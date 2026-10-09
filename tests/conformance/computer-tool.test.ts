@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import {
   COMPUTER_ACTIONS,
   computerToInput,
+  computerActionsFor,
   computerToolDefinition,
   describeComputerAction,
   normalizeSetup,
@@ -17,7 +18,9 @@ import {
   parseSurface,
   setupReached,
   setupVerifyExpr,
+  unsupportedAction,
 } from "../../src/substrate/computer-tool.ts";
+import { BROWSER_CAPABILITIES, ClockLevel, PointerLevel, TargetRuntime } from "../../src/shared/computer-target.ts";
 import { clickModifiers, parseCombo, pointInView, capActions } from "../../src/substrate/preview-input.ts";
 
 describe("computer tool — parsing either transport", () => {
@@ -273,5 +276,49 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
     const built = await playOn("builder");
     assert.deepEqual(built.reached, ["input"]);
     assert.match(built.prompt, /keeps running between actions/);
+  });
+});
+
+describe("computer tool — built from what the target can do", () => {
+  const bridge = {
+    ...BROWSER_CAPABILITIES,
+    runtime: TargetRuntime.Bridge,
+    pointer: PointerLevel.Relative,
+    cameras: false,
+    console: false,
+    zoom: false,
+    surfaces: false,
+    reload: false,
+  };
+
+  it("offers a browser game every verb, exactly as before", () => {
+    assert.deepEqual(computerActionsFor(BROWSER_CAPABILITIES), [...COMPUTER_ACTIONS]);
+    const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
+    assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
+    assert.ok("surface" in browser.parameters.properties);
+  });
+
+  it("never offers a verb the target lacks, and says so instead of failing silently", () => {
+    const actions = computerActionsFor(bridge);
+    for (const missing of ["zoom", "camera", "console", "reload", "left_click", "left_click_drag", "mouse_move"])
+      assert.ok(!actions.includes(missing as never), `${missing} is not offered`);
+    for (const kept of ["screenshot", "key", "hold_key", "type", "scroll", "wait", "state"])
+      assert.ok(actions.includes(kept as never), `${kept} is offered`);
+    const schema = computerToolDefinition({ role: "playtester", capabilities: bridge });
+    assert.ok(!("surface" in schema.parameters.properties), "no surface parameter on a target with one surface");
+    assert.doesNotMatch(schema.description, /left_click \|/);
+    assert.doesNotMatch(schema.description, /camera text=/);
+    assert.match(schema.description, /its own game process/);
+    assert.equal(unsupportedAction("zoom", bridge)?.includes("not available"), true);
+    assert.equal(unsupportedAction("key", bridge), null);
+  });
+
+  it("tells a paced role the truth when the target cannot hold its clock", () => {
+    const unheld = computerToolDefinition({
+      role: "playtester",
+      capabilities: { ...bridge, clock: ClockLevel.None },
+    }).description;
+    assert.match(unheld, /cannot be held still/);
+    assert.doesNotMatch(unheld, /stands still between your actions/);
   });
 });

@@ -5,8 +5,11 @@
  * preview; nothing here runs.
  */
 
-/** The `__studio` verbs that start and pause a game's clock (`src/game-template/src/studio.js`). */
-export const GameClock = { Start: "start", Pause: "pause" } as const;
+/**
+ * The `__studio` verbs that hold a game's clock (`src/game-template/src/studio.js`, `src/page/shim.ts`):
+ * start and pause it, step it by a number of milliseconds, and reseed its `Math.random`.
+ */
+export const GameClock = { Start: "start", Pause: "pause", Step: "step", Seed: "seed" } as const;
 export type GameClock = (typeof GameClock)[keyof typeof GameClock];
 
 /** The `__studio` verb that lets a racing game's own line (`config.steer`) steer the held keys. */

@@ -55,7 +55,10 @@ async function engineWith(options: { hostSkills?: HostSkills; hostSkillsDir?: st
 const DISABLE_FLAGS = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
 
 describe("codex host-skill suppression", () => {
-  it("adds nothing to a normal launch", async () => {
+  it("keeps a normal launch's skills, and still turns Codex's own computer use and browsers off", async () => {
+    // Flipped on purpose (computer-use epic): a normal launch once passed no `--disable` at all, so
+    // Codex's own computer use could drive the person's real screen past the studio's consent. The
+    // studio's `computer` tool is the only hands an agent has, in every lane.
     const skills = await tmpDir("studio-eval-skills-");
     await mkdir(path.join(skills, "alpha"));
     await writeFile(path.join(skills, "alpha", "SKILL.md"), "# alpha\n");
@@ -66,7 +69,8 @@ describe("codex host-skill suppression", () => {
       argv.some((arg) => arg.startsWith("skills.config=")),
       false,
     );
-    assert.equal(argv.includes("--disable"), false);
+    assert.deepEqual(argv.slice(-(DISABLE_FLAGS.length + 1), -1), DISABLE_FLAGS);
+    assert.equal(argv.at(-1), "-");
   });
 
   it("disables each host skill by path and the browser features, before the stdin prompt", async () => {

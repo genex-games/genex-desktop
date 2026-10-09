@@ -1070,6 +1070,7 @@ export class CodexEngine implements Engine {
       ...invocation.argv.slice(0, -1),
       ...(await codexProfileArgs(home)),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
+      ...STUDIO_OWNED_FEATURE_ARGS,
       invocation.argv.at(-1) ?? "-",
     ];
     if (this.#execFn) return this.#execFn({ ...invocation, argv, env });
@@ -1820,7 +1821,11 @@ function pickModel(model?: string): string | undefined {
 const HOST_SKILLS_DIR = path.join(".agents", "skills");
 /** The file that makes a host-skills subfolder a skill. */
 const HOST_SKILL_FILE = "SKILL.md";
-/** The Codex features an eval lane turns off with the host skills (evals plan Appendix B). */
+/**
+ * The Codex features every lane turns off: Codex's own computer use and browsers would drive the
+ * person's real screen past the studio's consent, and the studio's `computer` tool is the only
+ * hands an agent has (evals plan Appendix B; computer-use epic).
+ */
 export const HOST_SKILL_DISABLED_FEATURES = [
   "computer_use",
   "in_app_browser",
@@ -1838,11 +1843,13 @@ export function hostSkillSuppressionArgs(skillFiles: readonly string[]): string[
   return ["-c", `skills.config=[${entries.join(",")}]`];
 }
 
+/** `--disable` for each feature the studio owns instead, passed on every launch. */
+const STUDIO_OWNED_FEATURE_ARGS = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
+
 /** The suppression argv for a folder of host skills, or nothing when they are kept. Only reads. */
 async function hostSkillArgs(dir: string | null): Promise<string[]> {
   if (dir === null) return [];
-  const disabled = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
-  return [...hostSkillSuppressionArgs(await hostSkillFiles(dir)), ...disabled];
+  return hostSkillSuppressionArgs(await hostSkillFiles(dir));
 }
 
 /**

@@ -1,8 +1,17 @@
 /**
  * What the model reads about the `computer` tool: its description, its parameters, and the
  * sentences it gets back instead of an action when the arguments do not add up. Written once,
- * for both engines; `computer-tool.ts` decides when each is used.
+ * for every engine; `computer-tool.ts` decides when each is used. The description is built from
+ * what the target can do (`shared/computer-target.ts`), so a verb the target lacks is never offered.
  */
+import {
+  BROWSER_CAPABILITIES,
+  canPause,
+  canPoint,
+  hasState,
+  type TargetCapabilities,
+  TargetRuntime,
+} from "../shared/computer-target.ts";
 
 /** Who holds the tool, which changes whose build the window shows and whether it can reload. */
 export type ComputerToolRole = "builder" | "playtester" | "scout" | "director";
@@ -16,36 +25,23 @@ const WHOSE_BUILD: Record<ComputerToolRole, string> = {
   scout: "the build under test",
 };
 
+/** The roles that edit files, and so may rebuild what they look at. */
+const RELOADING_ROLES: ReadonlySet<ComputerToolRole> = new Set(["builder", "director"]);
+
+/** The roles whose clock the studio holds still between moves, where the target can hold it. */
+const PACED_TOOL_ROLES: ReadonlySet<ComputerToolRole> = new Set(["playtester"]);
+
 /** The reload sentence, for the roles that edit files. */
 const RELOAD_LINE =
   " reload — rebuild and reload the window after you edit files (until you do, the window keeps running the build it last loaded).";
 
-/** The tool's description, for a role, a window size and the cameras the game names. */
-export function computerToolDescription(options: {
-  role: ComputerToolRole;
-  view: { width: number; height: number };
-  cameras: string;
-}): string {
-  const whose = WHOSE_BUILD[options.role];
-  const reload = options.role === "builder" || options.role === "director" ? RELOAD_LINE : "";
-  const clock = options.role === "playtester" ? PACED_CLOCK_LINE : RUNNING_CLOCK_LINE;
-  return (
-    `Your hands and eyes on ${whose}, running live in its own hidden ${options.view.width}×${options.view.height} window (Chromium, the same one the judges use). ` +
-    "Actions — screenshot: what the window shows now (Claude: the image comes back in the result; Codex: it prints a file path, view it). " +
-    "zoom region=x0,y0,x1,y1: that part of the last screenshot at full size. " +
-    "left_click | right_click | middle_click | double_click | triple_click coordinate=x,y (text=shift|ctrl+alt holds modifiers). " +
-    "left_click_drag start_coordinate=x,y coordinate=x,y. mouse_move coordinate=x,y. left_mouse_down / left_mouse_up. " +
-    "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
-    "type text=<literal text>. key text=<a key or +chord: w, i, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=w duration=<seconds> (walks, grinds). " +
-    "wait duration=<seconds>. cursor_position. " +
-    `camera text=<name>: jump the view to a studio camera (eye:here is the player's eyes, default the game's own).${options.cameras} ` +
-    "state: the game's own __studio.state() numbers (a claim — a screenshot is the proof). console: errors since load." +
-    reload +
-    " screenshot, camera and zoom take surface=screen|canvas: screen is the whole page — a DOM menu, an HTML HUD, a loading screen — and canvas is only what the game draws. Leave it out and the studio picks. " +
-    `Coordinates are pixels of the last screenshot, origin top-left. ${clock} ` +
-    "Menus, map pickers and mode switches are reached the way a player reaches them: click or press the key, then screenshot to see that you are where you think you are."
-  );
-}
+/** Where the build runs, as the description's opening says it, per runtime. */
+const WHERE_IT_RUNS: Record<TargetRuntime, (view: { width: number; height: number }) => string> = {
+  [TargetRuntime.Browser]: (view) =>
+    `running live in its own hidden ${view.width}×${view.height} window (Chromium, the same one the judges use)`,
+  [TargetRuntime.Bridge]: (view) =>
+    `running as its own game process, seen through a ${view.width}×${view.height} view of what it draws`,
+};
 
 /** The game's clock for a builder, a scout and the lead: it runs between actions. */
 const RUNNING_CLOCK_LINE = "The game keeps running between actions.";
@@ -55,6 +51,61 @@ const RUNNING_CLOCK_LINE = "The game keeps running between actions.";
  */
 const PACED_CLOCK_LINE =
   "The game's clock stands still between your actions: it runs only while you press, hold, click or wait, so take your time to look.";
+/** A paced role on a target whose clock cannot be held: it is told the truth. */
+const UNHELD_CLOCK_LINE =
+  "This game's clock cannot be held still, so it keeps running between your actions: act, then look straight away.";
+
+/** The pointer sentences, for a target that can click at a point. */
+const POINTER_LINES =
+  "left_click | right_click | middle_click | double_click | triple_click coordinate=x,y (text=shift|ctrl+alt holds modifiers). " +
+  "left_click_drag start_coordinate=x,y coordinate=x,y. mouse_move coordinate=x,y. left_mouse_down / left_mouse_up. ";
+
+/** The clock sentence for a role on a target. */
+function clockLine(role: ComputerToolRole, caps: TargetCapabilities): string {
+  if (!PACED_TOOL_ROLES.has(role)) return RUNNING_CLOCK_LINE;
+  return canPause(caps) ? PACED_CLOCK_LINE : UNHELD_CLOCK_LINE;
+}
+
+/** The studio's own verbs a target has: camera, state, console. */
+function studioVerbLines(caps: TargetCapabilities, cameras: string): string {
+  const camera = caps.cameras
+    ? `camera text=<name>: jump the view to a studio camera (eye:here is the player's eyes, default the game's own).${cameras} `
+    : "";
+  const state = hasState(caps)
+    ? "state: the game's own __studio.state() numbers (a claim — a screenshot is the proof)."
+    : "";
+  const console = caps.console ? `${state ? " " : ""}console: errors since load.` : "";
+  return camera + state + console;
+}
+
+/** The tool's description, for a role, a window size, the cameras the game names and what the target can do. */
+export function computerToolDescription(options: {
+  role: ComputerToolRole;
+  view: { width: number; height: number };
+  cameras: string;
+  capabilities?: TargetCapabilities;
+}): string {
+  const caps = options.capabilities ?? BROWSER_CAPABILITIES;
+  const whose = WHOSE_BUILD[options.role];
+  const reload = RELOADING_ROLES.has(options.role) && caps.reload ? RELOAD_LINE : "";
+  const surface = caps.surfaces
+    ? " screenshot, camera and zoom take surface=screen|canvas: screen is the whole page — a DOM menu, an HTML HUD, a loading screen — and canvas is only what the game draws. Leave it out and the studio picks. "
+    : " ";
+  return (
+    `Your hands and eyes on ${whose}, ${WHERE_IT_RUNS[caps.runtime](options.view)}. ` +
+    "Actions — screenshot: what the window shows now (Claude: the image comes back in the result; Codex: it prints a file path, view it). " +
+    (caps.zoom ? "zoom region=x0,y0,x1,y1: that part of the last screenshot at full size. " : "") +
+    (canPoint(caps) ? POINTER_LINES : "") +
+    "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
+    "type text=<literal text>. key text=<a key or +chord: w, i, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=w duration=<seconds> (walks, grinds). " +
+    "wait duration=<seconds>. cursor_position. " +
+    studioVerbLines(caps, options.cameras) +
+    reload +
+    surface +
+    `Coordinates are pixels of the last screenshot, origin top-left. ${clockLine(options.role, caps)} ` +
+    "Menus, map pickers and mode switches are reached the way a player reaches them: click or press the key, then screenshot to see that you are where you think you are."
+  );
+}
 
 /** The known cameras, as the sentence the description carries (empty when the game names none). */
 export function knownCamerasLine(cameras: string[]): string {
@@ -88,4 +139,6 @@ export const COMPUTER_ARG_PROBLEM = {
   keyNeedsText: (action: string) => `${action} needs text=<key or combo, e.g. Return, Escape, ctrl+s, w>`,
   cameraNeedsName: "camera needs text=<camera name> (eye:here is your own eyes; default is the game's camera)",
   unknownSurface: (raw: string) => `surface "${raw}" is not screen or canvas — the studio picked the surface itself`,
+  unsupported: (action: string, actions: string) =>
+    `${action} is not available on this game — it cannot do that from here. Use one of ${actions}`,
 } as const;

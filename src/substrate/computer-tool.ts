@@ -28,6 +28,7 @@ import {
   type PreviewInputAction,
 } from "./preview-input.ts";
 import type { PreviewSetup } from "../shared/preview-contract.ts";
+import { BROWSER_CAPABILITIES, canPoint, hasState, type TargetCapabilities } from "../shared/computer-target.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
 import {
@@ -416,6 +417,45 @@ export function computerToInput(request: ComputerRequest, pointer: { x: number; 
   }
 }
 
+/** The pointer actions: each needs a target that can put its pointer at a point. */
+const POINTED_ACTIONS: ReadonlySet<ComputerAction> = new Set([
+  "left_click",
+  "right_click",
+  "middle_click",
+  "double_click",
+  "triple_click",
+  "left_click_drag",
+  "mouse_move",
+  "left_mouse_down",
+  "left_mouse_up",
+]);
+
+/** What each action asks of a target beyond pictures and keys; an action missing here every target can do. */
+const ACTION_NEEDS_CAPABILITY: Partial<Record<ComputerAction, (caps: TargetCapabilities) => boolean>> = {
+  zoom: (caps) => caps.zoom,
+  camera: (caps) => caps.cameras,
+  state: (caps) => hasState(caps),
+  console: (caps) => caps.console,
+  reload: (caps) => caps.reload,
+};
+
+/** Can this target carry out this action? */
+function actionFits(action: ComputerAction, caps: TargetCapabilities): boolean {
+  if (POINTED_ACTIONS.has(action) && !canPoint(caps)) return false;
+  return ACTION_NEEDS_CAPABILITY[action]?.(caps) ?? true;
+}
+
+/** The actions a target can carry out, in the tool's own order: the only ones the model is offered. */
+export function computerActionsFor(caps: TargetCapabilities): ComputerAction[] {
+  return COMPUTER_ACTIONS.filter((action) => actionFits(action, caps));
+}
+
+/** The sentence for an action the target cannot carry out, or null when it can. Never a silent no-op. */
+export function unsupportedAction(action: ComputerAction, caps: TargetCapabilities): string | null {
+  if (actionFits(action, caps)) return null;
+  return COMPUTER_ARG_PROBLEM.unsupported(action, computerActionsFor(caps).join(", "));
+}
+
 /** The flat parameter schema both transports share (the bridge prints it as flags). */
 export interface ComputerToolSchema {
   name: string;
@@ -432,17 +472,24 @@ export interface ComputerToolSchema {
  * `mcp__studio__computer`, Codex as `node .studio/bridge/tool.mjs computer --action=…`.
  */
 export function computerToolDefinition(
-  options: { role?: ComputerToolRole; cameras?: string[] } = {},
+  options: {
+    role?: ComputerToolRole;
+    cameras?: string[];
+    capabilities?: TargetCapabilities;
+    view?: { width: number; height: number };
+  } = {},
 ): ComputerToolSchema {
+  const capabilities = options.capabilities ?? BROWSER_CAPABILITIES;
   const cameras = knownCamerasLine((options.cameras ?? []).slice(0, MAX_LISTED_CAMERAS));
   const text = COMPUTER_PARAMETER_TEXT;
+  const view = options.view ?? COMPUTER_VIEW;
   return {
     name: COMPUTER_TOOL_NAME,
-    description: computerToolDescription({ role: options.role ?? "builder", view: COMPUTER_VIEW, cameras }),
+    description: computerToolDescription({ role: options.role ?? "builder", view, cameras, capabilities }),
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", description: text.action(COMPUTER_ACTIONS.join(", ")) },
+        action: { type: "string", description: text.action(computerActionsFor(capabilities).join(", ")) },
         coordinate: { type: "string", description: text.coordinate },
         start_coordinate: { type: "string", description: text.start_coordinate },
         region: { type: "string", description: text.region },
@@ -451,7 +498,7 @@ export function computerToolDefinition(
         duration: { type: "number", description: text.duration },
         scroll_direction: { type: "string", description: text.scroll_direction },
         scroll_amount: { type: "number", description: text.scroll_amount },
-        surface: { type: "string", description: text.surface },
+        ...(capabilities.surfaces ? { surface: { type: "string", description: text.surface } } : {}),
       },
       required: ["action"],
     },
