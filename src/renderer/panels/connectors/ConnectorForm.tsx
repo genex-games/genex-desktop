@@ -19,7 +19,7 @@ const SECRETS_LOCKED = {
   [SecretStorageIssue.EncryptionUnavailable]:
     "Secrets cannot be stored in this profile: Studio has no OS encryption here.",
   [SecretStorageIssue.NoKeyring]:
-    "Secrets cannot be stored: no system keyring is running. Start GNOME Keyring or KWallet, then restart Studio.",
+    "Secrets cannot be stored: no unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.",
 } as const satisfies Record<SecretStorageIssue, string>;
 
 /** A labelled field of the form. */

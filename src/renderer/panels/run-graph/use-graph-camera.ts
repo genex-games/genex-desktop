@@ -63,7 +63,7 @@ export function selectionView(size: ViewportSize, rect: Rect, view: CanvasView):
 function useFitting(canvas: Canvas, layout: StepsLayout, live: Step | null, touched: RefObject<boolean>) {
   const { viewport, apply } = canvas;
 
-  // A small night is not blown up past its own size.
+  // A small run is not blown up past its own size.
   const fit = useCallback(() => {
     const element = viewport.current;
     const bounds = boundsOf(Object.values(layout.rects));

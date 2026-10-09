@@ -1,9 +1,9 @@
 /**
  * The stage's views, and when Live may change. While the person watches Live only they change it:
- * a night's new build, a change to the game folder and a build found broken each mark Reload
+ * a run's new build, a change to the game folder and a build found broken each mark Reload
  * instead (`liveBehindOf`), and Reload applies it. What waits while Live is out of sight is
  * applied at once (`appliesUnseen`), so Live is current when they come back. The one automatic
- * swap is the empty scaffold's: it has no game to lose, so the night's first healthy build shows.
+ * swap is the empty scaffold's: it has no game to lose, so the run's first healthy build shows.
  */
 
 import { LiveBehindReason, type LiveBehindEvent } from "../shared/live-behind.ts";
@@ -30,7 +30,7 @@ const VIEWS: readonly StageView[] = [StageView.Live, StageView.Builds, StageView
 export const isStageView = (value: unknown): value is StageView => VIEWS.includes(value as StageView);
 
 /**
- * The build the stage can offer right now: the newest merge of the night, unless something has
+ * The build the stage can offer right now: the newest merge of the run, unless something has
  * found that it does not run, and only while it is not already what the stage is showing. It
  * carries what is known about its health, because only a build a health pass says runs is offered.
  */
@@ -65,15 +65,15 @@ export function laterOf(
   return heardSince ? now : read;
 }
 
-/** A build the stage can offer: the night's newest merge, with what is known about its health. */
+/** A build the stage can offer: the run's newest merge, with what is known about its health. */
 export type BuildOffer = NonNullable<ReturnType<typeof newBuildOffer>>;
 
-/** What Live's Reload would bring, and why: main's waiting change, the night's newest build, or a way back from a broken one. */
+/** What Live's Reload would bring, and why: main's waiting change, the run's newest build, or a way back from a broken one. */
 export interface LiveBehind {
   reason: LiveBehindReason;
   /** A builder's own words about the change, when it left some. */
   note: string | null;
-  /** The build Reload plays: the one main holds, or the night's newest; null for the game folder. */
+  /** The build Reload plays: the one main holds, or the run's newest; null for the game folder. */
   head: string | null;
   /** Main holds this change (`live.behind`), so Reload asks main for it. */
   held: boolean;
@@ -81,7 +81,7 @@ export interface LiveBehind {
 
 /**
  * What Reload offers now. Main's change comes first: it is what the studio did to the game or
- * what the lead chose to show. Then a healthy build of the night nobody is showing — nobody asked
+ * what the lead chose to show. Then a healthy build of the run nobody is showing — nobody asked
  * for it, so only one a health pass says runs; merged is not checked. Then, when the build on the
  * stage was found not to run, the way back to the game folder.
  */
@@ -111,7 +111,7 @@ export const watchingLive = (stage: StageWatch): boolean =>
   stage.visible && stage.view === StageView.Live && !stage.showEmpty;
 
 /**
- * Whether what waits for Live (anything but a night's newest build, which only ever waits for
+ * Whether what waits for Live (anything but a run's newest build, which only ever waits for
  * the person) goes in without asking: nobody is watching a game in Live.
  */
 export function appliesUnseen(behind: LiveBehind | null, stage: StageWatch): boolean {
@@ -119,7 +119,7 @@ export function appliesUnseen(behind: LiveBehind | null, stage: StageWatch): boo
   return behind.held || behind.reason === LiveBehindReason.Broken;
 }
 
-/** The empty scaffold's exception: its placeholder has no game to lose, so the night's first healthy build shows. */
+/** The empty scaffold's exception: its placeholder has no game to lose, so the run's first healthy build shows. */
 export function firstBuildShows(offer: BuildOffer | null, stage: StageWatch): boolean {
   const onPlaceholder = stage.visible && stage.view === StageView.Live && stage.showEmpty;
   return offer?.healthy === true && onPlaceholder;

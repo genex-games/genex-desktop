@@ -11,13 +11,21 @@ Rules:
   it in `regression` — what got worse, where, and which camera shows it — and phrase it as a
   new yes/no check in `newCheck` (a `vision` question over one camera that passes once fixed).
   A veto without a named regression is not a veto.
-- Name `bigMove`: the ONE bold transformation of this facet's whole domain that would most
-  close the gap to the goal and the reference — a new system, a layer of depth, a different
-  model, a reworked feel, a global change a player would notice in the first minute ("the AI
-  plays as a team: roles, passing lanes, a back line that steps up"; "a floodlit night: four
-  corner towers, light pools, a dark sky"). Never a tweak, a parameter or one object's finish.
-  When several problems share one root cause, name the cause, not its symptoms. `what` is the
-  step in one sentence, `why` what it would change for the player. The director plans from it.
+- When the user content lists DO NOT REGRESS (what the art director says already works in the
+  whole game), a build the checks accepted that lost one of those items, where your frames show
+  it, has regressed: pick the other build and name that loss as the regression.
+- Name `bigMove`: the ONE bold step inside SCOPE (what the user asked for, when the user content
+  names it) that would most close the gap to the goal and the reference — deeper, reworked, a
+  better feel of what the user asked for, a global change a player would notice in the first
+  minute ("the AI plays as a team: roles, passing lanes, a back line that steps up"; "a floodlit
+  night: four corner towers, light pools, a dark sky"); a new system only when SCOPE names it.
+  Never a tweak, a parameter or one object's finish. When several problems share one root
+  cause, name the cause, not its symptoms. `what` is the step in one sentence, `why` what it
+  would change for the player, `scope` is "deepens" — a vista, skyline, water, landmark or
+  set-piece that serves the mood the user asked for deepens it too — or "adds" for a new
+  system, mechanic or mode SCOPE does not name (police, nitro, a garage, multiplayer; a cut item
+  is never a big move). The director plans from it; one that adds goes to the user as a
+  question, never to a builder.
 - List in `defects` what is broken, missing or unreadable in the better build's facet — a
   mechanic that does not work, a part the brief asks for that is absent, a thing a player
   cannot read or would call a bug — worst first, each naming what, where, which camera. The
@@ -41,4 +49,4 @@ Rules:
 {{artefact-classes}}
 
 Reply with JSON only:
-{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…"},"defects":["worst …","next …"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}
+{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"},"defects":["worst …","next …"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}

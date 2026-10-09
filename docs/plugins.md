@@ -38,7 +38,10 @@ hyphens. Agent tool names are `<plugin-id>__<tool-name>`. Duplicate declarations
 capabilities, escaping paths, symlinks and incompatible API versions are rejected.
 
 Plugins → Add → Load local plugin copies a selected package into host-owned storage after displaying
-its publisher and capabilities. Local packages are unreviewed. Backends execute trusted native
+its publisher and capabilities. A package is one set of files on every route: dotfiles and
+dot-folders anywhere (`.git`, `.env`) and the scaffold's authoring files at its root
+(`AGENTS.md`, `jsconfig.json`, `tsconfig.json`, `plugin-sdk/`) are never packed, copied, fetched
+from GitHub or scanned (`isPackageEntry` in `substrate/plugins/pack.ts`). Local packages are unreviewed. Backends execute trusted native
 code; a child process is crash isolation, not an OS security sandbox — the trust dialog says so.
 Never load a package merely because an agent placed it in a game. Agents cannot install, enable,
 update, allow or approve plugins.
@@ -1025,7 +1028,9 @@ Available services are capability checked and scoped to the calling plugin:
   under the plugin's own storage (`publish/<project>/dist`) and returns the export result; it
   needs a project binding and is `Export unavailable` in sessions without the host export. The
   target is Studio's, never the game folder: the plugin names no path and the same audited
-  exporter the Export button uses does the copying.
+  exporter the Export button uses does the copying. The copy carries no package.json, so the
+  result's `genex` field holds what the game's own one tells Genex (its Genex SDK versions and
+  `genex` settings), read only when that file lives inside the game.
 - `game.engine.link` / `game.engine.read` / `game.engine.steps` (capability `game-engine`): link
   the bound game to an Unreal project file, read its link, or show the plugin's steps card in the
   calling chat (see "A game's engine" below).
@@ -1349,8 +1354,8 @@ entries carrying `id`, `name`, `publisher`, `description`, `category` (`assets`,
   the policy does not grant is shown as `community`; an artifact from an origin other than
   `https://plugins.genex.games`, or at a path that does not end in `/<id>/<version>/<sha256>.json`,
   is dropped. The policy is applied on every read, cached copies included. The index itself is
-  still unsigned: signing it with a key embedded in the app is the step before community entries
-  are accepted.
+  unsigned: community entries are listed only after maintainer review, with artifacts on the
+  approved origin; signing the index with a key embedded in the app is later hardening.
 
 The repository's `marketplace/index.json` is an empty scaffold, not the published catalog. The
 published catalog lists official `genex` and `blender` releases, but both ids are bundled seeds, so
@@ -1451,7 +1456,9 @@ output and is never shown as plugin status.
 | --- | --- |
 | `npm run plugin:new -- <id> [--out <dir>]` | Scaffolds a package from the SDK example with the id, name and tool names substituted; refuses reserved ids, malformed ids and occupied directories |
 | `npm run plugin:doctor -- <dir> [--json]` | `inspectPackage` → `scanPackage` → a real ping probe with every host service throwing (stderr echoed) → toolbar reserved labels and aria uniqueness → panel CSP → `mcpServers` (every `node` server's script is really a file inside the package, and each server is listed with the environment sources it asked for). Exit 1 on an error; scan findings and CSP problems are warnings |
-| `npm run plugin:pack -- <dir> <artifact.json>` | Writes the curated release envelope and prints the canonical manifest and its sha-256. Dotfiles and dot-folders (`.git`, `.env`) and the scaffold's editor files (`jsconfig.json`, `tsconfig.json`, `plugin-sdk/`) stay out; a link is refused (`packageFiles`, shared with `catalog:prepare`) |
+| `npm run plugin:pack -- <dir> <artifact.json>` | Writes the curated release envelope and prints the canonical manifest and its sha-256. Dotfiles and dot-folders (`.git`, `.env`) and the scaffold's authoring files (`AGENTS.md`, `jsconfig.json`, `tsconfig.json`, `plugin-sdk/`) stay out; a link is refused (`packEnvelope`, shared with `plugin:submit` and `catalog:prepare`) |
+| `npm run plugin:submit -- <dir> --catalog <genex-plugins clone> --repo <owner/repo> --sha <commit> --category <category> [--subdir] [--docs-url] [--min-studio-version] [--artifact]` | Packs the package, writes the community release record `records/<id>/<version>.json` and its `index.json` entry into the clone, and checks them with the catalog's validator against the clone as it was; on any refusal nothing is kept. Refuses an official id, the scaffold's `Unpublished` publisher, a released version and an artifact path inside the catalog or package. The artifact goes beside the clone, for the author's GitHub release |
+| `npm run plugin:unpack -- <artifact.json> <new-dir>` | Writes an envelope's files into a new folder for review (diff against the source commit, doctor, load); every name is checked before anything is written, and nothing runs |
 
 A panel places `<!-- STUDIO_PANEL_SDK -->` where the bridge goes; `plugin:new` (and the build, for
 the bundled example and Local Blender) replaces it with the current `panel.js` and `ui.js`

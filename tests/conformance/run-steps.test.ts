@@ -14,7 +14,6 @@ import {
   buildReview,
   capWords,
   checkingBuild,
-  elapsedShortWords,
   foldTries,
   frontier,
   headline,
@@ -33,6 +32,7 @@ import {
   stepWord,
   STEPS,
   triesWord,
+  workedShortWords,
 } from "../../src/renderer/run-steps.ts";
 import { sideBySideWords } from "../../src/renderer/words.ts";
 const START = Date.parse("2026-09-19T15:36:00.000Z");
@@ -84,8 +84,8 @@ const judged = (
     ...extra,
   });
 
-/** The tester's night: a lead's run with a helper that retried two steps and one single session. */
-function night({ finished = true }: { finished?: boolean } = {}): EventEnvelope[] {
+/** The tester's run: a lead's run with a helper that retried two steps and one single session. */
+function loopRun({ finished = true }: { finished?: boolean } = {}): EventEnvelope[] {
   minute = 0;
   const events = [
     event("run_started", { goal: "A sword in ice", mode: "director" }),
@@ -139,7 +139,7 @@ function rowsOf(events: EventEnvelope[]) {
 
 describe("tries fold into steps", () => {
   it("groups the tries at one step and ends the group at the try the judges kept", () => {
-    const { rows } = rowsOf(night());
+    const { rows } = rowsOf(loopRun());
     const land = rows.find((row) => row.facet.facetId === "land")!;
     assert.deepEqual(
       land.steps.map((step) => [step.name, step.tries.map((node) => node.iteration)]),
@@ -156,7 +156,7 @@ describe("tries fold into steps", () => {
   });
 
   it("starts a new step after a kept try even when the builder is asked the same thing", () => {
-    const { graph } = rowsOf(night());
+    const { graph } = rowsOf(loopRun());
     const rounds = graph.nodes.filter((node) => node.kind === "iteration" && node.facetId === "land");
     assert.equal(foldTries(rounds as never).length, 3);
   });
@@ -172,7 +172,7 @@ describe("tries fold into steps", () => {
 
 describe("a step's state comes from the build first, the judges second", () => {
   it("draws the kept steps on the line, the undone one below it, and says who stopped the last try", () => {
-    const { graph, rows } = rowsOf(night());
+    const { graph, rows } = rowsOf(loopRun());
     const land = rows.find((row) => row.facet.facetId === "land")!;
     assert.deepEqual(
       land.steps.map((step) => [step.state, step.onLine, step.gate]),
@@ -252,7 +252,7 @@ describe("a step's state comes from the build first, the judges second", () => {
   });
 
   it("shows a single-session part as one node, with an eye only when a judge compared its build", () => {
-    const { rows } = rowsOf(night());
+    const { rows } = rowsOf(loopRun());
     const sword = rows.find((row) => row.facet.facetId === "sword")!;
     assert.equal(sword.steps.length, 1);
     assert.deepEqual(
@@ -260,7 +260,7 @@ describe("a step's state comes from the build first, the judges second", () => {
       [true, "in-build", "lead", null],
     );
     assert.equal(rowMeta(sword, false), "", "its node says it all");
-    const events = night();
+    const events = loopRun();
     events.splice(
       events.length - 1,
       0,
@@ -279,7 +279,7 @@ describe("a step's state comes from the build first, the judges second", () => {
 
 describe("while the run goes on", () => {
   it("hangs the work in hand below the line and names the judges looking at it", () => {
-    const events = night({ finished: false });
+    const events = loopRun({ finished: false });
     events.push(
       event("facet_liveness", {
         facetId: "land",
@@ -304,16 +304,16 @@ describe("while the run goes on", () => {
 
 describe("the status line", () => {
   it("says the build is live and which steps did not land", () => {
-    const { graph, summary, rows } = rowsOf(night());
+    const { graph, summary, rows } = rowsOf(loopRun());
     assert.deepEqual(statusLine(graph, summary, rows), {
       tone: "green",
-      strong: "Live in your game",
+      strong: "Live in your game · 17 min",
       rest: "all but tall mountain landed",
     });
   });
 
   it("keeps failed checks in the line instead of the good news", () => {
-    const events = night();
+    const events = loopRun();
     events.splice(
       events.length - 1,
       0,
@@ -326,23 +326,23 @@ describe("the status line", () => {
   });
 
   it("says the status is unavailable when the summary cannot tell how the run closed", () => {
-    const { graph, summary, rows } = rowsOf(night());
+    const { graph, summary, rows } = rowsOf(loopRun());
     assert.deepEqual(statusLine(graph, { ...summary!, execution: "unknown" }, rows), {
       tone: "muted",
-      strong: "Status unavailable",
+      strong: "Status unavailable · 17 min",
       rest: "the run's record is incomplete",
     });
   });
 
   it("gives a build made live on health alone the grey eye", () => {
-    const { graph } = rowsOf(night());
+    const { graph } = rowsOf(loopRun());
     assert.equal(resultGate(graph), "waiting");
   });
 });
 
 describe("the layout", () => {
   it("puts what landed on the line, hangs the rest below its anchor, and overlaps nothing", () => {
-    const { rows } = rowsOf(night());
+    const { rows } = rowsOf(loopRun());
     const layout = layoutSteps(rows, { resultGate: "waiting" });
     const boxes = Object.entries(layout.rects).filter(([id]) => !id.startsWith("row:"));
     for (const [a, ra] of boxes)
@@ -412,7 +412,7 @@ it("no word the Builds tab shows for a try or a step says 'never judged' — the
   const said: string[] = [...Object.values(TRY_WORD)];
   for (const status of Object.values(IterationStatus))
     said.push(sideBySideWords({ status, satisfied: false, source: null }));
-  for (const { graph, rows } of [night(), night({ finished: false }), leadMerged()].map(rowsOf)) {
+  for (const { graph, rows } of [loopRun(), loopRun({ finished: false }), leadMerged()].map(rowsOf)) {
     for (const row of rows) said.push(rowMeta(row, graph.active));
     for (const step of rows.flatMap((row) => row.steps)) {
       for (const active of [true, false])
@@ -441,16 +441,17 @@ describe("the time a run was given", () => {
     assert.equal(capWords(90 * 60_000), "up to 1h 30m");
   });
 
-  it("says how long a finished build took in the card's short units", () => {
-    const from = "2026-10-01T08:00:00.000Z";
-    assert.equal(elapsedShortWords(from, "2026-10-01T13:17:20.000Z"), "5h 17m");
-    assert.equal(elapsedShortWords(from, "2026-10-01T08:42:00.000Z"), "42m");
-    assert.equal(elapsedShortWords(from, "2026-10-01T10:00:00.000Z"), "2h");
-    assert.equal(elapsedShortWords(from, "2026-10-01T08:00:20.000Z"), null);
+  it("says how long a finished build worked in the card's short units", () => {
+    const took = (ms: number) => workedShortWords({ ms, since: null });
+    assert.equal(took((5 * 60 + 17) * 60_000 + 20_000), "5h 17m");
+    assert.equal(took(42 * 60_000), "42m");
+    assert.equal(took(2 * 3_600_000), "2h");
+    assert.equal(took(20_000), null);
+    assert.equal(workedShortWords(undefined), null, "a build whose start is unknown");
   });
 
   it("puts it in the status line instead of the bare elapsed time", () => {
-    const events = night({ finished: false });
+    const events = loopRun({ finished: false });
     (events[0]!.data as { payload: Record<string, unknown> }).payload.budgets = { wallClockMs: 3_600_000 };
     events.push(
       event("facet_liveness", {
@@ -467,9 +468,56 @@ describe("the time a run was given", () => {
   });
 });
 
-describe("a finished night reopened", () => {
+describe("the clock counts the time a build worked", () => {
+  const HOUR = 60;
+  /** An 8 h run: an hour of work, then the app closed under it; a launch ten hours later pauses it. */
+  function interrupted(): EventEnvelope[] {
+    minute = 0;
+    const events = [
+      event("run_registered", { goal: "A sword in ice", budgets: { wallClockMs: 8 * 3_600_000 } }),
+      event("run_started", { goal: "A sword in ice", mode: "director" }),
+    ];
+    minute = HOUR;
+    events.push(event("autopilot_decision", { decision: "the sword needs more light" }));
+    minute = 11 * HOUR;
+    events.push(event("run_finished", { victory: false, stoppedBecause: "interrupted by restart" }));
+    events.push(event("autopilot_paused", {}));
+    return events;
+  }
+  /** The same run resumed two hours after the launch paused it. */
+  function resumed(): EventEnvelope[] {
+    const events = interrupted();
+    minute = 13 * HOUR;
+    events.push(event("run_registered", { goal: "A sword in ice", resumed: true }));
+    events.push(event("run_started", { goal: "A sword in ice", resumed: true }));
+    return events;
+  }
+
+  it("says how long a paused build has worked, against the time it was given", () => {
+    const { graph, summary, rows } = rowsOf(interrupted());
+    const line = statusLine(graph, summary, rows, START + 12 * HOUR * 60_000);
+    assert.equal(line.strong, "Paused · 1 h of 8 h");
+  });
+
+  it("goes on from the time worked: neither the pause nor the closed app counts", () => {
+    const events = resumed();
+    const { graph, summary, rows } = rowsOf(events);
+    const resumedAt = Date.parse(events.at(-2)?.created_at ?? "");
+    assert.equal(statusLine(graph, summary, rows, resumedAt + 5 * 60_000).strong, "Building · 1 h 5 min of 8 h");
+  });
+
+  it("names the time on every closed build", () => {
+    const { graph, summary, rows } = rowsOf(loopRun());
+    assert.equal(statusLine(graph, summary, rows).strong, "Live in your game · 17 min");
+    const failed = [...loopRun({ finished: true }).slice(0, -1), event("run_finished", { failure: { message: "x" } })];
+    const stopped = rowsOf(failed);
+    assert.equal(statusLine(stopped.graph, stopped.summary, stopped.rows).strong, "Build failed · 17 min");
+  });
+});
+
+describe("a finished run reopened", () => {
   it("counts its time from the reopen, and no longer calls the first close's build live", () => {
-    const events = night();
+    const events = loopRun();
     const reopen = event("run_registered", {
       goal: "A sword in ice",
       resumed: true,
@@ -484,7 +532,7 @@ describe("a finished night reopened", () => {
 });
 
 describe("between parts", () => {
-  /** A lead's night with one single-session part, merged a moment ago. */
+  /** A lead's run with one single-session part, merged a moment ago. */
   function merged(): EventEnvelope[] {
     minute = 0;
     return [
@@ -570,26 +618,26 @@ describe("between parts", () => {
       event("integration_health", { head: "h1", ok: true, problems: [] }),
       event("run_finished", { landed: false, integrationHead: "h1", baseCommit: "base" }),
     ]);
-    assert.equal(readyToPlay(over.graph, over.summary), null, "a finished night is played from Builds");
+    assert.equal(readyToPlay(over.graph, over.summary), null, "a finished run is played from Builds");
     assert.equal(readyToPlay(ran.graph, null), null, "no recorded outcome, nothing to play");
   });
 });
 
 describe("the words a card wears", () => {
   it("says the judges kept or rejected a step, and nothing about what comes next", () => {
-    const events = night({ finished: false });
+    const events = loopRun({ finished: false });
     events.push(judged("land", 5, "challenger"));
     const { graph, rows } = rowsOf(events);
     const mountain = rows.find((row) => row.facet.facetId === "land")!.steps[2]!;
     assert.equal(mountain.state, "kept");
     assert.equal(stepPill(mountain, graph.active), "Kept by reviewers");
     assert.equal(stepPill(mountain, false), "Kept by reviewers, not added");
-    const undone = rowsOf(night()).rows.find((row) => row.facet.facetId === "land")!.steps[2]!;
+    const undone = rowsOf(loopRun()).rows.find((row) => row.facet.facetId === "land")!.steps[2]!;
     assert.equal(undone.state, "undone");
     assert.equal(stepPill(undone, false), "Rejected by reviewers");
   });
 
-  /** A lead's night whose one build a pass of the lead's looked at and wrote a sentence about. */
+  /** A lead's run whose one build a pass of the lead's looked at and wrote a sentence about. */
   const looked = (pass: string, rule: string, because: string) => {
     minute = 0;
     return rowsOf([
@@ -618,8 +666,7 @@ describe("the words a card wears", () => {
   });
 
   it("says nothing about a build there was nothing to compare with", () => {
-    const empty =
-      "Nothing to compare it with: the night started from an empty game, so this build is judged on its own.";
+    const empty = "Nothing to compare it with: the run started from an empty game, so this build is judged on its own.";
     assert.equal(buildReview(looked("judge", "first-build", empty)), null);
     const unseen = "Nothing to compare it with: the game as it stood could not be photographed.";
     assert.equal(buildReview(looked("judge", "no-start", unseen)), null);

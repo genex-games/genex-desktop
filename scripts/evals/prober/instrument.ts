@@ -40,8 +40,8 @@ export type ProbeState = {
    * The page clock at install, paired with `installedAt` (wall). Together they
    * are one `(t, wall)` pair for the document even when no mark was ever made,
    * which is what lets the prober convert this document's page times into run
-   * times exactly — `installedAt` alone lands ~0.5–0.9 s late, MEASURED on the
-   * two 2026-09-04 bundles (842 ms and 511 ms of page time had passed by then).
+   * times exactly — `installedAt` alone lands ~0.5–0.9 s late (measured: 842 ms and 511 ms of
+   * page time had passed by then).
    */
   installedT: number;
   href: string;
@@ -441,7 +441,7 @@ export function installProbe() {
   /**
    * THE SHIM THAT GETS THE PROBE THROUGH A CLICK-TO-LOCK DOOR.
    *
-   * MEASURED 2026-09-04 on a first-person village: the game's only entrance was
+   * Measured on a first-person game: its only entrance was
    * a full-screen overlay whose click handler called `requestPointerLock()` and
    * which hid ONLY on `pointerlockchange`. Headless Chromium never grants
    * pointer lock, the promise rejected, the game swallowed the rejection, and
@@ -547,8 +547,8 @@ export function installProbe() {
      * cut of this comment said a CDP-dispatched mousemove carries neither
      * ("Input.dispatchMouseEvent has no field for them, so Blink leaves them at
      * 0") and that premise is FALSE: Blink derives movementX/Y from consecutive
-     * event positions, CDP-dispatched or not. MEASURED 2026-09-04 on the bare
-     * village run — the game's own `player.js` read `movementX` off `mousemove`,
+     * event positions, CDP-dispatched or not. Measured on a first-person game:
+     * the game's own `player.js` read `movementX` off `mousemove`,
      * the fallback below fired for zero events, and the camera samples show the
      * yaw sweeping 158° across the soak. `movesRouted: 0` meant "the fallback
      * was never needed" and was read as the opposite, which is why the three

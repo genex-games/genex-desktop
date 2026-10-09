@@ -10,24 +10,45 @@ jobs:
     timeout-minutes: 10
     steps:
       # PR changes cannot replace the validator/policy used to approve their own package.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           path: trusted
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: candidate
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - name: Validate metadata and public artifact bytes without executing plugins
+      # The contributor's part: identity, history, ownership and every released artifact. A new
+      # release whose artifact a maintainer has not uploaded yet is listed as pending, not failed.
+      - name: Metadata and history (submitter)
+        if: github.event_name == 'pull_request'
+        run: node trusted/scripts/check-catalog.mjs --root candidate --previous trusted --policy-root trusted --remote --allow-pending-new
+      # The maintainer's part: after review, the reviewed artifact is uploaded; then re-run this job.
+      - name: Artifacts published (maintainer upload)
         env:
           IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           if [ "$IS_PR" = true ]; then
-            node trusted/scripts/check-catalog.mjs --root candidate --previous trusted --policy-root trusted --remote
+            node trusted/scripts/check-catalog.mjs --root candidate --previous trusted --policy-root trusted --remote \
+              || { echo "::error::Waiting for a maintainer to review and upload this release's artifact; this step passes once it is published. If the step above also failed, fix the record first."; exit 1; }
           else
             node trusted/scripts/check-catalog.mjs --root candidate --policy-root trusted --remote
           fi
+  # The candidate's own validator tests run in a separate job that never sees the trusted checkout:
+  # in `validate` they could rewrite the trusted checker or policy before it judges this PR.
+  validator-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Validator tests
+        run: node --test scripts/check-catalog.test.mjs

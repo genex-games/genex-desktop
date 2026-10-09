@@ -1,11 +1,11 @@
 /**
- * The director's full journal, without a rig. Everything a night needs to go on lives in the run's
- * journal, not only in the harness's memory: the time the night has worked, which a Resume goes on
- * from instead of restarting the budget or reading the wall clock (journal.ts `nightClock`); the
- * record every save writes (night.ts `saveJournal`) — each worker's brief, seam, deadline, rounds
+ * The director's full journal, without a rig. Everything a run needs to go on lives in the run's
+ * journal, not only in the harness's memory: the time the run has worked, which a Resume goes on
+ * from instead of restarting the budget or reading the wall clock (journal.ts `loopRunClock`); the
+ * record every save writes (loop-run.ts `saveJournal`) — each worker's brief, seam, deadline, rounds
  * and last accepted commit, the defects nobody owns, the plan and its review window, the
  * integration's health, the workers' engine limit, the log and what the lead has heard of it; what
- * a resumed night reads back (`restoreNight`); the first message it opens with, a digest built from
+ * a resumed run reads back (`restoreLoopRun`); the first message it opens with, a digest built from
  * that record; and how often it is saved, into a store that keeps every version. And the workers'
  * engine limit, cleared once it lifts. And a finished build its chat reopens (director/reopen.ts):
  * its rewritten journal gives a fresh clock and wake loop, a fork in the game folder as it is now,
@@ -21,7 +21,7 @@ import { Side } from "../../src/harness-seed/loop/judge.ts";
 import { saveJournal as saveRunJournal } from "../../src/harness-seed/loop/run-events.ts";
 import { VerdictSource } from "../../src/harness-seed/loop/verdict.ts";
 import { directorTalk } from "../../src/harness-seed/loop/director.ts";
-import * as nightFunctions from "../../src/harness-seed/loop/director/night.ts";
+import * as loopRunFunctions from "../../src/harness-seed/loop/director/loop-run.ts";
 import * as toolFunctions from "../../src/harness-seed/loop/director/tools.ts";
 import * as workerFunctions from "../../src/harness-seed/loop/director/workers.ts";
 import { timedWorkRemaining, wrapReserveMs } from "../../src/harness-seed/loop/director/budgets.ts";
@@ -29,11 +29,11 @@ import {
   defaultWorkerId,
   JOURNAL_BRIEF_CHARS,
   JOURNAL_REASON_CHARS,
-  nightClock,
+  loopRunClock,
   priorWorkerIds,
   priorWorkersSummary,
   restoredWake,
-  restoreNight,
+  restoreLoopRun,
 } from "../../src/harness-seed/loop/director/journal.ts";
 import {
   outcomesAwaitPlan,
@@ -71,7 +71,7 @@ const fakeHost = (): FakeHost => ({ calls: [], journals: [] });
 const journalSaves = (host: FakeHost): number =>
   host.calls.filter((c) => c.method === HostMethod.ArtifactWrite && c.params.artifactId === "autopilot_run_j").length;
 
-/** The night's own clock in these rows: an hour, the wrap-up reserve at its end. */
+/** The run's own clock in these rows: an hour, the wrap-up reserve at its end. */
 const CLOCK = { started: T0, softDeadline: T0 + HOUR_MS - wrapReserveMs(HOUR_MS), finalDeadline: T0 + HOUR_MS };
 /** A clock as the journal keeps it, having worked `workedMs`. */
 const keptClock = (workedMs: number) => ({
@@ -133,11 +133,11 @@ const round = (iteration: number, won: boolean, reason = won ? "brighter" : "dar
 });
 
 /**
- * A night as prepareNight leaves it — its data plain, its parts the real ones, bound to it the way
- * `bindNight` binds them — on a host that records what it is asked. An answer may be a function of
+ * A run as prepareLoopRun leaves it — its data plain, its parts the real ones, bound to it the way
+ * `bindLoopRun` binds them — on a host that records what it is asked. An answer may be a function of
  * the call's params.
  */
-function fakeNight(host: FakeHost, over: Record<string, unknown> = {}, answers: Record<string, unknown> = {}) {
+function fakeLoopRun(host: FakeHost, over: Record<string, unknown> = {}, answers: Record<string, unknown> = {}) {
   const run = {
     runId: "run_j",
     project: "plaza",
@@ -209,12 +209,12 @@ function fakeNight(host: FakeHost, over: Record<string, unknown> = {}, answers: 
     journal: { runId: "run_j", run, director: { sessionId: null, workers: {}, notes: [] }, plan: {} },
     logSeq: 0,
     waitSeq: 0,
-    tonight: [],
+    runLedger: [],
     priorLedger: [],
     ledgerWrites: Promise.resolve(),
     ...over,
   };
-  return nightFunctions.bindNight(data as never, [nightFunctions, workerFunctions, toolFunctions]) as any;
+  return loopRunFunctions.bindLoopRun(data as never, [loopRunFunctions, workerFunctions, toolFunctions]) as any;
 }
 
 /** The loop's clock, moved by its own sleeps; `onSleep` runs after each. */
@@ -247,17 +247,17 @@ function lead(script: (turn: number) => Record<string, unknown>) {
 }
 
 /**
- * A resumed night on `priorJournal` whose lead starts workers: a host that lends windows, makes
+ * A resumed run on `priorJournal` whose lead starts workers: a host that lends windows, makes
  * worktrees and answers a builder's session, the plan gone ahead, every starting commit healthy.
  * Given its own `run` (a reopened one), it stands on the plan the journal kept.
  */
-function workerNight(
+function workerLoopRun(
   host: FakeHost,
   priorJournal: Record<string, any>,
   now: number,
   run: Record<string, unknown> | null = null,
 ) {
-  const night = fakeNight(
+  const loopRun = fakeLoopRun(
     host,
     {
       resume: true,
@@ -276,18 +276,20 @@ function workerNight(
       [HostMethod.EngineDelegate]: { ok: true, summary: "built", sessionId: "s" },
     },
   );
-  // A night on a run of its own (a reopened one) stands on the plan its journal kept, as prepareNight's.
-  if (run) night.state.run = run;
-  night.state.plan = run ? priorJournal.director.plan : { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }] };
-  night.state.monitor = Promise.resolve();
-  for (const commit of [FORK, SKY_ACCEPTED, LAMPS_ACCEPTED]) night.state.healthByHead.set(commit, true);
-  restoreNight(night, now);
-  return night;
+  // A run on a run of its own (a reopened one) stands on the plan its journal kept, as prepareLoopRun's.
+  if (run) loopRun.state.run = run;
+  loopRun.state.plan = run
+    ? priorJournal.director.plan
+    : { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }] };
+  loopRun.state.monitor = Promise.resolve();
+  for (const commit of [FORK, SKY_ACCEPTED, LAMPS_ACCEPTED]) loopRun.state.healthByHead.set(commit, true);
+  restoreLoopRun(loopRun, now);
+  return loopRun;
 }
 
 /** `worker_start` as the lead calls it: the refusal's words, or what it started. */
-const workerStart = (night: ReturnType<typeof fakeNight>) => async (args: Record<string, unknown>) => {
-  const answer = String(await night.startWorker({ mode: "single", brief: "Build it", ...args }));
+const workerStart = (loopRun: ReturnType<typeof fakeLoopRun>) => async (args: Record<string, unknown>) => {
+  const answer = String(await loopRun.startWorker({ mode: "single", brief: "Build it", ...args }));
   return answer.startsWith("{") ? JSON.parse(answer) : answer;
 };
 
@@ -298,45 +300,48 @@ function section(text: string, heading: string): string {
   return text.slice(from).split("\n\n")[0]!;
 }
 
-describe("the night's working time survives a Resume (journal.ts)", () => {
-  it("K1. a Resume goes on with the working time the night had left — paused time does not count, worked time is never given back — and a night whose worked time used its budget gets only its wrap-up", () => {
+describe("the run's working time survives a Resume (journal.ts)", () => {
+  it("K1. a Resume goes on with the working time the run had left — paused time does not count, worked time is never given back — and a run whose worked time used its budget gets only its wrap-up", () => {
     const total = HOUR_MS;
     const reserve = wrapReserveMs(total);
-    assert.deepEqual(nightClock({ saved: null, now: T0, totalMs: total }), CLOCK);
-    // Twenty minutes worked, then paused overnight: resumed ten hours on, it has the forty minutes
+    assert.deepEqual(loopRunClock({ saved: null, now: T0, totalMs: total }), CLOCK);
+    // Twenty minutes worked, then paused unattended: resumed ten hours on, it has the forty minutes
     // it had not used — not the wall clock's verdict that its hour is long over.
     const morning = T0 + 10 * HOUR_MS;
-    assert.deepEqual(nightClock({ saved: keptClock(20 * MINUTE_MS), now: morning, totalMs: total }), {
+    assert.deepEqual(loopRunClock({ saved: keptClock(20 * MINUTE_MS), now: morning, totalMs: total }), {
       started: morning - 20 * MINUTE_MS,
       softDeadline: morning + 40 * MINUTE_MS - reserve,
       finalDeadline: morning + 40 * MINUTE_MS,
     });
     // Resumed at once, the same forty minutes: never a fresh hour.
-    assert.deepEqual(nightClock({ saved: keptClock(20 * MINUTE_MS), now: T0 + 20 * MINUTE_MS, totalMs: total }), CLOCK);
+    assert.deepEqual(
+      loopRunClock({ saved: keptClock(20 * MINUTE_MS), now: T0 + 20 * MINUTE_MS, totalMs: total }),
+      CLOCK,
+    );
     // Worked into its wrap-up, or all of it: the wrap-up again, the reserve long, and nothing more.
     for (const worked of [total - reserve, total, 3 * total]) {
-      assert.deepEqual(nightClock({ saved: keptClock(worked), now: morning, totalMs: total }), {
+      assert.deepEqual(loopRunClock({ saved: keptClock(worked), now: morning, totalMs: total }), {
         started: morning - worked,
         softDeadline: morning,
         finalDeadline: morning + reserve,
       });
     }
-    // A journal that kept no worked time (a night from before it did) starts one.
+    // A journal that kept no worked time (a run from before it did) starts one.
     const { workedMs: _none, ...noCount } = keptClock(0);
-    assert.deepEqual(nightClock({ saved: noCount, now: T0, totalMs: total }), CLOCK);
-    assert.deepEqual(nightClock({ saved: { started: "soon", workedMs: -5 }, now: T0, totalMs: total }), CLOCK);
+    assert.deepEqual(loopRunClock({ saved: noCount, now: T0, totalMs: total }), CLOCK);
+    assert.deepEqual(loopRunClock({ saved: { started: "soon", workedMs: -5 }, now: T0, totalMs: total }), CLOCK);
   });
 
-  it("K9. a night stopped at 22:30 after 3 h of its 6 h, resumed at 08:00, gets the 3 h it had left — less the wrap-up reserve — not only a wrap-up", async (t) => {
+  it("K9. a run stopped at 22:30 after 3 h of its 6 h, resumed at 08:00, gets the 3 h it had left — less the wrap-up reserve — not only a wrap-up", async (t) => {
     const total = 6 * HOUR_MS;
     const reserve = wrapReserveMs(total);
     const evening = Date.UTC(2026, 8, 25, 19, 30);
     const stop = Date.UTC(2026, 8, 25, 22, 30);
     const morning = Date.UTC(2026, 8, 26, 8, 0);
     t.mock.timers.enable({ apis: ["Date"], now: evening });
-    const first = nightClock({ saved: null, now: evening, totalMs: total });
+    const first = loopRunClock({ saved: null, now: evening, totalMs: total });
     const before = fakeHost();
-    const one = fakeNight(before, { ...first, clock: first });
+    const one = fakeLoopRun(before, { ...first, clock: first });
     // 22:30, Stop: the close saves the journal.
     t.mock.timers.setTime(stop);
     await one.saveJournal();
@@ -344,15 +349,15 @@ describe("the night's working time survives a Resume (journal.ts)", () => {
 
     // 08:00, Resume.
     t.mock.timers.setTime(morning);
-    const clock = nightClock({ saved: paused.director.clock, now: morning, totalMs: total });
+    const clock = loopRunClock({ saved: paused.director.clock, now: morning, totalMs: total });
     assert.deepEqual(clock, {
       started: morning - 3 * HOUR_MS,
       softDeadline: morning + 3 * HOUR_MS - reserve,
       finalDeadline: morning + 3 * HOUR_MS,
     });
     const after = fakeHost();
-    const two = fakeNight(after, { resume: true, priorJournal: paused, ...clock, clock });
-    restoreNight(two, morning);
+    const two = fakeLoopRun(after, { resume: true, priorJournal: paused, ...clock, clock });
+    restoreLoopRun(two, morning);
     const { talk, turns } = lead(() => {
       two.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
@@ -369,14 +374,14 @@ describe("the night's working time survives a Resume (journal.ts)", () => {
   });
 });
 
-describe("every save writes the night's record (night.ts saveJournal)", () => {
-  it("K2. a worker started this turn is on the journal before the lead rests — its brief, seam, deadline, rounds and last accepted commit — with the defects nobody owns, the plan window, the health, the log and the time the night has worked", async (t) => {
+describe("every save writes the run's record (loop-run.ts saveJournal)", () => {
+  it("K2. a worker started this turn is on the journal before the lead rests — its brief, seam, deadline, rounds and last accepted commit — with the defects nobody owns, the plan window, the health, the log and the time the run has worked", async (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: T0 + 7 * MINUTE_MS });
     const host = fakeHost();
-    const night = fakeNight(host);
-    night.state.workers.set("sky", skyWorker());
+    const loopRun = fakeLoopRun(host);
+    loopRun.state.workers.set("sky", skyWorker());
     // A worker whose brief and last round's reason are longer than the journal keeps.
-    night.state.workers.set(
+    loopRun.state.workers.set(
       "moon",
       skyWorker({
         id: "moon",
@@ -385,18 +390,18 @@ describe("every save writes the night's record (night.ts saveJournal)", () => {
         iterations: [{ iteration: 3, won: false, stopped: true, reason: "y".repeat(1_000) }],
       }),
     );
-    night.state.ledger.push({ text: "the crates float above the plaza", from: "sky", owner: "props", at: T0 });
-    night.state.plan = { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }, { id: "props" }] };
-    night.state.planReviewUntil = T0 + 4 * MINUTE_MS;
-    night.state.planSaidFrom = 1;
-    night.state.integrationHealthy = true;
-    night.note("worker sky started (loop)");
-    night.note("worker sky: iteration 2 lost — the stars are gone", NoteKind.WorkerRound);
-    night.waitSeq = 1;
-    // A wrap-up that started early moves the working deadline; the night's own clock stays.
-    night.softDeadline = T0 + 10 * MINUTE_MS;
+    loopRun.state.ledger.push({ text: "the crates float above the plaza", from: "sky", owner: "props", at: T0 });
+    loopRun.state.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }, { id: "props" }] };
+    loopRun.state.planReviewUntil = T0 + 4 * MINUTE_MS;
+    loopRun.state.planSaidFrom = 1;
+    loopRun.state.integrationHealthy = true;
+    loopRun.note("worker sky started (loop)");
+    loopRun.note("worker sky: iteration 2 lost — the stars are gone", NoteKind.WorkerRound);
+    loopRun.waitSeq = 1;
+    // A wrap-up that started early moves the working deadline; the run's own clock stays.
+    loopRun.softDeadline = T0 + 10 * MINUTE_MS;
 
-    await night.saveJournal();
+    await loopRun.saveJournal();
 
     const saved = host.journals.at(-1)!.director;
     const sky = saved.workers.sky;
@@ -418,8 +423,8 @@ describe("every save writes the night's record (night.ts saveJournal)", () => {
       stopped: true,
       reason: "y".repeat(JOURNAL_REASON_CHARS),
     });
-    assert.deepEqual(saved.ledger, night.state.ledger);
-    assert.equal(saved.plan.summary, "Tonight: a dusk plaza.");
+    assert.deepEqual(saved.ledger, loopRun.state.ledger);
+    assert.equal(saved.plan.summary, "This run: a dusk plaza.");
     assert.deepEqual(saved.planReview, { until: iso(T0 + 4 * MINUTE_MS), go: false, saidFrom: 1 });
     assert.equal(saved.integrationHealthy, true);
     assert.deepEqual(
@@ -431,19 +436,19 @@ describe("every save writes the night's record (night.ts saveJournal)", () => {
     );
     assert.equal(saved.logSeq, 2);
     assert.equal(saved.heardSeq, 1, "what the lead has heard of the log");
-    assert.deepEqual(saved.clock, { ...keptClock(7 * MINUTE_MS) }, "the night's own clock, and seven minutes worked");
+    assert.deepEqual(saved.clock, { ...keptClock(7 * MINUTE_MS) }, "the run's own clock, and seven minutes worked");
   });
 });
 
-describe("a resumed night reads its journal back (journal.ts restoreNight, wake.ts)", () => {
+describe("a resumed run reads its journal back (journal.ts restoreLoopRun, wake.ts)", () => {
   it("K3. crash mid-build, then Resume: the first message opens with a digest read from the journal — the workers and the defects nobody owns from before, the news the lead never heard, the plan window — and the wrap-up comes when the working time it had left runs out", async (t) => {
-    // Night one, ten minutes in: a worker building, a defect a judge shelved, a round the lead has not heard of.
+    // Run one, ten minutes in: a worker building, a defect a judge shelved, a round the lead has not heard of.
     t.mock.timers.enable({ apis: ["Date"], now: T0 + 10 * MINUTE_MS });
     const before = fakeHost();
-    const one = fakeNight(before);
+    const one = fakeLoopRun(before);
     one.state.workers.set("sky", skyWorker());
     one.state.ledger.push({ text: "the crates float above the plaza", from: "sky", owner: "props", at: T0 });
-    one.state.plan = { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }, { id: "props" }] };
+    one.state.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }, { id: "props" }] };
     one.state.planReviewUntil = T0 + 30 * MINUTE_MS;
     one.note("worker sky started (loop)");
     one.waitSeq = 1;
@@ -456,16 +461,16 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       ],
     };
     await one.saveJournal();
-    // The loop dies here. The app's repair keeps the journal and marks the night paused.
+    // The loop dies here. The app's repair keeps the journal and marks the run paused.
     const kept: Record<string, any> = { ...before.journals.at(-1)!, phase: "paused" };
 
     // Resume, ten minutes after the crash: the ten minutes of the pause do not count.
     const later = T0 + 20 * MINUTE_MS;
     t.mock.timers.setTime(later);
-    const clock = nightClock({ saved: kept.director.clock, now: later, totalMs: HOUR_MS });
+    const clock = loopRunClock({ saved: kept.director.clock, now: later, totalMs: HOUR_MS });
     assert.equal(clock.softDeadline, CLOCK.softDeadline + 10 * MINUTE_MS);
     const after = fakeHost();
-    const two = fakeNight(after, {
+    const two = fakeLoopRun(after, {
       resume: true,
       priorJournal: kept,
       started: clock.started,
@@ -474,7 +479,7 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       clock,
     });
     two.state.plan = kept.director.plan;
-    restoreNight(two, later);
+    restoreLoopRun(two, later);
     const { talk, turns } = lead(() => {
       two.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
@@ -497,9 +502,9 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
     const happened = section(first, "WHAT HAPPENED:");
     assert.match(happened, /iteration 2 lost — the stars are gone/, "the round the lead never heard of");
     assert.doesNotMatch(happened, /worker sky started/, "what it had heard is not said again");
-    assert.ok(turns[0]!.timeoutMs <= clock.softDeadline - later, "the turn ends at the night's own working deadline");
+    assert.ok(turns[0]!.timeoutMs <= clock.softDeadline - later, "the turn ends at the run's own working deadline");
 
-    // …and what the resumed night saves keeps its clock and the workers from before.
+    // …and what the resumed run saves keeps its clock and the workers from before.
     await two.saveJournal();
     const resaved = after.journals.at(-1)!.director;
     assert.equal(resaved.clock.softDeadline, iso(clock.softDeadline));
@@ -516,11 +521,11 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
     );
   });
 
-  it("K4. a resumed night whose worked time used its working time opens in its wrap-up, with the wrap-up's time", async () => {
+  it("K4. a resumed run whose worked time used its working time opens in its wrap-up, with the wrap-up's time", async () => {
     const host = fakeHost();
     const late = T0 + 3 * HOUR_MS;
-    const clock = nightClock({ saved: keptClock(HOUR_MS), now: late, totalMs: HOUR_MS });
-    const night = fakeNight(host, {
+    const clock = loopRunClock({ saved: keptClock(HOUR_MS), now: late, totalMs: HOUR_MS });
+    const loopRun = fakeLoopRun(host, {
       resume: true,
       priorJournal: { director: { workers: {}, ledger: [] } },
       started: clock.started,
@@ -528,12 +533,12 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       finalDeadline: clock.finalDeadline,
       clock,
     });
-    restoreNight(night, late);
+    restoreLoopRun(loopRun, late);
     const { talk, turns } = lead(() => {
-      night.state.finished = true;
+      loopRun.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
     });
-    await runWakeLoop(night, talk, BRIEF, fakeClock(late));
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(late));
 
     assert.equal(turns.length, 1);
     assert.match(turns[0]!.prompt, /your session reached its deadline/, "the wrap-up, in the first message");
@@ -550,9 +555,9 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
     assert.deepEqual(restoredWake(null, now), { idleAsked: false, wakesAt: [] });
   });
 
-  it("K14. a plan window that closed while the night was paused lets the plan go on a Resume, and nothing wakes the lead for it", async () => {
+  it("K14. a plan window that closed while the run was paused lets the plan go on a Resume, and nothing wakes the lead for it", async () => {
     const later = T0 + 2 * HOUR_MS;
-    const night = fakeNight(fakeHost(), {
+    const loopRun = fakeLoopRun(fakeHost(), {
       resume: true,
       priorJournal: {
         director: { workers: {}, planReview: { until: iso(T0 + 30 * MINUTE_MS), go: false, saidFrom: 0 } },
@@ -562,24 +567,24 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       finalDeadline: later + 2 * HOUR_MS,
       clock: { started: later, softDeadline: later + HOUR_MS, finalDeadline: later + 2 * HOUR_MS },
     });
-    night.state.plan = { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }] };
-    restoreNight(night, later);
-    // A worker of the resumed night builds; the lead rests ten minutes and the night ends.
-    night.state.workers.set("sky", skyWorker({ startedAt: later }));
+    loopRun.state.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }] };
+    restoreLoopRun(loopRun, later);
+    // A worker of the resumed run builds; the lead rests ten minutes and the run ends.
+    loopRun.state.workers.set("sky", skyWorker({ startedAt: later }));
     const { talk, turns } = lead(() => ({ ok: true, sessionId: "lead-1" }));
     const clock = fakeClock(later, (now) => {
-      if (now >= later + 10 * MINUTE_MS) night.state.finished = true;
+      if (now >= later + 10 * MINUTE_MS) loopRun.state.finished = true;
     });
-    await runWakeLoop(night, talk, BRIEF, clock);
+    await runWakeLoop(loopRun, talk, BRIEF, clock);
 
     assert.equal(turns.length, 1, turns.map((turn) => turn.prompt.slice(0, 120)).join("\n---\n"));
-    assert.equal(night.state.planGo, true, "the window closed during the pause: the plan goes as it stands");
-    assert.equal(night.state.planReviewUntil, null);
+    assert.equal(loopRun.state.planGo, true, "the window closed during the pause: the plan goes as it stands");
+    assert.equal(loopRun.state.planReviewUntil, null);
   });
 
-  it("K15. the workers' engine limit is on the night's record and comes back on a Resume — unless it reset while the night was paused", async () => {
+  it("K15. the workers' engine limit is on the run's record and comes back on a Resume — unless it reset while the run was paused", async () => {
     const host = fakeHost();
-    const night = fakeNight(host);
+    const loopRun = fakeLoopRun(host);
     const limit = {
       engine: "codex",
       kind: "usage_limit",
@@ -588,19 +593,19 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       at: T0 + 5 * MINUTE_MS,
       worker: "sky",
     };
-    night.state.workerLimit = { ...limit };
-    await night.saveJournal();
+    loopRun.state.workerLimit = { ...limit };
+    await loopRun.saveJournal();
     const saved = host.journals.at(-1)!;
     assert.deepEqual(saved.director.workerLimit, { ...limit, at: iso(limit.at) });
 
-    const two = fakeNight(fakeHost(), { resume: true, priorJournal: saved });
-    restoreNight(two, T0 + HOUR_MS);
+    const two = fakeLoopRun(fakeHost(), { resume: true, priorJournal: saved });
+    restoreLoopRun(two, T0 + HOUR_MS);
     assert.deepEqual(two.state.workerLimit, limit, "no reset time was given: it stands until a session comes back");
 
     const reset = structuredClone(saved);
     reset.director.workerLimit = { ...reset.director.workerLimit, kind: "rate_limit", retryAfterMs: 10 * MINUTE_MS };
-    const three = fakeNight(fakeHost(), { resume: true, priorJournal: reset });
-    restoreNight(three, T0 + HOUR_MS);
+    const three = fakeLoopRun(fakeHost(), { resume: true, priorJournal: reset });
+    restoreLoopRun(three, T0 + HOUR_MS);
     assert.equal(three.state.workerLimit, null, "it reset during the pause");
   });
 
@@ -636,7 +641,7 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
         },
       },
     };
-    const night = fakeNight(fakeHost(), {
+    const loopRun = fakeLoopRun(fakeHost(), {
       resume: true,
       priorJournal,
       started: later,
@@ -644,21 +649,21 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
       finalDeadline: later + 2 * HOUR_MS,
       clock: { started: later, softDeadline: later + HOUR_MS, finalDeadline: later + 2 * HOUR_MS },
     });
-    restoreNight(night, later);
-    // A worker of the resumed night builds and lands a round while the lead rests.
+    restoreLoopRun(loopRun, later);
+    // A worker of the resumed run builds and lands a round while the lead rests.
     const moon = skyWorker({ id: "moon", title: "Moon", startedAt: later, iterations: [] });
-    night.state.workers.set("moon", moon);
+    loopRun.state.workers.set("moon", moon);
     let landed = false;
     const { talk, turns } = lead((turn) => {
-      if (turn === 2) night.state.finished = true;
+      if (turn === 2) loopRun.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
     });
     const clock = fakeClock(later, () => {
       if (landed) return;
       landed = true;
-      night.note("worker moon: iteration 1 accepted — the moon rises", NoteKind.WorkerRound);
+      loopRun.note("worker moon: iteration 1 accepted — the moon rises", NoteKind.WorkerRound);
     });
-    await runWakeLoop(night, talk, BRIEF, clock);
+    await runWakeLoop(loopRun, talk, BRIEF, clock);
 
     assert.equal(turns.length, 2);
     const first = section(turns[0]!.prompt, "WHERE THE RUN STANDS:");
@@ -674,11 +679,11 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
     assert.ok(line.length < 240, `one short line: ${line.length} characters`);
 
     // worker_status knows a worker from before the pause: its record, and how to go on from it.
-    const sky = JSON.parse(await night.handler(DirectorTool.WorkerStatus, { id: "sky" }));
+    const sky = JSON.parse(await loopRun.handler(DirectorTool.WorkerStatus, { id: "sky" }));
     assert.equal(sky.id, "sky");
     assert.equal(sky.lastCommit, SKY_ACCEPTED);
     assert.equal(sky.stateBeforeThePause, "running");
-    const all = JSON.parse(await night.handler(DirectorTool.WorkerStatus, {}));
+    const all = JSON.parse(await loopRun.handler(DirectorTool.WorkerStatus, {}));
     assert.deepEqual(
       all.map((w: Record<string, unknown>) => w.id),
       ["moon", "sky", "lamps"],
@@ -687,14 +692,14 @@ describe("a resumed night reads its journal back (journal.ts restoreNight, wake.
   });
 });
 
-describe("the journal is saved when something changed, not on every tick (night.ts, wake.ts, director.ts)", () => {
+describe("the journal is saved when something changed, not on every tick (loop-run.ts, wake.ts, director.ts)", () => {
   it("K10. a wake saves the journal twice — as the lead is woken and as it rests — a round saves itself only while the lead is awake, and an unchanged session id saves nothing", async (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: T0 });
     const host = fakeHost();
     const sky = skyWorker({ iterations: [], worktree: "", lastAccepted: null });
     const seen: Array<{ saves: number; skyRounds: number | undefined }> = [];
     let turn = 0;
-    const night = fakeNight(
+    const loopRun = fakeLoopRun(
       host,
       {},
       {
@@ -702,14 +707,14 @@ describe("the journal is saved when something changed, not on every tick (night.
           turn += 1;
           seen.push({ saves: journalSaves(host), skyRounds: host.journals.at(-1)?.director.workers.sky?.rounds });
           // A round lands while the lead is awake: it saves itself (and its line wakes the lead once it rests).
-          if (turn === 2) night.recordRound(sky, round(2, true));
-          if (turn === 3) night.state.finished = true;
+          if (turn === 2) loopRun.recordRound(sky, round(2, true));
+          if (turn === 3) loopRun.state.finished = true;
           return { ok: true, sessionId: "lead-1", summary: "decided" };
         },
       },
     );
-    night.state.plan = { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }] };
-    night.state.workers.set("sky", sky);
+    loopRun.state.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }] };
+    loopRun.state.workers.set("sky", sky);
     // A round lands while the lead rests, a minute into its first rest.
     let landedAt: number | null = null;
     let restedAt: number | null = null;
@@ -719,12 +724,12 @@ describe("the journal is saved when something changed, not on every tick (night.
         t.mock.timers.tick(ms);
         restedAt ??= Date.now();
         if (landedAt === null && Date.now() >= restedAt + MINUTE_MS) {
-          night.recordRound(sky, round(1, true));
+          loopRun.recordRound(sky, round(1, true));
           landedAt = journalSaves(host);
         }
       },
     };
-    await runWakeLoop(night, directorTalk(night, [], []), BRIEF, clock);
+    await runWakeLoop(loopRun, directorTalk(loopRun, [], []), BRIEF, clock);
     await nextTurn();
 
     assert.equal(turn, 3, "woken by the round that landed under it, then by the one it had not heard of");
@@ -739,12 +744,12 @@ describe("the journal is saved when something changed, not on every tick (night.
   });
 });
 
-describe("a save that changes nothing is not made (night.ts saveJournal)", () => {
+describe("a save that changes nothing is not made (loop-run.ts saveJournal)", () => {
   it("K17. a save that would write what the last one wrote — the worked time aside — is not made, and a write that failed is made again", async (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: T0 + MINUTE_MS });
     const host = fakeHost();
     let full = false;
-    const night = fakeNight(
+    const loopRun = fakeLoopRun(
       host,
       {},
       {
@@ -754,15 +759,15 @@ describe("a save that changes nothing is not made (night.ts saveJournal)", () =>
         },
       },
     );
-    await night.saveJournal();
+    await loopRun.saveJournal();
     t.mock.timers.tick(MINUTE_MS);
-    await night.saveJournal();
+    await loopRun.saveJournal();
     assert.equal(journalSaves(host), 1, "a minute more worked, and nothing else: no new version");
-    night.note("worker sky started (loop)");
+    loopRun.note("worker sky started (loop)");
     full = true;
-    await night.saveJournal();
+    await loopRun.saveJournal();
     full = false;
-    await night.saveJournal();
+    await loopRun.saveJournal();
     assert.equal(journalSaves(host), 3, "the line, and the write that failed, made again");
     assert.equal(
       host.journals.at(-1)!.director.clock.workedMs,
@@ -795,15 +800,15 @@ describe("a new worker and the workers from before the pause (workers.ts)", () =
         },
       },
     };
-    const night = workerNight(host, priorJournal, now);
-    const start = workerStart(night);
+    const loopRun = workerLoopRun(host, priorJournal, now);
+    const start = workerStart(loopRun);
 
     const taken = await start({ id: "sky" });
     assert.equal(typeof taken, "string", `refused: ${JSON.stringify(taken)}`);
     assert.match(taken, /"sky" ran before the pause/);
     assert.match(taken, new RegExp(`from=${SKY_ACCEPTED}`), "and it says how to build on that work");
-    assert.equal(night.state.workers.has("sky"), false);
-    assert.equal(night.journal.director.workers.sky.brief, "Build a dusk sky over the plaza", "its record is kept");
+    assert.equal(loopRun.state.workers.has("sky"), false);
+    assert.equal(loopRun.journal.director.workers.sky.brief, "Build a dusk sky over the plaza", "its record is kept");
 
     assert.equal((await start({ id: "sky", from: SKY_ACCEPTED })).started, "sky", "it may start again on its own work");
     assert.equal((await start({})).started, "w2", "the default id passes w1, which ran before the pause");
@@ -813,76 +818,76 @@ describe("a new worker and the workers from before the pause (workers.ts)", () =
     assert.equal(w1.started, "w1", "from=<its id> builds on its work");
     assert.equal(w1.forkedFrom, shortSha(LAMPS_ACCEPTED), "…from its last commit");
     await Promise.all(
-      [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
+      [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
     );
   });
 
-  it("K13. under a kept night.ts from before the full journal, whose save writes no record, the wake loop still puts the night's record on the journal", async () => {
+  it("K13. under a kept loop-run.ts from before the full journal, whose save writes no record, the wake loop still puts the run's record on the journal", async () => {
     const host = fakeHost();
-    const night = fakeNight(host);
+    const loopRun = fakeLoopRun(host);
     // The kept copy's save: the journal as it stands, with no record written first.
-    night.saveJournal = () => saveRunJournal(night.ctx, night.threadId, night.run.runId, night.journal);
-    night.state.workers.set("sky", skyWorker());
+    loopRun.saveJournal = () => saveRunJournal(loopRun.ctx, loopRun.threadId, loopRun.run.runId, loopRun.journal);
+    loopRun.state.workers.set("sky", skyWorker());
     const { talk } = lead(() => ({ ok: true, sessionId: "lead-1" }));
     const clock = fakeClock(T0 + 5 * MINUTE_MS, () => {
-      night.state.finished = true;
+      loopRun.state.finished = true;
     });
-    await runWakeLoop(night, talk, BRIEF, clock);
+    await runWakeLoop(loopRun, talk, BRIEF, clock);
 
     const saved = host.journals.at(-1)?.director;
     assert.equal(saved?.workers.sky?.brief, "Build a dusk sky over the plaza", JSON.stringify(saved));
-    assert.ok(saved?.clock?.softDeadline, "the night's clock is on it");
+    assert.ok(saved?.clock?.softDeadline, "the run's clock is on it");
   });
 
   it("answers a refused copy of the game as a start the lead reads, and starts nothing", async () => {
     const host = fakeHost();
-    const night = workerNight(host, { director: { workers: {} } }, Date.now());
+    const loopRun = workerLoopRun(host, { director: { workers: {} } }, Date.now());
     const refused =
       "This game is too large to copy, so nothing that needs its own copy of it can start; work in the game folder itself. A copy would take 6.1 GB, more than the 2 GB allowed (most of it in Content 5.2 GB).";
     // The host refuses the copy (`snapshot.worktree`); every other call is answered as before.
-    const answered = night.ctx.call;
-    night.ctx.call = (method: string, params: Record<string, unknown>) =>
+    const answered = loopRun.ctx.call;
+    loopRun.ctx.call = (method: string, params: Record<string, unknown>) =>
       method === HostMethod.SnapshotWorktree ? Promise.reject(new Error(refused)) : answered(method, params);
-    const answer = await workerStart(night)({ id: "sky" });
+    const answer = await workerStart(loopRun)({ id: "sky" });
     assert.equal(answer, `could not start "sky": ${refused}`);
-    assert.equal(night.state.workers.has("sky"), false);
+    assert.equal(loopRun.state.workers.has("sky"), false);
     const asked = host.calls.map((call) => call.method);
     assert.ok(!asked.includes(HostMethod.ThreadCreate), "no thread for a worker with no copy");
     assert.ok(!asked.includes(HostMethod.EngineDelegate), "and no turn");
   });
 });
 
-/** A night whose host refuses the first `refusals` builder turns for room, as a full chat's ceiling does. */
-function roomNight(refusals: number) {
+/** A run whose host refuses the first `refusals` builder turns for room, as a full chat's ceiling does. */
+function roomLoopRun(refusals: number) {
   const host = fakeHost();
-  const night = workerNight(host, { director: { workers: {} } }, Date.now());
+  const loopRun = workerLoopRun(host, { director: { workers: {} } }, Date.now());
   let refused = refusals;
-  const answered = night.ctx.call;
-  night.ctx.call = (method: string, params: Record<string, unknown>) => {
+  const answered = loopRun.ctx.call;
+  loopRun.ctx.call = (method: string, params: Record<string, unknown>) => {
     if (method !== HostMethod.EngineDelegate || refused-- <= 0) return answered(method, params);
     host.calls.push({ method, params });
     return Promise.reject(Object.assign(new Error("this chat already runs 8 workers"), { code: "too_many_workers" }));
   };
   const delegations = () => host.calls.filter((call) => call.method === HostMethod.EngineDelegate).length;
-  return { night, delegations };
+  return { loopRun, delegations };
 }
 
-/** Let the night's own work run until `done` holds, moving the mocked timers on while it waits. */
+/** Let the run's own work run until `done` holds, moving the mocked timers on while it waits. */
 async function runUntil(t: { mock: { timers: { tick(ms: number): void } } }, done: () => boolean): Promise<void> {
   for (let turn = 0; turn < 5_000 && !done(); turn++) {
     await nextTurn();
     if (turn % 20 === 19) t.mock.timers.tick(10_000);
   }
-  assert.ok(done(), "the night got there");
+  assert.ok(done(), "the run got there");
 }
 
 describe("a director's single worker under the chat's Settings ceiling", () => {
   it("waits for room when the host has none, then takes its turn and ends done", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { night, delegations } = roomNight(1);
-    const started = await workerStart(night)({ id: "sky" });
+    const { loopRun, delegations } = roomLoopRun(1);
+    const started = await workerStart(loopRun)({ id: "sky" });
     assert.equal(started.started, "sky", JSON.stringify(started));
-    const worker = night.state.workers.get("sky");
+    const worker = loopRun.state.workers.get("sky");
     await runUntil(t, () => worker.state !== "running");
     assert.equal(worker.state, "done", worker.error ?? "");
     assert.equal(delegations(), 2, "asked again once there was room");
@@ -890,11 +895,11 @@ describe("a director's single worker under the chat's Settings ceiling", () => {
 
   it("a stop while it waits for room ends it as stopped, and it never takes its turn", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const { night, delegations } = roomNight(1_000);
-    await workerStart(night)({ id: "sky" });
-    const worker = night.state.workers.get("sky");
+    const { loopRun, delegations } = roomLoopRun(1_000);
+    await workerStart(loopRun)({ id: "sky" });
+    const worker = loopRun.state.workers.get("sky");
     await runUntil(t, () => delegations() >= 1);
-    await workerFunctions.stopWorker(night, worker, "not needed");
+    await workerFunctions.stopWorker(loopRun, worker, "not needed");
     await runUntil(t, () => worker.state !== "running");
     assert.equal(worker.state, "stopped", worker.error ?? "");
     assert.equal(delegations(), 1, "no turn after the stop");
@@ -904,8 +909,8 @@ describe("a director's single worker under the chat's Settings ceiling", () => {
 describe("the workers' engine limit, once it lifts", () => {
   it("K6. the wake that says the workers' limit has reset clears it, so nothing names it again", async () => {
     const host = fakeHost();
-    const night = fakeNight(host);
-    night.state.workerLimit = {
+    const loopRun = fakeLoopRun(host);
+    loopRun.state.workerLimit = {
       engine: "codex",
       kind: "rate_limit",
       message: "rate limited",
@@ -915,11 +920,11 @@ describe("the workers' engine limit, once it lifts", () => {
     };
     const seen: Array<Record<string, unknown> | null> = [];
     const { talk, turns } = lead((turn) => {
-      seen.push(night.state.workerLimit);
-      if (turn === 2) night.state.finished = true;
+      seen.push(loopRun.state.workerLimit);
+      if (turn === 2) loopRun.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
     });
-    await runWakeLoop(night, talk, BRIEF, fakeClock(T0));
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0));
 
     assert.equal(turns.length, 2);
     assert.match(turns[1]!.prompt, /the workers' engine limit has reset/);
@@ -928,8 +933,8 @@ describe("the workers' engine limit, once it lifts", () => {
 
   it("K7. run_status stops naming a workers' limit whose reset time has passed, and clears it", async () => {
     const host = fakeHost();
-    const night = fakeNight(host);
-    night.state.workerLimit = {
+    const loopRun = fakeLoopRun(host);
+    loopRun.state.workerLimit = {
       engine: "codex",
       kind: "rate_limit",
       message: "rate limited",
@@ -937,11 +942,11 @@ describe("the workers' engine limit, once it lifts", () => {
       at: Date.now() - 20 * MINUTE_MS,
       worker: "sky",
     };
-    const status = await night.statusText();
+    const status = await loopRun.statusText();
     assert.equal(status.workersEngineLimit, undefined, JSON.stringify(status.workersEngineLimit));
-    assert.equal(night.state.workerLimit, null);
+    assert.equal(loopRun.state.workerLimit, null);
     // One that has not reset yet is still named.
-    night.state.workerLimit = {
+    loopRun.state.workerLimit = {
       engine: "codex",
       kind: "rate_limit",
       message: "rate limited",
@@ -949,7 +954,7 @@ describe("the workers' engine limit, once it lifts", () => {
       at: Date.now(),
       worker: "sky",
     };
-    assert.ok((await night.statusText()).workersEngineLimit);
+    assert.ok((await loopRun.statusText()).workersEngineLimit);
   });
   it("K8. a worker started after the workers' limit whose session comes back clears it — the engine answers again; one started before the limit does not", async () => {
     const limitAt = Date.now() - 10 * MINUTE_MS;
@@ -962,7 +967,7 @@ describe("the workers' engine limit, once it lifts", () => {
       worker: "sky",
     };
     const answered = { [HostMethod.EngineDelegate]: { ok: true, summary: "hung the sign", sessionId: "sign-1" } };
-    const after = fakeNight(fakeHost(), {}, answered);
+    const after = fakeLoopRun(fakeHost(), {}, answered);
     after.state.workerLimit = { ...noReset };
     const later = skyWorker({ id: "sign", mode: "single", startedAt: limitAt + MINUTE_MS, iterations: [] });
     after.state.workers.set("sign", later);
@@ -970,7 +975,7 @@ describe("the workers' engine limit, once it lifts", () => {
     assert.equal(later.state, "done");
     assert.equal(after.state.workerLimit, null, "a session that came back after the limit lifts it");
 
-    const before = fakeNight(fakeHost(), {}, answered);
+    const before = fakeLoopRun(fakeHost(), {}, answered);
     before.state.workerLimit = { ...noReset };
     const earlier = skyWorker({ id: "sign", mode: "single", startedAt: limitAt - MINUTE_MS, iterations: [] });
     before.state.workers.set("sign", earlier);
@@ -980,8 +985,8 @@ describe("the workers' engine limit, once it lifts", () => {
 
   it("K11. a round its builder's engine lost to a limit does not lift the workers' limit — only a round its build won does", async () => {
     const limitAt = Date.now() - 10 * MINUTE_MS;
-    const night = fakeNight(fakeHost());
-    night.state.workerLimit = {
+    const loopRun = fakeLoopRun(fakeHost());
+    loopRun.state.workerLimit = {
       engine: "codex",
       kind: "usage_limit",
       message: "out",
@@ -990,17 +995,17 @@ describe("the workers' engine limit, once it lifts", () => {
       worker: "sky",
     };
     const sign = skyWorker({ id: "sign", startedAt: limitAt + MINUTE_MS, iterations: [], worktree: "" });
-    night.state.workers.set("sign", sign);
+    loopRun.state.workers.set("sign", sign);
     // Its build turn met the limit: the round is still published — lost, with nothing built to judge.
-    night.recordRound(sign, {
+    loopRun.recordRound(sign, {
       ...round(1, false, "the build turn failed: rate limited"),
       verdictSource: VerdictSource.Broken,
     });
     await nextTurn();
-    assert.ok(night.state.workerLimit, "the engine did not answer: the limit stands");
-    night.recordRound(sign, round(2, true));
+    assert.ok(loopRun.state.workerLimit, "the engine did not answer: the limit stands");
+    loopRun.recordRound(sign, round(2, true));
     await nextTurn();
-    assert.equal(night.state.workerLimit, null, "a round its build won is the engine answering again");
+    assert.equal(loopRun.state.workerLimit, null, "a round its build won is the engine answering again");
   });
 });
 
@@ -1021,7 +1026,7 @@ describe("a finished build reopened (director/reopen.ts)", () => {
       integrationHealthy: true,
       clock: keptClock(HOUR_MS),
       wake: { loop: "wake", idleAsked: true, wakesAt: [iso(T0 + 50 * MINUTE_MS)] },
-      plan: { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky" }] },
+      plan: { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }] },
       planReview: { until: null, go: true, saidFrom: 0 },
       ledger: [{ text: "the crates float above the plaza", from: "sky", owner: "props", at: iso(T0) }],
       workers: {
@@ -1059,7 +1064,7 @@ describe("a finished build reopened (director/reopen.ts)", () => {
       run: { ...finished.run, budgets },
       director: {
         ...finished.director,
-        plan: { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky", done: SKY_DONE }] },
+        plan: { summary: "This run: a dusk plaza.", workers: [{ id: "sky", done: SKY_DONE }] },
         goals: { version: 1, scopeRevisions: [], entries: [{ ...sky, replan: null, blocker: null, verified: [0] }] },
         firstVerifiedCheckpoint: checkpoint,
         latestVerifiedCheckpoint: checkpoint,
@@ -1077,16 +1082,16 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     summary: "Enemies chase the player.",
     workers: JSON.stringify([{ id: "enemies", done: ["an enemy chases the player"] }]),
   };
-  /** The plan cards the night put in the chat. */
+  /** The plan cards the run put in the chat. */
   const planCards = (host: FakeHost) =>
     host.calls.filter(
       ({ method, params }) =>
         method === HostMethod.EventsAppend && params.batch?.[0]?.event_type === RunEvent.AutopilotPlanReview,
     );
-  /** The progress the finished night kept that a reopened one earns anew. */
+  /** The progress the finished run kept that a reopened one earns anew. */
   const EARNED_ANEW = ["firstVerifiedCheckpoint", "latestVerifiedCheckpoint", "softReviewAt"];
 
-  it("K23. a finished build reopened with Loop ∞ takes its required outcomes from the plan its lead writes for the ask — not the finished night's verified ones, nor its old plan's", async () => {
+  it("K23. a finished build reopened with Loop ∞ takes its required outcomes from the plan its lead writes for the ask — not the finished run's verified ones, nor its old plan's", async () => {
     const reopens = [
       { label: "a Loop ∞ build reopened with ∞", journal: reopenedWith(finishedGoalJournal(), null) },
       { label: "a timed build reopened with ∞", journal: reopenedWith(finishedJournal(), null) },
@@ -1094,25 +1099,25 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     for (const { label, journal } of reopens) {
       assert.equal(journal.director.goals, null, `${label}: its outcomes are the new plan's to set`);
       for (const key of EARNED_ANEW) assert.equal(key in journal.director, false, `${label}: ${key} is earned anew`);
-      journal.director.plan = { summary: "Tonight: a dusk plaza.", workers: [{ id: "sky", done: SKY_DONE }] };
+      journal.director.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky", done: SKY_DONE }] };
       const host = fakeHost();
-      const night = workerNight(host, journal, Date.now(), journal.run);
-      assert.equal(night.state.goals, undefined, `${label}: no outcomes until it plans`);
-      const start = workerStart(night);
+      const loopRun = workerLoopRun(host, journal, Date.now(), journal.run);
+      assert.equal(loopRun.state.goals, undefined, `${label}: no outcomes until it plans`);
+      const start = workerStart(loopRun);
 
       const unplanned = await start({ id: "enemies" });
       assert.equal(typeof unplanned, "string", `${label}: ${JSON.stringify(unplanned)}`);
       assert.match(unplanned, /call plan/);
       assert.doesNotMatch(unplanned, /finish instead|needs goal=/);
-      assert.match(await night.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./, label);
+      assert.match(await loopRun.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./, label);
       assert.equal(planCards(host).length, 1, `${label}: the user sees the plan for the ask`);
       assert.deepEqual(
-        night.state.goals.entries.map((goal: { id: string }) => goal.id),
+        loopRun.state.goals.entries.map((goal: { id: string }) => goal.id),
         ["enemies"],
       );
       assert.equal((await start({ id: "enemies" })).started, "enemies", label);
       await Promise.all(
-        [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
+        [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
       );
     }
   });
@@ -1125,61 +1130,63 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     for (const key of EARNED_ANEW) assert.equal(key in journal.director, false, `${key} is earned anew`);
     const host = fakeHost();
     const now = Date.now();
-    const night = workerNight(host, journal, now, journal.run);
-    assert.equal(night.state.goals, undefined);
+    const loopRun = workerLoopRun(host, journal, now, journal.run);
+    assert.equal(loopRun.state.goals, undefined);
     assert.equal(timedWorkRemaining(journal.run, now + HOUR_MS, now), false, "finish is never refused for time left");
-    const start = workerStart(night);
+    const start = workerStart(loopRun);
     assert.match(String(await start({ id: "enemies" })), /call plan/, "workers wait for the plan for the ask");
-    assert.match(await night.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./);
+    assert.match(await loopRun.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./);
     assert.equal(planCards(host).length, 1, "the new plan is in the chat");
     assert.equal((await start({ id: "enemies" })).started, "enemies");
     await Promise.all(
-      [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
+      [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
     );
   });
 
-  it("K27 (P10-F2). a conflict worker starts on a night with required outcomes: resolving a merge is not a new attempt at a goal", async () => {
+  it("K27. a conflict worker starts on a run with required outcomes: resolving a merge is not a new attempt at a goal", async () => {
     const { resolveByWorker } = await import("../../src/harness-seed/loop/director/conflict-worker.ts");
     const reopened = reopenedWith(finishedGoalJournal(), null);
     const host = fakeHost();
-    const night = workerNight(host, reopened, Date.now(), reopened.run);
-    await night.setPlan(ENEMIES);
+    const loopRun = workerLoopRun(host, reopened, Date.now(), reopened.run);
+    await loopRun.setPlan(ENEMIES);
     assert.deepEqual(
-      night.state.goals.entries.map((goal: { id: string }) => goal.id),
+      loopRun.state.goals.entries.map((goal: { id: string }) => goal.id),
       ["enemies"],
     );
     const answer = String(
-      await resolveByWorker(night as never, { id: "enemies", title: "Enemies" } as never, "c0ffee", ["src/enemies.js"]),
+      await resolveByWorker(loopRun as never, { id: "enemies", title: "Enemies" } as never, "c0ffee", [
+        "src/enemies.js",
+      ]),
     );
     assert.doesNotMatch(answer, /needs goal=|refused|did not start/i, answer);
     assert.ok(
-      [...night.state.workers.keys()].some((id: string) => id.startsWith("merge-enemies")),
+      [...loopRun.state.workers.keys()].some((id: string) => id.startsWith("merge-enemies")),
       `the conflict went to a worker: ${answer}`,
     );
     await Promise.all(
-      [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) =>
+      [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) =>
         worker.promise?.catch(() => {}),
       ),
     );
   });
 
-  it("K25. a reopened build paused before it planned asks its own plan for its outcomes again on a Resume; a paused night from before outcomes were kept still takes them from its plan", async () => {
+  it("K25. a reopened build paused before it planned asks its own plan for its outcomes again on a Resume; a paused run from before outcomes were kept still takes them from its plan", async () => {
     const reopened = reopenedWith(finishedGoalJournal(), null);
     const host = fakeHost();
-    const night = workerNight(host, reopened, Date.now(), reopened.run);
-    await night.saveJournal();
+    const loopRun = workerLoopRun(host, reopened, Date.now(), reopened.run);
+    await loopRun.saveJournal();
     const saved = host.journals.at(-1);
-    assert.ok(saved, "the reopened night saved its journal");
+    assert.ok(saved, "the reopened run saved its journal");
     const paused = structuredClone(saved);
     assert.equal(paused.director.goals, null, "the save says its outcomes still wait for its plan");
-    assert.equal(reopenMarkOf(paused), null, "a pause of the reopened night is a pause, not a reopen");
-    const resumed = workerNight(fakeHost(), { ...paused, run: reopened.run }, Date.now(), reopened.run);
+    assert.equal(reopenMarkOf(paused), null, "a pause of the reopened run is a pause, not a reopen");
+    const resumed = workerLoopRun(fakeHost(), { ...paused, run: reopened.run }, Date.now(), reopened.run);
     assert.equal(resumed.state.goals, undefined, "not the finished build's plan made outcomes");
 
-    // A goal night saved before outcomes were kept (no `goals` at all) still takes them from its plan.
+    // A goal run saved before outcomes were kept (no `goals` at all) still takes them from its plan.
     const before = { ...paused, director: { ...paused.director } };
     delete before.director.goals;
-    const legacy = workerNight(fakeHost(), before, Date.now(), reopened.run);
+    const legacy = workerLoopRun(fakeHost(), before, Date.now(), reopened.run);
     assert.deepEqual(
       legacy.state.goals?.entries.map((goal: { id: string }) => goal.id),
       ["sky"],
@@ -1189,31 +1196,31 @@ describe("a finished build reopened (director/reopen.ts)", () => {
   it("K26. a reopened Loop ∞ build whose first plan for the ask is refused keeps no outcomes: the plan that follows posts its card and sets them", async () => {
     const journal = reopenedWith(finishedGoalJournal(), null);
     const host = fakeHost();
-    const night = workerNight(host, journal, Date.now(), journal.run);
+    const loopRun = workerLoopRun(host, journal, Date.now(), journal.run);
     // A quote of the user's words that is not theirs exactly: the scope revision is refused.
-    const refused = await night.setPlan({ ...ENEMIES, scope_instruction: "Add some enemies" });
+    const refused = await loopRun.setPlan({ ...ENEMIES, scope_instruction: "Add some enemies" });
     assert.match(refused, /quoted exactly/);
-    assert.equal(night.state.goals, undefined, "a refused plan sets no outcomes");
-    assert.match(await night.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./);
+    assert.equal(loopRun.state.goals, undefined, "a refused plan sets no outcomes");
+    assert.match(await loopRun.setPlan(ENEMIES), /Required acceptance is frozen: enemies\./);
     assert.equal(planCards(host).length, 1, "the user sees the plan that was taken");
-    assert.equal((await workerStart(night)({ id: "enemies" })).started, "enemies");
+    assert.equal((await workerStart(loopRun)({ id: "enemies" })).started, "enemies");
     await Promise.all(
-      [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
+      [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
     );
   });
 
   it("K27. a reopened build's outcomes wait for its plan whichever journal.ts reads it back: those a kept one rebuilt from the finished plan are set aside, and a Resume's own are kept", () => {
     const journal = reopenedWith(finishedGoalJournal(), null);
-    const night = workerNight(fakeHost(), journal, Date.now(), journal.run);
+    const loopRun = workerLoopRun(fakeHost(), journal, Date.now(), journal.run);
     // What a kept journal.ts from before `goals: null` waited for its plan makes of it.
-    night.state.goals = {
+    loopRun.state.goals = {
       version: 1,
       entries: [{ id: "sky", required: true, acceptance: SKY_DONE, status: "pending" }],
     };
-    outcomesAwaitPlan(night);
-    assert.equal(night.state.goals, undefined, "the finished plan's parts are not the ask's outcomes");
+    outcomesAwaitPlan(loopRun);
+    assert.equal(loopRun.state.goals, undefined, "the finished plan's parts are not the ask's outcomes");
 
-    const resumed = workerNight(
+    const resumed = workerLoopRun(
       fakeHost(),
       { ...journal, director: { ...journal.director, reopened: undefined } },
       Date.now(),
@@ -1227,21 +1234,21 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     assert.deepEqual(
       resumed.state.goals?.entries.map((goal: { id: string }) => goal.id),
       ["enemies"],
-      "a night that is not a reopen keeps what it restored",
+      "a run that is not a reopen keeps what it restored",
     );
   });
 
-  it("K18. a finished build reopened gets a fresh clock of its new budget — the time the finished night worked is not taken back — while a paused one still goes on with what it had left", async (t) => {
+  it("K18. a finished build reopened gets a fresh clock of its new budget — the time the finished run worked is not taken back — while a paused one still goes on with what it had left", async (t) => {
     const finished = finishedJournal();
     const run = { ...finished.run, budgets: { wallClockMs: 2 * HOUR_MS } };
     const reopened = reopenedJournal(finished, run, MARK);
     assert.deepEqual(reopened.run, run, "the run with the Loop's new budget");
     assert.deepEqual(reopened.director.reopened, MARK);
-    assert.equal(reopened.phase, "done", "the night's setup writes its own phase");
+    assert.equal(reopened.phase, "done", "the run's setup writes its own phase");
     assert.ok(finished.director.clock, "the journal it read is left as it was");
 
     const total = 2 * HOUR_MS;
-    const clock = nightClock({ saved: reopened.director.clock, now: MORNING, totalMs: total });
+    const clock = loopRunClock({ saved: reopened.director.clock, now: MORNING, totalMs: total });
     assert.deepEqual(clock, {
       started: MORNING,
       softDeadline: MORNING + total - wrapReserveMs(total),
@@ -1249,18 +1256,18 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     });
     // The finished journal as it was would count its spent hour against the new budget.
     assert.equal(
-      nightClock({ saved: finished.director.clock, now: MORNING, totalMs: total }).started,
+      loopRunClock({ saved: finished.director.clock, now: MORNING, totalMs: total }).started,
       MORNING - HOUR_MS,
     );
-    // A paused night still goes on with the working time it had left.
-    const paused = nightClock({ saved: keptClock(20 * MINUTE_MS), now: MORNING, totalMs: HOUR_MS });
+    // A paused run still goes on with the working time it had left.
+    const paused = loopRunClock({ saved: keptClock(20 * MINUTE_MS), now: MORNING, totalMs: HOUR_MS });
     assert.equal(paused.started, MORNING - 20 * MINUTE_MS);
 
-    // The reopened night counts its own work: saved half an hour in, it has worked half an hour.
+    // The reopened run counts its own work: saved half an hour in, it has worked half an hour.
     t.mock.timers.enable({ apis: ["Date"], now: MORNING + 30 * MINUTE_MS });
     const host = fakeHost();
-    const night = fakeNight(host, { resume: true, priorJournal: reopened, ...clock, clock });
-    await night.saveJournal();
+    const loopRun = fakeLoopRun(host, { resume: true, priorJournal: reopened, ...clock, clock });
+    await loopRun.saveJournal();
     assert.equal(host.journals.at(-1)?.director.clock.workedMs, 30 * MINUTE_MS);
   });
 
@@ -1306,7 +1313,7 @@ describe("a finished build reopened (director/reopen.ts)", () => {
       assert.equal(probe.calls.length, 0, `${String(head)}: git is not asked`);
     }
     assert.equal(reopenMarkOf({ director: { reopened: { finishedHead: FINISHED } } }), null, "a mark with no time");
-    assert.equal(reopenMarkOf({ phase: "paused", director: { integrationHead: FINISHED } }), null, "a paused night");
+    assert.equal(reopenMarkOf({ phase: "paused", director: { integrationHead: FINISHED } }), null, "a paused run");
     assert.equal(reopenMarkOf(null), null);
 
     // The lead's first words say where it goes on from.
@@ -1318,25 +1325,25 @@ describe("a finished build reopened (director/reopen.ts)", () => {
   });
 
   it("K20. a reopened build reads its journal back — its workers, the defects nobody owns, its plan — but not the last health pass, which was the finished head's", () => {
-    const night = fakeNight(fakeHost(), { resume: true, priorJournal: reopenedWithTwoHours() });
-    restoreNight(night, MORNING);
-    assert.equal(night.state.integrationHealthy, null, "no health pass yet on the head it now stands on");
-    assert.deepEqual(priorWorkerIds(night), ["sky", "w1"]);
-    assert.equal(defaultWorkerId(night), "w2");
-    assert.equal(night.state.planGo, true, "the plan the build finished on goes on");
+    const loopRun = fakeLoopRun(fakeHost(), { resume: true, priorJournal: reopenedWithTwoHours() });
+    restoreLoopRun(loopRun, MORNING);
+    assert.equal(loopRun.state.integrationHealthy, null, "no health pass yet on the head it now stands on");
+    assert.deepEqual(priorWorkerIds(loopRun), ["sky", "w1"]);
+    assert.equal(defaultWorkerId(loopRun), "w2");
+    assert.equal(loopRun.state.planGo, true, "the plan the build finished on goes on");
     assert.deepEqual(
-      night.state.ledger.map((defect: Record<string, unknown>) => defect.text),
+      loopRun.state.ledger.map((defect: Record<string, unknown>) => defect.text),
       ["the crates float above the plaza"],
     );
-    // The finished journal as it was would carry that pass onto the reopened night.
-    const stale = fakeNight(fakeHost(), { resume: true, priorJournal: finishedJournal() });
-    restoreNight(stale, MORNING);
+    // The finished journal as it was would carry that pass onto the reopened run.
+    const stale = fakeLoopRun(fakeHost(), { resume: true, priorJournal: finishedJournal() });
+    restoreLoopRun(stale, MORNING);
     assert.equal(stale.state.integrationHealthy, true);
   });
 
   it("K21. a reopened build opens with the user's ask and its fresh time, never as a pause, and its wake loop starts afresh: asked what next before is not remembered", async () => {
     const reopened = reopenedWithTwoHours();
-    const clock = nightClock({ saved: reopened.director.clock, now: MORNING, totalMs: 2 * HOUR_MS });
+    const clock = loopRunClock({ saved: reopened.director.clock, now: MORNING, totalMs: 2 * HOUR_MS });
     let told = false;
     const inbox = {
       steering: async () => {
@@ -1348,14 +1355,14 @@ describe("a finished build reopened (director/reopen.ts)", () => {
       addressed: async () => [],
       backlog: async () => [],
     };
-    const night = fakeNight(fakeHost(), { resume: true, priorJournal: reopened, inbox, ...clock, clock });
-    restoreNight(night, MORNING);
-    // Turn 1 starts nothing; turn 2 finishes the night.
+    const loopRun = fakeLoopRun(fakeHost(), { resume: true, priorJournal: reopened, inbox, ...clock, clock });
+    restoreLoopRun(loopRun, MORNING);
+    // Turn 1 starts nothing; turn 2 finishes the run.
     const { talk, turns } = lead((turn) => {
-      if (turn === 2) night.state.finished = true;
+      if (turn === 2) loopRun.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
     });
-    await runWakeLoop(night, talk, BRIEF, fakeClock(MORNING));
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(MORNING));
 
     assert.equal(turns.length, 2, turns.map((turn) => turn.prompt.slice(0, 160)).join("\n---\n"));
     const [first = "", second = ""] = turns.map((turn) => turn.prompt);
@@ -1364,14 +1371,14 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     assert.match(first, /THE USER SAYS[\s\S]*make the moon red too/);
     assert.match(section(first, "WHERE THE RUN STANDS:"), /sky .*done in the finished build/);
     assert.doesNotMatch(first, /pause/, first);
-    assert.match(second, /What next\?/, "an idle turn is asked what next, once, as on a new night");
+    assert.match(second, /What next\?/, "an idle turn is asked what next, once, as on a new run");
     assert.doesNotMatch(second, /starts the wrap-up now/);
   });
 
   it("K22. a new worker of a reopened build never takes the id of one from the finished build that left work unless it builds on it, and the default id passes them", async () => {
-    const night = workerNight(fakeHost(), reopenedWithTwoHours(), Date.now());
-    assert.match(priorWorkersSummary(night) ?? "", /^- from the finished build, not running: sky, w1 /);
-    const start = workerStart(night);
+    const loopRun = workerLoopRun(fakeHost(), reopenedWithTwoHours(), Date.now());
+    assert.match(priorWorkersSummary(loopRun) ?? "", /^- from the finished build, not running: sky, w1 /);
+    const start = workerStart(loopRun);
 
     const taken = await start({ id: "sky" });
     assert.equal(typeof taken, "string", `refused: ${JSON.stringify(taken)}`);
@@ -1380,12 +1387,39 @@ describe("a finished build reopened (director/reopen.ts)", () => {
     assert.equal((await start({})).started, "w2", "the default id passes w1, from the finished build");
     assert.equal((await start({ id: "sky", from: SKY_ACCEPTED })).started, "sky", "it may start again on its own work");
     await Promise.all(
-      [...night.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
+      [...loopRun.state.workers.values()].map((worker: { promise?: Promise<unknown> }) => worker.promise),
     );
+  });
+
+  it("K28. a finished goal build whose finish the art director turned back once is reopened: the new ask's finish is the art director's to turn back once again, and the finished head's review is not the new ask's (SR-2)", () => {
+    const finished = finishedGoalJournal();
+    const turnedBack = {
+      ...finished,
+      director: {
+        ...finished.director,
+        shipFinishRefused: true,
+        lastShip: { head: FINISHED, ship: false, defects: [{ part: "sky", severity: "visible" }], at: iso(T0) },
+        wake: { ...finished.director.wake, finishMarkSaid: true },
+      },
+    };
+    const journal = reopenedWith(turnedBack, null);
+    assert.equal("shipFinishRefused" in journal.director, false, "the once is per commission");
+    assert.equal("lastShip" in journal.director, false, "the review was of the finished build for its ask");
+    const loopRun = fakeLoopRun(fakeHost(), { resume: true, priorJournal: journal, run: journal.run });
+    restoreLoopRun(loopRun, MORNING);
+    assert.notEqual(loopRun.state.shipFinishRefused, true, "its finish goes through the art director's gate");
+    assert.equal(loopRun.state.lastShip, null);
+
+    // A Resume of the reopened build, paused after the art director turned its own finish back, keeps that.
+    const paused = { ...journal, director: { ...journal.director, ...turnedBack.director, reopened: MARK } };
+    const resumed = fakeLoopRun(fakeHost(), { resume: true, priorJournal: paused, run: journal.run });
+    restoreLoopRun(resumed, MORNING);
+    assert.equal(resumed.state.shipFinishRefused, true, "never twice within one commission");
+    assert.equal(resumed.state.lastShip?.head, FINISHED);
   });
 });
 
-describe("a night reads its run's job ends on from its journal's cursor (journal.ts, wake.ts)", () => {
+describe("a run reads its job ends on from its journal's cursor (journal.ts, wake.ts)", () => {
   const BUILD_ID = "0b5e3c1a-3f7e-4f3d-9f0e-6f1c2d3e4a5b";
   /** The run's fourth job end: a worker's build that failed. */
   const fourthEnd = {
@@ -1405,22 +1439,22 @@ describe("a night reads its run's job ends on from its journal's cursor (journal
   const jobsAnswer = (params: Record<string, any>) =>
     params.endedAfter < 4 ? { jobs: [fourthEnd], seq: 4 } : { jobs: [], seq: 4 };
 
-  /** A resumed night on `priorJournal` whose lead rests once, then finishes: its turns and the host's calls. */
-  async function resumedNight(priorJournal: Record<string, any>) {
+  /** A resumed run on `priorJournal` whose lead rests once, then finishes: its turns and the host's calls. */
+  async function resumedLoopRun(priorJournal: Record<string, any>) {
     const host = fakeHost();
-    const night = fakeNight(host, { resume: true, priorJournal }, { [HostMethod.JobsList]: jobsAnswer });
-    restoreNight(night, T0);
+    const loopRun = fakeLoopRun(host, { resume: true, priorJournal }, { [HostMethod.JobsList]: jobsAnswer });
+    restoreLoopRun(loopRun, T0);
     const { talk, turns } = lead((turn) => {
-      if (turn > 1) night.state.finished = true;
+      if (turn > 1) loopRun.state.finished = true;
       return { ok: true, sessionId: "lead-1" };
     });
-    await runWakeLoop(night, talk, BRIEF, fakeClock(T0));
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0));
     const reads = host.calls.filter((call) => call.method === HostMethod.JobsList).map((call) => call.params);
     return { host, turns, reads };
   }
 
   it("after a restart the run reads on from its journal's cursor, and the next save keeps where it got to", async () => {
-    const { host, turns, reads } = await resumedNight({ director: { workers: {}, ledger: [], jobsCursor: 3 } });
+    const { host, turns, reads } = await resumedLoopRun({ director: { workers: {}, ledger: [], jobsCursor: 3 } });
     assert.deepEqual(reads[0], { project: "plaza", runId: "run_j", endedAfter: 3 });
     assert.match(
       turns[1]?.prompt ?? "",
@@ -1434,7 +1468,7 @@ describe("a night reads its run's job ends on from its journal's cursor (journal
   });
 
   it("a journal from before it kept a cursor reads the run's job ends from the start", async () => {
-    const { reads } = await resumedNight({ director: { workers: {}, ledger: [] } });
+    const { reads } = await resumedLoopRun({ director: { workers: {}, ledger: [] } });
     assert.equal(reads[0]?.endedAfter, 0);
   });
 });

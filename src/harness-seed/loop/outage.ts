@@ -1,12 +1,11 @@
 /**
  * Provider outages are weather, not verdicts.
  *
- * The medieval-village run (3 Sep 2026) ended at 3 h 11 m with every facet, the integration
- * facet, the ledger and the global judge reporting "API Error: 529 Overloaded" / "500 Internal
- * server error" inside one 25-minute window. The loop read each failed build turn as "the
- * challenger did not produce a judgeable build", counted two with the same cause and tripped
- * the circuit breaker on all four facets — a policy written for builds that crash, applied to
- * an API that was briefly down.
+ * A provider that answers "API Error: 529 Overloaded" or "500 Internal server error" for a few
+ * minutes fails every facet, the integration facet, the ledger and the global judge at once. Read
+ * as "the challenger did not produce a judgeable build", two failures with the same cause trip the
+ * circuit breaker on every facet — a policy written for builds that crash, applied to an API that
+ * was briefly down.
  *
  * `isTransientProviderError` tells the two apart; `withProviderPatience` waits it out with a
  * capped backoff (about half an hour in total) before the caller's own policy takes over. A

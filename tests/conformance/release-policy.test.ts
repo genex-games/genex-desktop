@@ -3,12 +3,14 @@ import { test } from "node:test";
 import {
   releaseIntent,
   assertDraftTarget,
+  assertStableDownloads,
   assertUpdateFeedAssets,
   distributionPlatforms,
 } from "../../scripts/release-policy.mjs";
+import { copyStableDownloads } from "../../scripts/release-downloads.mjs";
 import { releaseArtifacts, verifyReleaseArtifacts } from "../../scripts/release-manifest.mjs";
 import { uploadRelease } from "../../scripts/upload-release.mjs";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpDir } from "../helpers/tmp.ts";
 import { createHash } from "node:crypto";
@@ -78,10 +80,12 @@ const candidate = { version: "0.1.0-rc.1", refType: "branch", refName: "dev", pu
 
 /** What the makers name the assets update.electronjs.org serves installed copies from. */
 const FEED_ASSETS = ["Genex-darwin-arm64-0.2.0.zip", "Genex-Setup.exe", "RELEASES", "genex-0.2.0-full.nupkg"];
+/** The version-free names releases/latest/download/<name> links use while Windows does not ship. */
+const STABLE_DOWNLOADS = ["Genex.dmg", "Genex-linux-amd64.deb", "Genex-linux-x86_64.rpm", "Genex-linux-x64.zip"];
 
-/** A release folder holding the update feed's assets. */
+/** A release folder holding the update feed's assets and the version-free downloads. */
 async function writeFeedAssets(directory: string): Promise<void> {
-  for (const name of FEED_ASSETS) await writeFile(path.join(directory, name), name);
+  for (const name of [...FEED_ASSETS, ...STABLE_DOWNLOADS]) await writeFile(path.join(directory, name), name);
 }
 
 test("an unsigned build-only candidate is allowed from dev without publication", () => {
@@ -198,7 +202,7 @@ test("draft upload validates artifacts before remote writes and never replaces p
 
 test("draft upload refuses unsigned macOS before any remote call and proceeds without Windows signing", async () => {
   const directory = await tmpDir();
-  await writeFile(path.join(directory, FEED_ASSETS[0] ?? ""), "package");
+  for (const name of [FEED_ASSETS[0] ?? "", ...STABLE_DOWNLOADS]) await writeFile(path.join(directory, name), name);
   const calls: string[][] = [];
   const run = (args: string[]) => {
     calls.push(args);
@@ -241,4 +245,160 @@ test("draft creation refuses a missing or mismatched remote tag before writing",
     calls.map((args) => args[0]),
     ["api"],
   );
+});
+
+/** What the Linux makers write under out/make, laid out as the 0.1.3 release's provenance lists it. */
+const LINUX_MAKE = {
+  "deb/x64/genex_0.2.0_amd64.deb": "deb",
+  "rpm/x64/genex-0.2.0-1.x86_64.rpm": "rpm",
+  "zip/linux/x64/Genex-linux-x64-0.2.0.zip": "linux zip",
+};
+/** What the macOS makers write under out/make. */
+const MACOS_MAKE = { "dmg/arm64/Genex.dmg": "dmg", "zip/darwin/arm64/Genex-darwin-arm64-0.2.0.zip": "darwin zip" };
+/** Each version-free Linux copy, beside the versioned package it duplicates. */
+const LINUX_COPIES = {
+  "deb/x64/Genex-linux-amd64.deb": "deb/x64/genex_0.2.0_amd64.deb",
+  "rpm/x64/Genex-linux-x86_64.rpm": "rpm/x64/genex-0.2.0-1.x86_64.rpm",
+  "zip/linux/x64/Genex-linux-x64.zip": "zip/linux/x64/Genex-linux-x64-0.2.0.zip",
+};
+
+/** A make output folder holding `files` (relative path to contents). */
+async function writeMake(root: string, files: Record<string, string>): Promise<void> {
+  for (const [file, bytes] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), bytes);
+  }
+}
+
+/** Every entry under `root` with its kind and, for files, its contents: what a refusal must leave as it was. */
+async function listing(root: string): Promise<string[]> {
+  const rows: string[] = [];
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+    const file = path.join(entry.parentPath, entry.name);
+    const stat = await lstat(file);
+    if (stat.isSymbolicLink()) rows.push(`link ${path.relative(root, file)}`);
+    else if (stat.isFile()) rows.push(`file ${path.relative(root, file)} ${await readFile(file, "utf8")}`);
+    else rows.push(`dir ${path.relative(root, file)}`);
+  }
+  return rows.sort();
+}
+
+test("a Linux make gains byte-identical version-free copies beside its versioned packages", async () => {
+  const root = await tmpDir();
+  await writeMake(root, LINUX_MAKE);
+  await copyStableDownloads(root);
+  const rows: Array<{ file: string; sha256: string }> = await releaseArtifacts(root);
+  const hashes = new Map(rows.map((row) => [row.file, row.sha256]));
+  assert.deepEqual([...hashes.keys()].sort(), [...Object.keys(LINUX_MAKE), ...Object.keys(LINUX_COPIES)].sort());
+  for (const [copy, versioned] of Object.entries(LINUX_COPIES)) assert.equal(hashes.get(copy), hashes.get(versioned));
+  // A second run (a retried step) replaces its own copies and still leaves one of each.
+  await writeFile(path.join(root, "deb/x64/genex_0.2.0_amd64.deb"), "rebuilt deb");
+  await copyStableDownloads(root);
+  assert.equal(await readFile(path.join(root, "deb/x64/Genex-linux-amd64.deb"), "utf8"), "rebuilt deb");
+  assert.equal((await releaseArtifacts(root)).length, 6);
+});
+
+test("the version-free copies reach the draft through provenance, verification and upload", async () => {
+  const [macos, linux, upload] = [await tmpDir(), await tmpDir(), await tmpDir()];
+  await writeMake(macos, MACOS_MAKE);
+  await writeMake(linux, LINUX_MAKE);
+  await copyStableDownloads(linux);
+  const platforms = distributionPlatforms({ macos: true, windows: false });
+  // As each platform job records provenance and the publish job flattens the packages into upload/.
+  for (const [[platform, arch], root] of [
+    [MACOS, macos],
+    [LINUX, linux],
+  ] as const) {
+    const artifacts = await releaseArtifacts(root);
+    const manifest = { ...expected, platform, arch, signed: platform !== "linux", artifacts };
+    await writeFile(path.join(upload, `PROVENANCE-${platform}-${arch}.json`), JSON.stringify(manifest));
+    for (const { file } of artifacts)
+      await writeFile(path.join(upload, path.basename(file)), await readFile(path.join(root, file)));
+  }
+  await writeFile(path.join(upload, "SBOM.cyclonedx.json"), JSON.stringify({ bomFormat: "CycloneDX", components: [] }));
+  await verifyReleaseArtifacts(upload, expected, platforms);
+  const calls: string[][] = [];
+  const run = (args: string[]) => {
+    calls.push(args);
+    return args[0] === "api" ? JSON.stringify({ sha: expected.source }) : "[]";
+  };
+  const candidate = { version: "0.2.0", repo: "fixture/repo", source: expected.source, directory: upload, run };
+  await uploadRelease({ ...candidate, macos: true, windows: false });
+  const uploaded = (calls.find((args) => args[1] === "upload") ?? []).map((arg) => path.basename(arg));
+  // The versioned names the updater and existing links use stay beside the copies.
+  const versioned = [...Object.keys(MACOS_MAKE), ...Object.keys(LINUX_MAKE)].map((file) => path.basename(file));
+  for (const name of [...STABLE_DOWNLOADS, ...versioned]) assert.ok(uploaded.includes(name), name);
+});
+
+test("version-free copies refuse a make they cannot copy faithfully, writing nothing", async () => {
+  const cases: Array<[string, (root: string, outside: string) => Promise<void>, RegExp]> = [
+    ["a package is missing", (root) => rm(path.join(root, "rpm/x64/genex-0.2.0-1.x86_64.rpm")), /one \.rpm/],
+    [
+      "a stale version sits beside the package",
+      (root) => writeFile(path.join(root, "deb/x64/genex_0.1.9_amd64.deb"), "old"),
+      /one \.deb/,
+    ],
+    [
+      "the package is a link",
+      async (root, outside) => {
+        await rm(path.join(root, "zip/linux/x64/Genex-linux-x64-0.2.0.zip"));
+        await symlink(path.join(outside, "secret"), path.join(root, "zip/linux/x64/Genex-linux-x64-0.2.0.zip"));
+      },
+      /regular file/,
+    ],
+    [
+      "the version-free name is a link out of the make",
+      (root, outside) => symlink(path.join(outside, "secret"), path.join(root, "deb/x64/Genex-linux-amd64.deb")),
+      /regular file/,
+    ],
+    [
+      "a maker folder is a link out of the make",
+      async (root, outside) => {
+        await mkdir(path.join(outside, "rpm"));
+        await writeFile(path.join(outside, "rpm", "genex-0.2.0-1.x86_64.rpm"), "rpm");
+        await rm(path.join(root, "rpm/x64"), { recursive: true });
+        await symlink(path.join(outside, "rpm"), path.join(root, "rpm/x64"));
+      },
+      /link/,
+    ],
+  ];
+  for (const [name, arrange, refusal] of cases) {
+    const [root, outside] = [await tmpDir(), await tmpDir()];
+    await writeMake(root, LINUX_MAKE);
+    await writeFile(path.join(outside, "secret"), "outside");
+    await arrange(root, outside);
+    const before = [await listing(root), await listing(outside)];
+    await assert.rejects(copyStableDownloads(root), refusal, name);
+    assert.deepEqual([await listing(root), await listing(outside)], before, name);
+  }
+});
+
+test("a draft carries every version-free download; Windows' installer joins once Windows ships", () => {
+  assertStableDownloads([...STABLE_DOWNLOADS, "SHA256SUMS"], { windows: false });
+  for (const name of STABLE_DOWNLOADS)
+    assert.throws(
+      () =>
+        assertStableDownloads(
+          STABLE_DOWNLOADS.filter((other) => other !== name),
+          { windows: false },
+        ),
+      /Download links/,
+      name,
+    );
+  assert.throws(() => assertStableDownloads(STABLE_DOWNLOADS, { windows: true }), /Genex-Setup\.exe/);
+  assertStableDownloads([...STABLE_DOWNLOADS, "Genex-Setup.exe"], { windows: true });
+});
+
+test("draft upload refuses a release missing a version-free download before any remote call", async () => {
+  const directory = await tmpDir();
+  await writeFeedAssets(directory);
+  await rm(path.join(directory, "Genex-linux-x64.zip"));
+  const calls: string[][] = [];
+  const run = (args: string[]) => {
+    calls.push(args);
+    return "[]";
+  };
+  const candidate = { version: "0.2.0", repo: "fixture/repo", source: "source", directory, run };
+  await assert.rejects(uploadRelease({ ...candidate, macos: true, windows: false }), /Genex-linux-x64\.zip/);
+  assert.equal(calls.length, 0);
 });

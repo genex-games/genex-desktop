@@ -1,5 +1,5 @@
 /**
- * The computer tool (computer use, 2026-09-07) — the studio's own computer use, one vocabulary for every worker:
+ * The computer tool — the studio's own computer use, one vocabulary for every worker:
  * Anthropic's action names parsed from either transport (bridge strings, MCP values), mapped
  * onto the preview's HID plan, with the requested-state setup normalised and verified.
  */

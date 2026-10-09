@@ -1,5 +1,5 @@
 /**
- * Ambient motion rests while nobody is looking (2026-10-01): an endless "working" animation keeps
+ * Ambient motion rests while nobody is looking: an endless "working" animation keeps
  * Chromium drawing every frame, which held a fixture build at ~15% CPU in the background. The
  * studio's endless animations run only while its window is in front and someone touched it lately.
  */

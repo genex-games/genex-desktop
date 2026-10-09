@@ -9,6 +9,8 @@ import { shortSha } from "../git.ts";
 import { limitWords } from "../outage.ts";
 import { clip, clipMarked } from "../text.ts";
 import { minutes } from "../time.ts";
+import { FacetStage } from "../facet/stage.ts";
+import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import { LEAD_CARD_RULE, LEAD_FRESH_START, LEAD_INTEGRATE_SWAP } from "./lead-session-prompts.ts";
 import { WorkerTool } from "../workers/contract.ts";
 import { DirectorTool } from "./tool-specs.ts";
@@ -17,8 +19,9 @@ import type { LiveToolSpec } from "../../types/host-api.d.ts";
 import type { WakeReason } from "./wake-schedule.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a night
- * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
+ * This part serves a lead that is its chat's own session (one session): it builds in the integration
+ * worktree by its full path and keeps no memory file. A run seats one only when every part it
+ * depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
 
@@ -60,6 +63,8 @@ export interface DigestWorker {
   fromBefore?: string;
   /** What its reviewers propose for the part next: the judge's big move, the critic's biggest fix. */
   ideas?: string[];
+  /** Its stage when it finishes its part (facet/stage.ts): absent, it builds. */
+  stage?: FacetStage;
 }
 
 /** How many workers run, and how many the machine allows at once (the user's Maximum concurrent workers). */
@@ -76,11 +81,33 @@ export interface CardFacts {
   /** A duration commission spends its working time; goal commissions finish when verified. */
   direction: boolean;
   plan: { summary: string; parts: string[] } | null;
+  /** What the run will not build (loop/scope.ts `cut`): absent or empty, the card has no such line. */
+  cut?: string[];
   /**
-   * The lead writes nothing (one session, `night.lead`): its card says so. Absent — a director with
-   * its own hands, such as a kept director.ts from before one session drives — it keeps its memory file.
+   * The lead is its chat's own session (one session, `run.lead`): it builds in the integration
+   * worktree by its full path and keeps no memory file, and its card says so. Absent — a director
+   * whose cwd is that worktree, such as a kept director.ts from before one session drives — it keeps
+   * its memory file.
    */
   lead?: boolean;
+  /** The build is past its finish mark (a wake said it): the card names the finish stage. Absent: not yet. */
+  finishing?: boolean;
+  /**
+   * A goal commission (commission.ts `goalCommission`): the art director turns its first finish
+   * back with its defects, so its card says they are not optional polish. Absent: any other run.
+   */
+  goalCommission?: boolean;
+}
+
+/**
+ * A goal build's required outcomes on the current revision (progress.ts `outcomeTally`), while some
+ * are unverified, and whether this wake nudges the lead to verify them.
+ */
+export interface OutcomeFacts {
+  verified: number;
+  required: number;
+  unverified: readonly string[];
+  nudge: boolean;
 }
 
 /** The workers' engine's limit, as the digest names it. */
@@ -95,13 +122,13 @@ export interface WorkersLimitFacts {
 export interface DigestFacts {
   now: number;
   reasons: readonly WakeReason[];
-  /** The first line when it is not a wake's: a resumed night's first message (journal-prompts.ts). */
+  /** The first line when it is not a wake's: a resumed run's first message (journal-prompts.ts). */
   heading?: string;
   /** What the user said since the lead last heard them, oldest first, word for word. */
   userSays: readonly string[];
   /** The user asked to finish, and no message has said so yet. */
   finishNew: boolean;
-  /** The night's log since the lead last read it. */
+  /** The run's log since the lead last read it. */
   happened: readonly string[];
   softDeadline: number;
   finalDeadline: number;
@@ -113,12 +140,18 @@ export interface DigestFacts {
   workers: readonly DigestWorker[];
   /** Workers running and allowed at once; null when the studio could not say. */
   room?: WorkerRoom | null;
-  /** The workers from before a pause in one line, on every digest after a resumed night's first (journal.ts). */
+  /** The workers from before a pause in one line, on every digest after a resumed run's first (journal.ts). */
   priorLine?: string;
   /** When the plan window closes, while the builders still wait for the user. */
   planWindowUntil: number | null;
   workersLimit: WorkersLimitFacts | null;
   finishRequested: boolean;
+  /** When the finish mark comes, while it is ahead and unsaid (art-direction.ts); absent: none. */
+  finishMarkAt?: number | null;
+  /** The finish mark was said: from here every wake repeats its rule (no new parts). Absent: not yet. */
+  finishMarkPassed?: boolean;
+  /** A goal build's required outcomes while some are unverified: said on every wake. Absent: none to say. */
+  outcomes?: OutcomeFacts | null;
   card: CardFacts;
   /** The paragraph this wake ends on: carry on, what next, or the wrap-up. */
   closing: string;
@@ -145,6 +178,8 @@ export const REASON_WORDS = {
   [WakeCause.WrapUp]: "the wrap-up",
   [WakeCause.WorkersLimitLifted]: "the workers' engine limit has reset",
   [WakeCause.IdleAsk]: "nothing is running",
+  [WakeCause.FinishMark]: "the finish mark — the art director looked at the whole game",
+  [WakeCause.ShipLook]: "the art director's regular look at the whole game",
 } as const satisfies Record<WakeReason, string>;
 
 /** The one line a finish request adds to the user's part of a digest. */
@@ -199,7 +234,7 @@ function userSection({ userSays, finishNew }: DigestFacts): string {
   return lines.join("\n");
 }
 
-/** The night's news since the lead last read it: the newest lines, and how many older ones were left out. */
+/** The run's news since the lead last read it: the newest lines, and how many older ones were left out. */
 function happenedSection(happened: readonly string[]): string {
   const shown = happened.slice(-DIGEST_MAX_LINES);
   const hidden = happened.length - shown.length;
@@ -211,11 +246,25 @@ function happenedSection(happened: readonly string[]): string {
 }
 
 /** The clock, as the lead plans against it. */
-function timeLine({ now, softDeadline, finalDeadline, wrapping }: DigestFacts): string {
+function timeLine(facts: DigestFacts): string {
+  const { now, softDeadline, finalDeadline, wrapping } = facts;
   if (wrapping)
     return `- time: wrapping up — ${minutes(finalDeadline - now)} minutes left, until ${utc(finalDeadline)}`;
-  return `- time: ${minutes(softDeadline - now)} working minutes, wrap-up at ${utc(softDeadline)}, ${minutes(finalDeadline - now)} minutes in all`;
+  return `- time: ${minutes(softDeadline - now)} working minutes, ${finishMarkWords(facts)}wrap-up at ${utc(softDeadline)}, ${minutes(finalDeadline - now)} minutes in all`;
 }
+
+/**
+ * The finish mark as the time line names it: ahead, from then no new parts; once said, that the
+ * build is past it — on every wake, so a later wake never reads as leave to start something new.
+ */
+function finishMarkWords({ finishMarkAt: at, finishMarkPassed, now }: DigestFacts): string {
+  if (finishMarkPassed) return `past the finish mark (${PAST_MARK_RULE}), `;
+  if (typeof at !== "number" || at <= now) return "";
+  return `finish mark at ${utc(at)} (from then no new parts: the art director looks and the owners finish), `;
+}
+
+/** The rule past the finish mark, in the time line's words (art-direction-prompts.ts says it in full at the mark). */
+const PAST_MARK_RULE = "no new parts or systems: the owners finish theirs";
 
 /** What the last health pass said about the integration head. */
 function healthWords(healthy: boolean | null): string {
@@ -224,10 +273,16 @@ function healthWords(healthy: boolean | null): string {
   return "not run";
 }
 
-/** One worker in a line, with no worktree path. */
-function workerLine(w: DigestWorker): string {
+/**
+ * One worker in a line, with no worktree path. Its reviewers' next big step is a build-stage rung:
+ * past the finish mark (`pastMark`), or for a worker finishing its part, it is not shown, so no
+ * wake reads as leave to start a new system.
+ */
+function workerLine(w: DigestWorker, pastMark = false): string {
+  const finishing = w.stage === FacetStage.Finish;
   const parts = [
     w.state,
+    finishing ? `stage ${FacetStage.Finish}` : "",
     w.minutesLeft === undefined ? "" : `${w.minutesLeft} min left`,
     w.round === undefined ? "" : `round ${w.round}`,
     w.accepted === undefined ? "" : `${w.accepted} accepted`,
@@ -239,29 +294,31 @@ function workerLine(w: DigestWorker): string {
     w.stoppedBecause ? `stopped because: ${w.stoppedBecause}` : "",
     w.fromBefore ?? "",
   ].filter(Boolean);
-  const ideas = w.ideas?.length ? `\n  next big step, as its reviewers see it — ${w.ideas.join(" | ")}` : "";
+  const shown = pastMark || finishing ? [] : (w.ideas ?? []);
+  const ideas = shown.length ? `\n  next big step, as its reviewers see it — ${shown.join(" | ")}` : "";
   return `- worker ${w.id} (${w.title}): ${parts.join(" · ")}${ideas}`;
 }
 
 /**
- * The room for more workers. The golden-goal night ran three of the six its owner allowed, then
- * two, then one, and nothing it read ever said a window stood idle.
+ * The room for more workers: without it a lead runs fewer workers than the owner allowed, and
+ * nothing it reads says a window stands idle.
  */
-function roomLine(room: WorkerRoom | null | undefined): string {
+function roomLine(room: WorkerRoom | null | undefined, pastMark = false): string {
   if (!room) return "";
   const free = Math.max(0, room.allowed - room.running);
-  const more = free
-    ? ` — room for ${free} more: start the next area that has unbuilt work, or a deeper layer of one`
-    : "";
+  const use = pastMark
+    ? "only finish workers (stage=finish) on parts that exist, no new parts or systems"
+    : "a deeper layer of an in-scope area, or the next one the ask names with unbuilt work";
+  const more = free ? ` — room for ${free} more: ${use}` : "";
   return `- workers: ${room.running} running, up to ${room.allowed} at once (the user's Maximum concurrent workers)${more}`;
 }
 
 /** The workers, running ones first, at most `DIGEST_MAX_WORKERS` of them. */
-function workerLines(workers: readonly DigestWorker[]): string[] {
+function workerLines(workers: readonly DigestWorker[], pastMark = false): string[] {
   const ordered = [...workers].sort(
     (a, b) => Number(b.minutesLeft !== undefined) - Number(a.minutesLeft !== undefined),
   );
-  const shown = ordered.slice(0, DIGEST_MAX_WORKERS).map(workerLine);
+  const shown = ordered.slice(0, DIGEST_MAX_WORKERS).map((w) => workerLine(w, pastMark));
   const more = ordered.length - DIGEST_MAX_WORKERS;
   return more > 0
     ? [...shown, `- and ${more} more workers — worker_status lists every one, those from before a pause too`]
@@ -274,16 +331,35 @@ function workersLimitLine(limit: WorkersLimitFacts): string {
   return `- the workers' engine (${limit.engine}) hit its ${limitWords(limit.kind)} — ${resets}`;
 }
 
-/** Where the night stands: the clock, the integration head, the workers, the plan window, the user. */
+/** A goal build's required outcomes in one line, on every wake while some are unverified. */
+function outcomesLine(outcomes: OutcomeFacts | null | undefined): string {
+  if (!outcomes) return "";
+  const { required, unverified, verified } = outcomes;
+  return `- required outcomes: ${verified}/${required} verified on this revision — not verified yet: ${unverified.join(", ")}`;
+}
+
+/**
+ * The nudge to verify a goal build's outcomes (progress.ts `verifyNudgeDue`): every so often, and
+ * after each ship review, while some are unverified — a lead that never playtests never finishes.
+ */
+function verifyNudge(outcomes: OutcomeFacts | null | undefined): string {
+  if (!outcomes?.nudge) return "";
+  const { required, unverified } = outcomes;
+  const asks = unverified.map((id) => `playtest goal=${id}`).join(", ");
+  return `VERIFY THE OUTCOMES: ${unverified.length} of ${required} required outcomes are not verified on this revision. For each one the integrated build should meet now, verify it on integration (${asks}): a goal build finishes only on outcomes a playtest verified, and a worker's kept rounds verify none. One that fails names what its owner must still build.`;
+}
+
+/** Where the run stands: the clock, the integration head, the workers, the plan window, the user. */
 function standsSection(facts: DigestFacts): string {
   const { defects, integrationHead, now, planWindowUntil, workersLimit } = facts;
   return [
     "WHERE THE RUN STANDS:",
     timeLine(facts),
     `- integration: ${integrationHead ? shortSha(integrationHead) : "no commit yet"}, last health pass ${healthWords(facts.integrationHealthy)}`,
+    outcomesLine(facts.outcomes),
     defects.length ? `- defects nobody owns: ${defects.join(" | ")}` : "",
-    roomLine(facts.room),
-    ...workerLines(facts.workers),
+    roomLine(facts.room, facts.finishMarkPassed === true),
+    ...workerLines(facts.workers, facts.finishMarkPassed === true),
     facts.priorLine ?? "",
     planWindowUntil === null
       ? ""
@@ -295,18 +371,41 @@ function standsSection(facts: DigestFacts): string {
     .join("\n");
 }
 
-/** The build card: what a compacted session must still know — the run, its rule, its plan, its clock and the rules. */
-/** The build card a wake digest carries: the run, its kind, its plan and its clock. */
-export function buildCard({ card, softDeadline, finalDeadline }: DigestFacts): string {
+/** A timed build's completion rule, before its finish mark and from it on. */
+const TIMED_RULE = {
+  building:
+    "- An explicit duration commission: spend the working time building, testing and improving; finish in the wrap-up, or when the user asks.",
+  finishing:
+    "- An explicit duration commission in its finish stage: no new parts or systems — the owners finish theirs (stage=finish), integrate, judge ship=yes; finish in the wrap-up, or when the user asks.",
+} as const;
+
+/** A build's completion rule when it is not a duration commission: optional polish is not its work. */
+const GOAL_RULE =
+  "- Finish when the required goal is verified and integrated. Remaining time is a safety ceiling, not a target. If a required prerequisite is blocked, preserve progress and report it; do not continue optional polish.";
+
+/**
+ * The card's completion rule: a goal build's — and a goal commission's, whose finish the art
+ * director turns back with its defects, says those are not optional polish — or a timed build's
+ * for the stage it is in.
+ */
+function completionRule({ card, finishMarkPassed }: DigestFacts): string {
+  if (!card.direction) return card.goalCommission === true ? `${GOAL_RULE} ${SHIP_DEFECTS_NOT_POLISH}` : GOAL_RULE;
+  // The digest's own fact too: a caller that stamps no `finishing` on the card still reads the finish stage.
+  return card.finishing === true || finishMarkPassed === true ? TIMED_RULE.finishing : TIMED_RULE.building;
+}
+
+/** The build card a wake digest carries: what a compacted session must still know — the run, its kind, its plan, its clock and the rules. */
+export function buildCard(facts: DigestFacts): string {
+  const { card, softDeadline, finalDeadline } = facts;
   const plan = card.plan
     ? `- Plan: ${clip(card.plan.summary, PLAN_CHARS)} — parts: ${card.plan.parts.join(", ") || "none named"}`
     : "- Plan: none yet — call plan before your first worker.";
   return [
     "BUILD CARD:",
     `- Run ${card.runId} on "${card.project}": ${clip(card.goal, GOAL_CHARS)}`,
-    card.direction
-      ? "- An explicit duration commission: spend the working time building, testing and improving; finish in the wrap-up, or when the user asks."
-      : "- Finish when the required goal is verified and integrated. Remaining time is a safety ceiling, not a target. If a required prerequisite is blocked, preserve progress and report it; do not continue optional polish.",
+    // The goal is clipped here; what the run will not build is not (loop/scope.ts `cut`).
+    ...(card.cut?.length ? [`- Cut — not this build: ${card.cut.join("; ")}`] : []),
+    completionRule(facts),
     plan,
     `- Deadlines: the wrap-up starts at ${utc(softDeadline)}; the run ends at ${utc(finalDeadline)}.`,
     ...CARD_RULES,
@@ -317,7 +416,7 @@ export function buildCard({ card, softDeadline, finalDeadline }: DigestFacts): s
 
 /**
  * The message that wakes the lead: why, the user's words verbatim, what happened, where the
- * night stands, the build card, and this wake's closing paragraph — in that order, so what the
+ * run stands, the build card, and this wake's closing paragraph — in that order, so what the
  * user said is the first thing the lead reads.
  */
 export function wakeDigest(facts: DigestFacts, includeCard = true): string {
@@ -327,6 +426,7 @@ export function wakeDigest(facts: DigestFacts, includeCard = true): string {
     happenedSection(facts.happened),
     standsSection(facts),
     includeCard ? buildCard(facts) : "",
+    verifyNudge(facts.outcomes),
     facts.closing,
   ]
     .filter(Boolean)
@@ -354,15 +454,35 @@ export function carryOn(): string {
   return "Decide, act, and end your turn — the studio wakes you when something happens.";
 }
 
-/** The closing when the lead's last turn ended with nothing running: asked once, what next. */
-export function idleAsk({ direction, minutesLeft }: { direction: boolean; minutesLeft: number }): string {
+/** What an idle lead past the finish mark is asked to do: finish what exists, never start a new part. */
+const IDLE_PAST_MARK =
+  "The build is past its finish mark: no new parts or systems. Start a finish worker (stage=finish) on a part with defects left, integrate, judge ship=yes, then finish.";
+
+/**
+ * The closing when the lead's last turn ended with nothing running: asked once, what next. Past
+ * the finish mark (`finishing`) it asks for the finish rule instead of the next feature or part.
+ */
+export function idleAsk({
+  direction,
+  minutesLeft,
+  finishing = false,
+}: {
+  direction: boolean;
+  minutesLeft: number;
+  finishing?: boolean;
+}): string {
   const lead = direction
     ? `The timed build still has ${minutesLeft} working minutes and nothing is running. What next?`
     : `Nothing is running and ${minutesLeft} working minutes remain. What next?`;
-  const what = direction
+  return `${lead} ${idleWhat(direction, finishing)} If you end this turn with nothing running, the studio starts the wrap-up.`;
+}
+
+/** What the idle question asks for: the finish rule past the mark, else the build stage's next step. */
+function idleWhat(direction: boolean, finishing: boolean): string {
+  if (finishing) return IDLE_PAST_MARK;
+  return direction
     ? "Plan and start a worker for the most valuable unfinished feature or verification gap; inspect, integrate and show progress."
     : "Start the next part the goal still needs, or verify, integrate and finish if it is met.";
-  return `${lead} ${what} If you end this turn with nothing running, the studio starts the wrap-up.`;
 }
 
 /** Why a wrap-up that is not the deadline's started. */
@@ -379,7 +499,7 @@ export function wrapLead(cause: WrapCause, wrapUp: string): string {
   return lead ? `${lead}\n${wrapUp}` : wrapUp;
 }
 
-/** Why a fresh session carries the night, in the words its first line gives (`freshStart`). */
+/** Why a fresh session carries the run, in the words its first line gives (`freshStart`). */
 export const SESSION_LOST_WHY = {
   resumeFailed: "the session could not be resumed",
   contextFull: "its context was full",
@@ -390,7 +510,7 @@ export const SESSION_LOST_WHY = {
 
 /**
  * What a fresh session is told when the lead's own was lost: the brief, the rules, its notes, the
- * night and the news — and, for a director with its own hands (`lead` absent), its memory file first.
+ * run and the news — and, for a director with its own hands (`lead` absent), its memory file first.
  */
 export function freshStart({
   why,
@@ -431,7 +551,7 @@ export function freshStart({
   ].join("\n\n");
 }
 
-/** How the night runs, said once in the first message (and again in a fresh one). */
+/** How the run works, said once in the first message (and again in a fresh one). */
 export function wakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }): string {
   return [
     "HOW THIS RUN WORKS — ONE DECISION PER TURN:",
@@ -485,13 +605,13 @@ const WAKE_TOOL_SWAPS = new Map<string, readonly [string, string]>([
   ],
 ]);
 
-/** …and the ones a lead that writes nothing reads besides (one session, lead-session.ts): a merge conflict goes to a worker. */
+/** …and the ones a lead reads besides (one session, lead-session.ts): a merge conflict goes to a worker. */
 const LEAD_TOOL_SWAPS = new Map<string, readonly [string, string]>([[DirectorTool.Integrate, LEAD_INTEGRATE_SWAP]]);
 
 /**
  * The run tools a waking lead is offered: no `worker_wait`, and descriptions that say to end the turn —
- * and, for a lead that writes nothing (`lead`), that a conflict goes to a worker. A director with
- * its own hands on the wake loop (a kept director.ts from before one session) resolves it itself.
+ * and, for a lead (`lead`), that a conflict goes to a worker. A director whose cwd is the
+ * integration worktree on the wake loop (a kept director.ts from before one session) resolves it itself.
  */
 export function wakeTools(tools: readonly LiveToolSpec[], { lead = false }: { lead?: boolean } = {}): LiveToolSpec[] {
   return tools

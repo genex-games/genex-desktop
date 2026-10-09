@@ -44,6 +44,29 @@ function frozenBlock(): string {
   return readFileSync(pathMod.join(fixtureDir, "artefact-classes-shared.md"), "utf8").replace(/\n+$/, "");
 }
 
+/** Classes added to the shared block since it was frozen: the HUD's two (WP-HUD). */
+const ADDED_SINCE_FROZEN = ["hud-crowding", "jagged-hud"];
+
+/** A rendered block with the added classes' bullets taken out: what is left is the frozen text. */
+function withoutAdded(block: string): string {
+  const lines = block.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const added = ADDED_SINCE_FROZEN.some((name) => lines[i]!.startsWith(`- \`[${name}]\``));
+    if (!added) {
+      out.push(lines[i]!);
+      continue;
+    }
+    while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1]!)) i++;
+  }
+  return out.join("\n");
+}
+
+/** Every added class is in a rendered block, once. */
+function assertAdded(block: string): void {
+  for (const name of ADDED_SINCE_FROZEN) assert.equal(block.split(`[${name}]`).length - 1, 1, name);
+}
+
 describe("the artefact classes the three judges share", () => {
   it("lives in one file, and each rubric carries the marker exactly once", () => {
     for (const name of SHARED) {
@@ -55,17 +78,30 @@ describe("the artefact classes the three judges share", () => {
     assert.match(sharedBlock(), /^## Known artefact classes/);
   });
 
+  it("keeps the marker out of the finish rubric, which rides after taste-veto.md and would list the classes twice", () => {
+    const text = rubric("taste-finish.md");
+    assert.equal(text.includes(ARTEFACT_MARKER), false);
+    assert.equal(text.includes("[haze-plane]"), false);
+    assert.match(text, /^## The finish stage/);
+  });
+
   it("renders byte for byte what the rubrics used to say when the run declared nothing", () => {
     // This is what makes the migration safe: an empty token set is the identity filter, and the
     // fixture is the text the three rubrics shipped before the block moved.
-    assert.equal(filterArtefactClasses(sharedBlock(), []), frozenBlock());
-    assert.equal(filterArtefactClasses(sharedBlock(), artefactTokens({})), frozenBlock());
-    assert.equal(filterArtefactClasses(sharedBlock(), artefactTokens({ ownShape: true })), frozenBlock());
+    // Flipped (WP-HUD): the block has grown the two HUD classes since it was frozen, so the
+    // identity holds for everything else, and the two are there exactly once.
+    for (const tokens of [[], artefactTokens({}), artefactTokens({ ownShape: true })]) {
+      const rendered = filterArtefactClasses(sharedBlock(), tokens);
+      assert.equal(withoutAdded(rendered), frozenBlock(), JSON.stringify(tokens));
+      assertAdded(rendered);
+    }
   });
 
   it("keeps every class for a first-person run and drops [no-hands] for a game with no hands", () => {
     const all = filterArtefactClasses(sharedBlock(), ["template", "fps"]);
-    assert.equal(all, frozenBlock(), "a shooter sees the whole list");
+    assert.equal(withoutAdded(all), frozenBlock(), "a shooter sees the whole list");
+    assertAdded(all);
+    assertAdded(filterArtefactClasses(sharedBlock(), ["template", "racing"]));
     const puzzle = filterArtefactClasses(sharedBlock(), ["template", "puzzle"]);
     assert.equal(puzzle.includes("[no-hands]"), false, "a puzzle has no first-person hands to miss");
     const bullets = (block: string) => (block.match(/^- `\[[a-z-]+\]`/gm) ?? []).length;
@@ -174,7 +210,9 @@ describe("judgePrompt expands the marker against a workspace", () => {
   it("puts the class list where the marker was", async () => {
     const text = await judgePrompt({ workspace: workspace() } as never, "blind-compare.md", "fallback", []);
     assert.equal(text.includes(ARTEFACT_MARKER), false, "the marker is gone");
-    assert.ok(text.includes(frozenBlock()), "and the block it used to carry is back, verbatim");
+    // Flipped (WP-HUD): verbatim apart from the two HUD classes added since the block was frozen.
+    assert.ok(withoutAdded(text).includes(frozenBlock()), "and the block it used to carry is back, verbatim");
+    assertAdded(text);
     assert.match(text, /^You are judging two builds/, "the rest of the rubric is untouched");
   });
 

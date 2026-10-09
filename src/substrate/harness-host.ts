@@ -188,8 +188,8 @@ export class HarnessHost {
   #lastHeartbeat = 0;
   /**
    * Host-calls this process is currently servicing, by RPC id. A harness awaiting one (a
-   * streaming completion, a long delegation) is working, not wedged — the watchdog once rewound a
-   * healthy harness four times in one night for exactly that silence. A call with a deadline
+   * streaming completion, a long delegation) is working, not wedged, and the watchdog must not
+   * rewind a healthy harness for that silence. A call with a deadline
    * leaves this set when its deadline answers it, so a hung page cannot mute the watchdog for good.
    */
   #inFlight = new Map<number, InFlightRpc>();
@@ -419,7 +419,7 @@ export class HarnessHost {
 
   /**
    * Send work to the harness and await its acknowledgement. Most dispatches answer nothing;
-   * a `director_tool` answers with the tool's result (director, 2026-09-07).
+   * a `director_tool` answers with the tool's result.
    */
   async dispatch(action: DispatchAction, timeoutMs = 0): Promise<unknown> {
     if (!this.#child) throw new Error(MESSAGE.NotRunning);
@@ -660,8 +660,7 @@ export class HarnessHost {
       const now = this.#now();
       // A tick this late means the app itself was suspended — the Mac slept, or App Nap held
       // its timers — and the harness's heartbeats were held back just as long. That gap is
-      // nobody's silence: three quiet stretches on 2026-09-21 each ended in "stopped
-      // responding for ~930s" and a rewound harness.
+      // nobody's silence, never "stopped responding for ~930s" and a rewound harness.
       if (now - lastTick > every * SUSPENDED_TICK_FACTOR) this.#lastHeartbeat = now;
       lastTick = now;
       // A host-call being serviced means the harness is awaiting *us* — its silence is our

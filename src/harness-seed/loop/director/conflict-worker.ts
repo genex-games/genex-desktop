@@ -1,5 +1,5 @@
 /**
- * A merge conflict goes to a worker (one session, lead-session.ts). The lead of a waking night is
+ * A merge conflict goes to a worker (one session, lead-session.ts). The lead of a waking run is
  * its chat's own session and writes nothing while the build runs, so when `integrate` meets a
  * conflict it no longer tells the lead to merge by hand: the studio starts a single-session worker
  * from the integration branch, opens the same merge in that worker's worktree, and briefs it to
@@ -19,11 +19,11 @@ import { GIT, gitExec, headOf } from "../git.ts";
 import { setWorkerState, WorkerMode, WorkerState } from "../outcomes.ts";
 import { slug } from "./args.ts";
 import { CONFLICT_WORDS } from "./lead-session-prompts.ts";
-import { BuildTarget } from "./night.ts";
+import { BuildTarget } from "./loop-run.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { ExecResult } from "../../types/host-api.d.ts";
 import type { ConflictFacts } from "./lead-session-prompts.ts";
-import type { Night, Worker } from "./night.ts";
+import type { LoopRun, Worker } from "./loop-run.ts";
 
 /**
  * The merge a conflict worker's worktree is opened on, keyed by a symbol: the arguments of a
@@ -70,8 +70,8 @@ export function hasConflictMarkers(text: string): boolean {
 }
 
 /** A free id for the worker that merges `of`: `merge-<of>`, then `merge-<of>-2`, and so on. */
-function conflictWorkerId(night: Night, of: string): string {
-  const taken = new Set([...night.state.workers.keys(), ...(night.priorWorkers ?? []).map((w) => w.id)]);
+function conflictWorkerId(loopRun: LoopRun, of: string): string {
+  const taken = new Set([...loopRun.state.workers.keys(), ...(loopRun.priorWorkers ?? []).map((w) => w.id)]);
   const base = slug(`merge-${of}`);
   for (let n = 1; n <= MAX_CONFLICT_IDS; n += 1) {
     const id = n === 1 ? base : slug(`${base}-${n}`);
@@ -94,10 +94,10 @@ function startedId(answer: unknown): string | null {
  * Start the worker that resolves `worker`'s conflict with the integration branch, and answer what
  * `integrate` tells the lead: that worker's id and what to do when it ends — or why none started.
  */
-export async function resolveByWorker(night: Night, worker: Worker, commit: string, conflicts: string[]) {
-  const { note, shape, startWorker } = night;
+export async function resolveByWorker(loopRun: LoopRun, worker: Worker, commit: string, conflicts: string[]) {
+  const { note, shape, startWorker } = loopRun;
   const facts: ConflictFacts = { of: worker.id, title: worker.title, commit, conflicts };
-  const id = conflictWorkerId(night, worker.id);
+  const id = conflictWorkerId(loopRun, worker.id);
   const merge: ConflictMerge = { of: worker.id, commit };
   const args: MergeArgs = {
     id,
@@ -127,8 +127,8 @@ export function conflictMergeOf(args: MergeArgs | null | undefined): ConflictMer
  * (the integration branch had moved), or stopped on conflicts the session resolves — never aborted,
  * so the studio's commit when the session stops is the merge commit.
  */
-export async function openConflictMerge(night: Night, worker: Worker, merge: ConflictMerge): Promise<OpenedMerge> {
-  const { ctx, run } = night;
+export async function openConflictMerge(loopRun: LoopRun, worker: Worker, merge: ConflictMerge): Promise<OpenedMerge> {
+  const { ctx, run } = loopRun;
   const label = `director:${run.runId}:conflict:${worker.id}`;
   const message = `worker ${worker.id}: merge ${merge.of}`;
   const exec: Pick<ExecResult, "code" | "stdout" | "stderr"> = await gitExec(
@@ -158,10 +158,10 @@ export async function openConflictMerge(night: Night, worker: Worker, merge: Con
  * session — the merge went through on its own (the integration branch had moved), or git failed
  * before it reached a conflict — with the worker's end set; false when its session resolves it.
  */
-export async function mergeFirst(night: Night, worker: Worker): Promise<boolean> {
+export async function mergeFirst(loopRun: LoopRun, worker: Worker): Promise<boolean> {
   const merge = worker.merging;
   if (!merge) return false;
-  const opened = await openConflictMerge(night, worker, merge);
+  const opened = await openConflictMerge(loopRun, worker, merge);
   merge.conflicts = opened.conflicts;
   if (opened.clean) {
     worker.summary = CONFLICT_WORDS.mergedCleanly(merge.of);
@@ -175,8 +175,8 @@ export async function mergeFirst(night: Night, worker: Worker): Promise<boolean>
 }
 
 /** The paths `git diff --diff-filter=U` names in a worktree: those still unmerged. */
-async function stillUnmerged(night: Night, worker: Worker, label: string): Promise<string[]> {
-  const unmerged = await gitExec(night.ctx, worker.worktree, GIT.unmerged, { label }).catch(() => ({ stdout: "" }));
+async function stillUnmerged(loopRun: LoopRun, worker: Worker, label: string): Promise<string[]> {
+  const unmerged = await gitExec(loopRun.ctx, worker.worktree, GIT.unmerged, { label }).catch(() => ({ stdout: "" }));
   return String(unmerged?.stdout ?? "")
     .split("\n")
     .map((file) => file.trim())
@@ -197,16 +197,16 @@ async function fileHasMarkers(worktree: string, rel: string): Promise<boolean> {
  * is aborted, and its error names those files (answers true: the caller marks it failed). Answers
  * false for a worker that merges nothing, or one whose files are clean.
  */
-export async function markersLeft(night: Night, worker: Worker): Promise<boolean> {
+export async function markersLeft(loopRun: LoopRun, worker: Worker): Promise<boolean> {
   const merge = worker.merging;
   if (!merge) return false;
-  const label = `director:${night.run.runId}:conflict:${worker.id}`;
-  const files = [...new Set([...(merge.conflicts ?? []), ...(await stillUnmerged(night, worker, label))])];
+  const label = `director:${loopRun.run.runId}:conflict:${worker.id}`;
+  const files = [...new Set([...(merge.conflicts ?? []), ...(await stillUnmerged(loopRun, worker, label))])];
   const unresolved: string[] = [];
   for (const rel of files) if (await fileHasMarkers(worker.worktree, rel)) unresolved.push(rel);
   if (!unresolved.length) return false;
   merge.unresolved = unresolved;
-  await gitExec(night.ctx, worker.worktree, GIT.mergeAbort, { label }).catch(() => {});
+  await gitExec(loopRun.ctx, worker.worktree, GIT.mergeAbort, { label }).catch(() => {});
   worker.error = CONFLICT_WORDS.markersLeft(unresolved);
   return true;
 }

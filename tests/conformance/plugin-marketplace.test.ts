@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -977,6 +977,28 @@ test("another version of a looked-up plugin: its recent releases and default bra
       date: "2026-08-01T00:00:00Z",
     });
     await assert.rejects(f.marketplace.githubVersions("../etc"), /Invalid repository/);
+  } finally {
+    await f.clean();
+  }
+});
+
+test("a GitHub install fetches the package, not the repository around it: no dotfiles or authoring files", async () => {
+  const f = await fixture();
+  try {
+    const files = await exampleFiles();
+    files.set(".github/workflows/ci.yml", Buffer.from("on: push\n"));
+    files.set(".gitignore", Buffer.from("node_modules\n"));
+    files.set("AGENTS.md", Buffer.from("Notes for a coding agent.\n"));
+    mountRepo(f.routes, { files });
+    const staged = await f.marketplace.stageGithub(`${REPO}@${SHA}`);
+    try {
+      assert.deepEqual((await readdir(staged.stage)).sort(), [...FILES].sort());
+      assert.equal(staged.scan.verdict, "safe", JSON.stringify(staged.scan.findings));
+      const fetched = f.calls.filter((url) => url.startsWith("https://raw.githubusercontent.com/"));
+      assert.equal(fetched.length, FILES.length, "files outside the package are never downloaded");
+    } finally {
+      await rm(staged.stage, { recursive: true, force: true });
+    }
   } finally {
     await f.clean();
   }

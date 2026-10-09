@@ -16,7 +16,16 @@ import {
   messageQueueState,
 } from "../../shared/message-queue.ts";
 import { isChatReport } from "../../shared/protocol.ts";
-import { executionStep, type RecordedRunLoop, recordedRunLoop, type RunExecution } from "../../shared/run-state.ts";
+import {
+  executionActivity,
+  executionStep,
+  isExecutionEvent,
+  type RecordedRunLoop,
+  recordedRunLoop,
+  type RunExecution,
+  type RunWorked,
+  workStart,
+} from "../../shared/run-state.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
 import { isStudioRecord } from "../../shared/studio-activity.ts";
 import { EntryAction, EntryKind, toEntries } from "../chat-entries.ts";
@@ -236,27 +245,36 @@ export function runBudgetMs(threadEvents: readonly EventEnvelope[], runId: strin
 }
 
 /**
- * When a running build's working time began, in ms: its recorded summary's start, else its own
- * start records (a finished build reopened counts from the reopen, a resumed pause from its first start).
+ * Where a running build's clock starts, in ms: when it would have started had it never paused, so
+ * the clock says the time it has worked (run-state.ts `RunWorked`). Its recorded summary's working
+ * time while that says it is working, else its own records — a summary from before a resume has
+ * no stretch under way. A finished build reopened counts from the reopen, a resumed pause goes on
+ * from the time it worked, and the hours the app was closed under it never count. A closed build
+ * has no running clock.
  */
 export function runStartedAt(
   threadEvents: readonly EventEnvelope[],
   runId: string | null,
-  recorded: string | null | undefined,
+  recorded: RunWorked | null | undefined,
 ): number | undefined {
   if (!runId) return undefined;
+  const worked = recorded?.since ? recorded : recordedExecution(threadEvents, runId)?.worked;
+  return (worked && workStart(worked)) ?? undefined;
+}
+
+/** A run's execution, as its own records in the conversation say it, with the signs that it was working. */
+function recordedExecution(threadEvents: readonly EventEnvelope[], runId: string): RunExecution | null {
   let execution: RunExecution | null = null;
-  if (!recorded) {
-    for (const event of threadEvents) {
-      const custom = customRecord(event.data);
-      if (custom && custom.payload.runId === runId)
-        execution = executionStep(execution, runId, {
+  for (const event of threadEvents) {
+    const custom = customRecord(event.data);
+    if (custom?.payload.runId !== runId) continue;
+    execution = isExecutionEvent(custom)
+      ? executionStep(execution, runId, {
           event_type: custom.event_type,
           payload: custom.payload,
           at: event.created_at,
-        });
-    }
+        })
+      : executionActivity(execution, event.created_at);
   }
-  const at = Date.parse(recorded ?? execution?.openedAt ?? "");
-  return Number.isFinite(at) ? at : undefined;
+  return execution;
 }

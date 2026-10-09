@@ -71,6 +71,7 @@ export const DevMethod = {
   GameState: "game.state",
   Capture: "capture",
   Logs: "logs",
+  Runs: "runs",
   CpuStart: "cpu.start",
   CpuStop: "cpu.stop",
   MainCpuStart: "main.cpu.start",
@@ -179,6 +180,7 @@ export const operationSchema = z.discriminatedUnion("method", [
     cursor: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(200).default(100),
   }),
+  operation(DevMethod.Runs, {}),
   operation(DevMethod.CpuStart, { surface, profileId: name }),
   operation(DevMethod.CpuStop, { surface, profileId: name }),
   operation(DevMethod.MainCpuStart, { profileId: name }),
@@ -224,4 +226,41 @@ export class DevError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+/** Operations that answer in any state of the launch: they read its identity or its records, or stop it. */
+const UNGATED: ReadonlySet<DevMethod> = new Set([DevMethod.Status, DevMethod.Runs, DevMethod.Stop]);
+/** Operations that still answer on a stale build: they collect what an earlier call started. */
+const STALE_SAFE: ReadonlySet<DevMethod> = new Set([
+  DevMethod.Logs,
+  DevMethod.CpuStop,
+  DevMethod.MainCpuStop,
+  DevMethod.TraceStop,
+]);
+
+/** What the gate reads about a launch when an operation arrives; staleness is worked out only when asked. */
+export interface DevLaunchState {
+  ready: boolean;
+  authVisible: boolean;
+  stale: () => boolean;
+}
+
+/**
+ * Why a launch refuses an operation now, or null when it may run: an action needs a ready harness,
+ * no native sign-in sheet over the window, and a build that still matches its source.
+ */
+export function devRefusal(method: DevMethod, launch: DevLaunchState): DevError | null {
+  if (UNGATED.has(method)) return null;
+  if (!launch.ready) return new DevError(DevErrorCode.NotReady);
+  if (launch.authVisible)
+    return new DevError(
+      DevErrorCode.MissingPrerequisite,
+      "dismiss native account UI before collecting diagnostics or acting",
+    );
+  if (!STALE_SAFE.has(method) && launch.stale())
+    return new DevError(
+      DevErrorCode.StaleBuild,
+      "source/dependency/output changed; restart this profile for current evidence",
+    );
+  return null;
 }

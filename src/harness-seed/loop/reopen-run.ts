@@ -1,6 +1,6 @@
 /**
- * A finished build reopened (2026-09-29). After a build its lead led as the chat's own session has
- * finished (after-night.ts), a message with Loop on that asks for more work reopens the SAME run — its
+ * A finished build reopened. After a build its lead led as the chat's own session has
+ * finished (after-loop-run.ts), a message with Loop on that asks for more work reopens the SAME run — its
  * runId, plan, workers and Builds graph — with the working time the Loop gives it, led again by that
  * same session (director/lead-session.ts). The session decides from the message and records
  * `reopen_run`; once its reply has ended the chat rewrites the run's journal (director/reopen.ts
@@ -11,7 +11,7 @@
  * A finished build the run's coordinator answers for (its lead was a session of its own, the
  * message went to another engine, or a kept older part hands the chat to it) reopens the same way when a Loop came with the message: the
  * coordinator is told, and its continue_build reopens the build instead of handing the work to one
- * builder turn (`finishedNight`), with the models the build was made with. A finished build no Loop
+ * builder turn (`finishedLoopRun`), with the models the build was made with. A finished build no Loop
  * can go on from — no lead seated, a coordinator on a model without sessions, a kept older part — is
  * answered as with Loop off, and the chat says so once (`firstLoopUnused`). A game built in Unreal is
  * neither: its finished Unreal Loop is never reopened, and the person's Loop message after it may
@@ -19,7 +19,7 @@
  *
  * chat-dispatch.ts offers it only when every part it depends on says so (`servesReopen`): a seed
  * upgrade keeps a part the agent edited before, which would plan on the commission's model, bridge
- * the launch, word the old rules or read the reopened night's inbox from its start — then the message
+ * the launch, word the old rules or read the reopened run's inbox from its start — then the message
  * is answered as with Loop off. This module imports only names every older seed exported
  * (tests/fixtures/seed-exports-pre-reopen.json).
  */
@@ -34,9 +34,10 @@ import { MESSAGE, REOPEN_RUN, reopenPromise } from "./reopen-run-prompts.ts";
 import { EventKind, RunEvent, RunState } from "./run-events.ts";
 import { latestRun } from "./run-inbox.ts";
 import { readJournal, writeJournal } from "./run-journal.ts";
+import { addToScope, runScope, userWordsInLog } from "./scope.ts";
 import { isCommit } from "./shell.ts";
 import { HOUR_MS } from "./time.ts";
-import type { AfterNight } from "./after-night.ts";
+import type { AfterLoopRun } from "./after-loop-run.ts";
 import type { RunReopen, Studio } from "./studio-state.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent, Host } from "../types/harness.d.ts";
 import type { EventData, ModelPreferences, RunRoles, RunSpec } from "../types/host-api.d.ts";
@@ -53,34 +54,34 @@ export function servesReopen(parts: readonly Readonly<Record<string, unknown>>[]
   return parts.every((part) => part.SERVES_REOPEN === true);
 }
 
-/** A finished night the chat may reopen (`reopenable`, set by chat-dispatch.ts once its parts serve it). */
-function mayReopen(night: AfterNight | null | undefined): boolean {
-  return night?.reopenable === true && night.state === RunState.Finished;
+/** A finished run the chat may reopen (`reopenable`, set by chat-dispatch.ts once its parts serve it). */
+function mayReopen(loopRun: AfterLoopRun | null | undefined): boolean {
+  return loopRun?.reopenable === true && loopRun.state === RunState.Finished;
 }
 
 /**
- * Does a routed message keep its commission: one for no run, or one for a finished night the chat's
+ * Does a routed message keep its commission: one for no run, or one for a finished run the chat's
  * own session or the run's coordinator may reopen (`reopenable`) — never a run under way or a paused
- * night, where it could commission a second run.
+ * run, where it could commission a second run.
  */
-export function keepsCommission(existing: unknown, night: AfterNight | null): boolean {
+export function keepsCommission(existing: unknown, loopRun: AfterLoopRun | null): boolean {
   if (!existing) return true;
-  return mayReopen(night);
+  return mayReopen(loopRun);
 }
 
 /**
- * A finished build the run's coordinator answers for, as a night its continue_build may reopen: one
+ * A finished build the run's coordinator answers for, as a run its continue_build may reopen: one
  * whose journal seated a lead (the chat's own session, or one of its own), which goes on as the same
- * run. The long turn and a kept older night seat none, and the classic pipeline and a gauntlet keep no
+ * run. The long turn and a kept older run seat none, and the classic pipeline and a gauntlet keep no
  * director journal: none of them can. Its model is none — the build goes on with the models it was
  * made with.
  */
-export async function finishedNight(
+export async function finishedLoopRun(
   host: Pick<HarnessCtx, "call">,
   threadId: string,
   run: AnyRecord,
   messageId?: string,
-): Promise<AfterNight | null> {
+): Promise<AfterLoopRun | null> {
   if (run?.state !== RunState.Finished || !run.runId) return null;
   const journal = await readJournal(host, threadId, run.runId);
   if (typeof journal?.director?.lead?.chatSession !== "boolean") return null;
@@ -113,8 +114,8 @@ export function firstLoopUnused(studio: object, runId: string): boolean {
 }
 
 /** Does this turn offer the reopen: the chat may, and a Loop came with the message (or the question it answers). */
-export function reopens(night: AfterNight | null | undefined, commission: AnyRecord | null | undefined): boolean {
-  return Boolean(commission) && mayReopen(night);
+export function reopens(loopRun: AfterLoopRun | null | undefined, commission: AnyRecord | null | undefined): boolean {
+  return Boolean(commission) && mayReopen(loopRun);
 }
 
 /** The Loop's hours for a build; null for ∞. */
@@ -152,11 +153,11 @@ export interface ReopenAsk {
  * granted — with the Loop it reopens with: the message's, or the question's it answers.
  */
 export function reopenAsked(
-  night: AfterNight | null | undefined,
+  loopRun: AfterLoopRun | null | undefined,
   commission: AnyRecord | null | undefined,
   recorded: ReadonlyArray<{ name: string; args?: AnyRecord }>,
 ): ReopenAsk | null {
-  if (!reopens(night, commission)) return null;
+  if (!reopens(loopRun, commission)) return null;
   const call = recorded.find((c) => c.name === REOPEN_RUN);
   if (!call) return null;
   const text = typeof call.args?.text === "string" ? call.args.text.trim() : "";
@@ -244,7 +245,18 @@ export function withAsk(saved: AnyRecord, text: string): string[] {
   return (text ? [text, ...earlier] : earlier).slice(0, MAX_REOPEN_ASKS);
 }
 
-/** How the chat starts a reopened night (chat-dispatch.ts: `handleRunStart`, resumed, keeping a Stop). */
+/**
+ * The build's scope with the reopening message among the user's words (scope.ts `addToScope`): only
+ * the message's own words as the log has them (edits applied, never the chat's own report), once.
+ * Nothing for a build from before scope.
+ */
+function reopenedScope(saved: AnyRecord, words: string, events: readonly HarnessEvent[]): AnyRecord {
+  const scope = runScope(saved);
+  if (!scope) return {};
+  return { scope: addToScope(scope, [], words.trim(), userWordsInLog(events)) ?? scope };
+}
+
+/** How the chat starts a reopened run (chat-dispatch.ts: `handleRunStart`, resumed, keeping a Stop). */
 export type StartReopened = (run: RunSpec & AnyRecord, reopen: RunReopen) => Promise<void>;
 
 /** The chat that reopens: its thread, and whether Stop was pressed since its message began. */
@@ -254,14 +266,14 @@ interface ReopeningChat {
 }
 
 /**
- * Reopen the finished night once the reply has ended: its journal read, the finished night's learning
- * pass waited out, a Stop since honoured, the night still the chat's latest and finished in the log,
+ * Reopen the finished run once the reply has ended: its journal read, the finished run's learning
+ * pass waited out, a Stop since honoured, the run still the chat's latest and finished in the log,
  * its journal reopened, the ask recorded, the chat told, then started. A refusal is said, durably.
  */
 export async function reopenAfterReply(
   studio: Studio,
   ctx: ReopeningChat,
-  night: AfterNight,
+  loopRun: AfterLoopRun,
   ask: ReopenAsk & { words: string; models: ReopenModels | null },
   start: StartReopened,
   now: () => number = Date.now,
@@ -269,30 +281,30 @@ export async function reopenAfterReply(
   const { host } = studio;
   const { threadId } = ctx;
   try {
-    const journal = await readJournal(host, threadId, night.runId);
+    const journal = await readJournal(host, threadId, loopRun.runId);
     if (!journal?.run || !journal.director) throw new Error(MESSAGE.noJournal);
     const busy = await runUnderWay(studio, threadId, String(journal.run.project));
     if (busy) throw new Error(MESSAGE.alreadyBuilding(String(busy.run.project)));
     // Stop while that pass was waited out was for this build too.
     if (ctx.cancelled) throw new Error(MESSAGE.stoppedFirst);
     const events = await host.call(HostMethod.EventsList, { threadId });
-    const { close, closeAt } = finishedClose(events, night.runId);
+    const { close, closeAt } = finishedClose(events, loopRun.runId);
     const text = (ask.text ?? ask.words).trim();
     const reopened = reopenedRun(journal.run, reopenBudgets(journal.run.budgets, ask.hours), ask.models);
-    const run = { ...reopened, asks: withAsk(journal.run, text) };
+    const run = { ...reopened, asks: withAsk(journal.run, text), ...reopenedScope(journal.run, ask.words, events) };
     const finishedHead = isCommit(close.integrationHead) ? close.integrationHead : null;
     const at = new Date(now()).toISOString();
-    await writeJournal(host, threadId, night.runId, reopenedJournal(journal, run, { at, finishedHead }));
-    // The reopened night hears from its ask on — the one recorded now, or the one a turn replayed after
+    await writeJournal(host, threadId, loopRun.runId, reopenedJournal(journal, run, { at, finishedHead }));
+    // The reopened run hears from its ask on — the one recorded now, or the one a turn replayed after
     // a restart finds recorded since the close — and nothing before it, an ask a Stop left behind included.
-    const after = await askTheBuild(host, threadId, { events, closeAt }, night, { text, at });
+    const after = await askTheBuild(host, threadId, { events, closeAt }, loopRun, { text, at });
     studio.moodBoards.delete(threadId);
     await tell(host, threadId, {
       type: EventKind.Messages,
       messages: [{ role: "assistant", content: reopenPromise(run.budgets, now()) }],
     });
     void start(run, { after }).catch((err: unknown) =>
-      host.notify("run.failed", { runId: night.runId, error: String(err) }),
+      host.notify("run.failed", { runId: loopRun.runId, error: String(err) }),
     );
   } catch (err: unknown) {
     await tell(host, threadId, { type: EventKind.Error, message: MESSAGE.notReopened(errorWords(err)) });
@@ -300,7 +312,7 @@ export async function reopenAfterReply(
 }
 
 /**
- * The finished night's close, from the log, and where it stands there: the night must still be the
+ * The finished run's close, from the log, and where it stands there: the run must still be the
  * chat's latest and finished. The journal is not asked — a reopen rewound away leaves it paused on
  * withdrawn work, while the log shows the build as it finished.
  */
@@ -319,7 +331,7 @@ interface ReadLog {
   closeAt: number;
 }
 
-/** The ask as the reopened night's lead hears it first: its words, and when it was made. */
+/** The ask as the reopened run's lead hears it first: its words, and when it was made. */
 interface Ask {
   text: string;
   at: string;
@@ -327,7 +339,7 @@ interface Ask {
 
 /**
  * Is this the chat's own record of the same ask on the run — its message and words (a replayed turn)?
- * One a night's lead took from the message (`how`, live chat) is not: the lead heard it, or it came
+ * One a run's lead took from the message (`how`, live chat) is not: the lead heard it, or it came
  * back to the chat, which records its words anew (as the host's `resume_run` does).
  */
 function sameAsk(event: HarnessEvent, runId: string, messageId: string, text: string): boolean {
@@ -338,18 +350,18 @@ function sameAsk(event: HarnessEvent, runId: string, messageId: string, text: st
 
 /**
  * The user's ask on the run, as a Resume's instruction is (the host's `resume_run`): the reopened
- * night's inbox reads it first. Once per message and words since the close: a turn replayed after a
+ * run's inbox reads it first. Once per message and words since the close: a turn replayed after a
  * restart finds the ask its first answer recorded, and does not record it twice. Answers where that
- * inbox reads from: the record just before the ask, found or recorded now — never the finished night's.
+ * inbox reads from: the record just before the ask, found or recorded now — never the finished run's.
  */
 async function askTheBuild(
   host: Host,
   threadId: string,
   { events, closeAt }: ReadLog,
-  night: AfterNight,
+  loopRun: AfterLoopRun,
   { text, at }: Ask,
 ): Promise<string | null> {
-  const { runId, messageId } = night;
+  const { runId, messageId } = loopRun;
   const last = events.at(-1)?.id ?? null;
   if (!text) return last;
   const recorded = messageId

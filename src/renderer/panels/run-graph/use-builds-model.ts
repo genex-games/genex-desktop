@@ -1,6 +1,7 @@
 /** Everything the Builds tab draws, folded once from the run's graph, its recorded outcome and the game's assets. */
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
+import { workedMs } from "../../../shared/run-state.ts";
 import {
   type AssetsNode,
   type BaseNode,
@@ -37,6 +38,8 @@ export function useNow(live: boolean): number {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!live) return;
+    // A run that goes live (resumed, or shown again) counts from now, not from when the clock last stopped.
+    setNow(Date.now());
     const timer = setInterval(() => {
       if (!document.hidden) setNow(Date.now());
     }, CLOCK_TICK_MS);
@@ -208,11 +211,13 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
   );
 }
 
-/** How much of the time it was given a live run has used, 0 to 1; null when it has no budget or is over. */
+/**
+ * How much of the time it was given a live run has worked (run-state.ts `RunWorked`), 0 to 1; null
+ * when it has no budget, its start is unknown or it is not running.
+ */
 export function runProgress(model: ReturnType<typeof useBuildsModel>, now: number): number | null {
   const { graph, run, outcome } = model;
   const budget = run.durationMs ?? null;
-  const startedAt = Date.parse(outcome?.startedAt ?? run.startedAt ?? "");
-  if (!graph.active || !budget || !Number.isFinite(startedAt)) return null;
-  return Math.min(1, Math.max(0, (now - startedAt) / budget));
+  if (!graph.active || !budget || !outcome?.worked) return null;
+  return Math.min(1, Math.max(0, workedMs(outcome.worked, now) / budget));
 }

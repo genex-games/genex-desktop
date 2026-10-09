@@ -99,7 +99,7 @@ describe("a patient look", () => {
     assert.equal(racing.count(), 3);
   });
 
-  it("reads a look that threw as a failed pass, and a stopped night as the end", async () => {
+  it("reads a look that threw as a failed pass, and a stopped run as the end", async () => {
     const thrown = looks(new Error(BLIND), { ok: true });
     const evidence = await patientEvidence({ cancelled: false }, thrown.look as never, { delayMs: 1 });
     assert.equal(evidence!.ok, true, "the throw was a race, looked at again");
@@ -133,7 +133,7 @@ describe("a window to look through", () => {
     assert.match(String((answer as { noWindow?: string }).noWindow), /^no window free \(4\/4 in use\)/);
   });
 
-  // Flipped (2026-09-28): a pass that cannot wait used to borrow the user's Live and load back
+  // Flipped: a pass that cannot wait used to borrow the user's Live and load back
   // what it showed. A call that names no window now reaches the studio's stand-in, so the pass
   // looks there and leaves the user's window, and what it showed, alone.
   it("looks through the studio's own window for a pass that cannot wait, and puts nothing into Live", async () => {

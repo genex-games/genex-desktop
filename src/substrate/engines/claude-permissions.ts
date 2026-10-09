@@ -139,7 +139,7 @@ const PROJECT_NAME_RANGES = [
  * the settings JSON. The SDK hands all settings to the CLI as ONE command-line argument
  * (`--settings <json>`): a Windows command line holds 32,767 characters, one through a `.cmd`
  * shim 8,191 (command-launch.ts), and the studio's own home gains a project folder per builder
- * worktree every night. Rules past this are left out, and the session's log says which.
+ * worktree every run. Rules past this are left out, and the session's log says which.
  */
 const HOME_FENCE_BUDGET = 4_000;
 /** How many left-out folders the log names before it only counts them. */

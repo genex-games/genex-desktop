@@ -152,6 +152,8 @@ const MESSAGE = {
   InvalidParameterDescription: "Invalid tool parameter description",
   InvalidJsonCompatibility: "Invalid JSON input compatibility",
   InvalidTool: "Invalid or duplicate tool",
+  InvalidName: (kind: string, name: unknown) =>
+    `Invalid ${kind} name ${JSON.stringify(name ?? null)}: use lowercase letters, digits and hyphens, starting with a letter, at most 48 characters (get-scene, not get_scene)`,
   UnknownRequired: "Unknown required field",
   ConfirmationNeedsApi2: "tools[].confirmation requires apiVersion 2",
   InvalidConfirmation: "Invalid tool confirmation (1-300 characters)",
@@ -207,6 +209,8 @@ const MESSAGE = {
   InvalidCallTimeout: `Invalid mcpServers callTimeoutMs (1000-${MAX_CALL_TIMEOUT_MS})`,
   TooManyServers: "Invalid mcpServers (at most 4 servers)",
   InvalidServerId: "Invalid mcpServers id (unique, lowercase letters, digits and dashes, no underscore)",
+  ConnectorIdTooLong: (connector: string) =>
+    `mcpServers id makes the connector id ${connector} longer than 32 characters; shorten the plugin or server id`,
   InvalidMcpEnv: "Invalid mcpServers env",
   TooManyEnvVars: "Invalid mcpServers env (at most 32 variables)",
   InvalidEnvName: (name: string) => `Invalid mcpServers environment variable name: ${name}`,
@@ -290,6 +294,11 @@ const isValidToolHeader = (t: PluginTool, names: Set<string>) =>
   t.parameters?.type === "object" &&
   isRecord(t.parameters.properties);
 
+/** A declared name that breaks the id rule is refused with the rule itself, before anything else about it. */
+function assertName(kind: string, name: unknown): asserts name is string {
+  if (typeof name !== "string" || !id.test(name)) throw new Error(MESSAGE.InvalidName(kind, name));
+}
+
 /** A tool's `host`: a known host program, on the bundled Genex plugin's API 3 only, consented when it spends. */
 function validateHost(t: PluginManifestTool, m: PluginManifest): void {
   if (m.id !== HOST_CLI_PLUGIN || m.apiVersion !== 3) throw new Error(MESSAGE.HostToolReserved);
@@ -316,6 +325,7 @@ function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
 
 /** One tool in canonical form; `names` holds the tool names already declared. */
 function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<string>): PluginManifestTool {
+  assertName("tool", t?.name);
   if (!isValidToolHeader(t, names)) throw new Error(MESSAGE.InvalidTool);
   names.add(t.name);
   const properties: PluginTool["parameters"]["properties"] = {};
@@ -412,7 +422,8 @@ function validateSkills(m: PluginManifest, tools: PluginManifestTool[]): PluginS
   const names = new Set<string>();
   const skills: PluginSkill[] = [];
   for (const raw of m.skills as unknown[]) {
-    if (!isRecord(raw) || typeof raw.name !== "string" || !id.test(raw.name)) throw new Error(MESSAGE.InvalidSkill);
+    if (!isRecord(raw)) throw new Error(MESSAGE.InvalidSkill);
+    assertName("plugin skill", raw.name);
     const repeated = names.has(raw.name);
     if (repeated && !legacy) throw new Error(MESSAGE.DuplicateSkill);
     names.add(raw.name);
@@ -426,6 +437,7 @@ function validateSkills(m: PluginManifest, tools: PluginManifestTool[]): PluginS
 function validatePanels(m: PluginManifest): PluginManifest["panels"] {
   const names = new Set<string>();
   return m.panels.map((p) => {
+    assertName("panel", p?.id);
     const valid =
       p &&
       id.test(p.id) &&
@@ -452,6 +464,7 @@ function needsConfirmation(a: ManifestAction, m: PluginManifest): boolean {
 function validateActions(m: PluginManifest): PluginManifest["actions"] {
   const names = new Set<string>();
   return m.actions.map((a) => {
+    assertName("action", a?.name);
     const valid =
       a &&
       id.test(a.name) &&
@@ -474,6 +487,7 @@ function validateActions(m: PluginManifest): PluginManifest["actions"] {
 function validateSettings(m: PluginManifest): PluginManifest["settings"] {
   const names = new Set<string>();
   return m.settings.map((s) => {
+    assertName("setting", s?.key);
     const valid =
       s &&
       id.test(s.key) &&
@@ -723,6 +737,9 @@ function validateMcpServers(value: unknown, m: PluginManifest): PluginMcpServer[
   const ids = new Set<string>();
   return (value as PluginMcpServer[]).map((raw) => {
     if (!isRecord(raw) || !isValidServerId(raw, ids)) throw new Error(MESSAGE.InvalidServerId);
+    // Studio publishes the server as connector `<plugin>-<server>`, which must itself be a connector id.
+    const connector = `${m.id}-${raw.id}`;
+    if (!mcpServerId.test(connector)) throw new Error(MESSAGE.ConnectorIdTooLong(connector));
     ids.add(raw.id);
     return validateMcpServer(raw, m);
   });

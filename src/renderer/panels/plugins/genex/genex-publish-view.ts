@@ -1,11 +1,13 @@
 /**
  * The Publish dialog's view of Genex's publish record: where the game is (not online, draft only,
- * public), the running attempt's steps, and the one press the next step needs. What Publish asks
- * for first (Genex installed and on, then an account), whether Studio puts Publish on the strip
- * itself and which games get none (an Unreal game) are decided here too. Pure, so the dialog only
- * draws it.
+ * public), the running attempt's steps, how the last one ended, and the one press the next step
+ * needs. What Publish asks for first (Genex installed and on, then an account), whether Studio puts
+ * Publish on the strip itself and which games get none (an Unreal game) are decided here too. Pure,
+ * so the dialog only draws it.
  */
 import {
+  cleanGenexTitle,
+  defaultGenexTitle,
   GENEX_PLUGIN_ID,
   GENEX_PUBLISH_PANEL,
   GenexAction,
@@ -20,6 +22,7 @@ import {
 import { type PluginToolbarEntry, toolbarItems } from "../../../../shared/plugin-toolbar.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { type FactRef, type FolderHolds, servedAsWebGame } from "../../../../shared/project-facts.ts";
+import { relativeTime } from "../../../chat-labels.ts";
 import { GENEX_WORDS } from "../../../words.ts";
 
 const WORDS = GENEX_WORDS.publish;
@@ -28,26 +31,24 @@ const WORDS = GENEX_WORDS.publish;
 export const PublishStage = { None: "none", Draft: "draft", Public: "public" } as const;
 export type PublishStage = (typeof PublishStage)[keyof typeof PublishStage];
 
-/** A step of a publish attempt as the progress bar names it. */
+/** A step of a publish attempt as the progress bar names it: the draft is tested before it goes live. */
 export const GenexPublishStep = {
-  Export: "export",
-  Create: "create",
+  Prepare: "prepare",
   Upload: "upload",
-  Public: "public",
-  List: "list",
-  Check: "check",
+  Test: "test",
+  Live: "live",
 } as const;
 export type GenexPublishStep = (typeof GenexPublishStep)[keyof typeof GenexPublishStep];
 
 /** Which step each phase belongs to; the finished phases belong to none. */
 const PHASE_STEP: Partial<Record<GenexPublishPhase, GenexPublishStep>> = {
-  [GenexPublishPhase.Checking]: GenexPublishStep.Export,
-  [GenexPublishPhase.Exporting]: GenexPublishStep.Export,
-  [GenexPublishPhase.CreatingProject]: GenexPublishStep.Create,
+  [GenexPublishPhase.Checking]: GenexPublishStep.Prepare,
+  [GenexPublishPhase.Exporting]: GenexPublishStep.Prepare,
+  [GenexPublishPhase.CreatingProject]: GenexPublishStep.Prepare,
   [GenexPublishPhase.Uploading]: GenexPublishStep.Upload,
-  [GenexPublishPhase.Promoting]: GenexPublishStep.Public,
-  [GenexPublishPhase.Listing]: GenexPublishStep.List,
-  [GenexPublishPhase.VerifyingDeployment]: GenexPublishStep.Check,
+  [GenexPublishPhase.VerifyingDeployment]: GenexPublishStep.Test,
+  [GenexPublishPhase.Promoting]: GenexPublishStep.Live,
+  [GenexPublishPhase.Listing]: GenexPublishStep.Live,
 };
 
 /** Where a step stands on the progress bar. */
@@ -61,6 +62,15 @@ export interface StepView {
   state: StepState;
 }
 
+/** How the last attempt ended, as the dialog tells it: nothing to tell, working, done, failed, or not known yet. */
+export const PublishOutcome = {
+  Idle: "idle",
+  Running: "running",
+  Failed: "failed",
+  Unresolved: "unresolved",
+} as const;
+export type PublishOutcome = (typeof PublishOutcome)[keyof typeof PublishOutcome];
+
 /** A button the dialog offers: its words, the action it runs, and its aria-label (kept for smoke checks). */
 export interface PublishButton {
   label: string;
@@ -73,17 +83,26 @@ export interface PublishButton {
 export interface PublishView {
   stage: PublishStage;
   intro: string;
+  outcome: PublishOutcome;
   running: boolean;
   unresolved: boolean;
   phase: string;
   startedAt: string | null;
   steps: StepView[];
+  /** The game's line under its name: not online, a test version, live since…, publishing. */
+  status: string;
   primary: PublishButton;
-  /** Check again, allow a new upload, review terms: only when that is what is needed. */
+  /** Check again and allow a new upload, while an upload's outcome is unknown. */
   extra: PublishButton[];
+  /** Review Genex's terms in the browser: the one press while they are not accepted. */
+  terms: PublishButton | null;
   canPublish: boolean;
+  /** Something the person must do first (accept Genex's terms); never a failed attempt's raw error. */
   problems: string[];
-  notes: string[];
+  /** A failed or unknown attempt, said calmly, and the raw detail it keeps for support. */
+  failure: { title: string; text: string; details: string } | null;
+  /** The link anyone can play, once the game is public. */
+  link: string | null;
 }
 
 export const isListed = (state: GenexPublishState): boolean => state.status === GenexHostedStatus.Published;
@@ -92,26 +111,16 @@ export const isListed = (state: GenexPublishState): boolean => state.status === 
 export const isLive = (job: GenexPublishJob | undefined): boolean =>
   job?.state === GenexPublishJobState.Running || job?.state === GenexPublishJobState.Unresolved;
 
-/** The steps an attempt of this kind takes from where the game is: listed games update and promote, new ones list once. */
-export function publishSteps(job: GenexPublishJob, state: GenexPublishState): GenexPublishStep[] {
-  const created = job.phase !== GenexPublishPhase.CreatingProject && Boolean(state.slug);
-  const first = created ? [GenexPublishStep.Export] : [GenexPublishStep.Export, GenexPublishStep.Create];
-  const checks = job.kind === GenexPublishKind.Draft || job.deployment !== undefined;
-  const upload = uploadSteps(job, state);
-  return [...first, ...upload, ...(checks ? [GenexPublishStep.Check] : [])];
-}
-
-function uploadSteps(job: GenexPublishJob, state: GenexPublishState): GenexPublishStep[] {
-  if (job.kind === GenexPublishKind.Draft) return [GenexPublishStep.Upload];
-  return isListed(state) || job.phase === GenexPublishPhase.Promoting
-    ? [GenexPublishStep.Upload, GenexPublishStep.Public]
-    : [GenexPublishStep.List];
+/** The steps an attempt takes: a publish prepares, uploads, tests and goes live; a draft stops after its test. */
+export function publishSteps(job: GenexPublishJob): GenexPublishStep[] {
+  const steps = [GenexPublishStep.Prepare, GenexPublishStep.Upload, GenexPublishStep.Test];
+  return job.kind === GenexPublishKind.Draft ? steps : [...steps, GenexPublishStep.Live];
 }
 
 /** The progress bar: the steps before the running one done, the running one current. */
-function stepViews(job: GenexPublishJob | undefined, state: GenexPublishState, running: boolean): StepView[] {
+function stepViews(job: GenexPublishJob | undefined, running: boolean): StepView[] {
   if (!job || !running) return [];
-  const steps = publishSteps(job, state);
+  const steps = publishSteps(job);
   const current = PHASE_STEP[job.phase];
   const at = current ? steps.indexOf(current) : -1;
   return steps.map((step, index) => ({
@@ -129,70 +138,94 @@ function stageOf(state: GenexPublishState): PublishStage {
 
 const INTRO: Record<PublishStage, string> = {
   none: WORDS.intro,
-  draft: WORDS.draftOnly,
+  draft: WORDS.intro,
   public: WORDS.published,
 };
 
-/** Check again, allow a new upload, and review terms, when each is what the attempt or the account needs. */
-function extraButtons(state: GenexPublishState, job: GenexPublishJob | undefined): PublishButton[] {
-  const unresolved = job?.phase === GenexPublishPhase.Unresolved;
-  const extra: PublishButton[] = [];
-  if (unresolved) {
-    extra.push({
+/** How the record's last attempt ended, for the dialog. */
+function outcomeOf(job: GenexPublishJob | undefined, running: boolean): PublishOutcome {
+  if (running) return PublishOutcome.Running;
+  if (job?.state === GenexPublishJobState.Unresolved) return PublishOutcome.Unresolved;
+  if (job?.state === GenexPublishJobState.Failed) return PublishOutcome.Failed;
+  return PublishOutcome.Idle;
+}
+
+/** The game's line under its name. */
+function statusLine(state: GenexPublishState, stage: PublishStage, running: boolean, now: number): string {
+  if (running) return WORDS.statusPublishing;
+  if (stage === PublishStage.Public)
+    return state.lastPublishAt ? WORDS.statusLive(relativeTime(state.lastPublishAt, now)) : WORDS.statusLiveUndated;
+  return stage === PublishStage.Draft ? WORDS.statusDraft : WORDS.statusNone;
+}
+
+/** Check again and allow a new upload, while an upload's outcome is unknown. */
+function unresolvedButtons(job: GenexPublishJob | undefined): PublishButton[] {
+  if (job?.phase !== GenexPublishPhase.Unresolved) return [];
+  return [
+    {
       label: WORDS.checkAgain,
       action: GenexAction.PublishStatus,
       args: { operation: GenexPublishStatusOperation.Check },
       ariaLabel: "Check deployment availability without uploading",
-    });
-    extra.push({
+    },
+    {
       label: WORDS.allowUpload,
       action: GenexAction.PublishAllowUpload,
-      args: { jobId: job?.id },
+      args: { jobId: job.id },
       ariaLabel: "Allow a new upload after checking the deployment page",
-    });
-  }
-  if (state.terms?.accepted === false)
-    extra.push({ label: WORDS.reviewTerms, action: GenexAction.Terms, ariaLabel: WORDS.reviewTerms });
-  return extra;
+    },
+  ];
 }
 
-/** What went wrong and what else to know, in the order a person should read it. */
-function messages(state: GenexPublishState, job: GenexPublishJob | undefined) {
-  const problems: string[] = [];
-  if (state.terms?.accepted === false) problems.push(WORDS.termsNote);
-  const failure = job?.error ?? state.lastError;
-  if (failure) problems.push(failure);
-  const unknown = job?.phase === GenexPublishPhase.Unresolved && !job.uploadedAt;
-  const notes = [...(state.warnings ?? []), ...(unknown ? [WORDS.unknownUpload] : [])];
-  if (job?.checkError) notes.push(job.checkError);
-  return { problems, notes };
+/** A failed or unknown attempt in plain words; the raw error and check stay as details for support. */
+function failureOf(outcome: PublishOutcome, state: GenexPublishState, job: GenexPublishJob | undefined) {
+  const details = [job?.error ?? state.lastError, job?.checkError].filter(Boolean).join("\n");
+  if (outcome === PublishOutcome.Unresolved)
+    return { title: WORDS.unresolvedTitle, text: WORDS.unresolvedText, details };
+  if (outcome !== PublishOutcome.Failed) return null;
+  return { title: WORDS.failedTitle, text: isListed(state) ? WORDS.failedKept : WORDS.failedText, details };
 }
 
-/** The dialog's view of a publish record. */
-export function publishView(state: GenexPublishState): PublishView {
+/** The dialog's view of a publish record, at `now`. */
+export function publishView(state: GenexPublishState, now = Date.now()): PublishView {
   const job = state.job;
   const live = isLive(job);
   const unresolved = job?.phase === GenexPublishPhase.Unresolved;
   const running = live && !unresolved;
   const stage = stageOf(state);
   const listed = stage === PublishStage.Public;
+  const outcome = outcomeOf(job, running);
+  const failed = outcome === PublishOutcome.Failed;
   return {
     stage,
     intro: INTRO[stage],
+    outcome,
     running,
     unresolved,
-    phase: job && live ? WORDS.phase[job.phase] : "",
+    phase: job && running ? WORDS.phase[job.phase] : "",
     startedAt: running && job ? job.startedAt : null,
-    steps: stepViews(job, state, running),
+    steps: stepViews(job, running),
+    status: statusLine(state, stage, running, now),
     primary: {
-      label: listed ? WORDS.updatePublic : WORDS.publish,
+      label: (failed && WORDS.tryAgain) || (listed && WORDS.updatePublic) || WORDS.publish,
       action: GenexAction.PublishGallery,
       ariaLabel: "Publish this game on Genex",
     },
-    extra: extraButtons(state, job),
+    extra: unresolvedButtons(job),
+    terms:
+      state.terms?.accepted === false
+        ? { label: WORDS.reviewTerms, action: GenexAction.Terms, ariaLabel: WORDS.reviewTerms }
+        : null,
     canPublish: state.connected && !live,
-    ...messages(state, job),
+    problems: state.terms?.accepted === false ? [WORDS.termsNote] : [],
+    failure: failureOf(outcome, state, job),
+    link: listed ? (state.galleryUrl ?? null) : null,
   };
+}
+
+/** The name the dialog offers: the one the game is listed under, else Studio's title for it, else its folder. */
+export function offeredTitle(state: GenexPublishState | null, gameTitle: string | undefined, project: string): string {
+  return state?.title ?? cleanGenexTitle(gameTitle) ?? defaultGenexTitle(project);
 }
 
 /** What Publish asks for before it can publish, in this order. */

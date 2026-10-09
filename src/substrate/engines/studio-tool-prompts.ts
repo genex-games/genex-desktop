@@ -37,14 +37,17 @@ export const CLAUDE_CAPTURE_TOOL = {
   description:
     "LOOK at your own build: renders THIS workspace (your uncommitted edits included) in a hidden preview and saves fresh screenshots to files. Returns the file paths — Read them to actually see the frames. Use it after every meaningful change; a defect you catch here is an iteration you do not lose.",
   cameras:
-    "Comma-separated camera names to capture (as registered in the studio contract). Omit for every registered camera.",
+    "Comma-separated camera names to capture (as registered in the studio contract). Omit for your part's own cameras, or every registered camera when it has none.",
+  page: "A bench page to capture instead of the game: a .html file in this workspace that mounts just your module (for example bench/<part>.html). It loads in seconds; omit it to capture the game, and capture the game before you finish.",
 } as const;
 
 /** `capture` as Codex reads it: a bridge command that prints the frame files. */
 export const CODEX_CAPTURE_TOOL = {
   description:
     "LOOK at your own build: renders THIS workspace (your uncommitted edits included) in a hidden preview and saves fresh screenshots to files. Prints the file paths — read them to actually see the frames. Use it after every meaningful change.",
-  cameras: "Comma-separated camera names as registered in the studio contract. Omit for every camera.",
+  cameras:
+    "Comma-separated camera names as registered in the studio contract. Omit for your part's own cameras, or every camera when it has none.",
+  page: "A bench page to capture instead of the game: a .html file in this workspace that mounts just your module (for example bench/<part>.html). Omit it to capture the game, and capture the game before you finish.",
 } as const;
 
 /** What a Loop chat's bridged tool answers: it only records; the harness runs the real thing once the reply ends. */

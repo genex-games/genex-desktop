@@ -115,7 +115,7 @@ it("a denied prerequisite stays blocked across worker retries until an explicit 
   assert.equal(await priorConsentDecline(core, parent, "run-d", "genex__package", args), null);
 });
 
-it("P06-F6. a chat's declined tool call is not asked again until the user speaks", async () => {
+it("a chat's declined tool call is not asked again until the user speaks", async () => {
   const { priorConsentDecline } = await import("../../src/main/core/consent-audience.ts");
   const { core } = await coreLite();
   const chat = await core.store.createThread({ metadata: { project: "chess" } });

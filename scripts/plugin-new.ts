@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 import { inspectPackage, RESERVED_TOOLBAR_LABELS } from "../src/substrate/plugins/manifest.ts";
 import { PLUGIN_ID } from "../src/shared/plugin-id.ts";
 import { inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
+import { PLUGIN_GUIDE_URL } from "../src/shared/plugins.ts";
+import { SCAFFOLD_PUBLISHER } from "../src/substrate/plugins/pack.ts";
+import { scaffoldAgentsGuide } from "./plugin-new-prompts.ts";
 
 /** Studio's own package names; a scaffold may not shadow them. */
 const RESERVED = new Set(["genex", "blender", "example", "studio"]);
@@ -86,7 +89,7 @@ const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as Record<stri
 manifest.id = id;
 manifest.name = name;
 manifest.version = "0.1.0";
-manifest.publisher = "Unpublished";
+manifest.publisher = SCAFFOLD_PUBLISHER;
 manifest.description = `${name}: a Studio plugin scaffolded from the SDK example. Replace this description before publishing.`;
 // The button's own text, where it fits and is not one of Studio's reserved stage-strip labels;
 // otherwise the example's label stays and the author renames it with the rest of the manifest.
@@ -137,6 +140,9 @@ await writeFile(
   ) + "\n",
 );
 
+// The author's coding agent reads this first; packing leaves it out like the editor files.
+await writeFile(path.join(destination, "AGENTS.md"), scaffoldAgentsGuide(id, name));
+
 // Fail loudly here rather than at install time: a scaffold that cannot be inspected is a bug in
 // this script, not in the author's first edit.
 await inspectPackage(destination);
@@ -147,12 +153,12 @@ process.stdout.write(
     "",
     "Next:",
     `  npm run plugin:doctor -- ${destination}`,
-    "  Studio → Plugins → Load local… → choose that folder (the trust dialog names the publisher and capabilities)",
-    "  Plugins → Watch folder, to reload the backend on every save while you edit",
+    "  Genex → Plugins → Add → Load local plugin… → choose that folder (the trust dialog names the publisher and capabilities)",
+    "  The plugin's page → More (…) → Watch folder, to reload the backend on every save while you edit",
     "",
-    "Then edit plugin.json (tools, actions, panels, toolbar), backend.mjs and panel.html.",
-    "plugin-sdk/index.d.ts and jsconfig.json provide local editor checks; no Studio source imports are needed.",
-    "See docs/PLUGIN_GUIDE.md for the contract and docs/plugins.md for the manifest reference.",
+    'Then set "publisher" and edit plugin.json (tools, actions, panels, toolbar), backend.mjs and panel.html.',
+    "AGENTS.md, plugin-sdk/index.d.ts and jsconfig.json are for you and your coding agent; packing leaves them out.",
+    `Guide: ${PLUGIN_GUIDE_URL}`,
     "",
   ].join("\n"),
 );

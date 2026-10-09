@@ -8,15 +8,19 @@ import { deliverGenexFiles } from "../../substrate/genex-delivery.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, lstat, rm } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { atomicWriteJson } from "../../substrate/fsx.ts";
 import { writeFile } from "node:fs/promises";
 import {
+  cleanGenexTitle,
+  defaultGenexTitle,
   GenexHostedStatus,
   GenexJobStatus,
   GenexOperation,
   GenexPublishJobState,
   GenexPublishKind,
   GenexPublishPhase,
+  type GenexGameManifest,
   type GenexJob,
   type GenexPublishJob,
   type GenexPublishState,
@@ -74,24 +78,33 @@ import {
   canForceSettle,
   checksDraftPage,
   deploymentCheckDue,
+  DRAFT_TEST_MS,
+  draftRetryDelay,
   finishJob,
+  interruptedInTest,
+  markReady,
   linkFor,
   linkTarget,
   listingLanded,
   markUnknownAfterRestart,
+  MAX_UPLOADS,
   mergeMeta,
   MESSAGE as PUBLISH_MESSAGE,
+  needsRelisting,
   nextDeploymentCheck,
+  publicSteps,
   publishArgs,
   publishPhaseFor,
-  publishSteps,
+  recordPages,
   PUBLISH_ERROR_TAIL_CHARS,
   PublishLinkTarget,
   shareLink,
+  signInRecorded,
   stagingLink,
   stoppedBeforePromotion,
   uploadMissing,
   wasInterrupted,
+  workspaceManifest,
   type HostedMeta,
   type HostedStaging,
   type InterruptedJob,
@@ -172,6 +185,19 @@ interface PublishAttempt {
   before?: HostedStaging;
 }
 
+/** A draft Genex was seen serving: the upload's revision, its page and its files' digest. */
+type ReadyDraft = NonNullable<GenexPublishState["readyDraft"]>;
+
+/** One running publish: its game, Studio's copy and the CLI's HOME in it, its job and how to stop it. */
+interface PublishRun {
+  project: string;
+  dir: string;
+  home: string;
+  job: GenexPublishJob;
+  signal: AbortSignal;
+  attempt: PublishAttempt;
+}
+
 interface PendingAuthorization {
   deviceCode: string;
   userCode: string;
@@ -220,6 +246,8 @@ export class GenexTools {
   #exporting = new Set<string>();
   #readinessChecks = new Map<string, Promise<void>>();
   #publishJobs = new Map<string, { job: GenexPublishJob; done: Promise<void> }>();
+  /** How long a publish's new draft has to pass its test before the publish gives up on going public. */
+  readonly #draftTestMs: number;
   constructor(
     root: string,
     api = "https://api.genex.games",
@@ -228,10 +256,12 @@ export class GenexTools {
       preload?: string;
       observe?: GenexObserver;
       deliver?: typeof deliverGenexFiles;
+      draftTestMs?: number;
     } = {},
   ) {
     this.root = root;
     this.api = api;
+    this.#draftTestMs = options.draftTestMs ?? DRAFT_TEST_MS;
     this.#credentials = options.credentials;
     this.#observe = options.observe;
     this.#deliver = options.deliver ?? deliverGenexFiles;
@@ -392,7 +422,12 @@ export class GenexTools {
     mergeMeta(state, await readJsonOr<HostedMeta>(metaFile(this.#publishDir(project))));
     const live = this.#publishJobs.get(project);
     if (live) state.job = live.job;
-    else if (wasInterrupted(state.job, this.#exporting.has(project))) {
+    else if (interruptedInTest(state.job, this.#exporting.has(project))) {
+      // The CLI had finished uploading and nothing was made public: the attempt is over, not unknown.
+      finishJob(state.job, GenexPublishJobState.Failed, new Date().toISOString());
+      state.job.error = PUBLISH_MESSAGE.OnlyDraftUpdated;
+      await this.#savePublishState(project, state);
+    } else if (wasInterrupted(state.job, this.#exporting.has(project))) {
       // A restart is never permission to retry an upload whose outcome is unknown.
       markUnknownAfterRestart(state.job);
       await this.#savePublishState(project, state);
@@ -496,11 +531,16 @@ export class GenexTools {
     return this.#account(() => this.#startPublish(project, GenexPublishKind.Draft, exportStage));
   }
   /**
-   * Publish: export this game, put it on the draft page and make that same build the public
-   * version, creating the hosted project and the gallery listing the first time.
+   * Publish: export this game, put it on the draft page, test it there and make that same build
+   * the public version, creating the hosted project and the gallery listing the first time. `title`
+   * is the name it is listed under: the last one Studio listed, else its folder name, as words.
    */
-  async publishGallery(project: string, exportStage: () => Promise<unknown>): Promise<GenexPublishState> {
-    return this.#account(() => this.#startPublish(project, GenexPublishKind.Gallery, exportStage));
+  async publishGallery(
+    project: string,
+    exportStage: () => Promise<unknown>,
+    title?: unknown,
+  ): Promise<GenexPublishState> {
+    return this.#account(() => this.#startPublish(project, GenexPublishKind.Gallery, exportStage, title));
   }
   /** Record Genex's terms answer; false when the user still has to accept them. */
   async #termsAccepted(project: string, state: GenexPublishState): Promise<boolean> {
@@ -519,6 +559,7 @@ export class GenexTools {
     project: string,
     kind: GenexPublishKind,
     exportStage?: () => Promise<unknown>,
+    title?: unknown,
   ): Promise<GenexPublishState> {
     const state = await this.publishStatus(project);
     if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
@@ -533,10 +574,12 @@ export class GenexTools {
       id: randomUUID(),
       kind,
       state: GenexPublishJobState.Running,
-      phase: publishPhaseFor(meta, kind),
+      phase: publishPhaseFor(meta),
       startedAt: new Date().toISOString(),
     };
-    if (exportStage) await this.#exportGame(project, state, job, dir, meta, exportStage);
+    if (kind === GenexPublishKind.Gallery)
+      job.title = cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project);
+    if (exportStage) await this.#exportGame(project, state, job, dir, exportStage);
     state.job = job;
     delete state.warnings;
     delete state.lastError;
@@ -555,20 +598,21 @@ export class GenexTools {
     state: GenexPublishState,
     job: GenexPublishJob,
     dir: string,
-    meta: HostedMeta | null,
     exportStage: () => Promise<unknown>,
   ): Promise<void> {
     this.#exporting.add(project);
     try {
+      const startPhase = job.phase;
       job.phase = GenexPublishPhase.Exporting;
       state.job = job;
       await this.#savePublishState(project, state);
-      const exported = (await exportStage()) as { files?: unknown } | null;
+      const exported = (await exportStage()) as { files?: unknown; genex?: GenexGameManifest } | null;
       state.lastExportAt = new Date().toISOString();
       const files = exported?.files;
       if (Number.isSafeInteger(files)) job.export = { files: files as number };
+      await this.#writeWorkspaceManifest(dir, project, job, exported?.genex);
       job.deployment = await markDeployment(path.join(dir, "dist"), job.id);
-      job.phase = publishPhaseFor(meta, job.kind);
+      job.phase = startPhase;
     } catch (error) {
       job.state = GenexPublishJobState.Failed;
       job.phase = GenexPublishPhase.Failed;
@@ -579,31 +623,134 @@ export class GenexTools {
       throw error;
     }
   }
-  /** The upload itself, detached from the invocation that asked for it. Every phase is persisted. */
+  /**
+   * The CLI tells Genex what the game ships (sign-in support above all) from the package.json of
+   * the folder it runs in: Studio's copy gets the game's Genex part of it, or none.
+   */
+  async #writeWorkspaceManifest(
+    dir: string,
+    project: string,
+    job: GenexPublishJob,
+    manifest: GenexGameManifest | undefined,
+  ): Promise<void> {
+    const pkg = workspaceManifest(project, manifest);
+    const file = path.join(dir, "package.json");
+    if (!pkg) {
+      await rm(file, { force: true });
+      return;
+    }
+    await atomicWriteJson(file, pkg);
+    const embed = manifest?.dependencies["@genex-ai/embed-sdk"];
+    if (embed) job.embedSdkVersion = embed;
+  }
+  /**
+   * The upload itself, detached from the invocation that asked for it. Every phase is persisted. A
+   * publish tests the uploaded draft before anything goes public, and only then promotes and lists it.
+   */
   async #runPublishJob(project: string, kind: GenexPublishKind, job: GenexPublishJob): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
-    const attempt: PublishAttempt = { submitted: false };
+    const run: PublishRun = { project, dir, home, job, signal: controller.signal, attempt: { submitted: false } };
     try {
       const meta = await this.#ensureHostedProject(project, dir, home, job, controller.signal);
-      attempt.slug = meta.slug;
-      const outs: string[] = [];
-      for (const phase of publishSteps(meta, kind)) {
-        job.phase = phase;
-        await this.#persistJob(project, job);
-        // Genex's record just before an upload: a failed CLI that left it as it was sent nothing.
-        // A promotion changes no revision, so there is nothing to compare it against.
-        attempt.before = phase === GenexPublishPhase.Promoting ? undefined : await this.#hostedStaging(attempt.slug);
-        attempt.submitted = true;
-        outs.push((await this.#cliText(dir, publishArgs(phase), controller.signal, home)).out);
-      }
+      run.attempt.slug = meta.slug;
+      const outs = kind === GenexPublishKind.Draft ? [await this.#uploadDraft(run)] : await this.#uploadTested(run);
+      if (!outs) return;
+      const relist = needsRelisting(meta, (await this.#publishState(project)).title, job.title);
+      const listing = { title: job.title, redrawCover: relist };
+      for (const phase of publicSteps(meta, kind, relist)) outs.push(await this.#runStep(run, phase, listing));
       await this.#recordUpload(project, dir, kind, job, meta, outs);
     } catch (error) {
-      await this.#failPublishJob(project, job, attempt, error);
+      await this.#failPublishJob(project, job, run.attempt, error);
     } finally {
       this.#controllers.delete(controller);
+    }
+  }
+  /** One CLI phase, persisted first, with Genex's record read just before anything is uploaded. */
+  async #runStep(
+    run: PublishRun,
+    phase: GenexPublishPhase,
+    listing: Parameters<typeof publishArgs>[1] = {},
+  ): Promise<string> {
+    run.job.phase = phase;
+    await this.#persistJob(run.project, run.job);
+    // Genex's record just before an upload: a failed CLI that left it as it was sent nothing.
+    // A promotion changes no revision, so there is nothing to compare it against.
+    run.attempt.before =
+      phase === GenexPublishPhase.Promoting ? undefined : await this.#hostedStaging(run.attempt.slug);
+    run.attempt.submitted = true;
+    return (await this.#cliText(run.dir, publishArgs(phase, listing), run.signal, run.home)).out;
+  }
+  /**
+   * Upload the build to the draft page. A CLI that failed while Genex's record shows nothing
+   * landed is tried once more, quietly; any other failure, or a second one, ends the attempt.
+   */
+  async #uploadDraft(run: PublishRun): Promise<string> {
+    for (;;) {
+      run.job.uploads = (run.job.uploads ?? 0) + 1;
+      try {
+        return await this.#runStep(run, GenexPublishPhase.Uploading);
+      } catch (error) {
+        const again = (run.job.uploads ?? 0) < MAX_UPLOADS && (await this.#nothingLanded(run));
+        if (!again) throw error;
+      }
+    }
+  }
+  /** Whether Genex's record is as it was before the failed upload: nothing reached it. */
+  async #nothingLanded(run: PublishRun): Promise<boolean> {
+    if (!run.attempt.before) return false;
+    const afterward = await this.#hostedStaging(run.attempt.slug);
+    return Boolean(afterward && uploadMissing(run.job, run.attempt.before, afterward));
+  }
+  /**
+   * Upload the draft and test it until it passes, uploading once more when it does not. Null when
+   * it never passed: the attempt is then closed as failed, and nothing was made public.
+   */
+  async #uploadTested(run: PublishRun): Promise<string[] | null> {
+    const outs: string[] = [];
+    while ((run.job.uploads ?? 0) < MAX_UPLOADS) {
+      const out = await this.#uploadDraft(run);
+      outs.push(out);
+      if (await this.#draftPasses(run, out)) return outs;
+    }
+    finishJob(run.job, GenexPublishJobState.Failed, new Date().toISOString());
+    run.job.error = PUBLISH_MESSAGE.DraftFailedTest;
+    await this.#persistJob(run.project, run.job);
+    return null;
+  }
+  /**
+   * Test the draft an upload just put online: Genex serves this upload's revision, every exported
+   * file, and records the sign-in support it shipped. Tried again with backoff until the test time
+   * is up; a pass is recorded as the ready draft.
+   */
+  async #draftPasses(run: PublishRun, out: string): Promise<boolean> {
+    const { job } = run;
+    const meta = await readJsonOr<HostedMeta>(metaFile(run.dir));
+    job.expectedStagingRevision = meta?.stagingCommit;
+    job.stagingUrl = stagingLink(out, this.api);
+    job.phase = GenexPublishPhase.VerifyingDeployment;
+    delete job.checkError;
+    await this.#persistJob(run.project, job);
+    const deadline = Date.now() + this.#draftTestMs;
+    for (let check = 0; ; check++) {
+      try {
+        const ready = await this.#confirmDraft(run.attempt.slug, job);
+        const state = await this.#publishState(run.project);
+        state.readyDraft = { ...ready, verifiedAt: new Date().toISOString() };
+        state.job = job;
+        delete job.checkError;
+        await this.#savePublishState(run.project, state);
+        return true;
+      } catch (error) {
+        job.checkError = (error as Error).message;
+        job.checkCount = (job.checkCount ?? 0) + 1;
+        await this.#persistJob(run.project, job);
+      }
+      const wait = Math.min(draftRetryDelay(check), deadline - Date.now());
+      if (wait <= 0) return false;
+      await sleep(wait, undefined, { signal: run.signal });
     }
   }
   /** The hosted project this workspace publishes to, created on the first upload. */
@@ -644,11 +791,9 @@ export class GenexTools {
     const shared = shareLink(outs.at(-1) ?? "");
     const now = new Date().toISOString();
     const draft = kind === GenexPublishKind.Draft;
-    const verify = checksDraftPage(job);
-    if (verify) state.lastPreviewAt = now;
-    if (!draft) state.lastPublishAt = now;
-    if (shared && draft) state.draftUrl = shared;
-    if (shared && !draft) state.galleryUrl = shared;
+    // A publish tested its draft before promoting it; a draft is verified from here on.
+    const verify = draft && checksDraftPage(job);
+    recordPages(state, job, shared, now);
     job.uploadedAt = now;
     delete job.error;
     if (verify) {
@@ -657,7 +802,8 @@ export class GenexTools {
       if (link) job.stagingUrl = link;
       job.phase = GenexPublishPhase.VerifyingDeployment;
       job.state = GenexPublishJobState.Running;
-    } else finishJob(job, GenexPublishJobState.Done, now);
+    } else if (draft) finishJob(job, GenexPublishJobState.Done, now);
+    else markReady(job, now);
     state.job = job;
     delete state.lastError;
     await this.#savePublishState(project, state);
@@ -666,11 +812,12 @@ export class GenexTools {
   async #failPublishJob(project: string, job: GenexPublishJob, attempt: PublishAttempt, error: unknown) {
     // A CLI failure after submission may follow a successful remote upload. Never
     // silently turn an unknown outcome into permission for another upload: only Genex's own
-    // record, unchanged since just before the upload, shows that nothing landed.
-    let outcome: typeof GenexPublishJobState.Failed | typeof GenexPublishJobState.Unresolved = attempt.submitted
-      ? GenexPublishJobState.Unresolved
-      : GenexPublishJobState.Failed;
-    if (attempt.submitted && attempt.before) {
+    // record, unchanged since just before the upload, shows that nothing landed. One stopped
+    // while its draft was tested is known: the upload finished and nothing was made public.
+    const inTest = job.phase === GenexPublishPhase.VerifyingDeployment;
+    let outcome: typeof GenexPublishJobState.Failed | typeof GenexPublishJobState.Unresolved =
+      attempt.submitted && !inTest ? GenexPublishJobState.Unresolved : GenexPublishJobState.Failed;
+    if (outcome === GenexPublishJobState.Unresolved && attempt.before) {
       const afterward = await this.#hostedStaging(attempt.slug);
       if (afterward && uploadMissing(job, attempt.before, afterward)) outcome = GenexPublishJobState.Failed;
     }
@@ -712,21 +859,27 @@ export class GenexTools {
     }
     await this.#savePublishState(project, state);
   }
-  /** Genex serves this upload's revision and every exported file: the draft is ready. */
-  async #verifyStaging(state: GenexPublishState, job: GenexPublishJob): Promise<void> {
+  /**
+   * Genex serves this upload's revision and every exported file, and does not report sign-in
+   * support other than the build shipped: the draft passes. Returns it as the ready draft, unstamped.
+   */
+  async #confirmDraft(slug: unknown, job: GenexPublishJob): Promise<Omit<ReadyDraft, "verifiedAt">> {
     const { stagingUrl, deployment, expectedStagingRevision } = job;
     if (!stagingUrl || !deployment || !expectedStagingRevision) throw new Error(PUBLISH_MESSAGE.NoStagingIdentity);
-    const remote = await this.#fetch(GenexRoute.projectBySlug(state.slug ?? ""));
+    const remote = await this.#fetch(GenexRoute.projectBySlug(typeof slug === "string" ? slug : ""));
     const revision = remote?.project?.stagingCommitSha ?? remote?.project?.stagingCommit;
     if (revision !== expectedStagingRevision) throw new Error(PUBLISH_MESSAGE.RevisionMismatch);
+    const signIn = signInRecorded(job.embedSdkVersion, remote?.project);
+    if (!signIn.ok) throw new Error(PUBLISH_MESSAGE.SignInNotRecorded(job.embedSdkVersion ?? "none", signIn.reported));
     await verifyDeployment(stagingUrl, deployment);
+    return { revision, url: stagingUrl, digest: deployment.digest };
+  }
+  /** Genex serves this upload's revision and every exported file: the draft is ready. */
+  async #verifyStaging(state: GenexPublishState, job: GenexPublishJob): Promise<void> {
+    const ready = await this.#confirmDraft(state.slug, job);
     const finishedAt = new Date().toISOString();
-    job.state = GenexPublishJobState.Done;
-    job.phase = GenexPublishPhase.Ready;
-    job.finishedAt = finishedAt;
-    delete job.checkError;
-    delete job.nextCheckAt;
-    state.readyDraft = { revision, url: stagingUrl, digest: deployment.digest, verifiedAt: finishedAt };
+    markReady(job, finishedAt);
+    state.readyDraft = { ...ready, verifiedAt: finishedAt };
   }
   /**
    * Whether the game is listed is Genex's answer, not the CLI's record: only `preview` writes the

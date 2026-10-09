@@ -7,6 +7,7 @@ import path from "node:path";
 import { onSoundShortcut } from "../../src/main/game-sound.ts";
 import { GamePreview, registerGameScheme } from "../../src/main/preview.ts";
 import { PreviewPool } from "../../src/substrate/preview-pool.ts";
+import { PreviewConsoleSource, PreviewGone } from "../../src/shared/preview-contract.ts";
 
 const root = mkdtempSync(path.join(os.tmpdir(), "studio-preview-visibility-"));
 app.setPath("userData", path.join(root, "profile"));
@@ -162,6 +163,7 @@ async function main() {
     );
     await checkStandIn();
     await checkMutedAgentWindow();
+    await checkRendererGone();
   } catch (error) {
     mark("error", { error: String(error) });
     check("fixture completed", false);
@@ -300,6 +302,54 @@ async function checkMutedAgentWindow(): Promise<void> {
       "live: the game never sees ⌥⌘M, and still gets its own keys",
       Number(await port.evaluate("window.keys")) === 1,
     );
+  } finally {
+    port.destroy();
+    win.destroy();
+  }
+}
+/**
+ * A game window whose renderer dies says why (`preview.status` `gone`, beside `crashed`), from
+ * Electron's own `render-process-gone` reason, and says nothing once its page is back.
+ */
+async function checkRendererGone(): Promise<void> {
+  const win = new BrowserWindow({
+    width: 320,
+    height: 240,
+    show: false,
+    focusable: false,
+    skipTaskbar: true,
+    webPreferences: { offscreen: true },
+  });
+  const port = new GamePreview({
+    gamesRoot: root,
+    vendorDir: path.join(process.cwd(), "dist/resources/vendor"),
+    partition: "visibility-gone",
+    offscreen: true,
+  });
+  try {
+    port.attachTo(win, { x: 0, y: 0, width: 320, height: 200 });
+    await port.load("fixture");
+    const running = port.status();
+    check("gone: a running window gives no reason", !running.crashed && running.gone === null);
+    const wc = port.view!.webContents;
+    const died = new Promise<string>((resolve) => {
+      wc.once("render-process-gone", (_event, details) => resolve(details.reason));
+    });
+    wc.forcefullyCrashRenderer();
+    const reason = await died;
+    const dead = port.status();
+    mark("renderer-gone", { reason, gone: dead.gone });
+    const codes: readonly unknown[] = Object.values(PreviewGone);
+    check("gone: a dead window says it crashed", dead.crashed);
+    check("gone: and why, as one typed code", codes.includes(dead.gone));
+    check(
+      "gone: its console line is the studio's own, typed, never an error the build logged",
+      port.consoleEntries().some((entry) => entry.source === PreviewConsoleSource.WindowGone),
+    );
+    await port.reload();
+    const back = port.status();
+    mark("renderer-back", { crashed: back.crashed, gone: back.gone });
+    check("gone: a reloaded window gives no reason again", !back.crashed && back.gone === null);
   } finally {
     port.destroy();
     win.destroy();

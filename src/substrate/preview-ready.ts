@@ -9,7 +9,7 @@
  *
  * Readiness here is LOGICAL, never visual. A hidden or occluded window never fires
  * `requestAnimationFrame`, so a poll that waited for a presented frame would hang exactly
- * where nights run. Pixels stay the capture path's problem.
+ * where runs run. Pixels stay the capture path's problem.
  *
  * Pure over a {@link PreviewPort}: no Electron, no studio state, so `node --test` and
  * FakePreview get it for free.

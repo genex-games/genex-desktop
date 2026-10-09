@@ -32,7 +32,7 @@ const exists = (target: string): Promise<boolean> =>
   );
 
 const planFor = (...ids: string[]): Record<string, unknown> => ({
-  summary: "Tonight: hang a sign on the plaza.",
+  summary: "This run: hang a sign on the plaza.",
   workers: JSON.stringify(
     ids.map((id) => ({
       id,
@@ -68,11 +68,11 @@ function fakeEngine(rig: Rig, delegate: (request: DelegateRequest) => Promise<De
 }
 
 /**
- * One director night: plan, one single-mode worker on `sign`, integrate, then `beforeFinish`, then
+ * One director run: plan, one single-mode worker on `sign`, integrate, then `beforeFinish`, then
  * finish land=yes. `directorLoop: "turn"` runs a director with its own hands in its worktree; a
- * waking night's lead is its chat's own session and writes nothing (director/lead-session.ts).
+ * waking run's lead is its chat's own session and writes nothing (director/lead-session.ts).
  */
-async function night(
+async function loopRun(
   name: string,
   options: { title: string; beforeFinish?: (cwd: string) => Promise<void>; directorLoop?: "turn" },
 ) {
@@ -149,7 +149,7 @@ async function night(
 describe("the director's commits on the way to a landing", () => {
   it("commits a worker under its title as written: backticks and $(…) in it run nothing", async () => {
     const title = 'Sign `echo lit` $(echo twice) it\'s "open"';
-    const { project, finished } = await night("director-title", { title });
+    const { project, finished } = await loopRun("director-title", { title });
     assert.equal(finished.landed, true, String(finished.stoppedBecause));
     const subjects = (await git(project.dir, ["log", "--all", "--format=%s"])).split("\n");
     assert.ok(subjects.includes(`worker sign: ${title}`), subjects.join("\n"));
@@ -159,7 +159,7 @@ describe("the director's commits on the way to a landing", () => {
     let unreadable = "";
     // Flipped (one session): a director with its own hands in its worktree is the long turn's now;
     // a waking lead sits in the game folder and writes nothing.
-    const { project, results, finished } = await night("director-final", {
+    const { project, results, finished } = await loopRun("director-final", {
       title: "Sign",
       directorLoop: "turn",
       beforeFinish: async (cwd) => {

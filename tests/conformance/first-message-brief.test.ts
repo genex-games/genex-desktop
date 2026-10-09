@@ -339,9 +339,9 @@ describe("who runs the brief", () => {
 /** A director's run and one of its builders, as the briefs read them. */
 const RUN = { runId: "run_w", project: NAME, goal: "a keep to explore", engine: CLAUDE };
 const BUILDER = { id: "w1", title: "The gate", brief: "build the gate", owns: ["src/gate.js"], ownsMain: false };
-/** What the night found the game's folder holds, and where it is. */
-const NIGHT = { run: RUN, projectDir: "/Users/me/AI Games/keep", gameFacts: [fact(CoreFact.WebGame)] };
-/** Where a brief says the game is, as the night found it. */
+/** What the run found the game's folder holds, and where it is. */
+const LOOP_RUN = { run: RUN, projectDir: "/Users/me/AI Games/keep", gameFacts: [fact(CoreFact.WebGame)] };
+/** Where a brief says the game is, as the run found it. */
 const FOLDER = /^You are working inside Genex[^\n]*folder `AI Games\/keep`; it holds a web game at its root/;
 
 /** A facet builder's opening prompt: a director's (its `identity` option) or a classic Autopilot's (none). */
@@ -402,8 +402,8 @@ describe("every worker's brief", () => {
     const single = singleWorkerBrief({
       run: RUN,
       worker: BUILDER,
-      facts: NIGHT.gameFacts,
-      gameFolder: NIGHT.projectDir,
+      facts: LOOP_RUN.gameFacts,
+      gameFolder: LOOP_RUN.projectDir,
     } as never);
     assert.match(single, FOLDER, "the director's single worker");
     assert.match(single, /YOUR BRIEF FROM THE DIRECTOR — The gate:\nbuild the gate/, "and its brief follows");
@@ -417,7 +417,7 @@ describe("every worker's brief", () => {
       run: RUN,
       worker: { ...BUILDER, id: "w1-merge", title: "Merge The gate", brief: conflict },
       facts: [fact(CoreFact.WebGame, "site"), fact(CoreFact.UnrealProject)],
-      gameFolder: NIGHT.projectDir,
+      gameFolder: LOOP_RUN.projectDir,
     } as never);
     assert.match(
       merging,
@@ -430,7 +430,7 @@ describe("every worker's brief", () => {
       /^You are working inside Genex[^\n]*`keep`; it holds a web game/,
     );
 
-    const director = runIdentity(NIGHT as never);
+    const director = runIdentity(LOOP_RUN as never);
     assert.match(director, FOLDER);
     const facet = facetOpening({ identity: director, worker: { id: "w2", title: "The hall", runId: RUN.runId } });
     assert.ok(facet.startsWith(`${director}\n\n`), "a director's facet builder");

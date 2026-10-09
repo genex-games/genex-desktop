@@ -24,6 +24,7 @@ import type { Recipe } from "../library.ts";
 import type { Scoreboard } from "../checks.ts";
 import type { SpikeOutcome } from "../spike.ts";
 import type { ExecAnswer, Trim } from "../git.ts";
+import type { CarriedFix } from "./carried-fixes.ts";
 
 /**
  * How the facet loop is started (`optionDefaults` documents each option): the run and its
@@ -86,6 +87,8 @@ export interface FacetOptions {
   baseConsole: unknown[];
   policy: FacetPolicy;
   onLoopState: ((state: AnyRecord) => void) | null;
+  buildBlock: boolean;
+  onProviderLost: ((lost: AnyRecord) => void) | null;
 }
 
 /** What `runFacetLoop` works out once from its options: the facet, its places, its engine, its clock. */
@@ -157,6 +160,8 @@ export interface ResumableState {
   /** WP1e: the builder's HARNESS: flags, deduplicated across iterations. */
   seenFlags: Set<string>;
   flags: AnyRecord[];
+  /** The builder's lessons this facet already logged as `facet_lessons`, so none is logged twice. */
+  seenLessons: Set<string>;
   /** WP4e: last iteration's per-camera distances and pair images, for the brief and the prompt. */
   lastStyle: AnyRecord | null;
   lastPairs: AnyRecord[];
@@ -172,15 +177,25 @@ export interface ResumableState {
   rungMisses: Record<string, number>;
   polishStreak: number;
   /**
-   * The liveness critic's last card: its grow gaps are the next moves once the ladder is
-   * climbed, its polish gaps join the ledger.
+   * The liveness critic's last card: its grow gaps (and its biggest) are move candidates — the
+   * open rung's, or the move with nobody owning the ladder — its polish gaps join the ledger.
    */
   lastLiveness: AnyRecord | null;
+  /**
+   * How many critic cards in a row each principle has stayed short of convincing with a fix inside
+   * the ask (facet/growth.ts): at `STUCK_PRINCIPLE_CARDS` it is stuck, and actionable at a 2.
+   */
+  principleStreaks: Record<string, number>;
   /**
    * The taste judge's newest big move for the facet (`{ what, why }`): the next step once the
    * director's ladder is climbed, and what the director reads about this part.
    */
   lastBigMove: AnyRecord | null;
+  /**
+   * The proposals beyond what the user asked for (scope.ts `isBeyondScope`) this worker has already
+   * put to the user as a decision card, by their `what`: each is asked once, never built.
+   */
+  surfacedBeyond: string[];
   /** The judge's polish notes on the accepted build: optional, never a round's whole work. */
   polishList: string[];
   /** The judge's biggest gap and how many judged builds in a row it has stood: { text, count, checkId, losses }. */
@@ -197,6 +212,11 @@ export interface ResumableState {
    * difference between two looks, so the list has to survive a yielded round.
    */
   retiredChecks: string[];
+  /**
+   * What undone rounds had fixed (facet/carried-fixes.ts): every next brief says to carry those
+   * fixes over until the accepted build passes them.
+   */
+  carriedFixes: CarriedFix[];
 }
 
 /** The rest of the loop's changing state: what every start of the loop begins again. */
@@ -283,6 +303,7 @@ export const RESUMABLE_FIELDS = {
   replanRequests: Carry.List,
   seenFlags: Carry.Set,
   flags: Carry.List,
+  seenLessons: Carry.Set,
   lastStyle: Carry.Value,
   lastPairs: Carry.Value,
   moves: Carry.List,
@@ -291,12 +312,15 @@ export const RESUMABLE_FIELDS = {
   rungMisses: Carry.Record,
   polishStreak: Carry.Value,
   lastLiveness: Carry.Value,
+  principleStreaks: Carry.Record,
   lastBigMove: Carry.Value,
+  surfacedBeyond: Carry.List,
   polishList: Carry.Value,
   gapStreak: Carry.Value,
   emaBuildMs: Carry.Value,
   emaAfterMs: Carry.Value,
   retiredChecks: Carry.List,
+  carriedFixes: Carry.List,
 } as const satisfies { [Field in keyof ResumableState]: CarryFor<ResumableState[Field]> };
 
 /** The result's own fields a yielded round carries back beside the loop's. */
@@ -335,6 +359,7 @@ function freshResumable(facet: AnyRecord, initialDefects: unknown): ResumableSta
     replanRequests: [],
     seenFlags: new Set(),
     flags: [],
+    seenLessons: new Set(),
     lastStyle: null,
     lastPairs: [],
     moves: [],
@@ -343,12 +368,15 @@ function freshResumable(facet: AnyRecord, initialDefects: unknown): ResumableSta
     rungMisses: {},
     polishStreak: 0,
     lastLiveness: null,
+    principleStreaks: {},
     lastBigMove: null,
+    surfacedBeyond: [],
     polishList: [],
     gapStreak: null,
     emaBuildMs: null,
     emaAfterMs: null,
     retiredChecks: [],
+    carriedFixes: [],
   };
 }
 
@@ -427,6 +455,13 @@ function optionDefaults(): Omit<FacetOptions, "runThreadId" | "facetThreadId" | 
     policy: FACET_POLICY,
     /** Called with a LoopState at three points of every round — the director's window in. */
     onLoopState: null,
+    /**
+     * Whether the worker's first round is a build block (facet/build-block.ts): one long build
+     * kept on the checks. The director asks it for a new part; the classic pipeline never does.
+     */
+    buildBlock: false,
+    /** Called when a round starts waiting for a lost provider (facet/provider.ts) — the director's wake. */
+    onProviderLost: null,
   };
 }
 
@@ -516,9 +551,8 @@ function gitPlace(ctx: HarnessCtx, facet: AnyRecord, options: FacetOptions) {
   };
   /**
    * A worker's work, kept reachable. Its worktree is detached, so a commit that is never
-   * integrated is unreferenced the moment the worktree is removed — a morning once found the
-   * report naming two accepted iterations and a "preserved as commit …" that `git
-   * for-each-ref --contains` could not find anywhere. One ref per worker, moved forward each
+   * integrated is unreferenced the moment the worktree is removed, and a report could name
+   * accepted iterations "preserved as commit …" that nothing can find. One ref per worker, moved forward each
    * time: every earlier accepted build is an ancestor of the last one. Best-effort — a ref
    * that will not write must never cost the round.
    */
@@ -580,7 +614,7 @@ async function incumbentAnchor(
 /** The workers' engine and what it can do: a worker builds on it, and the whole loop speaks to it and no other. */
 async function builderEngine(ctx: HarnessCtx, run: AnyRecord, budgets: AnyRecord) {
   const described = await ctx.call(HostMethod.EngineDescribe, {});
-  // A worker builds on the workers' engine, which a cross-provider night puts on the other
+  // A worker builds on the workers' engine, which a cross-provider run puts on the other
   // subscription; the whole loop below speaks to that engine and no other.
   const engineId = roleEngine(run, RoleKey.Builder);
   const delegated = supportsSessions(described.find((e) => e.id === engineId));
@@ -596,7 +630,7 @@ async function builderEngine(ctx: HarnessCtx, run: AnyRecord, budgets: AnyRecord
 
 /** The facet's clock: how long it had, whether a step still fits, and what a build turn holds back. */
 function clock(ctx: HarnessCtx, deadline: number) {
-  // "Enough time left" scales with the facet's own clock: ten minutes on a night, a slice of a
+  // "Enough time left" scales with the facet's own clock: ten minutes on a run, a slice of a
   // short run — a fixed floor silently disabled spikes and follow-ups on anything under an hour.
   const budgetMs = Math.max(1, deadline - Date.now());
   return {

@@ -1,5 +1,15 @@
 /** A local model's download as its Settings row shows it after the download stopped short. */
+import { StudioPlatform } from "../shared/boot.ts";
+import { type EngineDescriptor, EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { InstallPhase, type ModelInstallJob } from "../shared/model-install.ts";
+
+/** Ollama's download page, and its page for each platform Studio runs on. */
+const OLLAMA_DOWNLOAD_URL = "https://ollama.com/download";
+const OLLAMA_DOWNLOAD_PAGE: Readonly<Record<StudioPlatform, string>> = {
+  [StudioPlatform.Mac]: `${OLLAMA_DOWNLOAD_URL}/mac`,
+  [StudioPlatform.Linux]: `${OLLAMA_DOWNLOAD_URL}/linux`,
+  [StudioPlatform.Windows]: `${OLLAMA_DOWNLOAD_URL}/windows`,
+};
 
 /** The phases of a download that ended before its model was ready. */
 const STOPPED_PHASES: ReadonlySet<InstallPhase> = new Set([
@@ -34,4 +44,15 @@ export function stoppedDownload(job: ModelInstallJob | null, model: string): Sto
     reason: job.error ?? null,
     cancelled: job.phase === InstallPhase.Cancelled,
   };
+}
+
+/** Whether no Ollama answers, so an Ollama model's failed download offers to install it. */
+export function needsOllama(ollama: Pick<EngineDescriptor, "status"> | undefined): boolean {
+  return ollama?.status.code === EngineStatusCode.NotRunning;
+}
+
+/** Where installing Ollama starts: its download page for `platform`, or the general one. */
+export function ollamaDownloadPage(platform: string | undefined): string {
+  const known = Object.values(StudioPlatform).find((value) => value === platform);
+  return known ? OLLAMA_DOWNLOAD_PAGE[known] : OLLAMA_DOWNLOAD_URL;
 }

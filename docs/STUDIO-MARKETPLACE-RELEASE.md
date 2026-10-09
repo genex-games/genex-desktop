@@ -26,7 +26,8 @@ records are immutable and still name the old repository, so the move takes three
    (`STUDIO_CATALOG_POLICY` in `src/substrate/plugins/marketplace.ts`) and treats them as one
    source, so an installed official plugin keeps its identity, account and data. Done.
 2. The next official Genex and Blender releases name `genex-games/genex-desktop` in their
-   records, and `policy.json` in genex-plugins switches to it.
+   records; `policy.json` in genex-plugins lists it first, then the legacy repository. Done for
+   Genex 1.5.0; Local Blender 1.1.1 (the bundled 1.1.0 code; catalog installs get the current backend and panel) is next.
 3. Once every current official record names the new repository, a later app release drops
    `Rabneba/ai-game-studio` from its policy.
 
@@ -44,6 +45,13 @@ records are immutable and still name the old repository, so the move takes three
 7. Follow [RELEASING.md](https://github.com/genex-games/genex-plugins/blob/main/RELEASING.md)
    for the exact R2 commands. Package objects have immutable caching; the index has a 60-second
    HTTP cache lifetime. Studio retains its six-hour cache with explicit refresh and stale fallback.
+
+Community releases arrive as pull requests written by `npm run plugin:submit`: a record, its index
+entry and an artifact attached to the author's own GitHub release. The maintainer stages that
+artifact, restores it with `npm run plugin:unpack` to compare with the source commit, doctors it in
+isolation and uploads it, as
+[RELEASING.md](https://github.com/genex-games/genex-plugins/blob/main/RELEASING.md#community-submissions)
+lists.
 
 Public main requires one approving code-owner review and the `validate` status check, including
 for administrators. Pull-request CI has read-only permissions and no deployment credentials.

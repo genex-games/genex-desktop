@@ -1,35 +1,36 @@
 /**
  * Publish to the web, drawn by Studio over the game's stage in the app's own type and buttons. It
  * asks first for what publishing needs and the person lacks (Genex Tools installed and on, then a
- * Genex account), then shows where the game is (not online, a test version, public), the running
- * attempt with its steps, and Publish: first the exact files that would go online, then the press
- * that publishes them. That press is the consent; no system dialog or chat card asks again.
+ * Genex account), then shows one dialog with one main button: the game and the name players will
+ * see, Publish, its progress in that same button and under it, and the link once the game is live.
+ * A failed attempt is said calmly, with the raw detail kept for support. The Publish press is the
+ * consent to the files it uploads (listed on request beside it); nothing asks again.
  */
 import type { JSX, ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { SECOND_MS } from "../../../../shared/duration.ts";
 import {
   GENEX_PLUGIN_ID,
+  GENEX_TITLE_MAX_CHARS,
   GenexAction,
-  GenexPublishStatusOperation,
   type GenexPublishState,
 } from "../../../../shared/genex.ts";
-import type { ExportReview as FileList, PluginInfo } from "../../../../shared/plugins.ts";
-import { relativeTime } from "../../../chat-labels.ts";
-import { ExportReview } from "../../../chat/ExportReview.tsx";
-import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
+import type { ExportReview, PluginInfo } from "../../../../shared/plugins.ts";
+import { useLibrary } from "../../../state/hooks.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OPEN_PLUGINS_EVENT } from "../../../ui/ComposerAddMenu.tsx";
 import { DialogSurface } from "../../../ui/dialog.tsx";
+import { GameAvatar } from "../../../ui/GameAvatar.tsx";
 import { Icon } from "../../../ui/icons.tsx";
 import { Pending } from "../../../ui/Pending.tsx";
 import { GENEX_WORDS, problemWords } from "../../../words.ts";
 import { PluginApproval } from "../../PluginApproval.tsx";
 import { GenexAccountKind, genexAccountView } from "./genex-view.ts";
 import {
-  isListed,
-  type PublishButton,
+  offeredTitle,
   PublishGate,
+  PublishOutcome,
+  PublishStage,
   type PublishView,
   publishGate,
   publishView,
@@ -37,83 +38,18 @@ import {
   type StepView,
 } from "./genex-publish-view.ts";
 import { useGenexStatus } from "./use-genex-status.ts";
+import { Pressing, usePublishRecord } from "./use-publish-record.ts";
 
 const WORDS = GENEX_WORDS.publish;
 const ACCOUNT = GENEX_WORDS.account;
-/** How often the dialog re-reads the record while an attempt runs, and otherwise. */
-const RUNNING_POLL_MS = 2 * SECOND_MS;
-const IDLE_POLL_MS = 10 * SECOND_MS;
 /** Where the publish-open action sends the browser (the plugin's `PublishLinkTarget`). */
-const LinkTarget = { Draft: "draft", Gallery: "gallery", Play: "play" } as const;
+const LinkTarget = { Gallery: "gallery" } as const;
+/** How long Copy reads "Copied". */
+const COPIED_MS = 1600;
 
 /** A cancelled review or approval is the person's choice, not an error to show. */
 const CANCELLED = /Cancelled/;
 const words = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** The game's publish record, re-read on open and on a timer that quickens while an attempt runs. */
-function usePublishRecord(plugin: PluginInfo, project: string | null) {
-  const [state, setState] = useState<GenexPublishState | null>(null);
-  const [error, setError] = useState("");
-  const [review, setReview] = useState<PluginReviewRequest | null>(null);
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [acting, setActing] = useState(false);
-  const id = plugin.manifest.id;
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const args = { operation: GenexPublishStatusOperation.Status };
-      setState(
-        (await window.studio.pluginAction(
-          id,
-          GenexAction.PublishStatus,
-          args,
-          project ?? undefined,
-        )) as GenexPublishState,
-      );
-    } catch (e) {
-      setError(words(e));
-    }
-  }, [id, project]);
-  const running = state ? publishView(state).running : false;
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), running ? RUNNING_POLL_MS : IDLE_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh, running]);
-  const run = async (step: () => Promise<unknown>): Promise<void> => {
-    setError("");
-    setActing(true);
-    try {
-      await step();
-    } catch (e) {
-      if (!CANCELLED.test(words(e))) setError(words(e));
-    } finally {
-      setActing(false);
-      await refresh();
-    }
-  };
-  const act = (name: string, args: Record<string, unknown> = {}): Promise<void> =>
-    run(() => runPluginAction({ plugin, name, args, project, review: setReview }));
-  // Publish first lists what would go online; nothing starts until the person publishes that list.
-  const showFiles = (): Promise<void> =>
-    run(async () => setFiles(await window.studio.genexPublishReview(project ?? "")));
-  const publish = (approved: FileList): Promise<void> => {
-    setFiles(null);
-    return run(() => window.studio.genexPublish(project ?? "", approved));
-  };
-  return {
-    state,
-    error,
-    review,
-    closeReview: () => setReview(null),
-    acting,
-    act,
-    files,
-    showFiles,
-    closeFiles: () => setFiles(null),
-    publish,
-    refresh,
-  };
-}
 
 /** Seconds since an attempt started, ticking while it runs. */
 function useElapsed(startedAt: string | null): number | null {
@@ -127,7 +63,23 @@ function useElapsed(startedAt: string | null): number | null {
   return Math.max(0, Math.floor((now - Date.parse(startedAt)) / SECOND_MS));
 }
 
-/** The running attempt: what it is doing, for how long, and its steps as one bar. */
+/** A press that reads "Copied" for a moment after it copied `text`. */
+function useCopy(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), COPIED_MS);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const copy = (text: string) =>
+    void navigator.clipboard.writeText(text).then(
+      () => setCopied(true),
+      () => {},
+    );
+  return [copied, copy];
+}
+
+/** The running attempt: what it is doing, for how long, and its steps as one bar with their names. */
 function Progress({ view }: { view: PublishView }): JSX.Element {
   const elapsed = useElapsed(view.startedAt);
   const at = view.steps.findIndex((s) => s.state === StepState.Current);
@@ -135,7 +87,7 @@ function Progress({ view }: { view: PublishView }): JSX.Element {
     <div className="genex-publish-progress" aria-live="polite">
       <div className="genex-publish-phase">
         <span>{view.phase}</span>
-        {elapsed !== null && <span className="genex-publish-elapsed">{WORDS.seconds(elapsed)}</span>}
+        {elapsed ? <span className="genex-publish-elapsed">{WORDS.seconds(elapsed)}</span> : null}
       </div>
       <div
         className="genex-publish-bar"
@@ -150,191 +102,112 @@ function Progress({ view }: { view: PublishView }): JSX.Element {
           <span key={step.step} data-state={step.state} />
         ))}
       </div>
-      <span className="genex-publish-steps">{view.steps.map((s) => s.label).join(" · ")}</span>
+      <div className="genex-publish-steps" aria-hidden>
+        {view.steps.map((step: StepView) => (
+          <span key={step.step} data-state={step.state}>
+            {step.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
 
-/** The exact files Publish would put online, and the press that publishes exactly those. */
-function FilesToPublish({
-  files,
-  label,
-  disabled,
-  onCancel,
-  onPublish,
+/**
+ * The game: its cover, and while nothing runs the name players will see, editable; while it
+ * publishes, that name as text. Under it, where the game is.
+ */
+function GameLine({
+  project,
+  title,
+  onTitle,
+  view,
+  publishing,
 }: {
-  files: FileList;
-  label: string;
-  disabled: boolean;
-  onCancel: () => void;
-  onPublish: (files: FileList) => Promise<void>;
+  project: string;
+  title: string;
+  onTitle: (title: string) => void;
+  view: PublishView;
+  publishing: boolean;
 }): JSX.Element {
+  const game = useLibrary((s) => s.games.find((g) => g.name === project));
+  const live = view.stage === PublishStage.Public && !publishing;
   return (
-    <>
-      <ExportReview review={files} />
-      <div className="genex-publish-actions">
-        <Button onClick={onCancel}>{WORDS.cancel}</Button>
-        <Button
-          variant="default"
-          aria-label={WORDS.publishFiles}
-          disabled={disabled}
-          onClick={() => void onPublish(files)}
-        >
-          {label}
-        </Button>
+    <div className="genex-publish-game">
+      <GameAvatar cover={game?.cover} gameKey={project} className="genex-publish-cover" />
+      <div className="genex-publish-game-text">
+        {publishing ? (
+          <span className="genex-publish-title">{title}</span>
+        ) : (
+          <label className="genex-publish-name">
+            <span>{WORDS.name}</span>
+            <input
+              value={title}
+              maxLength={GENEX_TITLE_MAX_CHARS}
+              spellCheck={false}
+              onChange={(e) => onTitle(e.target.value)}
+            />
+          </label>
+        )}
+        <span className="genex-publish-status" data-live={live || undefined}>
+          {publishing ? WORDS.statusPublishing : view.status}
+        </span>
       </div>
-    </>
+    </div>
   );
 }
 
-/** A page link: it opens through the plugin, which hands the browser the page Genex has for the game. */
-function PageLink({ label, onOpen }: { label: string; onOpen: () => void }): JSX.Element {
+/** The link anyone can play, with the press that copies it. */
+function LinkField({ link }: { link: string }): JSX.Element {
+  const [copied, copy] = useCopy();
   return (
-    <button type="button" className="genex-publish-link" onClick={onOpen}>
-      {label}
-      <Icon name="arrow-up-right" size={12} />
+    <div className="genex-publish-link-field">
+      <span title={link}>{link.replace(/^https?:\/\//, "")}</span>
+      <Button aria-label={WORDS.copyLinkLabel} onClick={() => copy(link)}>
+        <Icon name={copied ? "check" : "copy"} size={14} className={copied ? "text-green" : undefined} />
+        {copied ? WORDS.copied : WORDS.copyLink}
+      </Button>
+    </div>
+  );
+}
+
+/** A failed or unknown attempt, calmly: what happened and what to do. */
+function Failure({ title, text }: { title: string; text: string }): JSX.Element {
+  return (
+    <div role="status" className="genex-publish-failure">
+      <p className="genex-publish-failure-title">{title}</p>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+/** The exact files a Publish press uploads, and how many the export leaves out. */
+function FileList({ files }: { files: ExportReview }): JSX.Element {
+  return (
+    <div className="genex-publish-files" data-export-review>
+      <ul aria-label={WORDS.filesLabel}>
+        {files.included.map((file) => (
+          <li key={file}>{file}</li>
+        ))}
+      </ul>
+      {files.excluded.length > 0 && <p>{WORDS.filesLeftOut(files.excluded.length)}</p>}
+    </div>
+  );
+}
+
+/** A quiet text press at the footer's leading edge. */
+function TextButton({ children, ...props }: { children: ReactNode } & JSX.IntrinsicElements["button"]): JSX.Element {
+  return (
+    <button type="button" className="genex-publish-text-button" {...props}>
+      {children}
     </button>
   );
 }
 
-/** "updated 2m ago", or nothing when there is no time to tell. */
-const updatedWords = (at: string | undefined): string => (at ? WORDS.updated(relativeTime(at)) : "");
-
-/**
- * The game page and when it changed, or that there is none yet; and a test version, while there is
- * one and the game is not public.
- */
-function Pages({ state, open }: { state: GenexPublishState; open: (target: string) => void }): JSX.Element {
-  const listed = isListed(state);
-  const published = listed ? updatedWords(state.lastPublishAt) : "";
-  const draft = !listed && state.draftUrl ? updatedWords(state.lastPreviewAt) : "";
-  return (
-    <dl className="genex-publish-pages">
-      <dt>{WORDS.publicVersion}</dt>
-      <dd>
-        {listed ? <PageLink label={WORDS.openGame} onOpen={() => open(LinkTarget.Gallery)} /> : WORDS.notPublished}
-        {published && <span className="text-ink-3"> · {published}</span>}
-      </dd>
-      {!listed && state.draftUrl && (
-        <>
-          <dt>{WORDS.draftPage}</dt>
-          <dd>
-            <PageLink
-              label={WORDS.playDraft}
-              onOpen={() => open(state.readyDraft ? LinkTarget.Play : LinkTarget.Draft)}
-            />
-            {draft && <span className="text-ink-3"> · {draft}</span>}
-          </dd>
-        </>
-      )}
-    </dl>
-  );
-}
-
-/** What a step of setting up asks: a line saying what is missing, and the presses that fix it. */
-function Ask({ children, actions }: { children: ReactNode; actions: ReactNode }): JSX.Element {
-  return (
-    <>
-      <p className="genex-publish-ask">{children}</p>
-      <div className="genex-publish-actions">{actions}</div>
-    </>
-  );
-}
-
-/**
- * Connect a Genex account from the Publish dialog: Connect, then finishing in the browser with the
- * code to check, then the terms, until the account is connected and `onConnected` re-reads the record.
- */
-function ConnectGenex({
-  plugin,
-  project,
-  onConnected,
-}: {
-  plugin: PluginInfo;
-  project: string | null;
-  onConnected: () => void;
-}): JSX.Element {
-  const live = useGenexStatus(plugin, project);
-  const view = genexAccountView(live.status);
-  const busy = live.running !== null;
-  const connected = view.kind === GenexAccountKind.Connected;
-  useEffect(() => {
-    if (connected) onConnected();
-  }, [connected, onConnected]);
-  const connect = () => void live.act(GenexAction.Connect);
-  return (
-    <>
-      <ConnectStep view={view} busy={busy} live={live} connect={connect} />
-      {live.error && (
-        <p role="alert" className="genex-publish-problem">
-          {live.error}
-        </p>
-      )}
-      {live.review && <PluginApproval review={live.review} onClose={live.closeReview} />}
-    </>
-  );
-}
-
-/** The account step the person is on, with only the presses it needs. */
-function ConnectStep({
-  view,
-  busy,
-  live,
-  connect,
-}: {
-  view: ReturnType<typeof genexAccountView>;
-  busy: boolean;
-  live: ReturnType<typeof useGenexStatus>;
-  connect: () => void;
-}): JSX.Element {
-  switch (view.kind) {
-    case GenexAccountKind.SignedOut:
-      return (
-        <Ask
-          actions={
-            <Button variant="default" disabled={busy} onClick={connect}>
-              {view.retry ? ACCOUNT.retry : ACCOUNT.connect}
-            </Button>
-          }
-        >
-          {view.retry ? ACCOUNT.retryText : WORDS.connectText}
-        </Ask>
-      );
-    case GenexAccountKind.SigningIn:
-      return (
-        <Ask
-          actions={
-            <>
-              <Button variant="ghost" disabled={busy} onClick={() => void live.act(GenexAction.CancelConnect)}>
-                {ACCOUNT.cancel}
-              </Button>
-              <Button disabled={busy} onClick={connect}>
-                {ACCOUNT.reopen}
-              </Button>
-            </>
-          }
-        >
-          {ACCOUNT.signingInTitle}. {ACCOUNT.signingInText} <code className="genex-code">{view.code}</code>
-        </Ask>
-      );
-    case GenexAccountKind.Terms:
-      return (
-        <Ask
-          actions={
-            <Button variant="default" disabled={busy} onClick={() => void live.act(GenexAction.Terms)}>
-              {ACCOUNT.terms}
-              <Icon name="arrow-up-right" size={14} />
-            </Button>
-          }
-        >
-          {WORDS.termsNote}
-        </Ask>
-      );
-    case GenexAccountKind.Attention:
-      return <Ask actions={<Button onClick={() => void live.refresh()}>{ACCOUNT.tryAgain}</Button>}>{view.error}</Ask>;
-    default:
-      return <Pending label={ACCOUNT.checking} className="genex-checking" />;
-  }
+/** Copy the attempt's raw detail for support; reads "Details copied" for a moment. */
+function CopyDetails({ details }: { details: string }): JSX.Element {
+  const [copied, copy] = useCopy();
+  return <TextButton onClick={() => copy(details)}>{copied ? WORDS.detailsCopied : WORDS.copyDetails}</TextButton>;
 }
 
 /**
@@ -362,7 +235,7 @@ function PublishFrame({
       testId="genex-publish"
     >
       <div
-        className="contents"
+        className="genex-publish-body"
         data-genex-publish-status={state ? publishView(state).stage : undefined}
         data-connected={state?.connected}
       >
@@ -372,9 +245,132 @@ function PublishFrame({
   );
 }
 
-/** Where publishing goes next, in the description's own type, just above the dialog's buttons. */
-function NativeSoon(): JSX.Element {
-  return <p className="text-dialog-body text-muted-foreground">{WORDS.native}</p>;
+/** What a step of setting up asks: a line saying what is missing, and the presses that fix it. */
+function Ask({ children, actions }: { children: ReactNode; actions: ReactNode }): JSX.Element {
+  return (
+    <>
+      <div className="genex-publish-ask genex-publish-step">{children}</div>
+      <div className="genex-publish-actions">
+        <div className="genex-publish-presses">{actions}</div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Connect a Genex account from the Publish dialog: Connect, then finishing in the browser with the
+ * code to check, then the terms, until the account is connected and `onConnected` re-reads the record.
+ */
+function ConnectGenex({
+  plugin,
+  project,
+  onConnected,
+}: {
+  plugin: PluginInfo;
+  project: string | null;
+  onConnected: () => void;
+}): JSX.Element {
+  const live = useGenexStatus(plugin, project);
+  const view = genexAccountView(live.status);
+  const connected = view.kind === GenexAccountKind.Connected;
+  useEffect(() => {
+    if (connected) onConnected();
+  }, [connected, onConnected]);
+  return (
+    <>
+      <ConnectStep view={view} live={live} />
+      {live.error && (
+        <p role="alert" className="genex-publish-problem">
+          {live.error}
+        </p>
+      )}
+      {live.review && <PluginApproval review={live.review} onClose={live.closeReview} />}
+    </>
+  );
+}
+
+/** The account step the person is on, with only the presses it needs, each showing it is working. */
+function ConnectStep({
+  view,
+  live,
+}: {
+  view: ReturnType<typeof genexAccountView>;
+  live: ReturnType<typeof useGenexStatus>;
+}): JSX.Element {
+  const busy = live.running !== null;
+  const connecting = live.running === GenexAction.Connect;
+  const connect = () => void live.act(GenexAction.Connect);
+  switch (view.kind) {
+    case GenexAccountKind.SignedOut:
+      return (
+        <Ask
+          actions={
+            <Button variant="default" size="default" busy={connecting} disabled={busy && !connecting} onClick={connect}>
+              {(connecting && ACCOUNT.connecting) || (view.retry ? ACCOUNT.retry : ACCOUNT.connect)}
+            </Button>
+          }
+        >
+          <p>{view.retry ? ACCOUNT.retryText : WORDS.connectText}</p>
+        </Ask>
+      );
+    case GenexAccountKind.SigningIn:
+      return (
+        <Ask
+          actions={
+            <>
+              <Button size="default" disabled={busy} onClick={() => void live.act(GenexAction.CancelConnect)}>
+                {ACCOUNT.cancel}
+              </Button>
+              <Button variant="default" size="default" busy>
+                {ACCOUNT.waitingBrowser}
+              </Button>
+            </>
+          }
+        >
+          <div className="genex-publish-code">
+            <span>{ACCOUNT.browserShows}</span>
+            <code>{view.code}</code>
+          </div>
+          <TextButton disabled={busy} onClick={connect}>
+            {ACCOUNT.reopen}
+            <Icon name="arrow-up-right" size={12} />
+          </TextButton>
+        </Ask>
+      );
+    case GenexAccountKind.Terms:
+      return (
+        <Ask
+          actions={
+            <Button
+              variant="default"
+              size="default"
+              busy={live.running === GenexAction.Terms}
+              disabled={busy}
+              onClick={() => void live.act(GenexAction.Terms)}
+            >
+              {ACCOUNT.terms}
+              <Icon name="arrow-up-right" size={14} />
+            </Button>
+          }
+        >
+          <p>{WORDS.termsNote}</p>
+        </Ask>
+      );
+    case GenexAccountKind.Attention:
+      return (
+        <Ask
+          actions={
+            <Button size="default" onClick={() => void live.refresh()}>
+              {ACCOUNT.tryAgain}
+            </Button>
+          }
+        >
+          <p>{view.error}</p>
+        </Ask>
+      );
+    default:
+      return <Pending label={ACCOUNT.checking} className="genex-checking" />;
+  }
 }
 
 /** The Genex plugin's name as a link to its page in Plugins; the dialog closes on the way. */
@@ -390,15 +386,13 @@ function PluginLink({ onLeave }: { onLeave: () => void }): JSX.Element {
       }}
     >
       {WORDS.plugin}
-      <Icon name="arrow-up-right" size={12} />
     </button>
   );
 }
 
 /**
- * Publish while Genex Tools is off or not installed: what publishing goes through (its name opens
- * the plugin's page), and in the footer the one press that brings it back. The strip's own Publish
- * opens it; once Genex is on, its Publish takes over.
+ * Publish while Genex Tools is off or not installed: one line naming what publishing uses (its
+ * name opens the plugin's page), and the one press that brings it back, busy while it works.
  */
 export function GenexSetupDialog({
   genex,
@@ -422,23 +416,58 @@ export function GenexSetupDialog({
       setBusy(false);
     }
   };
+  const label = install ? WORDS.install : WORDS.turnOn;
+  const working = install ? WORDS.installing : WORDS.turningOn;
   return (
     <PublishFrame intro={WORDS.intro} onClose={onClose}>
-      <p className="genex-publish-setup">
+      <p className="genex-publish-ask">
         {WORDS.through} <PluginLink onLeave={onClose} />
+        {install ? WORDS.installEnd : WORDS.throughEnd}
       </p>
-      <NativeSoon />
       {error && (
         <p role="alert" className="genex-publish-problem">
           {error}
         </p>
       )}
       <div className="genex-publish-actions">
-        <Button variant="default" disabled={busy} onClick={() => void press()}>
-          {install ? WORDS.install : WORDS.turnOn}
-        </Button>
+        <div className="genex-publish-lead" />
+        <div className="genex-publish-presses">
+          <Button variant="default" size="default" busy={busy} aria-label={label} onClick={() => void press()}>
+            {busy ? working : label}
+          </Button>
+        </div>
       </div>
     </PublishFrame>
+  );
+}
+
+/** The footer's leading edge: the files to upload, that closing does not stop it, or the details for support. */
+function Lead({
+  view,
+  publishing,
+  failure,
+  filesOpen,
+  onFiles,
+  listing,
+  fileCount,
+}: {
+  view: PublishView;
+  publishing: boolean;
+  failure: { details: string } | null;
+  filesOpen: boolean;
+  onFiles: () => void;
+  listing: boolean;
+  fileCount: number | null;
+}): JSX.Element | null {
+  if (publishing) return <span className="genex-publish-note">{WORDS.keepsGoing}</span>;
+  if (failure?.details) return <CopyDetails details={failure.details} />;
+  if (view.stage === PublishStage.Public) return null;
+  const label = (listing && WORDS.filesLoading) || (fileCount === null ? WORDS.filesShow : WORDS.files(fileCount));
+  return (
+    <TextButton aria-expanded={filesOpen} aria-busy={listing || undefined} onClick={onFiles}>
+      {label}
+      <Icon name="chevron-down" size={12} className={filesOpen ? "rotate-180" : undefined} />
+    </TextButton>
   );
 }
 
@@ -454,62 +483,159 @@ export function GenexPublishDialog({
 }): JSX.Element {
   const record = usePublishRecord(plugin, project);
   const { state } = record;
-  const view = state ? publishView(state) : null;
-  const press = (button: PublishButton) => void record.act(button.action, button.args ?? {});
-  const disabled = record.acting || !view?.canPublish;
   if (state && publishGate(plugin, state.connected) === PublishGate.Connect)
     return (
       <PublishFrame intro={WORDS.intro} state={state} onClose={onClose}>
         <ConnectGenex plugin={plugin} project={project} onConnected={record.refresh} />
       </PublishFrame>
     );
+  const view = state ? publishView(state) : null;
   return (
     <PublishFrame intro={view?.intro ?? WORDS.intro} state={state} onClose={onClose}>
-      {view?.running && <Progress view={view} />}
-      {state && <Pages state={state} open={(target) => void record.act(GenexAction.PublishOpen, { target })} />}
-      {[...(view?.problems ?? []), ...(record.error ? [record.error] : [])].map((problem) => (
+      {!view && record.readError && (
+        <p role="alert" className="genex-publish-problem">
+          {record.readError}
+        </p>
+      )}
+      {view && <PublishBody view={view} record={record} project={project ?? ""} />}
+      {record.review && <PluginApproval review={record.review} onClose={record.closeReview} />}
+    </PublishFrame>
+  );
+}
+
+/**
+ * The read record: the game and its name, the running attempt's progress, the live link or what
+ * went wrong, the files on request, and the footer's presses.
+ */
+function PublishBody({
+  view,
+  record,
+  project,
+}: {
+  view: PublishView;
+  record: ReturnType<typeof usePublishRecord>;
+  project: string;
+}): JSX.Element {
+  const gameTitle = useLibrary((s) => s.games.find((g) => g.name === project)?.title);
+  const [title, setTitle] = useState<string | null>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const name = title ?? offeredTitle(record.state, gameTitle, project);
+  const publishing = record.pressing === Pressing.Publish || view.running;
+  const failure = record.error ? { title: WORDS.failedTitle, text: record.error, details: record.error } : view.failure;
+  const toggleFiles = () => {
+    if (!filesOpen && !record.files) void record.listFiles();
+    setFilesOpen(!filesOpen);
+  };
+  return (
+    <>
+      {view.problems.map((problem) => (
         <p key={problem} role="alert" className="genex-publish-problem">
           {problem}
         </p>
       ))}
-      {view?.notes.map((note) => (
-        <p key={note} className="genex-publish-note">
-          {note}
-        </p>
-      ))}
-      <NativeSoon />
-      {view && record.files && (
-        <FilesToPublish
-          files={record.files}
-          label={view.primary.label}
-          disabled={disabled}
-          onCancel={record.closeFiles}
-          onPublish={record.publish}
-        />
-      )}
-      {view && !record.files && (
-        <div className="genex-publish-actions">
-          {view.extra.map((button) => (
-            <Button
-              key={button.label}
-              aria-label={button.ariaLabel}
-              disabled={record.acting}
-              onClick={() => press(button)}
-            >
-              {button.label}
-            </Button>
-          ))}
-          <Button
-            variant="default"
-            aria-label={view.primary.ariaLabel}
-            disabled={disabled}
-            onClick={() => void record.showFiles()}
-          >
-            {view.primary.label}
-          </Button>
+      <GameLine project={project} title={name} onTitle={setTitle} view={view} publishing={publishing} />
+      {view.running && <Progress view={view} />}
+      {view.link && !publishing && <LinkField link={view.link} />}
+      {failure && !publishing && <Failure title={failure.title} text={failure.text} />}
+      {filesOpen && !publishing && record.files && <FileList files={record.files} />}
+      <div className="genex-publish-actions">
+        <div className="genex-publish-lead">
+          <Lead
+            view={view}
+            publishing={publishing}
+            failure={failure}
+            filesOpen={filesOpen}
+            onFiles={toggleFiles}
+            listing={record.pressing === Pressing.Files}
+            fileCount={record.files?.included.length ?? null}
+          />
         </div>
-      )}
-      {record.review && <PluginApproval review={record.review} onClose={record.closeReview} />}
-    </PublishFrame>
+        <div className="genex-publish-presses">
+          <Presses view={view} record={record} name={name} publishing={publishing} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The presses on the footer's trailing edge. One main button: Publish (busy while it publishes),
+ * Try again after a failure, Open game once live with Publish update beside it, or, while an
+ * upload's outcome is unknown, Check again and the person's own word.
+ */
+function Presses({
+  view,
+  record,
+  name,
+  publishing,
+}: {
+  view: PublishView;
+  record: ReturnType<typeof usePublishRecord>;
+  name: string;
+  publishing: boolean;
+}): JSX.Element {
+  const acting = record.pressing === Pressing.Action;
+  if (view.terms) {
+    const terms = view.terms;
+    return (
+      <Button
+        variant="default"
+        size="default"
+        className="genex-publish-primary"
+        aria-label={terms.ariaLabel}
+        busy={acting}
+        onClick={() => void record.act(terms.action)}
+      >
+        {terms.label}
+        <Icon name="arrow-up-right" size={14} />
+      </Button>
+    );
+  }
+  if (view.outcome === PublishOutcome.Unresolved)
+    return (
+      <>
+        {view.extra.map((button, index) => (
+          <Button
+            key={button.label}
+            size="default"
+            variant={index === 0 ? "default" : "secondary"}
+            aria-label={button.ariaLabel}
+            busy={acting && index === 0}
+            disabled={acting && index !== 0}
+            onClick={() => void record.act(button.action, button.args ?? {})}
+          >
+            {button.label}
+          </Button>
+        ))}
+      </>
+    );
+  const publish = (
+    <Button
+      variant={view.link && !publishing ? "secondary" : "default"}
+      size="default"
+      className={view.link && !publishing ? undefined : "genex-publish-primary"}
+      aria-label={view.primary.ariaLabel}
+      busy={publishing}
+      disabled={!publishing && (!view.canPublish || record.pressing !== Pressing.None)}
+      onClick={() => void record.publish(name)}
+    >
+      {publishing ? WORDS.publishing : view.primary.label}
+    </Button>
+  );
+  if (!view.link || publishing || view.outcome === PublishOutcome.Failed) return publish;
+  return (
+    <>
+      {publish}
+      <Button
+        variant="default"
+        size="default"
+        className="genex-publish-primary"
+        busy={acting}
+        onClick={() => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery })}
+      >
+        {WORDS.openGame}
+        <Icon name="arrow-up-right" size={14} />
+      </Button>
+    </>
   );
 }

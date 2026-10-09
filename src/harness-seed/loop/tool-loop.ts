@@ -13,6 +13,7 @@ import { EventKind, RunEvent } from "./run-events.ts";
 import { TurnStop, sayInTurn } from "./turn-record.ts";
 import { lookAtPictures, turnBriefing } from "./turn-prompts.ts";
 import { OUTPUT_LIMIT_NOTE } from "./tool-loop-prompts.ts";
+import { picturesNotShown } from "./unseen-pictures-prompts.ts";
 import type { TurnOptions, TurnOutcome } from "./turn-loop.ts";
 import type { HarnessCtx } from "../types/harness.d.ts";
 import type {
@@ -87,6 +88,8 @@ interface LoopState {
   contextWindow: number | null;
   /** Pixels stay out of the event log (same rule as the judge). Kept for this turn only. */
   images: MessageImage[];
+  /** Whether the model takes images; asked once a picture is to be sent, again after a fallback. */
+  seesImages?: boolean;
   /** What the system prompt stands on, as the turn's first prompt read it (prompt.ts). */
   standing?: StandingContext;
 }
@@ -225,7 +228,7 @@ async function complete(
       model: state.model,
       threadId: options.threadId,
       systemPrompt: prompt.systemPrompt,
-      messages: withTurnImages(prompt.messages, state.images),
+      messages: await withPictures(ctx, state, prompt.messages),
       tools: tools.definitions(),
       toolRegistryRevision: tools.toolRegistryRevision,
       ...(options.deadlineMs ? { timeoutMs: Math.max(1, options.deadlineMs - Date.now()) } : {}),
@@ -255,13 +258,13 @@ async function completionFailed(
   // worktree. Swallowing the error here would blind all of them: rethrow instead.
   const inRun = Boolean(options.runId);
   if (inRun && !fallbackReady) throw err;
-  // A weekly/monthly cap outlives any wait, and a night on the wrong model is not the
-  // night the user paid for — stop honestly instead of substituting.
+  // A weekly/monthly cap outlives any wait, and a run on the wrong model is not the
+  // run the user paid for — stop honestly instead of substituting.
   if (kind === EngineFailure.UsageLimit) {
     await sayInTurn(ctx, turnId, MESSAGE.outOfUsage(engine, err?.message));
     return { outcome: { stopped: TurnStop.EngineLimited, round, engine } };
   }
-  // Subscription throttles must not end the night (PLAN.md §6.3 / M2 acceptance) — but a
+  // Subscription throttles must not end the run (PLAN.md §6.3 / M2 acceptance) — but a
   // swap the user never hears about reads as deception. Fall back only mid-run or
   // mid-commission, and say so in the chat, not just in a log event.
   const commissioned = inRun || Boolean(options.loop || options.autopilot);
@@ -306,6 +309,7 @@ async function switchEngine(
   ctx.notify("engine.fallback", { from, to: next, kind });
   state.engine = next;
   state.model = undefined;
+  state.seesImages = undefined;
   state.contextWindow = resolveContextWindow(await ctx.call(HostMethod.EngineDescribe), next, undefined);
 }
 
@@ -442,10 +446,34 @@ async function runToolCalls(
   return null;
 }
 
+/**
+ * The round's messages with this turn's pictures. A local model that cannot see images refuses a
+ * request that carries them, so it hears that they exist instead of receiving the pixels.
+ */
+async function withPictures(ctx: HarnessCtx, state: LoopState, messages: Message[]): Promise<Message[]> {
+  if (!state.images.length) return messages;
+  state.seesImages ??= await seesImages(ctx, state);
+  if (state.seesImages) return withTurnImages(messages, state.images);
+  return [...messages, { role: "user", content: picturesNotShown(imageLabels(state.images.slice(-MAX_TURN_IMAGES))) }];
+}
+
+/** Whether the turn's model takes images; a model the engine does not describe is taken to. */
+async function seesImages(ctx: HarnessCtx, state: LoopState): Promise<boolean> {
+  const described: readonly EngineDescriptor[] = await ctx.call(HostMethod.EngineDescribe).catch(() => []);
+  const descriptor = described.find((e) => e.id === state.engine);
+  const id = state.model ?? descriptor?.defaultModel;
+  return descriptor?.models?.find((m) => m.id === id)?.supportsVision !== false;
+}
+
+/** The pictures' names as the model reads them. */
+function imageLabels(images: MessageImage[]): string {
+  return images.map((img, index) => img.label || `shot ${index + 1}`).join(", ");
+}
+
 function withTurnImages(messages: Message[], images: MessageImage[]): Message[] {
   if (!images.length) return messages;
   const kept = images.slice(-MAX_TURN_IMAGES);
-  const labels = kept.map((img, index) => img.label || `shot ${index + 1}`).join(", ");
+  const labels = imageLabels(kept);
   return [
     ...messages,
     {

@@ -47,6 +47,10 @@ export const BONSAI_BINARY: DownloadFile = {
   sha256: "f9cdf245fb7b832f1996dd776b321d4ae1f23b6d88c380100f636742c3a980ff",
   url: `https://github.com/PrismML-Eng/llama.cpp/releases/download/${BONSAI_RUNTIME}/llama-${BONSAI_RUNTIME}-bin-macos-arm64.tar.gz`,
 };
+/** Every Bonsai id starts with this: such an id is Bonsai's to answer for, never Ollama's. */
+const BONSAI_ID_PREFIX = "bonsai-2:";
+/** Whether `id` names a Bonsai model, pinned or not. */
+export const isBonsaiModelId = (id: string): boolean => id.startsWith(BONSAI_ID_PREFIX);
 /** The pinned model with this id; an unknown id is refused. */
 export function bonsaiModel(id: string) {
   const model = BONSAI_MODELS.find((m) => m.id === id);

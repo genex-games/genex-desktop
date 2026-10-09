@@ -19,7 +19,8 @@
       "!**/out",
       "!package-lock.json",
       "!src/harness-seed/types/host-api.d.ts",
-      "!evals/ledger"
+      "!evals/ledger",
+      "!marketplace/template/scripts"
     ]
   },
   "formatter": {

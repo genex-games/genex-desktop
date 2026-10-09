@@ -56,7 +56,7 @@ function barLine(run: BriefRun): string {
   return `QUALITY BAR: ${run.reference?.name ?? "unnamed reference"}${notes}`;
 }
 
-/** How much the first playable should reach for, by the length of the night. */
+/** How much the first playable should reach for, by the length of the run. */
 function ambitionFor(run: BriefRun): string {
   const hours = (run.budgets?.wallClockMs ?? 0) / HOUR_MS;
   if (hours >= 8) return "This is a long run: a world with a readable fantasy, not a mechanic demo.";

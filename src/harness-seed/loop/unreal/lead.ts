@@ -12,7 +12,7 @@
  */
 import path from "node:path";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
-import { nightClock } from "../director/journal.ts";
+import { loopRunClock } from "../director/journal.ts";
 import { openLeadLine } from "../director/lead-line.ts";
 import { type LeadSeat, leadSeat } from "../director/lead-session.ts";
 import { directors } from "../director/tool-specs.ts";
@@ -137,7 +137,7 @@ function newLead(
 ): LeadRun {
   const { threadId, run, clock, game, journal } = setup;
   const totalMs = Number(run.budgets?.wallClockMs) || DEFAULT_RUN_MS;
-  const times = nightClock({ saved: journal.workedMs > 0 ? journal : null, now: clock.now(), totalMs });
+  const times = loopRunClock({ saved: journal.workedMs > 0 ? journal : null, now: clock.now(), totalMs });
   return {
     ctx,
     run,

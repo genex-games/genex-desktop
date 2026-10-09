@@ -119,6 +119,25 @@ export function partialDelegateResult(
 }
 
 /**
+ * What a provider says when it has taken the account's access away: an organization that disabled
+ * subscription access, an account suspended or on hold. Both delegated engines read their CLI's
+ * error text with it (one table, so they stay in step) and call it a sign-in failure: no retry and
+ * no wait fixes it, the user or their admin does. Each words the access, never a game's own words
+ * ("the organization has disabled tyre spray" is not one).
+ */
+const ACCESS_LOST_PATTERNS = [
+  /\bdisabled\b.{0,40}\bsubscription access\b/i,
+  /\bsubscription access\b.{0,20}\b(?:disabled|revoked|suspended)\b/i,
+  /\b(?:organi[sz]ation|admin(?:istrator)?|workspace) has (?:disabled|revoked|blocked)\b.{0,60}\baccess\b/i,
+  /\byour (?:\w+ )?account (?:is|has been|was) (?:suspended|deactivated|disabled|on hold)\b/i,
+];
+
+/** Does a CLI's error text say the account's access was taken away (`ACCESS_LOST_PATTERNS`)? */
+export function isAccessLost(text: string): boolean {
+  return ACCESS_LOST_PATTERNS.some((re) => re.test(text));
+}
+
+/**
  * Whether a CLI home holds a sign-in: its credential file, or any JSON file or folder beside it.
  * Presence check only: the studio never opens a credential file. Ownership locks are runtime
  * state created before login, so that directory alone never selects this home for authentication.

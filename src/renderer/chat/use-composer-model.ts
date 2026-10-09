@@ -9,7 +9,7 @@ import { MODEL_PICKER_WORDS } from "../words.ts";
  * hook keeps the picks a chat has made in this session and writes them back.
  */
 import { useEffect, useMemo, useState } from "react";
-import { normalizeRoles, resolveRoles } from "../../shared/model-roles.ts";
+import { crossesTo, normalizeRoles, takesRoles } from "../../shared/model-roles.ts";
 import { supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import {
   effortScale,
@@ -21,13 +21,13 @@ import {
   withRoleEfforts,
 } from "../model-choices.ts";
 import { autopilotSendOptions } from "../loop-setting.ts";
-import { openingRoles, readStoredRoles, storeRoles } from "../role-store.ts";
+import { openingRoles, presetRoles, readStoredRoles, storeRoles } from "../role-store.ts";
 import { readJson, safeStorage, STORAGE_KEYS, storageKeyFor, type KeyValueStorage } from "../storage.ts";
 import { useModelPicker } from "../state/hooks.ts";
 import { rememberChatEffort, rememberChatModel, storedChatEffort, storedChatModel } from "../stored-model.ts";
 import type { EngineDescriptor, ThreadMeta } from "../types.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
-import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { EngineKind, EngineStatusCode, splitsRoles } from "../../shared/engine-descriptor.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { ComposerExtras, ComposerModelProps, ModelChoice, RoleGroup, RoleRecord } from "../ui/PromptBar.tsx";
@@ -108,20 +108,25 @@ export interface ComposerModelView {
   plannerEffort: string | undefined;
   /** Whether the effort control applies: some role's model has a reasoning dial. */
   effortApplies: boolean;
-  /** Game chats on a session engine split the work into roles. */
+  /** Game chats on an engine that splits roles (`splitsRoles`) give each job its own model. */
   rolesApply: boolean;
   roleModels: Array<{ id: string; label: string }>;
-  /** The other signed-in subscriptions' models, offered to workers and judges (never the orchestrator). */
+  /**
+   * The other ready engines that take roles, and their models: each job may go to those it crosses
+   * to (`crossesTo`), never the orchestrator.
+   */
   roleOthers: RoleGroup[];
   /** The roles a send carries, efforts resolved (`effectiveRoles`); null where roles do not apply. */
   roles: RoleRecord | null;
 }
 
 const modelRow = (m: { id: string; label: string }) => ({ id: m.id, label: m.id === "default" ? "Default" : m.label });
-const holdsSessions = (engine: EngineDescriptor) => engine.supportsSessions ?? engine.kind === EngineKind.Delegated;
-/** Another engine can take the builder or judge role: it holds sessions, is ready, and has models. */
+/**
+ * Another engine can take the builder or judge role: it takes roles (a session engine, or a
+ * completion-only local one), is ready, and has models.
+ */
 const canTakeRoles = (engine: EngineDescriptor) =>
-  holdsSessions(engine) && engine.status.code === EngineStatusCode.Ready && engine.models.length > 0;
+  takesRoles(engine.id) && engine.status.code === EngineStatusCode.Ready && engine.models.length > 0;
 
 type RoleView = Pick<ComposerModelView, "choices" | "selected" | "selectedEngine" | "rolesApply" | "roleOthers">;
 
@@ -167,7 +172,7 @@ export function resolveComposerModel(input: {
   const selectedChoice = choices.find((choice) => choice.key === selected);
   const selectedEngine = input.engines.find((engine) => engine.id === parseModelKey(selected).engine);
   const rolesApply = Boolean(
-    !input.studio && selectedEngine && holdsSessions(selectedEngine) && selectedEngine.models.length > 0,
+    !input.studio && selectedEngine && splitsRoles(selectedEngine) && selectedEngine.models.length > 0,
   );
   const roleOthers: RoleGroup[] =
     rolesApply && selectedEngine
@@ -242,7 +247,8 @@ function requireAvailableRoles(
   if (!roles) return;
   for (const role of ["builder", "judge"] as const) {
     const provider = roles.engines?.[role] ?? engine;
-    const available = provider === engine || model.roleOthers.some((group) => group.engine === provider);
+    const ready = model.roleOthers.some((group) => group.engine === provider);
+    const available = provider === engine || (ready && crossesTo(engine, role, provider));
     if (!available) throw new Error(MODEL_PICKER_WORDS.unavailable);
     requireAvailableChoice(model.choices, keyOf(provider, roles[role] ?? ""));
   }
@@ -329,7 +335,7 @@ export function useComposerModel({
       setRoles(null);
       return;
     }
-    setRoles(openingRoles(storage, selectedEngine.id, parseModelKey(selected).model || undefined));
+    setRoles(openingRoles(storage, selectedEngine.id, parseModelKey(selected).model || undefined, choices));
   }, [rolesApply, selectedEngine?.id]);
 
   const sendRoles = view.roles;
@@ -341,11 +347,11 @@ export function useComposerModel({
     // A model row is a preset: it fills all three roles from the policy table.
     const { engine: engineId, model: modelId } = parseModelKey(key);
     const engine = engines.find((e) => e.id === engineId);
-    const fillsRoles = !studio && engine !== undefined && holdsSessions(engine);
+    const fillsRoles = !studio && engine !== undefined && splitsRoles(engine);
     if (fillsRoles) {
       const saved = readStoredRoles(storage, engineId);
       const preset = {
-        ...(saved ?? resolveRoles(engineId, modelId || undefined)),
+        ...(saved ?? presetRoles(engineId, modelId || undefined, choices)),
         planner: modelId || undefined,
         efforts: { ...saved?.efforts, planner: undefined },
       };

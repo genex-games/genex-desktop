@@ -35,10 +35,11 @@ const EXIT_GRACE_MS = 2 * SECOND_MS;
 /** One CLI's installers, the shell its macOS/Linux script is written for, and what keeps it from asking. */
 interface Installer {
   unix: string;
-  windows: string;
+  /** The vendor's PowerShell installer, or null when it publishes none (OpenCode). */
+  windows: string | null;
   shell: string;
   set: Record<string, string>;
-  vendor: "claude" | "codex";
+  vendor: "claude" | "codex" | "opencode";
 }
 
 /** Each coding CLI's official installers, from its vendor's install instructions. */
@@ -58,6 +59,13 @@ const INSTALLERS = {
     set: { CODEX_NON_INTERACTIVE: "1" },
     vendor: "codex",
   },
+  [EngineId.OpenCode]: {
+    unix: "https://opencode.ai/install",
+    windows: null,
+    shell: "/bin/bash",
+    set: {},
+    vendor: "opencode",
+  },
 } as const satisfies Record<CodingProvider, Installer>;
 
 /** Why an installer cannot be looked up; the renderer never sees this, main refuses first. */
@@ -68,17 +76,17 @@ const MESSAGE = {
   size: (bytes: number) => `the installer download was ${bytes} bytes`,
   exited: (code: number | null, output: string) => `the installer exited with ${code}: ${output}`,
   timedOut: (output: string) => `the installer did not finish in time: ${output}`,
+  noInstaller: (provider: string, platform: string) => `${provider} publishes no installer for ${platform}`,
 } as const;
 
 /** Where `provider`'s installer comes from on `platform`, and the extension its saved copy needs. */
 export function installerSource(
   provider: CodingProvider,
   platform: NodeJS.Platform,
-): { url: string; extension: ".sh" | ".ps1" } {
+): { url: string; extension: ".sh" | ".ps1" } | null {
   const installer = installerOf(provider);
-  return isWindows(platform)
-    ? { url: installer.windows, extension: ".ps1" }
-    : { url: installer.unix, extension: ".sh" };
+  if (!isWindows(platform)) return { url: installer.unix, extension: ".sh" };
+  return installer.windows ? { url: installer.windows, extension: ".ps1" } : null;
 }
 
 /** How the installer saved at `script` is started: its own shell, or PowerShell by its full path. */
@@ -134,6 +142,8 @@ export async function installCodingCli(
   const platform = options.platform ?? process.platform;
   const parent = options.env ?? process.env;
   const source = installerSource(provider, platform);
+  if (!source)
+    return { ok: false, problem: CliInstallProblem.Download, detail: MESSAGE.noInstaller(provider, platform) };
   const script = await download(source.url, options.fetch ?? fetch);
   if (!script.ok) return { ok: false, problem: CliInstallProblem.Download, detail: script.detail };
   const folder = await mkdtemp(path.join(options.tmpRoot ?? os.tmpdir(), "genex-cli-install-"));

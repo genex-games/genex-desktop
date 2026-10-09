@@ -1,5 +1,5 @@
 import { previewVisibility } from "./preview-visibility.ts";
-import { CaptureSurface } from "../shared/preview-contract.ts";
+import { CaptureSurface, type PreviewGone, PreviewConsoleSource, previewGone } from "../shared/preview-contract.ts";
 import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
 /**
  * Game preview.
@@ -58,8 +58,12 @@ import {
   PAGE_CAPTURE,
   PAGE_CAPTURE_TIMEOUT_MS,
   type PageCaptureInfo,
+  STATE_MAX_CHARS,
   TRUSTED_PROBE,
+  pageEvaluation,
+  studioStateExpression,
 } from "./preview-page-scripts.ts";
+import { StateShape } from "../shared/studio-state-shape.ts";
 import { computePixelStats, isEffectivelyBlack, type PixelDiff, type PixelStats } from "../substrate/pixel-stats.ts";
 import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../substrate/page-ui.ts";
 import type { CropRect, PageAttachReport, ShimOptions } from "../substrate/preview-port.ts";
@@ -95,6 +99,8 @@ export interface PreviewStatus {
   project: string | null;
   url: string | null;
   crashed: boolean;
+  /** Why the renderer went away while `crashed`; null while it runs. */
+  gone: PreviewGone | null;
   unresponsive: boolean;
   loadError: string | null;
   consoleErrors: number | null;
@@ -195,6 +201,8 @@ export class GamePreview {
   /** A load or reload this port started and has not seen finish: the page on screen is not the one asked for. */
   #navigating = false;
   #crashed = false;
+  /** Why the renderer went away, from Electron's own reason; cleared with `#crashed`. */
+  #gone: PreviewGone | null = null;
   #unresponsive = false;
   #loadError: string | null = null;
   #captureRecoveries = 0;
@@ -339,7 +347,14 @@ export class GamePreview {
     });
     wc.on("render-process-gone", (_event, details) => {
       this.#crashed = true;
-      this.#push({ at: Date.now(), level: "error", message: MESSAGE.renderGone(details.reason) });
+      this.#gone = previewGone(details.reason);
+      // Typed as the studio's own line: the crash is read off status(), never as an error the build logged.
+      this.#push({
+        at: Date.now(),
+        level: "error",
+        message: MESSAGE.renderGone(details.reason),
+        source: PreviewConsoleSource.WindowGone,
+      });
     });
     wc.on("unresponsive", () => {
       this.#unresponsive = true;
@@ -361,6 +376,7 @@ export class GamePreview {
       this.#syncAnimationVisibility();
       this.#loadError = null;
       this.#crashed = false;
+      this.#gone = null;
       void wc.executeJavaScript('console.debug("__studio_console_channel_probe__")').catch(() => {
         this.#consoleAvailable = false;
       });
@@ -645,6 +661,7 @@ export class GamePreview {
     this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
     this.#loadError = null;
     this.#crashed = false;
+    this.#gone = null;
     this.#console = [];
     this.#blockedNoted.clear();
     this.#consoleAvailable = false;
@@ -893,7 +910,7 @@ export class GamePreview {
    * It NEVER restores a hidden window. The evidence pass takes a user-view frame every pass now,
    * and un-hiding the user's window once a pass (or once a camera) to get a nicety is not a
    * trade the studio makes. An offscreen port does attempt it — offscreen rendering paints its
-   * own frames — and falls back like any other. A page frame is a nicety; an unattended night
+   * own frames — and falls back like any other. A page frame is a nicety; an unattended run
    * must never depend on one, so a failure ends at the page's own canvas read, not at an error.
    */
   async #capturePageSurface(): Promise<{
@@ -1058,15 +1075,11 @@ export class GamePreview {
     // `Promise.resolve` first: an expression that evaluates to a promise (a `fetch`, an async
     // probe) must be awaited *before* serialising, otherwise every async probe silently returns
     // `{}` and any check built on it passes without testing anything.
-    const wrapped = `Promise.resolve().then(() => ${expression}).then(
-        (value) => JSON.stringify(value === undefined ? null : value),
-        (err) => JSON.stringify({ __error: String(err) }),
-      )`;
-    const raw = (await view.webContents.executeJavaScript(wrapped, true)) as string | undefined;
+    const raw = (await view.webContents.executeJavaScript(pageEvaluation(expression), true)) as string | undefined;
     if (raw === undefined) return undefined;
     const text = String(raw);
     if (text.length > maxChars) {
-      return { __truncated: true, length: text.length, head: text.slice(0, maxChars) };
+      return { [StateShape.Truncated]: true, length: text.length, head: text.slice(0, maxChars) };
     }
     return JSON.parse(text);
   }
@@ -1095,9 +1108,13 @@ export class GamePreview {
     return { ...base, navigating: false, page: answered ? page : null };
   }
 
-  /** `window.__studio.state()` — the structural probe that complements screenshots. */
-  async studioState(): Promise<unknown> {
-    return this.evaluate("window.__studio ? window.__studio.state() : { __missing: true }");
+  /**
+   * `window.__studio.state()` — the structural probe that complements screenshots. Bounded by
+   * structure in the page (`boundStudioState`): a state past {@link STATE_MAX_CHARS} loses its
+   * largest lists to stubs, never the tail of its text, and the `keep` paths are cut last.
+   */
+  async studioState(options?: { keep?: readonly string[] }): Promise<unknown> {
+    return this.evaluate(studioStateExpression(STATE_MAX_CHARS, options?.keep));
   }
 
   /**
@@ -1300,7 +1317,7 @@ export class GamePreview {
             at: Date.now(),
             level: "error",
             message: MESSAGE.consoleUnavailable,
-            source: "studio:observation",
+            source: PreviewConsoleSource.Observation,
           },
         ];
   }
@@ -1316,6 +1333,7 @@ export class GamePreview {
       project: this.#project,
       url: this.#view?.webContents.getURL() ?? null,
       crashed: this.#crashed,
+      gone: this.#gone,
       unresponsive: this.#unresponsive,
       loadError: this.#loadError,
       consoleErrors: this.#consoleAvailable ? this.#console.filter((entry) => entry.level === "error").length : null,
@@ -1351,6 +1369,12 @@ export class GamePreview {
    * (PreviewPort.dispose). The visible view never sets one — the pool refuses to dispose "live".
    */
   dispose?: () => Promise<void> | void;
+
+  /**
+   * Pooled headless ports get their resize injected the same way (PreviewPort.setViewSize): the
+   * hosting window and this view at one size, or null for the size the window opened at.
+   */
+  setViewSize?: (size: { width: number; height: number } | null) => void;
 
   get sessionRef(): Session | null {
     return this.#session;

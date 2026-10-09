@@ -21,6 +21,10 @@ function terminalTheme(style: CSSStyleDeclaration) {
     foreground: color("--foreground"),
     cursor: color("--foreground"),
     selectionBackground: color("--secondary"),
+    // The slider matches the app's own scrollbars.
+    scrollbarSliderBackground: color("--line"),
+    scrollbarSliderHoverBackground: color("--line-strong"),
+    scrollbarSliderActiveBackground: color("--line-strong"),
   };
 }
 

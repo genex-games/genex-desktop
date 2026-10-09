@@ -7,6 +7,7 @@ import {
   GenexPublishJobState,
   GenexPublishKind,
   GenexPublishPhase,
+  type GenexGameManifest,
   type GenexPublishJob,
   type GenexPublishState,
 } from "../../shared/genex.ts";
@@ -16,6 +17,10 @@ import { DEFAULT_DASHBOARD, isGenexLink } from "./http.ts";
 
 /** A draft checked this soon after its upload is still expected to go live on its own. */
 const FOREGROUND_CHECK_MS = 2 * 60 * SECOND_MS;
+/** How long a gallery publish waits for its new draft to pass its test before it gives up on going public. */
+export const DRAFT_TEST_MS = FOREGROUND_CHECK_MS;
+/** A gallery publish uploads its build at most this many times: once, and once more when the draft fails its test. */
+export const MAX_UPLOADS = 2;
 const FIRST_RETRY_MS = 2 * SECOND_MS;
 const MAX_FOREGROUND_RETRY_MS = 15 * SECOND_MS;
 /** Retries double at most this many times before settling at the cap. */
@@ -45,6 +50,10 @@ export const MESSAGE = {
   NeedsGit: "Publishing needs git on this Mac. Install git (Xcode command line tools or Homebrew) and try again.",
   NeedsGitLfs:
     "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
+  DraftFailedTest:
+    "The new build did not pass its test on the draft page, so it was not made public. Players still get the previous version.",
+  SignInNotRecorded: (shipped: string, reported: string) =>
+    `Genex does not record this build's sign-in support (shipped ${shipped}, Genex reports ${reported})`,
 } as const;
 
 /** Genex's own record of a hosted game, read by slug. `missing`: there is no hosted project. */
@@ -73,39 +82,78 @@ const hasSlug = (meta: HostedMeta | null | undefined): meta is HostedMeta & { sl
   typeof meta?.slug === "string" && meta.slug !== "";
 const isListed = (meta: HostedMeta | null | undefined) => meta?.status === GenexHostedStatus.Published;
 
+/** Whether a listed game is listed again: only when the name it is listed under changes. */
+export const needsRelisting = (meta: HostedMeta | null | undefined, listedTitle: string | undefined, title?: string) =>
+  isListed(meta) && title !== undefined && title !== listedTitle;
+
 /**
- * The CLI phases an attempt runs, in order. A draft is one upload. Publishing always updates the
- * draft too: the first time `publish` uploads, promotes and lists in one run; a listed game's
- * draft is uploaded and then promoted, so the gallery listing is never repeated.
+ * The CLI phases after the draft upload and its test, in order. A draft stops there. Publishing
+ * makes that tested build the public version, then lists the game the first time, or again when
+ * its name changed; nothing goes public before the draft passed.
  */
-export function publishSteps(
+export function publicSteps(
   meta: HostedMeta | null | undefined,
   kind: GenexPublishKind,
-): [GenexPublishPhase, ...GenexPublishPhase[]] {
-  if (kind === GenexPublishKind.Draft) return [GenexPublishPhase.Uploading];
-  return isListed(meta) ? [GenexPublishPhase.Uploading, GenexPublishPhase.Promoting] : [GenexPublishPhase.Listing];
+  relist = false,
+): GenexPublishPhase[] {
+  if (kind === GenexPublishKind.Draft) return [];
+  const listing = !isListed(meta) || relist;
+  return listing ? [GenexPublishPhase.Promoting, GenexPublishPhase.Listing] : [GenexPublishPhase.Promoting];
 }
 
-/** The phase an attempt starts in: create the hosted project once, then its first upload step. */
-export function publishPhaseFor(meta: HostedMeta | null | undefined, kind: GenexPublishKind): GenexPublishPhase {
-  if (!meta?.slug) return GenexPublishPhase.CreatingProject;
-  return publishSteps(meta, kind)[0];
+/** The phase an attempt starts in: create the hosted project once, then upload the draft. */
+export function publishPhaseFor(meta: HostedMeta | null | undefined): GenexPublishPhase {
+  return meta?.slug ? GenexPublishPhase.Uploading : GenexPublishPhase.CreatingProject;
 }
 
-/** Whether an attempt's upload is verified on the draft page: every draft, and a publish of a marked export. */
+/**
+ * Whether an upload is verified on the draft page after it finished: every draft, and a publish of a
+ * marked export that an earlier Studio promoted before testing. A publish now tests its draft first.
+ */
 export const checksDraftPage = (job: GenexPublishJob): boolean =>
   job.kind === GenexPublishKind.Draft || job.deployment !== undefined;
 
-/** The CLI command for each upload phase. */
+/** The CLI command for each upload phase. Listing ships nothing: the promoted build is already live. */
 const CLI_ARGS_FOR_PHASE: Partial<Record<GenexPublishPhase, string[]>> = {
   [GenexPublishPhase.Uploading]: ["preview", "--no-build"],
   [GenexPublishPhase.Promoting]: ["promote"],
-  [GenexPublishPhase.Listing]: ["publish", "--no-build"],
+  [GenexPublishPhase.Listing]: ["publish", "--no-push"],
 };
 
-/** The CLI arguments that carry out an upload phase. */
-export function publishArgs(phase: GenexPublishPhase): string[] {
-  return [...(CLI_ARGS_FOR_PHASE[phase] ?? [])];
+/**
+ * The CLI arguments that carry out an upload phase. Listing names the game; a game listed before
+ * under another name (or none Studio sent) also has its cover redrawn, since Genex paints the name on it.
+ */
+export function publishArgs(
+  phase: GenexPublishPhase,
+  listing: { title?: string; redrawCover?: boolean } = {},
+): string[] {
+  const args = [...(CLI_ARGS_FOR_PHASE[phase] ?? [])];
+  if (phase !== GenexPublishPhase.Listing || !listing.title) return args;
+  return [...args, "--title", listing.title, ...(listing.redrawCover ? ["--regenerate-cover"] : [])];
+}
+
+/**
+ * The package.json of Studio's publish copy: the game's Genex SDK versions and `genex` settings,
+ * which the CLI reads from the folder it runs in and sends with every upload. Null when the game
+ * names none, so no package.json is left behind.
+ */
+export function workspaceManifest(project: string, manifest: GenexGameManifest | undefined): object | null {
+  if (!manifest) return null;
+  return {
+    name: project.toLowerCase(),
+    private: true,
+    dependencies: manifest.dependencies,
+    ...(manifest.genex ? { genex: manifest.genex } : {}),
+  };
+}
+
+/** The sign-in support Genex records for a build, when its answer names one: compared with what shipped. */
+export function signInRecorded(shipped: string | undefined, project: { embedSdkVersion?: unknown } | undefined) {
+  const reported = project?.embedSdkVersion;
+  if (!shipped || reported === undefined) return { ok: true } as const;
+  if (reported === shipped) return { ok: true } as const;
+  return { ok: false, reported: typeof reported === "string" ? reported : "none" } as const;
 }
 
 /** A running upload with no recorded outcome that no process here owns: a restart interrupted it. */
@@ -147,9 +195,21 @@ export function uploadMissing(job: GenexPublishJob, before: HostedStaging, now: 
   return phase === GenexPublishPhase.Listing && now.status !== GenexHostedStatus.Published;
 }
 
-/** A publish that stopped in its draft upload never reached its promotion: the public version is unchanged. */
-export const stoppedBeforePromotion = (job: GenexPublishJob): boolean =>
-  job.kind === GenexPublishKind.Gallery && phaseOf(job) === GenexPublishPhase.Uploading;
+/** A publish that stopped in its draft upload or its test never reached its promotion: the public version is unchanged. */
+export const stoppedBeforePromotion = (job: GenexPublishJob): boolean => {
+  const phase = phaseOf(job);
+  const beforePublic = phase === GenexPublishPhase.Uploading || phase === GenexPublishPhase.VerifyingDeployment;
+  return job.kind === GenexPublishKind.Gallery && beforePublic;
+};
+
+/**
+ * A publish a restart stopped while its draft was being tested: the CLI had finished uploading,
+ * nothing was made public, so it is over rather than unknown.
+ */
+export function interruptedInTest(job: GenexPublishJob | undefined, exporting: boolean): job is GenexPublishJob {
+  const testing = job?.phase === GenexPublishPhase.VerifyingDeployment && job.kind === GenexPublishKind.Gallery;
+  return testing && job.state === GenexPublishJobState.Running && !job.uploadedAt && !exporting;
+}
 
 /** Whether an unknown gallery upload is shown listed by Genex. */
 export function listingLanded(job: GenexPublishJob, hosted: HostedStaging): boolean {
@@ -166,6 +226,34 @@ export function finishJob(
   job.state = outcome;
   job.phase = outcome;
   job.finishedAt = at;
+}
+
+/** How long a publish waits before testing its draft again after `check` failed tries: doubling, capped. */
+export const draftRetryDelay = (check: number): number =>
+  Math.min(MAX_FOREGROUND_RETRY_MS, FIRST_RETRY_MS * 2 ** Math.min(check, MAX_BACKOFF_STEPS));
+
+/** Close a job whose build Genex was seen serving: done, and ready to play. */
+export function markReady(job: GenexPublishJob, at: string): void {
+  job.state = GenexPublishJobState.Done;
+  job.phase = GenexPublishPhase.Ready;
+  job.finishedAt = at;
+  delete job.checkError;
+  delete job.nextCheckAt;
+}
+
+/**
+ * What a finished upload records about the game's pages: when each was updated, the name a
+ * publish listed it under, and the page link the CLI printed for this attempt.
+ */
+export function recordPages(state: GenexPublishState, job: GenexPublishJob, shared: string | undefined, at: string) {
+  state.lastPreviewAt = at;
+  if (job.kind === GenexPublishKind.Draft) {
+    if (shared) state.draftUrl = shared;
+    return;
+  }
+  state.lastPublishAt = at;
+  if (job.title) state.title = job.title;
+  if (shared) state.galleryUrl = shared;
 }
 
 /** When to check an unverified draft again: back off while it is fresh, then poll slowly. */

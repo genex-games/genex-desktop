@@ -1,9 +1,8 @@
 /**
  * What a judged round may claim, beside the acceptance rule (rules.ts): a rung of the director's
  * ladder already built or set aside, a regression a second look reproduces, a gap a judge named.
- * The golden-goal night (run_muqk3i4yjnez, 2026-10-02) lost four rounds running to a rung its
- * worker had built in round one, a round to a probe that sampled one frame, and asked a vision
- * judge whether "regressed play-loop" was gone. A module of its own, so a workspace that kept an
+ * Without them a worker loses round after round to a rung it built long ago, a round to a probe
+ * that sampled one frame, and a vision judge is asked whether "regressed play-loop" is gone. A module of its own, so a workspace that kept an
  * older rules.ts or policy.ts still loads the parts that read these names.
  */
 import { CheckKind } from "../spec.ts";

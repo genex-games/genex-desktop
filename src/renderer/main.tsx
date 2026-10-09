@@ -3,7 +3,7 @@ import { PerformanceComponent } from "../shared/performance.ts";
 /**
  * Renderer entry.
  *
- * Two rooms: Build (chat + the live game) and Review (what it did overnight, and what it changed
+ * Two rooms: Build (chat + the live game) and Review (what it did unattended, and what it changed
  * about itself). The renderer holds no state the log does not: it subscribes to substrate events
  * and renders them, so what you see is always a view of the agent's actual state.
  *

@@ -6,9 +6,10 @@
  * process, including the harness itself, can read these files even after the agent has rewritten
  * all of its own tools.
  *
- * In v1 there is deliberately little to keep here (D8: no API keys). Subscriptions never produce
- * a token we hold: Claude Code and Codex manage their own credentials in their own config homes.
- * This exists so that when a key does arrive, there is an obvious right place to put it.
+ * There is deliberately little to keep here. Subscriptions never produce a token we hold: Claude
+ * Code and Codex manage their own credentials in their own config homes, as OpenCode does. The one
+ * API key the studio keeps is OpenRouter's, pasted in Settings (`provider-keys.ts`), beside the
+ * MCP connectors' secrets.
  */
 import path from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
@@ -36,7 +37,8 @@ const MESSAGE = {
 const LOCKED_MESSAGE = {
   [SecretStorageIssue.OsCredentialsDisabled]: "OS credential access is disabled for this process.",
   [SecretStorageIssue.EncryptionUnavailable]: "OS encryption is unavailable; secret storage remains locked.",
-  [SecretStorageIssue.NoKeyring]: "No OS keyring is available; secret storage remains locked.",
+  [SecretStorageIssue.NoKeyring]:
+    "No unlocked system keyring is available. Start GNOME Keyring or KWallet and unlock it, then restart Genex.",
 } as const satisfies Record<SecretStorageIssue, string>;
 
 /** The secret store is locked, and `issue` says why; nothing was written. */
@@ -76,8 +78,11 @@ export interface SafeStorage {
 export function safeStorageBackend(safeStorage: SafeStorage): CryptoBackend {
   const unavailable = (): SecretStorageIssue | null => {
     assertOsCredentialsAllowed();
+    // `getSelectedStorageBackend` exists only on Linux, and names the backend chosen, not one that started.
+    const onLinux = safeStorage.getSelectedStorageBackend !== undefined;
     if (safeStorage.getSelectedStorageBackend?.() === LINUX_PLAINTEXT_BACKEND) return SecretStorageIssue.NoKeyring;
-    return safeStorage.isEncryptionAvailable() ? null : SecretStorageIssue.EncryptionUnavailable;
+    if (safeStorage.isEncryptionAvailable()) return null;
+    return onLinux ? SecretStorageIssue.NoKeyring : SecretStorageIssue.EncryptionUnavailable;
   };
   return {
     name: "electron-safeStorage",

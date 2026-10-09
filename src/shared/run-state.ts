@@ -56,7 +56,7 @@ export const VerdictRule = {
 } as const;
 export type VerdictRule = (typeof VerdictRule)[keyof typeof VerdictRule];
 
-/** The rules of a build judged with nothing before it: a night from an empty game, or a start nobody could photograph. */
+/** The rules of a build judged with nothing before it: a run from an empty game, or a start nobody could photograph. */
 const NOTHING_TO_COMPARE: ReadonlySet<string> = new Set([VerdictRule.FirstBuild, VerdictRule.NoStart]);
 
 /** Whether a verdict's build had nothing to be compared with, so it was judged on its own. */
@@ -134,6 +134,28 @@ export const ExecutionStatus = {
 export type ExecutionStatus = (typeof ExecutionStatus)[keyof typeof ExecutionStatus];
 
 /**
+ * Where a run's journal stands (`journal.phase`); a Resume reads it back. The harness writes these
+ * (its copy is `JournalPhase` in `loop/run-events.ts`): never rename a value.
+ */
+export const JournalPhase = {
+  /** The classic pipeline's one-part run. */
+  Single: "single",
+  /** A director run: the lead's own session. */
+  Director: "director",
+  Base: "base",
+  Facets: "facets",
+  Integrate: "integrate",
+  Ledger: "ledger",
+  IntegrationFacet: "integration-facet",
+  Verdict: "verdict",
+  Optimization: "optimization",
+  /** Stopped before it finished: a resume picks it up. */
+  Paused: "paused",
+  Done: "done",
+} as const;
+export type JournalPhase = (typeof JournalPhase)[keyof typeof JournalPhase];
+
+/**
  * What a run's budgets say ends it (`budgets.completionPolicy`): the judge's satisfaction, or its
  * time. The harness writes these (its copy is `CompletionPolicy` in `loop/completion-policy.ts`):
  * never rename a value.
@@ -151,6 +173,21 @@ export function isCompletionPolicy(value: unknown): value is CompletionPolicy {
   return COMPLETION_POLICIES.has(value);
 }
 
+/**
+ * How long a run has worked since its working time began: the stretches it ran, never a pause or
+ * the hours the app was closed under it. The harness counts its budget the same way (its journal's
+ * `loopRunClock`), so a resumed build goes on from the time it worked, not from its first start.
+ */
+export interface RunWorked {
+  /** The working time of its closed stretches, in ms. */
+  ms: number;
+  /** When the stretch it is working now began; null while it is closed. */
+  since: string | null;
+}
+
+/** A run that has not worked yet. */
+const NOT_WORKED: RunWorked = { ms: 0, since: null };
+
 export interface RunExecution {
   runId: string;
   state: RunState;
@@ -161,6 +198,13 @@ export interface RunExecution {
   openedAt: string | null;
   /** When it last closed; null while it runs. */
   endedAt: string | null;
+  /** How long it has worked since `openedAt`. */
+  worked: RunWorked;
+  /**
+   * Its newest own record in the stretch it is working now (`executionActivity`): where that
+   * stretch ends when a later launch closes a run the app died under. Null until one arrives.
+   */
+  activeAt: string | null;
 }
 
 /** The records that start (or restart) a run. */
@@ -229,18 +273,33 @@ export function executionStep(
     startedAt: null,
     openedAt: null,
     endedAt: null,
+    worked: NOT_WORKED,
+    activeAt: null,
   };
   if (event_type === CustomEvent.RunFinished) {
     const status = closed(payload);
-    return { ...run, status, state: status === "paused" ? "paused" : "finished", endedAt: at };
+    const state = status === "paused" ? "paused" : "finished";
+    const worked = stoppedWorking(run, closeEnd(run, payload, at));
+    return { ...run, status, state, endedAt: at, worked, activeAt: null };
   }
-  if (RUN_PAUSE_EVENTS.has(event_type)) return { ...run, state: "paused", status: "paused" };
-  return { ...run, state: "running", status: "running", endedAt: null };
+  if (RUN_PAUSE_EVENTS.has(event_type))
+    return { ...run, state: "paused", status: "paused", worked: stoppedWorking(run, at), activeAt: null };
+  return { ...run, state: "running", status: "running", endedAt: null, worked: workingFrom(run, at) };
+}
+
+/**
+ * Any other record of the run's own, in order: while it works, the newest sign that it was
+ * working. Closed, it leaves the run as it was.
+ */
+export function executionActivity(current: RunExecution | null, at: string): RunExecution | null {
+  if (current?.state !== RunState.Running) return current;
+  return { ...current, activeAt: at };
 }
 
 /** A start or restart: a finished run started again is reopened, and its working time counts from here. */
 function startedStep(current: RunExecution | null, runId: string, at: string): RunExecution {
-  const openedAt = current?.state === RunState.Finished ? at : (current?.openedAt ?? at);
+  const reopened = current?.state === RunState.Finished;
+  const openedAt = reopened ? at : (current?.openedAt ?? at);
   return {
     runId,
     state: RunState.Running,
@@ -248,7 +307,55 @@ function startedStep(current: RunExecution | null, runId: string, at: string): R
     startedAt: current?.startedAt ?? at,
     openedAt,
     endedAt: null,
+    worked: reopened || !current ? { ms: 0, since: at } : workingFrom(current, at),
+    activeAt: current?.state === RunState.Running ? current.activeAt : null,
   };
+}
+
+/** Its working time once it (re)starts at `at`: a stretch already under way goes on. */
+function workingFrom(run: RunExecution, at: string): RunWorked {
+  return run.worked.since ? run.worked : { ms: run.worked.ms, since: at };
+}
+
+/** Its working time once the stretch under way ends at `end`. */
+function stoppedWorking(run: RunExecution, end: string): RunWorked {
+  const { since } = run.worked;
+  if (!since) return run.worked;
+  const span = Date.parse(end) - Date.parse(since);
+  return { ms: run.worked.ms + (Number.isFinite(span) ? Math.max(0, span) : 0), since: null };
+}
+
+/** Is this close the run's own report, written as it stopped: its status, or its rounds? */
+const reportedByRun = (payload: Record<string, unknown>): boolean =>
+  typeof payload.executionStatus === "string" || Array.isArray(payload.iterations);
+
+/**
+ * Where a `run_finished` written at `at` ends the stretch under way. The run's own report ends it
+ * then: a build turn may work long after the run's last record of its own. A close that a later
+ * launch settled for a run the app died under is written hours after the work stopped, and those
+ * hours were never work: it ends when the conversation last heard from the run (`workedUntil`), or,
+ * for a launch from before it said, at the run's newest own record.
+ */
+function closeEnd(run: RunExecution, payload: Record<string, unknown>, at: string): string {
+  const { workedUntil } = payload;
+  if (typeof workedUntil === "string" && Number.isFinite(Date.parse(workedUntil))) return workedUntil;
+  if (reportedByRun(payload)) return at;
+  return run.activeAt ?? at;
+}
+
+/** How long a run has worked by `now`, in ms: its closed stretches and the one under way. */
+export function workedMs(worked: RunWorked, now: number): number {
+  const since = worked.since ? Date.parse(worked.since) : Number.NaN;
+  return worked.ms + (Number.isFinite(since) ? Math.max(0, now - since) : 0);
+}
+
+/**
+ * When a working run would have started had it never paused, in ms — the origin a running clock
+ * counts from. Null while it is closed.
+ */
+export function workStart(worked: RunWorked): number | null {
+  const since = worked.since ? Date.parse(worked.since) : Number.NaN;
+  return Number.isFinite(since) ? since - worked.ms : null;
 }
 
 type LogRecord = { readonly created_at: string; readonly data: CustomEventData };

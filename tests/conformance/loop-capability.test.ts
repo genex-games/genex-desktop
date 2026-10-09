@@ -9,7 +9,7 @@
  * instead of being silently downgraded.
  */
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { HarnessCapability } from "../../src/shared/protocol.ts";
@@ -69,7 +69,7 @@ describe("loop capability handshake", () => {
     assert.deepEqual(rig.core.host.capabilities, [], "a harness that claims nothing has nothing");
 
     const threadId = await rig.core.createGameThread();
-    const brief = "an overnight rainy city with neon puddles";
+    const brief = "a rainy city with neon puddles";
     await rig.core.sendUserMessage(brief, { thread: threadId, loop: { hours: 2 } });
 
     const events = await waitForLog(
@@ -89,7 +89,7 @@ describe("loop capability handshake", () => {
       "the user's text is in the log",
     );
 
-    // Never downgraded: the stale self never saw the commission as a chat turn, no night was
+    // Never downgraded: the stale self never saw the commission as a chat turn, no run was
     // started, and no model was ever consulted.
     assert.ok(
       !messages.some((m) => String(m.content).startsWith("plain chat:")),
@@ -116,6 +116,53 @@ describe("loop capability handshake", () => {
         ),
       15_000,
       "plain chat reaching the stale harness",
+    );
+  });
+
+  it("a build whose jobs cross to a local engine reaches only a harness whose every part serves it, never one that would misroute", async () => {
+    const rig = await startRig();
+    rigs.push(rig);
+    assert.equal(
+      rig.core.host.hasCapability(HarnessCapability.LocalRoles),
+      true,
+      "the shipped seed serves local roles",
+    );
+
+    // The agent edited its scout before local roles existed: the upgrade kept its copy, which has no
+    // marker and would ask Ollama for a session.
+    const scout = path.join(rig.core.layout.harnessWs, "loop", "scout.ts");
+    const kept = (await readFile(scout, "utf8")).replace("export const SERVES_LOCAL_ROLES = true;", "");
+    await writeFile(scout, kept);
+    await rig.core.host.restart();
+    assert.equal(rig.core.host.state, "ready");
+    assert.equal(rig.core.host.hasCapability(HarnessCapability.LocalRoles), false);
+    assert.equal(rig.core.host.hasCapability(HarnessCapability.Autopilot), true, "everything else is still served");
+
+    const threadId = await rig.core.createGameThread();
+    const brief = "a marsh at dusk";
+    await rig.core.sendUserMessage(brief, {
+      thread: threadId,
+      engine: "claude-code",
+      model: "opus",
+      autopilot: { hours: 1, roles: { planner: "opus", builder: "opus", judge: "vl", engines: { judge: "ollama" } } },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => log.some((e) => e.data.type === "error"),
+      15_000,
+      "the refusal in the thread",
+    );
+    const refusal = events.find((e) => e.data.type === "error")!.data as { message: string };
+    assert.match(refusal.message, /local model/);
+    const messages = await rig.core.store.listMessages(threadId);
+    assert.ok(
+      messages.some((m) => m.role === "user" && m.content === brief),
+      "the brief is in the log",
+    );
+    assert.equal(customEvents(events, "run_started").length, 0, "no run may start on a part that misroutes");
+    assert.ok(
+      rig.events.some((e) => e.type === "chat.error"),
+      "the open window is told",
     );
   });
 });

@@ -355,7 +355,7 @@ The bundled palettes adapt the following MIT-licensed themes for Studio UI roles
 
 ### Tokyo Night
 
-Source: https://raw.githubusercontent.com/tokyo-night/tokyo-night-vscode-theme/master/LICENSE.txt
+Source: https://raw.githubusercontent.com/tokyo-run/tokyo-run-vscode-theme/master/LICENSE.txt
 
 The MIT License (MIT)
 

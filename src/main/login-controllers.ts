@@ -7,6 +7,7 @@ import os from "node:os";
 import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
+import { childEnv } from "../substrate/child-env.ts";
 import type { ClaudeLoginState } from "../shared/claude-login.ts";
 import type { CodexLoginState } from "../shared/codex-login.ts";
 import { ClaudeLoginController } from "./claude-login.ts";
@@ -35,6 +36,8 @@ export interface LoginControllerDeps {
   /** Show the Codex sign-in state: the dialog covers the stage, so the native preview hides. */
   showCodexState(state: CodexLoginState): void;
   showClaudeState(state: ClaudeLoginState): void;
+  /** OpenCode's sign-in ended: read the models it can run now. */
+  onOpenCodeSignedIn?(): Promise<unknown>;
   /** The installed CLI each sign-in runs; the studio's own resolver unless a test gives another. */
   requireCli?: typeof requireCodingCli;
   findBinary?: typeof findClaudeBinary;
@@ -49,7 +52,12 @@ export function createLoginControllers({
   showClaudeState,
   requireCli = requireCodingCli,
   findBinary = findClaudeBinary,
-}: LoginControllerDeps): { codexLogin: CodexLoginController; claudeLogin: ClaudeLoginController } {
+  onOpenCodeSignedIn,
+}: LoginControllerDeps): {
+  codexLogin: CodexLoginController;
+  claudeLogin: ClaudeLoginController;
+  openCodeLogin: OpenCodeLogin;
+} {
   let lastCodexLoginPhase = "idle";
   const codexLogin = new CodexLoginController({
     resolveCli: () => requireCli(EngineId.Codex),
@@ -97,5 +105,35 @@ export function createLoginControllers({
       pushUiEvent({ type: UiEvent.EnginesChanged, payload: {} });
     },
   });
-  return { codexLogin, claudeLogin };
+  const openCodeLogin: OpenCodeLogin = {
+    async start() {
+      const cli = await requireCli(EngineId.OpenCode).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: ["auth", "login"],
+        cwd: os.tmpdir(),
+        // Its own sign-in: OpenCode's settings, no other vendor's variables and no credential. Its
+        // provider list comes from the catalog it already has: a refresh can stall for minutes
+        // before the first question, and the engine refreshes the models itself after.
+        env: childEnv(cli.env, { base: "contractor", vendor: "opencode", set: { OPENCODE_DISABLE_MODELS_FETCH: "1" } }),
+        title: "OpenCode sign-in",
+        kind: TerminalKind.OpenCodeLogin,
+        onExit: () => {
+          void onOpenCodeSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
+  return { codexLogin, claudeLogin, openCodeLogin };
+}
+
+/**
+ * OpenCode's sign-in: its own `opencode auth login`, in a terminal in its Settings row, for any
+ * of the providers it supports. OpenCode keeps what it is given in its own store; the studio
+ * rereads the models OpenCode can run once the terminal closes.
+ */
+export interface OpenCodeLogin {
+  start(): Promise<{ started: boolean; missingCli?: boolean }>;
 }

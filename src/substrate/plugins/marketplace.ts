@@ -19,6 +19,7 @@ import {
   GithubVersionKind,
   PLUGIN_CATEGORIES,
   PluginSourceKind,
+  PluginTier,
 } from "../../shared/plugins.ts";
 import { type GithubLink, manifestFolder, parseGithubLink, pinnedSpec } from "../../shared/github-link.ts";
 import { isPluginId } from "../../shared/plugin-id.ts";
@@ -26,6 +27,7 @@ import { atomicWriteJson } from "../fsx.ts";
 import { inspectPackage, validateManifest } from "./manifest.ts";
 import { assertRelativePath } from "../paths.ts";
 import { scanPackage } from "./scan.ts";
+import { isPackagePath, MAX_ARTIFACT_BYTES } from "./pack.ts";
 import { errorMessage, UserCancelledError } from "../../shared/errors.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 
@@ -35,13 +37,16 @@ import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
  * Nothing is extracted from an archive and no install hook ever runs — every file is fetched as a blob,
  * checked against the commit's own object id and written through `assertRelativePath`.
  */
-export const DEFAULT_INDEX_URL = "https://plugins.genex.games/catalog/v1/index.json";
+/** The one host the published catalog and its artifacts live on. */
+const CATALOG_ORIGIN = "https://plugins.genex.games";
+export const DEFAULT_INDEX_URL = `${CATALOG_ORIGIN}/catalog/v1/index.json`;
+/** Where a reviewed release's artifact is uploaded: `<base>/<id>/<version>/<sha256>.json`. */
+export const CATALOG_ARTIFACT_BASE_URL = `${CATALOG_ORIGIN}/releases`;
 const INDEX_TTL_MS = 6 * HOUR_MS;
 const INDEX_TIMEOUT_MS = 15 * SECOND_MS;
 const INDEX_MAX_BYTES = 1024 * 1024;
 // Bundled runtimes are much larger than index metadata; allow bounded slow-network delivery.
 const ARTIFACT_TIMEOUT_MS = 5 * MINUTE_MS;
-const ARTIFACT_MAX_BYTES = 256 * 1024 * 1024;
 const TREE_MAX_FILES = 400;
 const FILE_MAX_BYTES = 8 * 1024 * 1024;
 const TREE_MAX_BYTES = 64 * 1024 * 1024;
@@ -295,6 +300,8 @@ function packageBlob(node: TreeNode, prefix: string): GithubBlob | undefined {
   const relative = file.slice(prefix.length);
   if (!relative) return undefined;
   assertRelativePath(relative);
+  // The repository around a package (`.github/`, `.gitignore`, an author's AGENTS.md) is not installed.
+  if (!isPackagePath(relative)) return undefined;
   const size = typeof node.size === "number" ? node.size : 0;
   if (size > FILE_MAX_BYTES) throw new Error(MESSAGE.FileTooLarge(relative));
   return { path: file, relative, sha: typeof node.sha === "string" ? node.sha : "", size };
@@ -329,7 +336,7 @@ const hasListingText = (e: PluginIndexEntry) =>
   typeof e.publisher === "string" &&
   e.publisher !== "" &&
   typeof e.description === "string";
-const isKnownTier = (tier: unknown) => tier === "official" || tier === "community";
+const isKnownTier = (tier: unknown) => tier === PluginTier.Official || tier === PluginTier.Community;
 const isStringList = (value: unknown) => Array.isArray(value) && value.every((c) => typeof c === "string");
 const isPinnedArtifact = (artifact: PluginIndexEntry["artifact"]) =>
   Boolean(artifact?.url?.startsWith("https://")) && SHA256.test(artifact?.sha256 ?? "");
@@ -399,8 +406,9 @@ export function validateIndex(value: unknown): PluginIndex {
 
 /**
  * What the catalog's own CI enforces (its `policy.json`), held by the app as well: the index is
- * unsigned, so "official" and an artifact's origin must not be whatever the index says. Index
- * signing (a key embedded here) is the later step, before community entries are accepted.
+ * unsigned, so "official" and an artifact's origin must not be whatever the index says. Community
+ * entries are listed after maintainer review, their artifacts hosted on an approved origin; signing
+ * the index with a key embedded here is later hardening.
  */
 export interface CatalogPolicy {
   /** Origins an artifact may be downloaded from; its path must end in `/<id>/<version>/<sha256>.json`. */
@@ -418,7 +426,7 @@ export interface CatalogPolicy {
  */
 const OFFICIAL_REPOS = ["genex-games/genex-desktop", "Rabneba/ai-game-studio"] as const;
 export const STUDIO_CATALOG_POLICY: CatalogPolicy = {
-  artifactOrigins: ["https://plugins.genex.games"],
+  artifactOrigins: [CATALOG_ORIGIN],
   official: {
     genex: { publisher: "Genex", repos: OFFICIAL_REPOS },
     blender: { publisher: "Studio", repos: OFFICIAL_REPOS },
@@ -468,7 +476,7 @@ export function applyCatalogPolicy(index: PluginIndex, policy: CatalogPolicy): P
     const impostor = reserved && (entry.publisher !== reserved.publisher || !reserved.repos.includes(entry.repo));
     if (impostor) continue;
     if (entry.artifact && !isAllowedArtifact(entry, entry.artifact, policy)) continue;
-    plugins.push(entry.tier === "official" && !reserved ? { ...entry, tier: "community" } : entry);
+    plugins.push(entry.tier === PluginTier.Official && !reserved ? { ...entry, tier: PluginTier.Community } : entry);
   }
   return { ...index, plugins };
 }
@@ -935,7 +943,7 @@ export class PluginMarketplace {
       signal: AbortSignal.timeout(ARTIFACT_TIMEOUT_MS),
       redirect: "error",
     });
-    const bytes = await this.#read(response, ARTIFACT_MAX_BYTES, MESSAGE.PluginDownload);
+    const bytes = await this.#read(response, MAX_ARTIFACT_BYTES, MESSAGE.PluginDownload);
     if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error(MESSAGE.DigestMismatch);
     let scanned: PluginScan | undefined;
     const manifest = await target.installEnvelope(

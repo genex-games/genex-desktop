@@ -154,7 +154,7 @@ export interface HarnessCompleteParams {
 export interface HarnessDelegateParams {
   coordinator?: { runId: string; messageId?: string };
   /**
-   * The chat's own session after a night it led: the run's controls it keeps (`run_status`,
+   * The chat's own session after a run it led: the run's controls it keeps (`run_status`,
    * `show_build`, `land_build`, shared/coordinator.ts `RunControl`), answered by the host for this
    * run and message as the coordinator's tools are. Honoured only for the chat's own session.
    */
@@ -162,7 +162,7 @@ export interface HarnessDelegateParams {
   /**
    * This session is its chat's current turn: the message it answers. What the person sends
    * meanwhile can reach it (`engine.steer`); honoured only for the chat's own session, and for a
-   * night's lead (a `director` session), whose turn is named by its run id instead.
+   * run's lead (a `director` session), whose turn is named by its run id instead.
    */
   chatTurn?: { messageId?: string };
   engine?: string;
@@ -192,9 +192,9 @@ export interface HarnessDelegateParams {
   images?: DelegateImage[];
   /** Edit-time ownership the engine enforces before a Write lands. */
   ownership?: DelegateOwnership;
-  /** The computer (computer use, 2026-09-07): `false` withholds the builder's hands; default on with a capture grant. */
+  /** The computer: `false` withholds the builder's hands; default on with a capture grant. */
   computer?: boolean;
-  /** The director (director, 2026-09-07): the run's orchestrating session, with the harness's run tools forwarded. */
+  /** The director: the run's orchestrating session, with the harness's run tools forwarded. */
   director?: DelegateDirectorGrant & { tools?: LiveToolSpec[] };
   /**
    * A run's sub-agent: every plugin call this session makes carries the run and the agent's id (its
@@ -467,10 +467,24 @@ export interface HarnessHostApi {
     params: { project: string; root?: string; entry?: string; candidateId?: string };
     result: AttachReport;
   };
-  /** v2 contract upgrade: an older `src/studio.js` gets the shipped template's copy, the old one kept beside it. */
+  /**
+   * v2 contract upgrade: an older `src/studio.js` that is a copy the studio shipped gets the template's
+   * copy, the old one kept beside it. An older copy anyone edited is left alone and answered with
+   * `edited` and the `generation` it stays at; its `src/hud.js` stays with it.
+   * `hud` is there when the game's `src/hud.js` was older than the template's: replaced (a shipped copy,
+   * kept as `backup`) or left alone (an edited copy, or one beside a kept contract, still at `generation`).
+   */
   "game.upgradeContract": {
     params: { project: string };
-    result: { upgraded: boolean; reason?: string; materialsAdded?: boolean; backup?: string | null };
+    result: {
+      upgraded: boolean;
+      reason?: string;
+      materialsAdded?: boolean;
+      backup?: string | null;
+      edited?: boolean;
+      generation?: number;
+      hud?: { generation: number; replaced: boolean; backup?: string };
+    };
   };
   "game.read": { params: { project: string; file: string; candidateId?: string }; result: string | GameImageRead };
   "game.write": {
@@ -519,7 +533,12 @@ export interface HarnessHostApi {
   };
   /** What the page holds outside the canvas: a DOM menu, an HTML HUD, a loader. */
   "preview.pageUi": { params: { handle?: string }; result: unknown };
-  "preview.state": { params: { handle?: string }; result: unknown };
+  /**
+   * `__studio.state()`, bounded by structure: over the studio's budget its largest lists become
+   * `{__elided, length, chars}` stubs and the root names them under `__cut`. `keep` names the
+   * dotted paths a board reads (at most 64, each up to 120 characters); they are cut last.
+   */
+  "preview.state": { params: { handle?: string; keep?: string[] }; result: unknown };
   "preview.call": { params: { method: string; arg?: unknown; handle?: string }; result: unknown };
   /** Read-only JS over the game's own graph; the answer is untrusted JSON, size-capped by the port. */
   "preview.evaluate": { params: { expression: string; handle?: string }; result: unknown };
@@ -555,6 +574,17 @@ export interface HarnessHostApi {
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
   "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
   "preview.release": { params: { handle: string }; result: boolean };
+  /**
+   * One leased window at another size (the art director's 1600×900 look), for that lease only:
+   * clamped to 320–1920 × 240–1200 and back at the facet size when the lease is released. Never
+   * Live, the stand-in or a window a computer session plays in, so its view never changes size:
+   * handing the lease to a session puts it back at the facet size, and the caller sizes it again
+   * afterwards (`preview.status` `viewSize` says the size it is at now).
+   */
+  "preview.viewport": {
+    params: { handle: string; width: number; height: number };
+    result: { handle: string; width: number; height: number };
+  };
   /** Pixel stats of an encoded still — the same numbers a capture yields. */
   "preview.statsOf": {
     params: { base64?: string; path?: string; handle?: string };
@@ -714,6 +744,7 @@ export const HostMethod = {
   PreviewObserve: "preview.observe",
   PreviewAcquire: "preview.acquire",
   PreviewRelease: "preview.release",
+  PreviewViewport: "preview.viewport",
   PreviewStatsOf: "preview.statsOf",
   PreviewPair: "preview.pair",
   PreviewScreens: "preview.screens",

@@ -1,8 +1,12 @@
 /**
  * The scripts the preview runs inside a game's page: probes that report what the page can do
- * and saw (trusted input, the attach report, WebGL errors) and the page-side capture. Each is an
- * expression string for `webContents.executeJavaScript`.
+ * and saw (trusted input, the attach report, WebGL errors), the page-side capture and the bounded
+ * read of `__studio.state()`. Each is an expression string for `webContents.executeJavaScript`.
  */
+import { ElidedKind, StateShape, keepPathsOf } from "../shared/studio-state-shape.ts";
+
+/** The studio reads at most this much of a `state()` whole; past it, the largest lists are cut. */
+export const STATE_MAX_CHARS = 48_000;
 
 /** Installed once per page: remembers whether any trusted (native) input ever arrived. */
 export const TRUSTED_PROBE = `(() => {
@@ -182,3 +186,308 @@ export const GL_PROBE = `(() => {
   window.__studioGl = { errors: () => { drain(); return seen.slice(); } };
   return true;
 })()`;
+
+/**
+ * How every expression is evaluated in the page: awaited first (an async probe must resolve
+ * before it is serialised, or it reads `{}`), then serialised to JSON text there, with a throw
+ * answered as `{__error}`. The host parses that text; nothing else crosses.
+ */
+export function pageEvaluation(expression: string): string {
+  return `Promise.resolve().then(() => ${expression}).then(
+        (value) => JSON.stringify(value === undefined ? null : value),
+        (err) => JSON.stringify({ __error: String(err) }),
+      )`;
+}
+
+/**
+ * What {@link boundStudioState} is told. It runs in the page from its own source, so the marker
+ * names arrive here rather than through an import the page would not have.
+ */
+export interface StateBoundOptions {
+  /** The budget for the state's JSON, its `__cut` marker included. */
+  maxChars: number;
+  /** Paths cut only when nothing else brings the state under the budget. */
+  keep: readonly string[];
+  shape: typeof StateShape;
+  kind: typeof ElidedKind;
+}
+
+/** The bounder's options for a budget and the `keep` paths a caller sent, validated here. */
+export function stateBoundOptions(maxChars: number, keep: unknown = []): StateBoundOptions {
+  return { maxChars, keep: keepPathsOf(keep), shape: StateShape, kind: ElidedKind };
+}
+
+/**
+ * The page expression that reads `window.__studio.state()` bounded to `maxChars`: a page without
+ * the contract answers `{__missing}` and a throwing `state()` answers `{__error}`, exactly as the
+ * unbounded read did.
+ */
+export function studioStateExpression(maxChars = STATE_MAX_CHARS, keep: unknown = []): string {
+  const options = JSON.stringify(stateBoundOptions(maxChars, keep));
+  const read = `window.__studio ? window.__studio.state() : { ${StateShape.Missing}: true }`;
+  return `Promise.resolve(${read}).then((state) => (${boundStudioState.toString()})(state, ${options}))`;
+}
+
+/**
+ * A `state()` bounded by structure, never cut as a string. A state whose JSON fits `maxChars` comes
+ * back unchanged, byte for byte. Past it, the largest lists are replaced by stubs
+ * (`{__elided, length, chars}`), then — when no list is left to cut — the object that holds the
+ * bulk, descending while one child holds most of it; a long string is cut the same way. Order is
+ * deterministic (size, then path); a scalar is never removed; the paths in `keep` are cut only
+ * when nothing else is left, lists first. The root then says what was cut under `__cut`.
+ *
+ * A cycle or a throwing getter throws exactly as serialising the state did. The walks are
+ * iterative, so deep nesting cannot overflow the stack, and sizes are measured in one pass.
+ *
+ * It runs from its own source text (`boundStudioState.toString()`), so everything it uses — its
+ * limits included — is declared inside it: a helper or a constant of this module would not exist
+ * in the page.
+ */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: evaluated in the page from its own source, so it stays one self-contained function
+// biome-ignore lint/complexity/noExcessiveLinesPerFunction: evaluated in the page from its own source, so it stays one self-contained function
+export function boundStudioState(state: unknown, options: StateBoundOptions): unknown {
+  /** `__cut.paths` names at most this many paths, each clipped to this many characters. */
+  const MAX_CUT_PATHS = 32;
+  const MAX_CUT_PATH_CHARS = 120;
+  /** The most one cut adds back: its stub, and its path in `__cut.paths`. */
+  const CUT_COST_CHARS = MAX_CUT_PATH_CHARS + 72;
+  /** A value smaller than this is never worth a stub: cutting it could grow the state. */
+  const MIN_ELIDE_CHARS = 2 * CUT_COST_CHARS;
+  /** The bounder stops after this many cuts; the host's own cap is the last word. */
+  const MAX_ELISIONS = 512;
+  /** Lists get at most half the cuts, so the object that holds them can always still be cut. */
+  const MAX_LIST_CUTS = MAX_ELISIONS / 2;
+  /** A value's relation to the `keep` paths: none, an ancestor of one, or one (or inside one). */
+  const FREE = 0;
+  const ON_KEPT_PATH = 1;
+  const KEPT = 2;
+  const { shape, kind, maxChars } = options;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(state);
+  } catch {
+    // A cycle, a throwing getter, nesting too deep to serialise: hand the state back untouched,
+    // and the evaluation fails on it exactly where and how it always has.
+    return state;
+  }
+  if (text === undefined) return state;
+  const root: unknown = JSON.parse(text);
+  if (text.length <= maxChars) return root;
+
+  const isContainer = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object";
+  const kindOf = (v: unknown): string => {
+    if (Array.isArray(v)) return kind.Array;
+    if (typeof v === "string") return kind.String;
+    return kind.Object;
+  };
+  const lengthOf = (v: unknown): number => {
+    if (Array.isArray(v) || typeof v === "string") return v.length;
+    return isContainer(v) ? Object.keys(v).length : 0;
+  };
+  const stubOf = (v: unknown, chars: number) => ({ [shape.Elided]: kindOf(v), length: lengthOf(v), chars });
+  // Never `target[key] = value`: a state may carry a `__proto__` key, and assigning it would
+  // change the object's prototype instead of replacing the data.
+  const setOwn = (target: object, key: string, value: unknown): void => {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+  };
+  const cut = { chars: text.length, paths: [] as string[] };
+  if (!isContainer(root) || Array.isArray(root)) {
+    const answer = stubOf(root, text.length);
+    cut.paths.push("");
+    setOwn(answer, shape.Cut, cut);
+    return answer;
+  }
+
+  // One pre-order walk: every value's parent, key and relation to `keep`. A value's subtree is
+  // the index range [i, ends[i]).
+  const values: unknown[] = [];
+  const parents: number[] = [];
+  const keys: string[] = [];
+  /** What a member's key adds to its parent's JSON: `"key":` in an object, nothing in a list. */
+  const memberChars: number[] = [];
+  const depths: number[] = [];
+  const keepState: number[] = [];
+  const kids: number[][] = [];
+  const keepSegments = options.keep.map((path) => path.split("."));
+  type Pending = { value: unknown; parent: number; key: string; member: number; matching: number[]; kept: boolean };
+  const stack: Pending[] = [
+    { value: root, parent: -1, key: "", member: 0, matching: keepSegments.map((_, j) => j), kept: false },
+  ];
+  while (stack.length > 0) {
+    const next = stack.pop() as Pending;
+    const i = values.length;
+    const depth = next.parent < 0 ? 0 : depths[next.parent] + 1;
+    const kept = next.kept || next.matching.some((j) => keepSegments[j].length === depth);
+    values.push(next.value);
+    parents.push(next.parent);
+    keys.push(next.key);
+    memberChars.push(next.member);
+    depths.push(depth);
+    kids.push([]);
+    let relation = FREE;
+    if (kept) relation = KEPT;
+    else if (next.matching.length > 0) relation = ON_KEPT_PATH;
+    keepState.push(relation);
+    if (next.parent >= 0) kids[next.parent].push(i);
+    const value = next.value;
+    if (!isContainer(value)) continue;
+    const names = Array.isArray(value) ? value.map((_, k) => String(k)) : Object.keys(value);
+    for (let k = names.length - 1; k >= 0; k--) {
+      const key = names[k];
+      const member = Array.isArray(value) ? 0 : JSON.stringify(key).length + 1;
+      const matching = kept ? [] : next.matching.filter((j) => keepSegments[j][depth] === key);
+      stack.push({ value: value[key], parent: i, key, member, matching, kept });
+    }
+  }
+
+  // Sizes bottom-up: every value's JSON length, and how much of it lies in kept values.
+  const n = values.length;
+  const sizes: number[] = new Array(n).fill(0);
+  const ends: number[] = new Array(n).fill(0);
+  const keptChars: number[] = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    const own = kids[i];
+    let size = 0;
+    let keptBelow = 0;
+    if (isContainer(values[i])) {
+      size = 2 + Math.max(0, own.length - 1);
+      for (const c of own) {
+        size += memberChars[c] + sizes[c];
+        keptBelow += keptChars[c];
+      }
+    } else size = String(JSON.stringify(values[i])).length;
+    sizes[i] = size;
+    keptChars[i] = keepState[i] === KEPT ? size : keptBelow;
+    ends[i] = own.length > 0 ? ends[own[own.length - 1]] : i + 1;
+  }
+
+  const dead = new Uint8Array(n);
+  const exhausted = new Uint8Array(n);
+  let elisions = 0;
+  const cutMarkerChars = () => JSON.stringify(shape.Cut).length + 2 + JSON.stringify(cut).length;
+  const overBudget = () => sizes[0] + cutMarkerChars() > maxChars && elisions < MAX_ELISIONS;
+  const paths = new Map<number, string>();
+  const pathOf = (i: number): string => {
+    const known = paths.get(i);
+    if (known !== undefined) return known;
+    const segments: string[] = [];
+    for (let at = i; at > 0; at = parents[at]) segments.push(keys[at]);
+    const path = segments.reverse().join(".");
+    paths.set(i, path);
+    return path;
+  };
+  const heavierFirst = (a: number, b: number): number => {
+    if (sizes[a] !== sizes[b]) return sizes[b] - sizes[a];
+    const pa = pathOf(a);
+    const pb = pathOf(b);
+    if (pa === pb) return a - b;
+    return pa < pb ? -1 : 1;
+  };
+  const elide = (i: number): void => {
+    const stub = stubOf(values[i], sizes[i]);
+    const stubChars = JSON.stringify(stub).length;
+    setOwn(values[parents[i]] as object, keys[i], stub);
+    const saved = sizes[i] - stubChars;
+    for (let at = parents[i]; at >= 0; at = parents[at]) sizes[at] -= saved;
+    sizes[i] = stubChars;
+    for (let d = i + 1; d < ends[i]; d++) dead[d] = 1;
+    exhausted[i] = 1;
+    elisions++;
+    if (cut.paths.length >= MAX_CUT_PATHS) return;
+    const path = pathOf(i);
+    cut.paths.push(path.length > MAX_CUT_PATH_CHARS ? `${path.slice(0, MAX_CUT_PATH_CHARS - 1)}…` : path);
+  };
+
+  // Lists first, largest first: a list is what grows without bound (every HUD id, every bullet).
+  const isLooseList = (i: number): boolean =>
+    Array.isArray(values[i]) && keepState[i] === FREE && dead[i] === 0 && sizes[i] >= MIN_ELIDE_CHARS;
+  // Whether the lists, largest first, bring the state under the budget within MAX_LIST_CUTS cuts
+  // (or run out first). When they cannot, the weight is spread over many medium lists — every
+  // car's path in a map of thousands — and cutting them one by one would spend every cut and
+  // still not fit: the map that holds them is cut whole instead.
+  const listsFitInCuts = (lists: number[]): boolean => {
+    const planned = new Uint8Array(n);
+    let over = sizes[0] + cutMarkerChars() - maxChars;
+    let count = 0;
+    for (const i of lists) {
+      if (over <= 0) return true;
+      let inside = false;
+      for (let at = parents[i]; at > 0 && !inside; at = parents[at]) inside = planned[at] === 1;
+      if (inside) continue;
+      if (count >= MAX_LIST_CUTS) return false;
+      planned[i] = 1;
+      count++;
+      over -= sizes[i] - CUT_COST_CHARS;
+    }
+    return true;
+  };
+  const cutLists = (): void => {
+    const lists: number[] = [];
+    for (let i = 1; i < n; i++) if (isLooseList(i)) lists.push(i);
+    lists.sort(heavierFirst);
+    if (!listsFitInCuts(lists)) return;
+    for (const i of lists) {
+      if (!overBudget()) return;
+      if (dead[i] === 0) elide(i);
+    }
+  };
+  // Then the bulk: descend from the root into the heaviest child while one child holds most of
+  // its parent; where the weight is spread over many children, cut the parent whole.
+  const cuttable = (i: number): number => (exhausted[i] || dead[i] ? 0 : sizes[i] - keptChars[i]);
+  const heaviestKid = (i: number): number => {
+    let best = -1;
+    for (const c of kids[i]) {
+      if (keepState[c] === KEPT || cuttable(c) < MIN_ELIDE_CHARS) continue;
+      const tie = best >= 0 && cuttable(c) === cuttable(best) && keys[c] < keys[best];
+      if (best < 0 || cuttable(c) > cuttable(best) || tie) best = c;
+    }
+    return best;
+  };
+  const excess = (): number => sizes[0] + cutMarkerChars() - maxChars;
+  const loose = (at: number): boolean => at > 0 && keepState[at] === FREE;
+  // Stop at `at` when its weight is spread over many children (a map of thousands of entries)
+  // or when its heaviest child alone would not bring the state under the budget.
+  const stopsAt = (at: number, kid: number): boolean => {
+    const spread = cuttable(kid) * 2 < cuttable(at);
+    const tooSmall = cuttable(kid) < excess() + CUT_COST_CHARS;
+    return loose(at) && (spread || tooSmall);
+  };
+  const pickBulk = (): number => {
+    let at = 0;
+    for (;;) {
+      const kid = heaviestKid(at);
+      if (kid < 0) {
+        if (loose(at)) return at;
+        exhausted[at] = 1;
+        return -1;
+      }
+      if (stopsAt(at, kid)) return at;
+      if (!isContainer(values[kid])) return kid;
+      at = kid;
+    }
+  };
+  const cutBulk = (): void => {
+    while (overBudget() && exhausted[0] === 0) {
+      const target = pickBulk();
+      if (target >= 0) elide(target);
+    }
+  };
+  // Last, the kept paths themselves, by the same rules.
+  const releaseKeeps = (): void => {
+    for (let i = 0; i < n; i++) {
+      keepState[i] = FREE;
+      keptChars[i] = 0;
+      if (dead[i] === 0 && sizes[i] >= MIN_ELIDE_CHARS) exhausted[i] = 0;
+    }
+  };
+
+  cutLists();
+  cutBulk();
+  if (overBudget() && keepSegments.length > 0) {
+    releaseKeeps();
+    cutLists();
+    cutBulk();
+  }
+  setOwn(root, shape.Cut, cut);
+  return root;
+}

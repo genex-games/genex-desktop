@@ -14,6 +14,7 @@ import { MINUTE_MS } from "../loop/time.ts";
 import { TurnStop } from "../loop/turn-record.ts";
 import { isRecord } from "../loop/json.ts";
 import { ProjectStarter, ProjectTool } from "../loop/folder-facts.ts";
+import { scopeItems } from "../loop/scope.ts";
 
 /** How long `run_command` lets a command run when the call names no timeout. */
 const COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
@@ -47,6 +48,32 @@ const SLUG_STOP = new Set([
 ]);
 
 const str = (description: string) => ({ type: "string", description });
+/**
+ * A list parameter. Engines that declare intake fields as strings (claude-code.ts `intakeTool`) send
+ * it as a JSON array in a string or one item per line: the registry lets that text through
+ * (`acceptJsonString`) and `scopeItems` reads every shape.
+ */
+const list = (description: string) => ({
+  type: "array",
+  items: { type: "string" },
+  acceptJsonString: true,
+  description,
+});
+
+/** What a launch's goal is: the user's ask, nothing they did not ask for. */
+const GOAL_WORDS = "one paragraph in the user's words; add nothing they did not ask for — put it in cut, or ask";
+/** What a launch delivers. */
+const IN_SCOPE_WORDS = "what this build delivers, each item in the user's words";
+/** What a launch leaves out: a named reference is a look bar, not a feature list. */
+const CUT_WORDS =
+  "what a game like this often has that this build will not (a reference is a look bar, not a feature list)";
+
+/** A launch's in-scope and cut lists as the run carries them to its scope (chat-dispatch.ts `intakeRun`); none when unnamed. */
+function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[] } {
+  const inScope = scopeItems(args.in_scope);
+  const cut = scopeItems(args.cut);
+  return { ...(inScope.length ? { inScope } : {}), ...(cut.length ? { cut } : {}) };
+}
 
 /** Does the call name a folder other than the one this chat is pinned to? */
 function pinnedElsewhere(args: AnyRecord, ctx: ToolCtx): boolean {
@@ -312,10 +339,12 @@ export const tools: HarnessTool[] = [
     parameters: {
       type: "object",
       properties: {
-        goal: str("one paragraph: what exists when the build ends, in the user's words plus the feeling"),
+        goal: str(GOAL_WORDS),
         direction: str("the feeling bar — AAA photoreal rainy city, etc. Titles optional"),
         project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
         notes: str("optional extra for the critic"),
+        in_scope: list(IN_SCOPE_WORDS),
+        cut: list(CUT_WORDS),
       },
       required: ["goal", "direction"],
     },
@@ -332,7 +361,7 @@ export const tools: HarnessTool[] = [
       const kind = referenceKind(frames);
       // This slug only ever names a chat that has no folder yet: the launch stamps the chat's
       // own folder over it (turn-loop) and a bound thread wins outright (main.ts). It used to
-      // outrank the binding, and the night then built in a second, empty folder while the user
+      // outrank the binding, and the run then built in a second, empty folder while the user
       // typed into the chat attached to the first.
       const project = slugProject(args.project || args.direction || args.goal);
       const hours = clampRunHours(loop.hours);
@@ -350,6 +379,7 @@ export const tools: HarnessTool[] = [
         hours,
         engine: builderEngine,
         ...(builderModel ? { model: builderModel } : {}),
+        ...scopeArgs(args),
       };
       return {
         ok: true,
@@ -367,11 +397,13 @@ export const tools: HarnessTool[] = [
     parameters: {
       type: "object",
       properties: {
-        goal: str("one paragraph: what should exist, in the user's words plus the feeling"),
+        goal: str(GOAL_WORDS),
         direction: str("the visual/feeling bar — a named game or film, or a described feeling"),
         project: str("folder slug for a chat that has no folder yet, lowercase; a chat already bound to one keeps it"),
         notes: str("optional extra for the critics — what makes the reference good"),
         textual_reference: str("if the user had no images: the game/film they named as the vibe"),
+        in_scope: list(IN_SCOPE_WORDS),
+        cut: list(CUT_WORDS),
       },
       required: ["goal", "direction"],
     },
@@ -388,11 +420,11 @@ export const tools: HarnessTool[] = [
       const kind = referenceKind(frames);
       // This slug only ever names a chat that has no folder yet: the launch stamps the chat's
       // own folder over it (turn-loop) and a bound thread wins outright (main.ts). It used to
-      // outrank the binding, and the night then built in a second, empty folder while the user
+      // outrank the binding, and the run then built in a second, empty folder while the user
       // typed into the chat attached to the first.
       const project = slugProject(args.project || args.direction || args.goal);
       // No cap set means run until the critics are satisfied — with a 24h safety ceiling so a
-      // wedged night can never hold the machine forever.
+      // wedged run can never hold the machine forever.
       const capped = typeof autopilot.hours === "number" && autopilot.hours > 0;
       const hours = capped ? clampRunHours(autopilot.hours) : MAX_RUN_HOURS;
       const notes = criticNotes(args);
@@ -419,6 +451,7 @@ export const tools: HarnessTool[] = [
         // (model-roles.ts) — the interview's own model is never inferred as the builders'.
         ...(autopilot.roles && typeof autopilot.roles === "object" ? { roles: autopilot.roles } : {}),
         ...(autopilot.reviewPlan === true ? { reviewPlan: true } : {}),
+        ...scopeArgs(args),
       };
       const clock = capped ? `Building for up to ${hours} h` : `Building until the critics are satisfied`;
       return {

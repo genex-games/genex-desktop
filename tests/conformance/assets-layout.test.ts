@@ -67,7 +67,7 @@ describe("groupAssets", () => {
       groups.map((group) => group.source),
       ["genex", "blender", "alpha", "zebra", "imported"],
     );
-    // A plugin installed tonight must not be able to reshuffle the canvas above it.
+    // A plugin installed during a run must not be able to reshuffle the canvas above it.
     const reversed = groupAssets([
       asset("assets/genex/x.png", { source: "genex", jobId: "g1" }),
       asset("assets/alpha/x.png", { source: "alpha", jobId: "a1" }),

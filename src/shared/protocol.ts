@@ -163,7 +163,7 @@ export type DispatchAction =
   | { type: "run_stop"; runId: string }
   | { type: "autopilot_resume"; threadId: string; runId: string }
   /**
-   * The director's tools (director, 2026-09-07): a live tool call from the run's director session, hosted
+   * The director's tools: a live tool call from the run's director session, hosted
    * by the studio, forwarded to the harness that owns the workers, the judges and the merge.
    * Unlike every other dispatch this one answers with a value — the tool's result.
    */
@@ -222,6 +222,8 @@ export const HarnessCapability = {
   Steer: "steer",
   /** The chat's own session may run workers: the harness answers `worker_tool` for its turn. */
   Workers: "workers",
+  /** A build whose jobs cross to or from a completion-only local engine (`crossesCompletionEngine`). */
+  LocalRoles: "local-roles",
 } as const;
 export type HarnessCapability = (typeof HarnessCapability)[keyof typeof HarnessCapability];
 
@@ -312,8 +314,8 @@ export interface RunSpec {
   /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
   mode?: "autopilot";
   /**
-   * The programmed pipeline on purpose (director, 2026-09-07): planner → base → facet loops → merge. A
-   * delegated engine's Autopilot is otherwise the director's — one session that decides the night.
+   * The programmed pipeline on purpose: planner → base → facet loops → merge. A
+   * delegated engine's Autopilot is otherwise the director's — one session that decides the run.
    */
   classic?: boolean;
   /**

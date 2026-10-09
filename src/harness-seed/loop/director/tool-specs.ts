@@ -36,12 +36,16 @@ export const DirectorTool = {
 } as const;
 export type DirectorTool = (typeof DirectorTool)[keyof typeof DirectorTool];
 
-/** The run tools, as the studio's engines see them (flat string properties — both bridges). */
+/**
+ * The run tools, as the studio's engines see them (flat string properties — both bridges). Every
+ * session pays for these bytes on every turn and check-grammar.test.ts ratchets the total: say
+ * each rule once, and keep the phrases the wake swaps (wake-prompts.ts) replace.
+ */
 export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.GoalUpdate,
     description:
-      "Record an external blocker or the one concrete replan after two unsuccessful attempts. Cannot mark a goal passed; only playtest goal=<id> can do that. Required goal ids and acceptance are frozen by the first plan.",
+      "Record an external blocker, or the one concrete replan after two failed attempts. It cannot pass a goal; only playtest goal=<id> can. The first plan freezes required goal ids and acceptance.",
     parameters: {
       type: "object",
       properties: {
@@ -52,7 +56,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         },
         replan: {
           type: "string",
-          description: "A materially different approach after two attempts; one replan per unresolved gap.",
+          description: "A materially different approach; one per unresolved gap.",
         },
       },
       required: ["goal"],
@@ -61,47 +65,65 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.RunStatus,
     description:
-      "Run status: time, integration branch, worker progress and budgets, pool slots, free memory, loop thresholds and user guidance. Read when the wake snapshot is stale or incomplete. Boards show the first failing and unmeasured checks; worker_status returns the whole board.",
+      "Time, integration branch, worker progress and budgets, pool slots, free memory, loop thresholds and user guidance. Read it when the wake snapshot is stale or incomplete. Boards show the first failing and unmeasured checks; worker_status has the whole board.",
     parameters: { type: "object", properties: {} },
   },
   {
     name: DirectorTool.Plan,
     description:
-      "Post the plan in the user's chat before worker_start: purpose, worker parts and ids, fork point and risks. Workers refuse without a plan. If the user requested review, the first worker waits for their word before building. Call again when the plan changes.",
+      "Post the plan in the user's chat before worker_start (workers refuse without one): purpose, parts and ids, fork point, risks. If the user asked to review it, the first worker waits for their word. Call again when the plan changes.",
     parameters: {
       type: "object",
       properties: {
         scope_instruction: {
           type: "string",
           description:
-            "Only for a user-requested scope change: quote the new user steer exactly. Routine replans leave initial acceptance unchanged.",
+            "Only for a scope change the user asked for: their steer, quoted exactly. Routine replans leave acceptance unchanged.",
         },
         summary: {
           type: "string",
-          description:
-            "What this run is for, in two or three sentences someone who has never seen a terminal would understand.",
+          description: "What this run is for, in two or three sentences anyone could follow.",
         },
         workers: {
           type: "string",
-          description: `JSON array of the parts you mean to hand out, 1–${MAX_PLAN_WORKERS}: [{"id":"plaza-lighting","title":"Plaza lighting","seam":"the plaza's light and sky — nothing else touches it","owns":"src/plaza.js, src/sky.js","done":["the plaza reads as dusk from every camera"],"minutes":45}]. Set multiplayer:true on each outcome requiring Genex online play; its host prerequisites are checked before delegation. Use the same id in worker_start; a part you drop or add later is a new plan.`,
+          description: `JSON array of the parts you hand out, 1–${MAX_PLAN_WORKERS}: [{"id":"plaza-light","title":"Plaza light","seam":"the plaza's light and sky","owns":"src/plaza.js","done":["dusk from every camera"],"minutes":45}]. multiplayer:true on a part needing Genex online play checks its host prerequisites first. added:true on a part SCOPE does not name makes it optional. worker_start takes the same id; dropping or adding a part is a new plan.`,
+        },
+        cut: {
+          type: "string",
+          description: "What this run will not build, one per line or a JSON array; joins SCOPE's cut list.",
+        },
+        added: {
+          type: "string",
+          description:
+            "What this plan builds that SCOPE does not name, one per line or a JSON array: each is a card asking the user, never scope until they say so.",
         },
         base: {
           type: "string",
           description:
-            "What every worker forks from, in a sentence — the starting point the studio built, the branch as it stands, what you fixed first.",
+            "What every worker forks from, in a sentence (the studio's starting point, the branch as it stands, your first fix).",
         },
         risks: {
           type: "string",
-          description: "What could go wrong in this run and what you will do about it — one per line, or a JSON array.",
+          description: "What could go wrong and what you will do about it — one per line, or a JSON array.",
         },
         kind: {
           type: "string",
-          description: `What kind of game this is, one of: ${KIND_NAMES.join(", ")}. The harness drives that kind's controls before every judgement and puts only the checks it can pass on the board; declare nothing and it assumes nothing.`,
+          description: `Game kind: ${KIND_NAMES.join(", ")}. The harness drives its controls before every judgement and boards only checks it can pass; undeclared assumes nothing.`,
+        },
+        contract: {
+          type: "string",
+          description:
+            'Module contract, required before loop workers when 2+ parts loop: JSON {"conventions":[…],"modules":[{"path","owner":"<part id>","api":[…]}],"shared":[{"path","owner"}]}. It freezes interfaces and conventions, with ranges for content (track 2.5–4 km), never a layout. Committed as docs/MODULE-CONTRACT.md; a bad one is answered with the grammar.',
+        },
+        vision: {
+          type: "string",
+          description:
+            'Required with contract: JSON {"scale","far","set_pieces":[2–3],"headroom"} — the world\'s scale, what the player sees past the nearest building, set-pieces, what it could grow into. Committed as docs/VISION.md; never frozen.',
         },
         play_script: {
           type: "string",
           description:
-            'The controls the harness drives before every judgement, when the kind\'s own script is wrong for this game: JSON array of [{"type":"hold","keys":["w"],"ms":800},{"type":"look","dx":56,"dy":-8},{"type":"click","x":480,"y":300},{"type":"drag","fromX":100,"fromY":100,"x":300,"y":200}].',
+            'Replaces the kind\'s controls when they are wrong for this game: JSON array of [{"type":"hold","keys":["w"],"ms":800},{"type":"look","dx":56,"dy":-8},{"type":"click","x":480,"y":300},{"type":"drag","fromX":100,"fromY":100,"x":300,"y":200}].',
         },
       },
       required: ["summary", "workers"],
@@ -110,24 +132,23 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.WorkerStart,
     description:
-      "Start a background builder with its own git worktree and hidden preview. loop (default): build, gather evidence, check, compare blindly, accept or roll back; repeat until done passes or budget ends, committing accepted builds. Supply 2–4 measurable done outcomes. single: one session, committed without a judge; you assess it. Returns a worker id — use worker_wait and worker_status. One area a player can name per worker, on files of its own; start every independent area, up to the workers run_status allows at once. isolation read starts a reader: it writes nothing and reports what it found.",
+      "Start a background builder with its own git worktree and hidden preview. loop (default): build, gather evidence, check, compare blindly, keep or roll back, until done passes or the budget ends; accepted builds are committed. single: one session committed without a judge; you assess it. Returns a worker id — use worker_wait and worker_status. One area the ask names per worker, on files of its own. The workers run_status allows are a ceiling: start the fewest that cover independent files. isolation read starts a reader: it writes nothing and reports what it found.",
     parameters: {
       type: "object",
       properties: {
         goal: {
           type: "string",
-          description:
-            "The initial required goal this worker advances; defaults to its id. Renaming a worker never resets attempts.",
+          description: "Required goal it advances (default: its id). Renaming a worker never resets attempts.",
         },
         id: {
           type: "string",
-          description: "A slug (letters, digits, dashes) unique in this run, e.g. plaza-lighting.",
+          description: "Slug (letters, digits, dashes), unique in the run.",
         },
         title: { type: "string", description: "A short title for the feed." },
         task: {
           type: "string",
           description:
-            "The brief — what to build, where it is in the code, what done looks like, what not to touch. Everything the builder needs; it does not see your conversation.",
+            "What to build, where in the code, what done looks like, what not to touch. The builder never sees your conversation.",
         },
         isolation: {
           type: "string",
@@ -139,33 +160,33 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         },
         mode: {
           type: "string",
-          description: "loop (judged iterations, default) or single (one session, your judgement).",
+          description: "loop (default) or single.",
         },
         minutes: {
           type: "string",
-          description: "Its time budget in minutes (default 45; capped at what the run has left).",
+          description: "Time budget (default 45; capped at what the run has left).",
         },
         iterations: {
           type: "string",
-          description: "loop only: the most iterations it may run (default from minutes).",
+          description: "loop only: most iterations (default: from minutes).",
         },
         owns: {
           type: "string",
           description:
-            'Comma-separated files, folders or globs this worker owns — its seam (src/plaza.js, src/world/, "src/ui/*.tsx", "app/**/hud.*"). In a glob * and ? stop at a slash and ** crosses them; a pattern containing * or ? must be QUOTED, because on Codex this arrives as a shell command line and an unquoted glob is expanded before the studio sees it. Edits elsewhere are reverted by the reviewer; empty means src/ on the studio\'s template, and everything but the entry, the contract and index.html in a game of its own — name a seam whenever more than one worker runs.',
+            'Its seam: comma-separated files, folders or globs (src/world/, "src/ui/*.tsx", "app/**/hud.*"). * and ? stop at a slash, ** crosses them; a pattern with * or ? must be QUOTED (on Codex the shell expands an unquoted glob). The reviewer reverts edits elsewhere. Empty means src/ on the studio\'s template, everything but the entry, the contract and index.html in a game of its own; name a seam whenever more than one worker runs.',
         },
         owns_main: {
           type: "string",
           description:
-            "yes|no — may it edit the entry module beyond the FACET WIRING block (default: yes when it is the only worker, else no).",
+            "yes|no: may it edit the entry module beyond the FACET WIRING block (default: yes only for a lone worker).",
         },
         cameras: {
           type: "string",
-          description: "Comma-separated registered camera names its evidence is taken from (default: default).",
+          description: "Registered cameras its evidence comes from, comma-separated (default: default).",
         },
         done: {
           type: "string",
-          description: `loop only: JSON array of 2–${MAX_DONE} measurable {"what","check"} outcomes: [{"what":"a car keeps its speed after hitting a bin","check":{"id":"props-dont-stop-cars","kind":"probe","demo":"prop-run","expr":"state.contact.speedKept >= 0.7"}}]. Identity checks must pass with judge agreement to finish. Write before the brief. Same grammar as checks.`,
+          description: `loop only: JSON array of 2–${MAX_DONE} measurable {"what","check"} outcomes, check in the checks grammar: [{"what":"a car keeps its speed after a bin","check":{"id":"bins-keep-speed","kind":"probe","demo":"prop-run","expr":"state.contact.speedKept >= 0.7"}}]. Identity checks need judge agreement to finish. Write it before the brief.`,
         },
         checks: {
           type: "string",
@@ -174,52 +195,56 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           // about which helpers exist. `helpers: false` is the tool-schema voice — every
           // session pays for this description on every turn.
           description: [
-            `loop only: JSON array of the other typed checks, scored every iteration next to done. Each is {"id":"kebab","kind":\u2026} plus its kind's fields; "hard":true marks one that needs a technique spike. The grammar:`,
+            `loop only: JSON array of further typed checks, scored each iteration with done: {"id":"kebab","kind":…} plus the kind's fields; "hard":true marks one needing a technique spike.`,
             renderCheckGrammar({ kinds: CHECK_KINDS, indent: "  ", helpers: false }),
-            `Every check is dry-run against the state the fork point reports before the worker starts; ones that cannot be read there come back as unsatisfiable, with the paths that do exist.`,
+            `Each is dry-run against the fork point's state before the worker starts; unreadable ones come back unsatisfiable, with the paths that exist.`,
           ].join("\n"),
         },
         move: {
           type: "string",
           description:
-            "loop only: the ONE structural change this worker builds first, in a sentence — what the game IS afterwards. The harness hands it to the builder as THE MOVE of the iteration and a build without it loses. Give it, or the harness's own planner will invent one.",
+            "loop only: the ONE structural change it builds first, in a sentence — what the game IS afterwards. A build without it loses. Omitted, the harness's planner invents one.",
         },
         milestones: {
           type: "string",
-          description: `loop only: JSON array of 2–${MAX_MILESTONES} ORDERED structural steps after the move, each a transformation of the area (a system, a layer of depth, a reworked feel) that one accepted round builds — never a list of small fixes: [{"what":"herons wade and the reeds sway","check":{"kind":"scene","js":"count('heron') >= 3"}}] ("check" optional). The worker climbs one rung per accepted build; a rung the judge finds already built climbs by itself. While you own the ladder the harness never names a move of its own; when it is climbed the worker builds its reviewer's big move until you add a rung with worker_steer move=.`,
+          description: `loop only: JSON array of ORDERED structural steps after the move — three concrete rungs with the move (at most ${MAX_MILESTONES}), each a transformation one accepted round builds (a system, a layer of depth, a reworked feel), never small fixes: [{"what":"herons wade","check":{"kind":"scene","js":"count('heron') >= 3"}}] (check optional) — then {"open":true}. One rung per accepted build; a rung the judge finds built is climbed. Every ladder ends open: when reached, the reviewers' best in-scope step fills it, mandatory like yours, or it is passed over. Once climbed the worker builds its reviewer's big move until worker_steer move= adds a rung.`,
+        },
+        stage: {
+          type: "string",
+          description: "finish: polish what exists, no move; blind pick wins, regressions roll back (default build).",
         },
         identity: {
           type: "string",
           description:
-            "Comma-separated identity features (what must be visibly true when it is done); a check that names one is scored as identity too. Prefer done.",
+            "Comma-separated features that must be visibly true when done; a check naming one scores as identity. Prefer done.",
         },
         setup: {
           type: "string",
           description:
-            'JSON: the state its window and its judges open on — {"actions":[{"type":"tap","keys":["i"]},{"type":"click","x":480,"y":300,"px":true}],"verify":{"path":"maps.activeId","equals":"macba"},"note":"…"} or {"demo":"name","verify":{…}}. Default: the run\'s setup.',
+            'JSON state its window and judges open on: {"actions":[{"type":"tap","keys":["i"]},{"type":"click","x":480,"y":300,"px":true}],"verify":{"path":"maps.activeId","equals":"macba"},"note":"…"} or {"demo":"name","verify":{…}}. Default: the run\'s. {"begin":false}: judged on its title/menu (the front-end\'s owner).',
         },
         kind: {
           type: "string",
-          description: `What kind of game this part is, when it differs from the run's: ${KIND_NAMES.join(", ")}. Default: the kind the plan declared.`,
+          description: `This part's game kind when it differs from the plan's: ${KIND_NAMES.join(", ")}.`,
         },
         critic: {
           type: "string",
           description:
-            "Which critic reviews this part every round: screen for a UI or HUD part (is it readable, does it say the game's state, does every action answer on screen), place for a world a player stands in. Default: the kind's.",
+            "Its per-round critic: screen for a UI or HUD part (readable, shows the game's state, every action answers on screen), place for a world a player stands in. Default: the kind's. screen makes it the one part that draws on the screen.",
         },
         traits: {
           type: "string",
           description:
-            "Comma-separated game traits the harness adds its own checks for: hud, mouseLook, keyboardMove. Only what you name is added — an unnamed trait is not declared false, it is simply not measured.",
+            "Comma-separated traits the harness adds checks for: hud, mouseLook, keyboardMove. An unnamed trait is not measured (not declared false).",
         },
         policy: {
           type: "string",
-          description: `loop only: JSON object setting this worker's loop thresholds — ${Object.keys(FACET_POLICY).join(", ")}. What you leave out keeps the harness's own value; run_status reports those.`,
+          description: `loop only: JSON object of loop thresholds — ${Object.keys(FACET_POLICY).join(", ")}. Omitted keys keep the harness's values (see run_status).`,
         },
         from: {
           type: "string",
           description:
-            "What to fork from: integration (default: the integration branch HEAD), a worker id (its last commit), or a commit hash. The studio looks at it once per commit before the worker starts and refuses a fork point that does not run.",
+            "Fork point: integration (default, its HEAD), a worker id (its last commit) or a commit hash. The studio refuses a fork point that does not run.",
         },
         replaces: {
           type: "string",
@@ -231,14 +256,13 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   },
   {
     name: DirectorTool.WorkerStatus,
-    description:
-      "Full worker scoreboard, iterations, attempts, last commit, notes, phase and current gap. Omit id for all workers.",
-    parameters: { type: "object", properties: { id: { type: "string", description: "The worker id; omit for all." } } },
+    description: "Full worker scoreboard, iterations, attempts, last commit, notes, phase and current gap.",
+    parameters: { type: "object", properties: { id: { type: "string", description: "Omit for all workers." } } },
   },
   {
     name: DirectorTool.WorkerSteer,
     description:
-      "Hand a running worker an instruction (a correction, a priority, something you saw) and/or the next structural move it must build. By default a loop worker reads it at the top of its next round, which can be twenty minutes away; now=yes interrupts its build turn and it carries on with your instruction in front of everything — use that whenever waiting would waste the round. A single session is always steered now: it has no round boundary to wait for.",
+      "Give a running worker an instruction (a correction, a priority, something you saw) and/or the next structural move it must build. A loop worker reads it at the top of its next round, maybe twenty minutes away, unless now=yes; use now whenever waiting would waste the round. A single session is always steered now.",
     parameters: {
       type: "object",
       properties: {
@@ -247,13 +271,14 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         now: {
           type: "string",
           description:
-            "yes to interrupt the build turn and hand it over immediately (it keeps everything it has read and written); default no — at the top of its next round.",
+            "yes interrupts the build turn and hands it over now (it keeps what it has read and written); default no.",
         },
         move: {
           type: "string",
           description:
-            "The next rung of its ladder, in a sentence — what the game IS after this iteration. It becomes THE MOVE of the worker's next iteration (mandatory), ahead of the rest of its ladder and of anything the harness would have named.",
+            "The next rung of its ladder, in a sentence — what the game IS afterwards. It becomes THE MOVE of the worker's next iteration (mandatory), ahead of its ladder and the harness's own.",
         },
+        stage: { type: "string", description: "build|finish from its next round." },
       },
       required: ["id"],
     },
@@ -261,15 +286,14 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.WorkerStop,
     description:
-      "Stop a worker now. Whatever it had already written is committed in its worktree (nothing is rolled back), the round it was in is recorded as stopped rather than judged, and its last accepted commit stays where integrate can find it.",
+      "Stop a worker now. What it wrote is committed in its worktree (nothing rolled back), its round is recorded as stopped, not judged, and integrate can still take its last accepted commit.",
     parameters: {
       type: "object",
       properties: {
         id: { type: "string" },
         why: {
           type: "string",
-          description:
-            'Why you are stopping it, in one line — the owner reads this instead of "at the user\'s request".',
+          description: 'One line on why; the owner reads it instead of "at the user\'s request".',
         },
       },
       required: ["id"],
@@ -277,7 +301,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   },
   {
     name: DirectorTool.Wait,
-    description: `Wait for worker completion, an accepted iteration, new inspection evidence, user guidance or timeout (default 60 seconds, maximum ${MAX_WAIT_S}). Returns worker progress, touched files, contract violations, inspection and integration status. Use instead of polling; call again to wait longer.`,
+    description: `Wait until a worker ends, an iteration is accepted, new inspection evidence or user guidance arrives, or until the timeout (default 60 s, max ${MAX_WAIT_S}). Returns worker progress, touched files, contract violations, inspection and integration status. Use instead of polling; call again to wait longer.`,
     parameters: {
       type: "object",
       properties: {
@@ -304,7 +328,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Judge,
     description:
-      "Load a build, replay setup with seeded controls for thirty simulated seconds, capture cameras and player eyes, state and console. Optionally score typed checks, ask a vision question or compare blindly with another build. Returns frame paths; read them to inspect the evidence.",
+      "Load a build, replay setup with seeded controls for thirty simulated seconds, capture cameras, player eyes, state and console; optionally score checks, ask a vision question or compare blindly. Returns frame paths: read them.",
     parameters: {
       type: "object",
       properties: {
@@ -312,16 +336,21 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         against: {
           type: "string",
           description:
-            "start (the game as the run began, default), none, integration, live, or a worker id — the other side of the blind comparison.",
+            "Other side of the blind comparison: start (the game as the run began, default), none, integration, live, or a worker id.",
         },
-        cameras: { type: "string", description: "Comma-separated camera names (default: every registered camera)." },
+        cameras: { type: "string", description: "Comma-separated (default: every registered camera)." },
         checks: {
           type: "string",
-          description: "JSON array of typed checks to score on this build — the same grammar as worker_start's checks.",
+          description: "JSON array of typed checks to score, in worker_start's checks grammar.",
         },
         question: {
           type: "string",
           description: "One yes/no question for the vision judge about the default (or first listed) camera.",
+        },
+        ship: {
+          type: "string",
+          description:
+            "yes: the art director's absolute look at the whole game at 1600x900, alone (no against): ship or not, defects by part.",
         },
       },
     },
@@ -329,7 +358,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Playtest,
     description:
-      "Send a playtester into a build with one question (can you reach X, does Y work, is Z fun). It plays with the computer tool for a few minutes and answers yes/no with a report. Costs minutes; use it for what only play can tell.",
+      "Send a playtester into a build with one question (can you reach X, does Y work, is Z fun). It plays for a few minutes and answers yes/no with a report; use it for what only play can tell.",
     parameters: {
       type: "object",
       properties: {
@@ -337,14 +366,14 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         goal: {
           type: "string",
           description:
-            "Required goal to verify on integration. Uses its frozen acceptance scenarios, not the caller's question; unavailable hosted prerequisites must be reported as blocked.",
+            "Required goal to verify on integration by its frozen acceptance scenarios, not your question (ask); report unavailable hosted prerequisites as blocked.",
         },
         scenario: {
           type: "string",
           description:
-            "Optional zero-based acceptance scenario to verify; only independently passed scenarios reset no-progress attempts.",
+            "Zero-based acceptance scenario to verify; only independently passed scenarios reset no-progress attempts.",
         },
-        ask: { type: "string", description: "One yes/no question (ignored when goal is supplied)." },
+        ask: { type: "string", description: "One yes/no question (ignored with goal)." },
         minutes: { type: "string", description: "2–8, default 5." },
       },
       required: [],
@@ -353,34 +382,42 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Integrate,
     description:
-      "Merge a worker's last accepted commit into the integration branch (your worktree), union-merging the FACET WIRING block. A conflict elsewhere is left for you: the merge is aborted and the files listed — resolve it yourself with git in your worktree, then commit. After a clean merge the studio loads the integrated build and reports whether it runs (a health pass, not a verdict).",
+      "Merge a worker's last accepted commit into the integration branch (your worktree), union-merging the FACET WIRING block. A conflict elsewhere is left for you: the merge is aborted and the files listed — resolve it yourself with git in your worktree, then commit. A clean merge gets a health pass (does it run), not a verdict.",
     parameters: {
       type: "object",
-      properties: { worker: { type: "string", description: "The worker id." } },
-      required: ["worker"],
+      properties: {
+        worker: {
+          type: "string",
+          description: "The worker id, or ids comma-separated: one wave, merged in order, one health pass.",
+        },
+        wave: {
+          type: "string",
+          description: "close: running workers take the integration head now (a healthy integrate closes the wave).",
+        },
+      },
     },
   },
   {
     name: DirectorTool.Show,
     description:
-      "Offer a build to Live, the game view the user is looking at: integration (default), live, or a worker id. Live never changes under the user: its Reload button lights up and plays the build when they press it. Nothing is changed on disk.",
+      "Offer a build to Live, the user's game view: integration (default), live, or a worker id. Live never changes under the user; its Reload button lights up and plays it when pressed. Nothing changes on disk.",
     parameters: { type: "object", properties: { target: { type: "string" } } },
   },
   {
     name: DirectorTool.Note,
     description:
-      "Leave a decision card in the run's feed — what you decided and why, what you verified, what you are giving up on. The user reads these; write them at every turn of the run.",
+      "Leave a decision card in the run's feed — what you decided and why, what you verified, what you are giving up on. The user reads these; write one at every turn.",
     parameters: {
       type: "object",
       properties: {
         text: {
           type: "string",
-          description: "The card, in your own words — shas, worker ids and file paths are fine here.",
+          description: "The card; shas, worker ids and file paths are fine.",
         },
         plain: {
           type: "string",
           description:
-            "The same thing in one sentence for someone who has never seen a terminal: no shas, no ids, no branch names, no error text. This is what the chat shows.",
+            "The same in one sentence, which the chat shows, for someone who has never seen a terminal: no shas, ids, branch names or error text.",
         },
       },
       required: ["text"],
@@ -389,7 +426,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
   {
     name: DirectorTool.Finish,
     description:
-      "Close the run: stop any workers, land the integration branch in the live game folder (land=yes, the default, when it is healthy) or keep it unlanded (land=no), write the report. victory=yes only when you verified the goal was met. Call it before your deadline; an unfinished run lands nothing.",
+      "Close the run: stop workers, land the integration branch in the live game folder when it is healthy (land=no keeps it unlanded), write the report. victory=yes only when you verified the goal. Call it before your deadline; an unfinished run lands nothing.",
     parameters: {
       type: "object",
       properties: {
@@ -402,7 +439,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         user_asked: {
           type: "string",
           description:
-            "A timed build with working time left: the user's words asking to stop or finish now, quoted exactly from their message to this run.",
+            "Timed build with working time left: the user's words asking to stop or finish now, quoted exactly from their message to this run.",
         },
       },
       required: ["summary"],

@@ -112,7 +112,7 @@ const said = (content: string): EventData => ({
 export async function seedRewindChat(core: StudioCore): Promise<void> {
   const game = await core.games.scaffold("rewind-chat", { title: "Rewind chat" });
   const thread = await core.threadForGame(game.name);
-  const run = fixtureRun({ runId: "fixture-rewind-night", project: game.name });
+  const run = fixtureRun({ runId: "fixture-rewind-run", project: game.name });
   const boats = "fixture-rewind-boats";
   const joined = "fixture-rewind-joined";
   await core.append(
@@ -128,7 +128,7 @@ export async function seedRewindChat(core: StudioCore): Promise<void> {
   );
   await core.append(
     [
-      ...answered("fixture-rewind-built", "Build the festival tonight.", [said("Starting a build for the festival.")]),
+      ...answered("fixture-rewind-built", "Build the festival now.", [said("Starting a build for the festival.")]),
       run(CustomEvent.RunStarted, { goal: "A lantern festival", engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
       run(CustomEvent.RunFinished, {
         landed: true,

@@ -1,21 +1,39 @@
 # Submit a plugin release
 
-1. Scaffold using Studio's `plugin:new`, implement your plugin, and test it locally in the same chat.
-2. Run `plugin:doctor` in your own development environment. It runs your backend; do not run
-   unreviewed submissions with maintainer credentials.
-3. Pack the prebuilt directory with `plugin:pack`. Use stable `x.y.z` versions and an immutable
-   SHA-256 artifact URL on an approved origin. Do not include node_modules, private profiles,
-   credentials, generated acceptance assets or unrelated files.
-4. Submit a PR adding `records/<id>/<version>.json` and updating the matching index entry.
-   Include source commit, license, maintainer identity/contact, documentation, purpose,
-   compatibility, requested access and test evidence. Explain each new capability on updates.
-5. Maintainers check ownership and actual package/source contents, static findings, account
-   behavior and install/update evidence. Passing automation alone does not approve a release.
+Anyone can submit a plugin. Maintainers review every release by hand before it is listed;
+passing automation alone never approves one. Until it is listed, people can already install
+your plugin from its GitHub link (Plugins → Add → Install from GitHub).
 
-Do not change existing release records, reuse another publisher's ID or modify the validation
-policy with a plugin submission. A correction needs a higher version, even when reverting bad
-code. New hosting origins and ownership transfers are separate maintainer decisions.
+1. **Build and test it in Genex.** Follow the
+   [plugin guide](https://github.com/genex-games/genex-desktop/blob/dev/docs/PLUGIN_GUIDE.md):
+   `npm run plugin:new`, `npm run plugin:doctor`, then Plugins → Add → Load local plugin… in
+   the app. Use stable `x.y.z` versions; a fix after release needs a higher version.
+2. **Publish the source.** Push the plugin to a public GitHub repository, commit, and note the
+   40-character commit sha. Keep a license file in the repository.
+3. **Write the release record.** From a Genex checkout, with a clone of your fork of this
+   repository:
 
-Required manual evidence: fresh install, real harmless tool execution, same-chat activation,
-settings retained after update, disable/remove behavior and account flow when applicable.
+   ```sh
+   npm run plugin:submit -- /path/to/plugin --catalog /path/to/genex-plugins \
+     --repo you/your-plugin --sha <commit> --category tools [--subdir <folder>] [--docs-url <https URL>]
+   ```
+
+   It packs the prebuilt package, writes `records/<id>/<version>.json`, updates `index.json`,
+   checks the result with this repository's validator and prints the artifact file it made.
+   Never edit an existing record.
+4. **Attach the artifact** that command printed to a GitHub release of your plugin's
+   repository (the release for that version). Do not commit it here.
+5. **Open a pull request** against `main` and fill in the template: the release asset link,
+   license, contact, what each capability is for, and the test evidence.
+
+CI's first step checks your record (identity, history, ownership). Its second step stays red
+with "Waiting for a maintainer…" until a maintainer has reviewed your package and uploaded the
+artifact; that is expected. Maintainers check that the artifact matches your source at the
+commit, run it, and look at static findings, account behavior and install/update evidence.
+
+Do not reuse another publisher's id or change the validation policy in a submission. New
+hosting origins and ownership transfers are separate maintainer decisions.
+
+Required evidence: fresh install, a real harmless tool call, activation in the same chat,
+settings kept after an update, disable/remove behavior, and the account flow when there is one.
 No paid generation is required to demonstrate plugin plumbing.

@@ -284,3 +284,30 @@ test("the scan records each skill's digest, and two packages whose skill bytes d
     await second.clean();
   }
 });
+
+test("the scan reads what installs: dotfiles anywhere and the scaffold's authoring files are not part of a package", async () => {
+  const outside = await scanned(async (dir) => {
+    await mkdir(path.join(dir, ".git", "hooks"), { recursive: true });
+    await writeFile(path.join(dir, ".git", "hooks", "pre-push.sample"), "#!/bin/sh\nexec child_process\n");
+    await writeFile(path.join(dir, ".env"), "TOKEN=1\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "Notes for a coding agent.\n");
+    await mkdir(path.join(dir, "plugin-sdk"));
+    await writeFile(path.join(dir, "plugin-sdk", "index.d.ts"), "export {};\n");
+  });
+  try {
+    assert.equal(outside.scan.verdict, "safe", JSON.stringify(outside.scan.findings));
+    assert.deepEqual(outside.scan.findings, []);
+  } finally {
+    await outside.clean();
+  }
+  // Only the package root's authoring files are left out: the same name deeper in is package code.
+  const nested = await scanned(async (dir) => {
+    await mkdir(path.join(dir, "docs"));
+    await writeFile(path.join(dir, "docs", "AGENTS.md"), "x\n");
+  });
+  try {
+    assert.deepEqual(rules(nested.scan), ["not-scanned"]);
+  } finally {
+    await nested.clean();
+  }
+});

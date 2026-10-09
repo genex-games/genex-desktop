@@ -1,6 +1,7 @@
 /** Harness RPC: previews — load, look, drive and measure a game in a window. */
 import { readFile } from "node:fs/promises";
 import { HostMethod, type HarnessHostHandlers, type HarnessParams } from "../../shared/harness-api.ts";
+import { keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { availableMemory } from "../../substrate/hardware.ts";
 import type { CaptureSurface } from "../../substrate/preview-port.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
@@ -74,9 +75,13 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
       const ui = port.pageUi ? await port.pageUi().catch(() => null) : null;
       return ui ?? { ...NO_PAGE_UI };
     }),
-    [HostMethod.PreviewState]: routed(async (p: HarnessParams<typeof HostMethod.PreviewState>) =>
-      x.previews.preview(p?.handle).studioState(),
-    ),
+    // Bounded by structure in the page; `keep` reaches it only through the host's validation,
+    // and a malformed one is ignored rather than refused, so an older seed still reads its state.
+    [HostMethod.PreviewState]: routed(async (p: HarnessParams<typeof HostMethod.PreviewState>) => {
+      const keep = keepPathsOf(p?.keep);
+      const port = x.previews.preview(p?.handle);
+      return keep.length > 0 ? port.studioState({ keep }) : port.studioState();
+    }),
     [HostMethod.PreviewCall]: routed(async (p: HarnessParams<typeof HostMethod.PreviewCall>) =>
       x.previews.preview(p.handle).studioCall(String(p.method), p.arg),
     ),
@@ -102,9 +107,13 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
       const preview = x.previews.preview(p?.handle);
       return preview.gpuErrors ? preview.gpuErrors() : [];
     }),
-    [HostMethod.PreviewStatus]: routed(async (p: HarnessParams<typeof HostMethod.PreviewStatus>) =>
-      x.previews.preview(p?.handle).status(),
-    ),
+    [HostMethod.PreviewStatus]: routed(async (p: HarnessParams<typeof HostMethod.PreviewStatus>) => {
+      const port = x.previews.preview(p?.handle);
+      const status = port.status();
+      // The size it is at now, so a look `preview.viewport` set and a session put back is visible.
+      const viewSize = port.viewSize?.();
+      return viewSize ? { ...status, viewSize } : status;
+    }),
     // Readiness is a fact the page reports, not a sleep — and a HOST call, not an agent tool:
     // the loop asks over the substrate RPC, so no MCP schema and no bridge entry change.
     [HostMethod.PreviewReady]: routed(async (p: HarnessParams<typeof HostMethod.PreviewReady>) => {
@@ -130,6 +139,8 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
       await x.previewPool?.release(p.handle);
       return true;
     },
+    // One leased window at another size for a look (the art director's), for that lease only.
+    [HostMethod.PreviewViewport]: async (p) => x.previews.viewport(p),
     // Pixel stats of an encoded still — the same numbers a capture yields.
     [HostMethod.PreviewStatsOf]: async (p) => {
       const preview = x.previews.preview(p?.handle);
@@ -270,7 +281,7 @@ async function acquire(x: CoreInternals, p: HarnessParams<typeof HostMethod.Prev
 }
 
 async function capacity(core: StudioCore, x: CoreInternals) {
-  // Memory rides along (director, 2026-09-07): six windows of a big game is not a number the pool
+  // Memory rides along: six windows of a big game is not a number the pool
   // knows; whoever starts workers reads the free memory beside the free slots.
   const memory = await availableMemory();
   try {

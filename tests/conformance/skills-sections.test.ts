@@ -36,13 +36,13 @@ const codex = (builders: ProviderBuilderUse): ProviderSkillInventory => ({
 });
 
 test("Studio's own skills say who uses them, not only local models", () => {
-  const section = studioSkillsSection([{ name: "director", description: "Runs the night", text: "..." }]);
+  const section = studioSkillsSection([{ name: "director", description: "Runs the run", text: "..." }]);
   assert.equal(section.id, SkillsSection.Studio);
   assert.doesNotMatch(`${section.title} ${section.intro}`, /Local models/);
   assert.match(section.intro, /director/);
   assert.deepEqual(
     section.rows.map((r) => [r.name, r.line]),
-    [["director", "Runs the night"]],
+    [["director", "Runs the run"]],
   );
 });
 

@@ -2,7 +2,7 @@
  * How a steered message reached the session answering the chat (`coordinator_message_delivered`
  * `how`, and the host's `engine.steer` answer): in the prompt the session was about to read, read
  * mid-turn by an engine that takes input, or by interrupting the session and resuming it with the
- * message in front — or, sent while a night's lead works, handed to that lead (`lead`: `into` is
+ * message in front — or, sent while a run's lead works, handed to that lead (`lead`: `into` is
  * its run; live-chat.ts). The app's copy is `SteerDelivery` in `shared/message-queue.ts`; logs keep
  * the values: never rename one.
  *

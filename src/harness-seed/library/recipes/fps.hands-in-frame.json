@@ -4,6 +4,7 @@
   "tags": ["hands", "arms", "firstperson", "viewmodel", "weapon", "float", "grip", "fps", "camera"],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "First-person: an object tagged hands exists with real geometry; a gun floating without hands is the first thing a player sees.",
   "intent": "A weapon alone in the lower right of the frame is the classic unfinished first-person view. Build a viewmodel group parented to the camera holding both the weapon and a pair of forearms and hands, with the front hand on the fore-end and the rear hand on the grip, and tag the arms group hands. Keep the viewmodel on its own near-clip range so it never intersects walls, add a small positional lag behind the camera's rotation so it feels attached to a body, and bob it with the movement speed rather than with the wall clock.",

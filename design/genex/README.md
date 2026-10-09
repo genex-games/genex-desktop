@@ -41,7 +41,8 @@ for principles and skill routing.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
   read has answered, and a read that fails says so instead of checking forever. Media keeps a
   plain inset tile of its final size while it loads; an agent's turn keeps `LoadingState`; actions
-  swap their button label (**Sending…**) and disable it.
+  swap their button label (**Sending…**) and disable it; a long one (Publish) is `Button busy`:
+  a spinner, same fill, no second press.
 - **Interaction:** enabled controls and their children use pointer cursors. Keep visible
   keyboard focus through a contrasting 2px inset edge, appropriate disabled states, semantic
   names and safe dialog dismissal. Focus must be distinct from hover without external rings;
@@ -236,8 +237,10 @@ titles and a keyboard-reachable overflow menu 6px from the row edge. The row's e
 buttons use the derived `--sidebar-selected`/`--sidebar-hover` fills (quieter than the shared hover in
 dark themes, visible in light ones). The toggle sits 80px from the window edge, just clear of the
 native window buttons, on one line with them and the header title (24px down), and stays there
-when the sidebar is hidden. Pinned
-games sort first, then recent activity. The sidebar has no global readiness/build footer; activity
+when the sidebar is hidden. Send feedback's bug ends that line, centred over the bell's column,
+and leaves with the sidebar; it opens an lg dialog: the text field, Attach app logs and (with a
+chat open) Attach this chat, two switches that start off with a line each on what they add,
+Cancel and Send. Pinned games sort first, then recent activity. The sidebar has no global readiness/build footer; activity
 belongs to each game row and conversation, with Stop in the chat. No folder disclosures or chat counts. Sidebar visibility persists on wide
 windows; at 900 CSS pixels and below it becomes a dismissible drawer so both content panes remain
 usable at zoom. Hidden navigation and the content behind an open drawer are inert. Command-B
@@ -544,7 +547,9 @@ while it first loads or after a refresh failed (Showing saved models… with Try
 in progress reads Updating…. A signed-out row's one action is Sign in. No filesystem path or
 executable picker is shown; a missing or outdated CLI offers Install (or Update) and Check again, shows Installing… while the vendor's
 installer runs, and adds the vendor's Install guide after a failure. Local Models ranks models that fit with a
-Best fit tag, a memory meter and "Needs a N GB Mac" for the rest, plus Add from Ollama. Closing or switching sections preserves host installation
+Best fit tag, a memory meter and "Needs a N GB Mac" for the rest, plus Add from Ollama. An installed
+row keeps the quiet Installed badge beside a ghost trash button; it asks on the row ("Delete it from
+this Mac?") with Cancel, which takes focus, and a destructive Delete. Closing or switching sections preserves host installation
 jobs. Harness holds **Maximum concurrent workers** (a ceiling the lead chooses under, default 8, maximum 12)
 and **Apply suggestions automatically** with how suggestions are tested. The game model list's
 Add more models opens Model Providers. First-launch and Studio setup links open the corresponding

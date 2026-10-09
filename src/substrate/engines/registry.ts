@@ -9,7 +9,7 @@
 import type { Engine, EngineError, EngineModel } from "./types.ts";
 import { EngineKind, EngineStatusCode, type EngineDescriptor } from "../../shared/engine-descriptor.ts";
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
-import { providerInfo } from "../../shared/providers.ts";
+import { isMetered, providerInfo } from "../../shared/providers.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 
 /** What the UI reads about an engine is a contract; it lives in `shared/engine-descriptor.ts`. */
@@ -19,7 +19,7 @@ const MESSAGE = {
   UnknownEngine: (id: string) => `unknown engine: ${id}`,
 } as const;
 
-/** How long a fallback choice waits on one engine's status before counting it not ready (P01-F8). */
+/** How long a fallback choice waits on one engine's status before counting it not ready. */
 const STATUS_PROBE_MS = 5 * SECOND_MS;
 
 /** What a failed call needs from the engine that takes it over. */
@@ -53,11 +53,14 @@ export class EngineRegistry {
     }
   }
 
-  /** The engines in preference order that pass `keep`, each asked whether it is ready, side by side. */
+  /**
+   * The engines in preference order that pass `keep`, each asked whether it is ready, side by side.
+   * A metered engine is never among them: a choice the app makes on its own never spends credits.
+   */
   async #readyInOrder(keep: (engine: Engine) => boolean): Promise<Engine[]> {
     const engines = this.#preferredOrder
       .map((id) => this.#engines.get(id))
-      .filter((engine): engine is Engine => Boolean(engine) && keep(engine as Engine));
+      .filter((engine): engine is Engine => Boolean(engine) && !isMetered(engine?.id) && keep(engine as Engine));
     const ready = await Promise.all(engines.map((engine) => this.#readyWithin(engine)));
     return engines.filter((_, index) => ready[index]);
   }
@@ -146,12 +149,12 @@ export class EngineRegistry {
    *
    * Rate limits are the case that matters in v1: subscriptions throttle server-side and there is
    * no bill to cap, so the right answer is to keep building on the local engine rather than to
-   * stop the night's run.
+   * stop the run.
    */
   async fallbackFor(failed: string, error: Pick<EngineError, "kind">, needs: FallbackNeeds = {}): Promise<string[]> {
     if (error.kind === EngineFailureKind.ContextOverflow || error.kind === EngineFailureKind.Auth) return [];
     // A local engine is the only fallback that cannot itself be rate limited, and the only one
-    // whose complete() runs a tool loop: a delegated engine's refuses tools (P01-F1).
+    // whose complete() runs a tool loop: a delegated engine's refuses tools.
     const directOnly = error.kind === EngineFailureKind.RateLimit || needs.tools === true;
     const ready = await this.#readyInOrder(
       (engine) => engine.id !== failed && (!directOnly || engine.kind === EngineKind.Direct),

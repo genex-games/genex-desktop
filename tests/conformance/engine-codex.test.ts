@@ -208,7 +208,7 @@ describe("codex engine", () => {
     assert.equal(result.billing, "subscription");
     assert.equal(result.sessionId, "01a0-thread");
     assert.equal(result.summary, "Built a playable pong prototype.");
-    // Flipped (P03-F10): Codex's output_tokens already include its reasoning (its total_tokens is
+    // Flipped: Codex's output_tokens already include its reasoning (its total_tokens is
     // input + output), so the 50 reasoning tokens are not added a second time; they are named apart.
     assert.deepEqual(result.usage, {
       input_tokens: 1200,
@@ -220,7 +220,7 @@ describe("codex engine", () => {
     assert.equal("cost_usd" in result.usage, false, "subscription usage has no reported dollar amount");
     assert.equal(result.model, undefined, "the requested model is not confirmation");
     assert.equal(result.requestedModel, "gpt-5.6-sol");
-    // The four facts that keep an unattended night both possible and contained.
+    // The four facts that keep an unattended run both possible and contained.
     assert.ok(call.argv.includes("--json"));
     // `--ignore-user-config` is `$CODEX_HOME/config.toml` and nothing else — not the home's
     // AGENTS.md, not its skills (see the critic test below, and the doc comment on complete()).
@@ -296,10 +296,10 @@ describe("codex engine", () => {
   });
 
   /**
-   * One session: a waking night's lead is its chat's own session and writes nothing. Codex can
+   * One session: a waking run's lead is its chat's own session and writes nothing. Codex can
    * always write where it is started, so the lead runs from a folder of its own and resumes the
    * chat's session there by id (a session is found by its id wherever it is started; the chat
-   * resumes it from the game folder again after the night). The game folder and the build it leads
+   * resumes it from the game folder again after the run). The game folder and the build it leads
    * are outside the only place its sandbox writes, and it is told where both are.
    */
   it("runs a read-only lead from a folder of its own, resumes the chat's session by id, and names what it only reads", async () => {
@@ -310,7 +310,7 @@ describe("codex engine", () => {
     await mkdir(game, { recursive: true });
     await mkdir(build, { recursive: true });
     await engine.delegate({
-      prompt: "lead the night",
+      prompt: "lead the run",
       cwd: game,
       readOnly: true,
       resume: "chat-thread",
@@ -641,6 +641,37 @@ describe("codex engine", () => {
     );
   });
 
+  it("hands the wait a Codex limit names to the run, so the host can resume after it", async () => {
+    const rows = [
+      {
+        message:
+          "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again in 1 hour 30 minutes.",
+        kind: "usage_limit",
+        retryAfterMs: 90 * 60_000,
+      },
+      { message: "Rate limit reached for gpt-5. Please try again in 20s.", kind: "rate_limit", retryAfterMs: 20_000 },
+      { message: "You've hit your weekly limit. It resets Nov 3.", kind: "usage_limit", retryAfterMs: undefined },
+    ];
+    for (const [i, row] of rows.entries()) {
+      const { fn } = fakeExec([
+        { type: "thread.started", thread_id: "t" },
+        { type: "turn.failed", error: { message: row.message } },
+      ]);
+      const { engine, root } = await signedInEngine(fn);
+      const cwd = path.join(root, `limit${i}`);
+      await mkdir(cwd, { recursive: true });
+      await assert.rejects(
+        () => engine.delegate({ prompt: "build", cwd }),
+        (err: EngineError) => {
+          assert.ok(err instanceof EngineError, row.message);
+          assert.equal(err.kind, row.kind, row.message);
+          assert.equal(err.retryAfterMs, row.retryAfterMs, row.message);
+          return true;
+        },
+      );
+    }
+  });
+
   it("reports a stale sign-in as auth, so the remedy is a login and not a retry", async () => {
     const { fn } = fakeExec([{ type: "turn.failed", error: { message: "Not logged in. Run `codex login`." } }]);
     const { engine, root } = await signedInEngine(fn);
@@ -724,7 +755,7 @@ describe("codex engine", () => {
   });
 });
 
-describe("codex endings that must not lose the interview (skate-prod, 2026-09-06)", () => {
+describe("codex endings that must not lose the interview", () => {
   it("survives a notice Codex reports as an error and then carries on past", async () => {
     // `codex exec` opened with "Skill descriptions were shortened to fit the skills context
     // budget…" as an `error` event, ran a seven-turn interview, and completed the turn. The
@@ -1156,7 +1187,7 @@ describe("ownership locks", () => {
     assert.match(seen[0]!.prompt, /this game is the user's own/);
   });
 
-  it("a delegation whose bridge cannot open leaves no file locked (P03-V1)", async () => {
+  it("a delegation whose bridge cannot open leaves no file locked", async () => {
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
     const cwd = path.join(root, "planted");

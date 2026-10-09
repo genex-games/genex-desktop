@@ -23,7 +23,7 @@ import { commitArg, REFUSED_VALUE_CHARS, shellQuote } from "./shell.ts";
 
 /**
  * This part serves a lead that is its chat's own session and writes nothing (one session): its
- * strays are set aside with `GIT.snapshotCommit`, which an older copy lacks, so a night seats a
+ * strays are set aside with `GIT.snapshotCommit`, which an older copy lacks, so a run seats a
  * lead only when this says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
@@ -113,7 +113,9 @@ export const GIT = Object.freeze({
   addAll: "git add -A",
   /** Intent-to-add: a new file shows in `git diff` without anything being staged for real. */
   intentToAddAll: "git add -A -N -- .",
-  addPath: (file: string): string => `git add -- ${shellQuote(file)}`,
+  /** Stage one file; `force` stages it even where .gitignore covers it (the module contract's file). */
+  addPath: (file: string, { force = false }: { force?: boolean } = {}): string =>
+    `git add${force ? " -f" : ""} -- ${shellQuote(file)}`,
   commit: (message: string, options: { allowEmpty?: boolean; only?: string[] | null; noEdit?: boolean } = {}): string =>
     `git ${STUDIO_AS} commit ${commitFlags(options)} -m ${shellQuote(message)}${options.only ? ` -- ${options.only.map(shellQuote).join(" ")}` : ""}`,
   /**
@@ -139,6 +141,9 @@ export const GIT = Object.freeze({
   reset: (rev: unknown): string => `git reset -q --hard ${commitArg(rev)}`,
   clean: "git clean -qfd",
   revListCount: (from: unknown, to: unknown): string => `git rev-list --count ${commitArg(from)}..${commitArg(to)}`,
+  /** The first-parent line from `head` back to (not into) what `since` holds, newest first, at most `max` commits. */
+  firstParentLine: (head: unknown, since: unknown, max: number): string =>
+    `git rev-list --first-parent --max-count=${Number(max)} ${commitArg(head)} ^${commitArg(since)}`,
   diffStat: (base: unknown): string => `git diff --stat ${commitArg(base)} HEAD -- . ':(exclude).studio/*'`,
   /** Paths changed against `base`, restricted to `pathspec` (already-quoted shell words). */
   diffNames: (base: unknown, pathspec: string): string => `git diff --name-only ${commitArg(base)} -- ${pathspec}`,
@@ -147,6 +152,35 @@ export const GIT = Object.freeze({
   catFileExists: (rev: string, file: string): string =>
     `git cat-file -e ${shellQuote(`${rev}:${file}`)} && echo yes || echo no`,
   checkoutPath: (rev: unknown, file: string): string => `git checkout ${commitArg(rev)} -- ${shellQuote(file)}`,
+  /**
+   * Is the worktree's `file` byte-identical to its copy at `rev` (and does `rev` hold it at all)?
+   * Answers `yes` or `no` on stdout: an untracked file never reads as the same as nothing.
+   */
+  sameAsRev: (rev: unknown, file: string): string =>
+    `git cat-file -e ${shellQuote(`${commitArg(rev)}:${file}`)} && git diff --quiet ${commitArg(rev)} -- ${shellQuote(file)} && echo yes || echo no`,
+  /** The best common ancestor of two commits. */
+  mergeBase: (a: unknown, b: unknown): string => `git merge-base ${commitArg(a)} ${commitArg(b)}`,
+  /** The paths that differ between two commits, one per line, renames read as a delete and an add. */
+  changedBetween: (from: unknown, to: unknown): string =>
+    `git diff --name-only --no-renames ${commitArg(from)} ${commitArg(to)} --`,
+  /** The commit a merge in progress is merging; fails when no merge is pending. */
+  mergeHead: "git rev-parse -q --verify MERGE_HEAD",
+  /** Does the index hold `stage` of a conflicted path (1 base, 2 ours, 3 theirs)? Answers `yes` or `no`. */
+  stageExists: (stage: 1 | 2 | 3, file: string): string =>
+    `git cat-file -e ${shellQuote(`:${Number(stage)}:${file}`)} && echo yes || echo no`,
+  /** Settle a conflicted path on the side being merged in. */
+  takeTheirs: (file: string): string =>
+    `git checkout --theirs -- ${shellQuote(file)} && git add -- ${shellQuote(file)}`,
+  /** Settle a conflicted path the side being merged in deleted: deleted here too. */
+  takeTheirDeletion: (file: string): string => `git rm -q -- ${shellQuote(file)}`,
+  /** The paths staged against HEAD, one per line. */
+  stagedNames: "git diff --cached --name-only --no-renames",
+  /**
+   * Of `files`, the ones on disk that still hold a conflict (a `<<<<<<<` line and a `>>>>>>>`
+   * line), one per line. A link is never read through.
+   */
+  conflictMarked: (files: readonly string[]): string =>
+    `for f in ${files.map(shellQuote).join(" ")}; do if [ -f "$f" ] && [ ! -L "$f" ] && grep -qE '^<{7}( |$)' -- "$f" && grep -qE '^>{7}( |$)' -- "$f"; then printf '%s\\n' "$f"; fi; done; true`,
   /** One stage of a conflicted path (`:1:<path>` base, `:2:` ours, `:3:` theirs). */
   show: (object: string): string => `git show ${shellQuote(object)}`,
   /** A three-way union merge of three files; the arguments are shell words the caller built. */
@@ -342,7 +376,7 @@ export async function gitlinks(
  * git repository of its own; the studio versions it inside every fork when the user allowed that
  * (substrate/snapshots.ts `worktreeAt`), and this is the check that it happened. A path the
  * commit still holds as a pointer is a path whose every edit is invisible to the merge, the
- * landing and the user — the silent loss of 2026-09-07, said out loud. A plain `git status`
+ * landing and the user — a silent loss, said out loud. A plain `git status`
  * cannot see it: git does not walk into a gitlink path, which is why the loss was silent.
  *
  * `exec` runs git in the worktree being asked about; `nested` are the paths the game's history
@@ -431,7 +465,7 @@ export async function mergeNoFf(
 
 /**
  * Land a run's integrated build in the live game folder: one `--no-ff` merge, aborted on any
- * conflict. The live folder sat at the base all night, so a conflict here is the user's own work;
+ * conflict. The live folder sat at the base for the whole run, so a conflict here is the user's own work;
  * nothing is ever forced over it (`git reset --hard` once was) — the build stays on its ref and
  * "Make it live" lands it once the folder is theirs to merge into.
  */

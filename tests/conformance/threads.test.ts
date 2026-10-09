@@ -635,7 +635,7 @@ describe("context management", () => {
     );
   });
 
-  it("a second and a third compaction replace what they summarised, even a tail older than the last summary (P16-F2)", () => {
+  it("a second and a third compaction replace what they summarised, even a tail older than the last summary", () => {
     const say = (id: string, role: string, content: string) => ({
       id,
       data: { type: "messages", messages: [{ role, content }] },
@@ -667,7 +667,7 @@ describe("context management", () => {
     assert.deepEqual(third.slice(1), ["newer ask", "newest reply"]);
   });
 
-  it("one oversized tool result is clamped in a preserved history, so compaction can make the prompt fit (P04-F3)", async () => {
+  it("one oversized tool result is clamped in a preserved history, so compaction can make the prompt fit", async () => {
     const huge = "row,".repeat(100_000);
     const events = [
       { id: "01a", data: { type: "messages", messages: [{ role: "user", content: "read the log" }] } },
@@ -1162,7 +1162,7 @@ describe("Compact now on a session chat", () => {
 });
 
 /**
- * The person may switch the chat's model at any message (owner, 2026-10-05), and the chat must
+ * The person may switch the chat's model at any message, and the chat must
  * stay one conversation. A session goes on only while it is the chat's latest: one that missed
  * another model's turns is not resumed. A fresh session whose brief cannot carry the conversation
  * is briefed with a written summary, which a Codex compaction cannot give (it keeps its own sealed).

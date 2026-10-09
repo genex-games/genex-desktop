@@ -143,11 +143,12 @@ async function untilJob(chat: Chat, id: string, done: (state: JobState | undefin
   assert.fail(`job ${id} never got there`);
 }
 
-/** Wait until a job's end is recorded in its chat. */
+/** Wait until a job's end is recorded in its chat and the registry marks it recorded (the mark follows the row). */
 async function untilEndRecorded(chat: Chat, id: string) {
   for (let tries = 0; tries < POLL_TRIES; tries++) {
     const ended = await jobRows<JobEndedPayload>(chat, "job_ended");
-    if (ended.some((row) => row.jobId === id)) return;
+    const marked = (await chat.core.jobs.get(chat.game, id))?.endLogged === true;
+    if (marked && ended.some((row) => row.jobId === id)) return;
     await sleep(POLL_MS);
   }
   assert.fail(`job ${id}'s end was never recorded`);

@@ -65,10 +65,10 @@ test("the same text sent twice pairs each bubble with its own row", () => {
 
 test("a row written without the queue is matched by its text, once, and only after the send", () => {
   // A harness without the queue, or a refusal the host saved with the text.
-  const pending = [send("c1", "Start a night build"), send("c2", "Start a night build")];
+  const pending = [send("c1", "Start a run build"), send("c2", "Start a run build")];
   const events = [
-    user(1, "Start a night build"),
-    user(3, "Start a night build"),
+    user(1, "Start a run build"),
+    user(3, "Start a run build"),
     event(4, { type: "error", message: "Loop can’t start" }),
   ];
   const { shown, adopted } = reconcile(pending, events);

@@ -2,7 +2,7 @@
  * A job's end wakes the lead. The harness reads a run's job ends from the host's registry
  * (`jobs.list`) after a cursor it keeps, so nothing is told twice or lost; an end the lead caused
  * itself is passed over; an app without `jobs.list` wakes nobody and fails nothing; and a resting
- * director is woken soon by a line that names the job. The night's own use of the cursor is in
+ * director is woken soon by a line that names the job. The run's own use of the cursor is in
  * director-journal.test.ts, the Unreal lead's in unreal-lead.test.ts.
  */
 import assert from "node:assert/strict";

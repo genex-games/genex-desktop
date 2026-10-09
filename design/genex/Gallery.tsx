@@ -21,7 +21,7 @@ function Gallery(){
   <header><h1 id="landing-heading" tabIndex={-1} className="text-title">Genex · Studio design system</h1><p className="text-dialog-body text-muted-foreground">Shared components, real states, local fixture data.</p></header>
   <section className="space-y-3"><h2 className="text-name">Typography</h2><p id="latin" className="text-chat">Build a world worth exploring. Il1 O0 — 1234567890</p><p id="cyrillic" className="text-chat">Создайте игру · Ελληνικά · Build вместе</p><p id="mono" className="font-mono text-sm">Geist Mono · 0123456789 · 12m 34s</p></section>
   <section className="space-y-3"><h2 className="text-name">Actions</h2><div className="flex flex-wrap gap-3">
-   <Button id="primary" variant="default"><Icon name="new-game" />Create game</Button><Button id="secondary">Secondary</Button><Button id="tint" variant="accent-tint">Invite friend</Button><Button variant="ghost">Ghost</Button><Button id="disabled" disabled>Unavailable</Button>
+   <Button id="primary" variant="default"><Icon name="new-game" />Create game</Button><Button id="secondary">Secondary</Button><Button id="tint" variant="accent-tint">Invite friend</Button><Button variant="ghost">Ghost</Button><Button id="disabled" disabled>Unavailable</Button><Button id="busy" variant="default" busy>Publishing…</Button>
    <Tooltip><TooltipTrigger asChild><Button size="icon" aria-label="Copy"><Icon name="copy" /></Button></TooltipTrigger><TooltipContent>Copy</TooltipContent></Tooltip>
   </div></section>
   <section className="space-y-3"><h2 className="text-name">Menus and dialogs</h2><div className="flex gap-3">

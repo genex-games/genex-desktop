@@ -10,6 +10,8 @@ import {
   createReloadPolicy,
   installProcessHandlers,
   pageRecovery,
+  QuitQuestion,
+  quitQuestion,
   runShutdown,
   settleWithin,
   type ShutdownTimers,
@@ -217,4 +219,54 @@ describe("the quit sequence", () => {
     await runShutdown([{ name: "a", timeoutMs: 100, run: async () => {} }], { log: () => {}, timers });
     assert.equal(cleared, 1);
   });
+});
+
+describe("quitQuestion: what a quit or a relaunch into an update asks first", () => {
+  const RESUME_AT = Date.parse("2026-10-06T05:00:00.000Z");
+  const rows: Array<{
+    name: string;
+    runActive: boolean;
+    resumeAt: number | null;
+    confirmed: boolean;
+    want: QuitQuestion;
+  }> = [
+    {
+      name: "nothing running or waiting quits at once",
+      runActive: false,
+      resumeAt: null,
+      confirmed: false,
+      want: QuitQuestion.None,
+    },
+    {
+      name: "an active run asks first",
+      runActive: true,
+      resumeAt: null,
+      confirmed: false,
+      want: QuitQuestion.RunActive,
+    },
+    {
+      name: "a paused build waiting to resume on its own asks first: the quit drops the resume",
+      runActive: false,
+      resumeAt: RESUME_AT,
+      confirmed: false,
+      want: QuitQuestion.ResumePending,
+    },
+    {
+      name: "an active run is the question even with a resume waiting",
+      runActive: true,
+      resumeAt: RESUME_AT,
+      confirmed: false,
+      want: QuitQuestion.RunActive,
+    },
+    {
+      name: "an answered quit does not ask twice",
+      runActive: true,
+      resumeAt: RESUME_AT,
+      confirmed: true,
+      want: QuitQuestion.None,
+    },
+  ];
+  for (const { name, want, ...state } of rows) {
+    it(name, () => assert.equal(quitQuestion(state), want));
+  }
 });

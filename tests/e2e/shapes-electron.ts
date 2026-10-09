@@ -8,7 +8,7 @@ import { fixtureCodingCli } from "../helpers/external-cli.ts";
  * real `GamePreview`, the real serve layer, the real shadow build, the real evidence pass out of
  * the harness seed, the real file bridge and the real in-process MCP server. `ctx` is
  * `core.api()` with the substrate pipe removed, which is exactly what the harness host
- * dispatches against — so what passes here is what a night would get.
+ * dispatches against — so what passes here is what a run would get.
  *
  * No model of any kind is started: `StudioCore` is built with `engines: []` (an explicit empty
  * list skips the default registration), and only the two scripted engines are registered.

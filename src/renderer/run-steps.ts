@@ -15,7 +15,7 @@
  * Pure: no DOM, no window. `panels/RunGraph.tsx` draws it and the tests read it directly.
  */
 import { HOUR_MS, MINUTE_MS } from "../shared/duration.ts";
-import { comparedWithNothing, ExecutionStatus, VerdictPass } from "../shared/run-state.ts";
+import { comparedWithNothing, ExecutionStatus, type RunWorked, VerdictPass, workedMs } from "../shared/run-state.ts";
 import { type RunSummary, UNKNOWN_EXECUTION } from "../shared/run-summary.ts";
 import { plural } from "../shared/skill-words.ts";
 import {
@@ -574,7 +574,7 @@ export interface ResultStatus {
   state: StepState;
 }
 
-/** A running night's build: none yet, one that did not start, one being tried, or one to play. */
+/** A running run's build: none yet, one that did not start, one being tried, or one to play. */
 function runningResultStatus(graph: RunGraph, summary: RunSummary | null): ResultStatus {
   if (!hasNewBuild(graph, summary)) return { word: "Nothing yet", tone: Tone.Muted, state: StepState.Waiting };
   const merged = graph.mergedHead;
@@ -586,8 +586,8 @@ function runningResultStatus(graph: RunGraph, summary: RunSummary | null): Resul
 }
 
 /**
- * The build a running night offers to play on Live — the one its result node calls ready to
- * play — or null while there is none, it is still being tried, it didn't start, or the night is over.
+ * The build a running run offers to play on Live — the one its result node calls ready to
+ * play — or null while there is none, it is still being tried, it didn't start, or the run is over.
  */
 export function readyToPlay(graph: RunGraph, summary: RunSummary | null): string | null {
   if (!graph.active || !summary?.head) return null;
@@ -687,16 +687,6 @@ export function elapsedWords(
   return minutes === null ? null : spanWords(minutes);
 }
 
-/** How long a build took, in the chat build card's short units: "5h 17m". */
-export function elapsedShortWords(
-  from: string | null | undefined,
-  to: string | null | undefined,
-  now = Date.now(),
-): string | null {
-  const minutes = elapsedMinutes(from, to, now);
-  return minutes === null ? null : shortSpanWords(minutes);
-}
-
 const listWords = (names: string[]): string =>
   names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
@@ -704,45 +694,72 @@ const listWords = (names: string[]): string =>
 const MAX_NAMED_MISSING = 2;
 
 interface LineFacts {
-  elapsed: string | null;
-  /** how long a running night has run, against the time it was given when it has one */
+  /** how long the build has worked, pauses aside: "1 h 5 min" */
+  worked: string | null;
+  /** the same for a build that can go on, against the time it was given when it has one: "1 h 5 min of 8 h" */
   time: string | null;
   hasBuild: boolean;
 }
 
-/** The time a run was given is part of how long it has run: "9 of 30 min", never "9 min" alone. */
-function runningTime(budget: number | null, started: string | null | undefined, now: number): string | null {
-  const start = started ? Date.parse(started) : Number.NaN;
-  if (!budget || !Number.isFinite(start)) return null;
-  return budgetWords(now - start, budget);
+/** How long a build has worked, in whole minutes: "0 min", "9 min", "1 h 5 min". */
+const workedWords = (ms: number): string => spanWords(Math.max(0, Math.floor(ms / MINUTE_MS)));
+
+/**
+ * How long a build has worked by `now` (a summary's `worked`): "1 h 5 min", never a pause or the
+ * hours the app was closed under it. Null while its start is unknown.
+ */
+export function workedSpan(worked: RunWorked | null | undefined, now = Date.now()): string | null {
+  return worked ? workedWords(workedMs(worked, now)) : null;
+}
+
+/** The same in the chat build card's short units, "5h 17m"; null under a minute. */
+export function workedShortWords(worked: RunWorked | null | undefined, now = Date.now()): string | null {
+  const minutes = worked ? Math.floor(workedMs(worked, now) / MINUTE_MS) : 0;
+  return minutes < 1 ? null : shortSpanWords(minutes);
 }
 
 /**
- * The one line above the graph: the state of the build you play, then the fact that matters most
- * about it. Failed checks and missing history stay in it; they are not good news to hide.
+ * The time a build has worked (run-state.ts `RunWorked`, left out while its start is unknown),
+ * said once for every state, and against the time it was given while it can still go on.
  */
-export function statusLine(graph: RunGraph, summary: RunSummary | null, rows: PartRow[], now = Date.now()): StatusLine {
+function lineFacts(graph: RunGraph, summary: RunSummary | null, now: number): LineFacts {
   const run = graph.nodes.find((node) => node.kind === GraphNodeKind.Run);
-  const started = summary?.startedAt ?? (run?.kind === GraphNodeKind.Run ? run.startedAt : null);
-  const elapsed = elapsedWords(started, summary?.endedAt ?? null, now);
   const budget = run?.kind === GraphNodeKind.Run ? (run.durationMs ?? null) : null;
-  const facts: LineFacts = {
-    elapsed,
-    time: runningTime(budget, started, now) ?? elapsed,
+  const ms = summary?.worked ? workedMs(summary.worked, now) : null;
+  const worked = ms === null ? null : workedWords(ms);
+  return {
+    worked,
+    time: ms !== null && budget ? budgetWords(ms, budget) : worked,
     hasBuild: hasNewBuild(graph, summary),
   };
+}
+
+/** A state and the time the build has worked: "Paused · 1 h of 8 h". */
+const timed = (state: string, time: string | null): string => (time ? `${state} · ${time}` : state);
+
+/**
+ * The one line above the graph: the state of the build you play and how long it has worked, then
+ * the fact that matters most about it. Failed checks and missing history stay in it; they are not
+ * good news to hide.
+ */
+export function statusLine(graph: RunGraph, summary: RunSummary | null, rows: PartRow[], now = Date.now()): StatusLine {
+  const facts = lineFacts(graph, summary, now);
   const execution = runExecution(graph, summary);
   if (execution === ExecutionStatus.Running) return runningLine(graph, summary, rows, facts);
   if (execution === ExecutionStatus.Paused)
     return {
       tone: Tone.Orange,
-      strong: "Paused",
+      strong: timed("Paused", facts.time),
       rest: facts.hasBuild ? "an earlier build is ready to play · resume from chat" : "resume from chat",
     };
   if (execution === ExecutionStatus.Failed || execution === ExecutionStatus.Cancelled)
-    return stoppedLine(execution === ExecutionStatus.Failed, summary, facts.hasBuild);
+    return stoppedLine(execution === ExecutionStatus.Failed, summary, facts);
   if (execution === UNKNOWN_EXECUTION)
-    return { tone: Tone.Muted, strong: "Status unavailable", rest: "the run's record is incomplete" };
+    return {
+      tone: Tone.Muted,
+      strong: timed("Status unavailable", facts.worked),
+      rest: "the run's record is incomplete",
+    };
   return finishedLine(summary, rows, facts);
 }
 
@@ -762,10 +779,10 @@ function runningLine(graph: RunGraph, summary: RunSummary | null, rows: PartRow[
         ? `${rest} · the starting point failed`
         : `the starting point failed${base.error ? `: ${base.error}` : ""}`;
   const doing = step?.state === StepState.Judging ? "Checking" : "Building";
-  return { tone: "live", strong: `${doing}${facts.time ? ` · ${facts.time}` : ""}`, rest };
+  return { tone: "live", strong: timed(doing, facts.time), rest };
 }
 
-/** What a running night is on, once its starting point is built. */
+/** What a running run is on, once its starting point is built. */
 function runningRest(
   graph: RunGraph,
   summary: RunSummary | null,
@@ -788,11 +805,11 @@ function stepRest(graph: RunGraph, step: Step): string {
   return `${title}: ${lowerFirst(step.name)}${tryNote}`;
 }
 
-function stoppedLine(failed: boolean, summary: RunSummary | null, hasBuild: boolean): StatusLine {
-  const rest = hasBuild ? "an earlier build is ready to play" : "nothing was made live";
+function stoppedLine(failed: boolean, summary: RunSummary | null, facts: LineFacts): StatusLine {
+  const rest = facts.hasBuild ? "an earlier build is ready to play" : "nothing was made live";
   return {
     tone: failed ? Tone.Red : Tone.Muted,
-    strong: failed ? "Build failed" : "Build stopped",
+    strong: timed(failed ? "Build failed" : "Build stopped", facts.worked),
     rest: summary?.reason ? stoppedWords(summary.reason) : rest,
   };
 }
@@ -824,7 +841,7 @@ function leadLandedWords(rows: PartRow[]): string {
   return [saves, ...lost].join(" · ");
 }
 
-/** Which of the night's steps reached the build, named when only one or two did not; a lead's run in its own terms. */
+/** Which of the run's steps reached the build, named when only one or two did not; a lead's run in its own terms. */
 function landedWords(rows: PartRow[]): string {
   const steps = rows.flatMap((row) => row.steps).filter((step) => step.state !== StepState.Waiting);
   if (!steps.length) return "";
@@ -844,18 +861,21 @@ function finishedLine(summary: RunSummary | null, rows: PartRow[], facts: LineFa
     const rest = [failedWords, newer ? "a newer build wasn't made live" : "", clean ? landedWords(rows) : ""]
       .filter(Boolean)
       .join(" · ");
-    const finished = facts.elapsed ? `finished in ${facts.elapsed}` : "finished";
-    return { tone: clean ? Tone.Green : Tone.Orange, strong: "Live in your game", rest: rest || finished };
+    return {
+      tone: clean ? Tone.Green : Tone.Orange,
+      strong: timed("Live in your game", facts.worked),
+      rest: rest || "finished",
+    };
   }
   if (facts.hasBuild)
     return {
       tone: Tone.Orange,
-      strong: "Not live yet",
+      strong: timed("Not live yet", facts.worked),
       rest: [failedWords, "the build is ready to play"].filter(Boolean).join(" · "),
     };
   return {
     tone: Tone.Muted,
-    strong: "No new build",
+    strong: timed("No new build", facts.worked),
     rest: summary?.reason ? stoppedWords(summary.reason) : "nothing was merged",
   };
 }

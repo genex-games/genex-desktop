@@ -74,7 +74,7 @@ const CLAMP_MESSAGE_TOKENS = 2_000;
 /**
  * The share of the context window one tool result may take in a preserved history. Compaction
  * keeps the recent tail whole, so a single result larger than the window used to fail every later
- * turn with "context cannot fit" (P04-F3); the log keeps the whole result.
+ * turn with "context cannot fit"; the log keeps the whole result.
  */
 const TOOL_RESULT_WINDOW_SHARE = 0.25;
 /** How much of a game's NOTES.md a prompt carries. */
@@ -229,7 +229,7 @@ export function eventsToMessagesWithSources(events: readonly HarnessEvent[]): {
 /**
  * A call the turn stopped before running (Stop, a crash) has no result in the log. Engines refuse
  * or misread an assistant call left unanswered, so each gets a failed result saying it did not
- * run, placed after the results its round did get (P07-F9).
+ * run, placed after the results its round did get.
  */
 function answerCallsNeverRun(log: MessageLog): void {
   const answered = new Set(log.messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
@@ -328,7 +328,7 @@ function noteOf(data: AnyRecord): Message | null {
  * Covered is by position: through the last message whose event is not newer than `upTo`. The
  * sources are not in id order after a compaction — the earlier summary leads, newer than the
  * tail it kept — so a scan that stopped at the first newer id replaced nothing when a second
- * compaction's cut fell inside that tail, and the prompt never shrank (P16-F2).
+ * compaction's cut fell inside that tail, and the prompt never shrank.
  */
 function replaceCompacted(messages: Message[], sources: string[], eventId: string, payload: AnyRecord): void {
   if (!String(payload.summary ?? "").trim()) return;

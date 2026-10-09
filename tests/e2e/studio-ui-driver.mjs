@@ -402,9 +402,19 @@ async function acceptance() {
     check(
       "Maximum workers and automatic suggestions live in Settings",
       await until(
-        `(() => {const b=document.querySelector('[data-harness-settings]');return !!b && b.textContent.includes('Maximum concurrent workers') && b.querySelector('output')?.textContent==='8' && !!b.querySelector('[role="switch"]');})()`,
+        `(() => {const b=document.querySelector('[data-harness-settings]');return !!b && b.textContent.includes('Maximum concurrent workers') && b.querySelector('output')?.textContent==='4' && !!b.querySelector('[role="switch"]');})()`,
       ),
     );
+    const autoResume = (state) =>
+      until(
+        `(() => {const s=document.querySelector('[data-harness-auto-resume]');return !!s && s.getAttribute('role')==='switch' && s.getAttribute('aria-checked')==='${state}' && !s.disabled;})()`,
+      );
+    check("Resume builds automatically is on by default", await autoResume("true"));
+    await click("[data-harness-auto-resume]");
+    check("Resume builds automatically turns off", await autoResume("false"));
+    await click("#settings-tab-appearance");
+    await click("#settings-tab-harness");
+    check("Resume builds automatically stays off when Settings → Harness opens again", await autoResume("false"));
     await click("#settings-tab-appearance");
     await click('input[name="appearance-mode"][value="light"]');
     await key("Escape");

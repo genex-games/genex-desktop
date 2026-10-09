@@ -4,6 +4,7 @@
   "tags": ["ads", "aim", "sight", "iron", "centre", "ndc", "align", "fov", "weapon", "demo", "fps"],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "A demo named ads enters aim-down-sights and returns the tagged sight projected into NDC, within 3% of screen centre.",
   "intent": "Aiming that does not put the sight on the crosshair position is worse than no aiming at all. Move the viewmodel so the tagged sight lands on the camera axis rather than tweaking numbers by eye: take the sight's world position, transform it into camera space, and offset the viewmodel group by the negation of its x and y. Do it once at build time and store the offset, then lerp to it over about 150 ms when aiming. Register a demo named ads that enters the state and returns { sightNdc: { x, y }, crosshairVisible } so the board can measure it.",

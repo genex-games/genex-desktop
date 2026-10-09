@@ -66,6 +66,10 @@ export interface PageUi {
  *    page-sized gradient or a letterboxing frame beside the game cannot flip a game that has no
  *    DOM UI at all.
  *
+ * One rule runs the other way and is not mirrored here: `domUi()` names a second visible canvas
+ * over the game's (a HUD painted beside the contract's), while this probe skips every canvas, so
+ * that canvas reaches the no-dom-ui check and never this coverage.
+ *
  * The canvases are collected ONCE and containment is tested against that list, rather than a
  * `querySelector` per element; the entry cap stops the naming, never the area sum. The probe
  * swallows its own throw, because a capture must never fail because the page could not be read.
@@ -250,7 +254,7 @@ export function autoWantsPage(ui: PageUi | null): boolean {
  * The other half of `auto`: the case where the CANVAS eye is the broken one. No frame at all, or
  * a frame that is effectively black on a page that does have a canvas, means the canvas read
  * gave the studio nothing — a WebGPU or multi-canvas game that would otherwise be judged black
- * all night. The compositor sees those frames, so `auto` asks it.
+ * for the whole run. The compositor sees those frames, so `auto` asks it.
  */
 export function blankCanvasWantsPage(stats: PixelStats | null, ui: PageUi | null): boolean {
   if (!stats) return true;

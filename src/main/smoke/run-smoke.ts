@@ -830,6 +830,7 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     await sleep(300);
     await fs.writeFile(bonsaiShot.replace(/\.png$/, "-bonsai.png"), (await wc.capturePage()).toPNG());
   }
+  await checkLocalModelRoles(buildSmoke);
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'codex::gpt-5.6-sol')`,
   );
@@ -840,6 +841,67 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
       `document.body.innerText.includes('Ready for your first idea')&&document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Sol')`,
     ),
   );
+}
+
+/**
+ * A game chat on a completion-only local engine gives each job its own model: the fake Ollama
+ * lists one model that sees and a coding model that cannot, and a reviewer must see.
+ */
+async function checkLocalModelRoles(buildSmoke: BuildSmoke): Promise<void> {
+  const { wc, check, waitFor } = buildSmoke;
+  await wc.executeJavaScript(`localStorage.removeItem('studio.roles.ollama')`);
+  await openGameChatOn(buildSmoke, "ollama::coder:7b", "coder");
+  check(
+    "an Ollama main agent offers Workers and Reviewers",
+    await waitFor(`!!document.querySelector('[data-model-view="roles"] [data-role="builder"]')`),
+  );
+  check(
+    "a main agent that cannot see leaves reviewing to the local model that can",
+    await waitFor(`JSON.parse(localStorage.getItem('studio.roles.ollama')||'{}').roles?.judge==='qwen3.6:27b'`),
+  );
+  await wc.executeJavaScript(`document.querySelector('[data-model-view="roles"] [data-role="judge"]')?.click()`);
+  check(
+    "Ollama reviewers offer the model that sees and the subscription, and refuse the one that cannot see",
+    await waitFor(
+      `!!document.querySelector('[data-model-list="judge"] [data-model-choice="ollama::qwen3.6:27b"]:not(:disabled)')&&!!document.querySelector('[data-model-list="judge"] [data-model-choice="ollama::coder:7b"]:disabled')&&!!document.querySelector('[data-model-list="judge"] [data-model-choice^="codex::"]')`,
+    ),
+  );
+  const localShot = flagValue(StudioFlag.BuildShot);
+  if (localShot) {
+    await sleep(300);
+    await fs.writeFile(localShot.replace(/\.png$/, "-ollama-roles.png"), (await wc.capturePage()).toPNG());
+  }
+  await openGameChatOn(buildSmoke, "codex::gpt-5.6-sol", "Sol");
+  await wc.executeJavaScript(`document.querySelector('[data-model-view="roles"] [data-role="judge"]')?.click()`);
+  check(
+    "Codex reviewers offer the local model that sees",
+    await waitFor(
+      `!!document.querySelector('[data-model-list="judge"] [data-model-choice="ollama::qwen3.6:27b"]:not(:disabled)')`,
+    ),
+  );
+  await wc.executeJavaScript(`document.querySelector('[data-model-view="roles"] [data-role="builder"]')?.click()`);
+  check(
+    "Codex workers offer no Ollama model",
+    await waitFor(
+      `!!document.querySelector('[data-model-list="builder"] [data-model-choice^="codex::"]')&&!document.querySelector('[data-model-list="builder"] [data-model-choice^="ollama::"]')`,
+    ),
+  );
+}
+
+/** Reload on a model for the game's chat, open that chat itself and its model menu. */
+async function openGameChatOn(buildSmoke: BuildSmoke, modelKey: string, shown: string): Promise<void> {
+  const { wc, threadId, waitFor } = buildSmoke;
+  await wc.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},${JSON.stringify(modelKey)})`,
+  );
+  wc.reload();
+  // Open the game's chat itself: the reload is not relied on to land there.
+  await waitFor(`!!document.querySelector('nav [data-thread="${threadId}"]')`);
+  await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
+  await waitFor(
+    `document.querySelector('[data-chat-composer] [aria-label="Model settings"]')?.textContent.includes(${JSON.stringify(shown)})`,
+  );
+  await wc.executeJavaScript(`document.querySelector('[data-chat-composer] [aria-label="Model settings"]')?.click()`);
 }
 
 /** Plugins is a workspace page with bundled Genex, and it hides the native preview. */
@@ -1409,7 +1471,7 @@ async function checkPluginJobInGraph(buildSmoke: BuildSmoke, assetJobId: string)
   const { core, pushUiEvent } = buildSmoke.ctx;
   // The two records the host writes for every plugin tool call, built by the very functions
   // that write them in production and carrying this run's attribution: the graph has to draw
-  // the job under the part that asked for it rather than floating it loose in the night.
+  // the job under the part that asked for it rather than floating it loose in the run.
   const assetCall = startedPayload({
     callId: randomUUID(),
     pluginId: "genex",
@@ -1515,7 +1577,7 @@ async function checkInterruptControls(buildSmoke: BuildSmoke): Promise<Interrupt
     await wc.executeJavaScript(`document.querySelector('[aria-label="Model settings"]')?.click()`);
     return waitFor(`!!document.querySelector('[data-slot="popover-content"][aria-label="Model options"]')`);
   });
-  await checkAsync("Escape closes the menu and leaves the night running", async () => {
+  await checkAsync("Escape closes the menu and leaves the run running", async () => {
     await wc.executeJavaScript(
       `document.querySelector('[data-slot="popover-content"][aria-label="Model options"] button')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
     );
@@ -1683,10 +1745,10 @@ async function checkFinishedRun(buildSmoke: BuildSmoke): Promise<void> {
 async function checkMorningCardAndHistory(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, project, runId, append, waitFor } = buildSmoke;
   const { pushUiEvent } = buildSmoke.ctx;
-  // The morning card is the night's whole report to the user; its copy is unit-tested in
+  // The morning card is the run's whole report to the user; its copy is unit-tested in
   // morning-words.ts, but only a real window proves the card mounts at all.
   check(
-    "the night's morning card is in the chat",
+    "the run's morning card is in the chat",
     await waitFor(`!!document.querySelector('[data-testid="morning-card"]')`),
   );
   await append(CustomEvent.RunStarted, {
@@ -1853,7 +1915,7 @@ async function checkRunTimeAndLead(buildSmoke: BuildSmoke, { followRun, followEv
 }
 
 /**
- * The empty scaffold takes the night's first healthy build by itself; after that Live never
+ * The empty scaffold takes the run's first healthy build by itself; after that Live never
  * changes while it is watched: a later build, a checkpoint and a changed folder light Reload, and
  * Reload (or leaving Live) brings them in.
  */
@@ -1942,8 +2004,8 @@ const reloadState = (reason: string | null, label?: string): string =>
     : `!!document.querySelector('[data-stage-reload=""]')`;
 
 /**
- * The user, 2026-09-28: "if I'm sitting in Live the game must not update on its own when code
- * changes; only Reload is highlighted, with a changed tooltip". A later healthy build and a
+ * A game on screen in Live never updates on its own when code changes: only Reload is
+ * highlighted, with a changed tooltip. A later healthy build and a
  * builder's checkpoint light Reload while Live is on screen and load nothing; Reload plays the
  * build; leaving Live for Builds brings the changed game folder in.
  */
@@ -2000,7 +2062,7 @@ async function checkLiveStaysStill(
       Boolean(await wc.executeJavaScript(`${LIVE_LOADS}===0`)),
   );
   // Out of sight, what waits goes in, so Live is current when the person comes back. Live then
-  // shows the game folder, so Reload may offer the night's newest build again, never the change.
+  // shows the game folder, so Reload may offer the run's newest build again, never the change.
   await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]').click()`);
   const changedGone = `!document.querySelector('[data-behind-reason="changed"]')`;
   check(
@@ -2643,7 +2705,7 @@ type Seen = Record<string, unknown>;
 type DirectorSeen = Record<string, any>;
 
 /**
- * The computer tool over a real hidden window (computer use, 2026-09-07): a fixture game with a map picker
+ * The computer tool over a real hidden window: a fixture game with a map picker
  * on I, a click that chooses the map, W that moves the player — driven end to end
  * through engine.delegate with a scripted contractor, exactly as a run's builder is.
  */
@@ -3034,7 +3096,7 @@ function checkWebGpuWorker({ check }: ComputerSmoke, gpu: Seen): void {
 }
 
 /**
- * The director (director, 2026-09-07): a run on this Electron — the real harness child, real offscreen
+ * The director: a run on this Electron — the real harness child, real offscreen
  * windows, the dispatch that answers — with a scripted director that looks, starts a
  * single worker, integrates, shows and finishes; its screen is the lead's node in Builds meanwhile.
  */
@@ -3051,7 +3113,7 @@ async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void
   core.engines.register(
     scriptedCodex(
       async (request) => {
-        if (request.director) return directNight(computerSmoke, request, dir);
+        if (request.director) return directLoopRun(computerSmoke, request, dir);
         await fs.writeFile(path.join(request.cwd, "src", "sign.js"), "export const sign = 1;\n");
         dir.workerShot = await required(request.onLiveTool, "a live tool bridge")("computer", { action: "screenshot" });
         return { ok: true, engine: EngineId.Codex, turns: 2, usage: {}, sessionId: "sign", summary: "sign added" };
@@ -3073,12 +3135,12 @@ async function checkScriptedDirector(computerSmoke: ComputerSmoke): Promise<void
     .filter((e) => e.data.type === EventKind.Custom && e.data.event_type === CustomEvent.RunFinished)
     .map((e) => (e.data as { payload: Record<string, unknown> }).payload)
     .find((p) => p.runId === dirRunId);
-  checkDirectorNight(computerSmoke, dir);
+  checkDirectorLoopRun(computerSmoke, dir);
   checkDirectorLanding(computerSmoke, dir, dirFinished, dirProject.dir);
 }
 
-/** The scripted director's night: look, plan, one worker, integrate, show, finish. */
-async function directNight(
+/** The scripted director's run: look, plan, one worker, integrate, show, finish. */
+async function directLoopRun(
   { wc, waitFor }: ComputerSmoke,
   request: DelegateRequest,
   dir: DirectorSeen,
@@ -3091,9 +3153,9 @@ async function directNight(
   // No part works yet, so the lead has the run: its node in Builds is its own screen.
   await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]')?.click()`);
   dir.uiCard = await waitFor(`!!document.querySelector('[data-graph-node="lead"][data-agent-screen] img')`);
-  // The night says what it is for before a builder starts (M3.8): worker_start refuses until plan has been called.
+  // The run says what it is for before a builder starts (M3.8): worker_start refuses until plan has been called.
   await call("plan", {
-    summary: "Tonight: a sign on the street.",
+    summary: "This run: a sign on the street.",
     workers: JSON.stringify([
       {
         id: "sign",
@@ -3124,11 +3186,11 @@ async function directNight(
   dir.integrated = JSON.parse(asText(await call("integrate", { worker: "sign" })));
   dir.shown = asText(await call("show", { target: "integration" }));
   dir.finished = asText(await call("finish", { summary: "a sign on the street", land: "yes" }));
-  return { ok: true, engine: EngineId.Codex, turns: 9, usage: {}, sessionId: "director", summary: "night done" };
+  return { ok: true, engine: EngineId.Codex, turns: 9, usage: {}, sessionId: "director", summary: "run done" };
 }
 
-/** What the director saw and did during the night. */
-function checkDirectorNight({ check }: ComputerSmoke, dir: DirectorSeen): void {
+/** What the director saw and did during the run. */
+function checkDirectorLoopRun({ check }: ComputerSmoke, dir: DirectorSeen): void {
   check(
     "the director's window shows the integration worktree with the game running in it",
     /the window now shows integration/.test(asText(dir.look)) &&
@@ -3161,7 +3223,7 @@ function checkDirectorNight({ check }: ComputerSmoke, dir: DirectorSeen): void {
   );
 }
 
-/** How the night ended: landed in the live folder, closed as the director's, every window gone. */
+/** How the run ended: landed in the live folder, closed as the director's, every window gone. */
 function checkDirectorLanding(
   { check, ctx }: ComputerSmoke,
   dir: DirectorSeen,

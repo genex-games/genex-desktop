@@ -3,7 +3,7 @@
  * opening a game, Reload, Play or Make live, a build they asked the chat to show while Live is out of
  * their sight (`PreviewService.liveOutOfSight`). Anything else
  * that used to change it — the harness loading the game or a run's build, a builder's checkpoint,
- * a night landing, a rewind — is offered here instead: Live is marked behind, and the stage's
+ * a run landing, a rewind — is offered here instead: Live is marked behind, and the stage's
  * Reload says why and applies it (docs/product/builds-live.md).
  */
 import { createHash } from "node:crypto";

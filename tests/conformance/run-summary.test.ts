@@ -213,7 +213,7 @@ test("final provider failure is retained instead of the generic stopped reason",
       "run_finished",
       {
         executionStatus: "failed",
-        stoppedBecause: "the night hit a problem",
+        stoppedBecause: "the run hit a problem",
         failure: { message: "request exceeds context size" },
       },
       1,

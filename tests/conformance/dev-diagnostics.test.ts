@@ -1,5 +1,5 @@
 /**
- * The developer control's performance diagnostics (2026-10-01): `window.resize` takes bounded
+ * The developer control's performance diagnostics: `window.resize` takes bounded
  * parameters and counts how far, and in how many steps, Live's view was behind its slot; a
  * main-process CPU profile is one at a time and answers only its own id.
  */

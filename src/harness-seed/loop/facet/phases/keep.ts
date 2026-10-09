@@ -19,6 +19,7 @@ import { RoundFlow } from "../flow.ts";
 import { StopCode, stopWith } from "../../outcomes.ts";
 import { roundFields } from "../record.ts";
 import { ReplanSource } from "./replans.ts";
+import { lessonsPayload, unseenLessons } from "../lessons.ts";
 
 /** The most attempts a facet remembers for its briefs, newest last. */
 const MAX_ATTEMPTS = 12;
@@ -35,8 +36,9 @@ export async function keepOrRollBack(loop: FacetLoop, round: FacetRound): Promis
   // ── commit or retain-and-roll-back ──
   round.attemptBranch = null;
   round.diffStat = "";
-  // Read before a rollback takes them: a lost attempt's notes are what it tried (P12-V1).
+  // Read before a rollback takes them: a lost attempt's notes are what it tried.
   round.attemptNotes = await builderNotes(loop);
+  await logRoundLessons(loop, round.attemptNotes);
   if (round.won) {
     await keepWinner(loop, round);
     return;
@@ -46,7 +48,7 @@ export async function keepOrRollBack(loop: FacetLoop, round: FacetRound): Promis
   // loop erased all of this and re-attempted the same idea because it could not see it.
   const kept = loop.worktree ? await retainAttemptOnRef(loop, round) : await retainAttemptSnapshot(loop, round);
   if (kept) return;
-  // Rolling back an attempt nobody kept throws it away for good (P12-F8): it stays where it is,
+  // Rolling back an attempt nobody kept throws it away for good: it stays where it is,
   // and the facet stops on it.
   stopWith(
     loop.result,
@@ -199,6 +201,17 @@ export async function rememberAttempt(loop: FacetLoop, round: FacetRound): Promi
   if (!round.challengerBroken) result.judged = (result.judged ?? 0) + 1;
 }
 
+/**
+ * The round's new lessons go to the log now, won or lost: a lost round's notes are reset away
+ * next, and a facet a crash cuts short never reaches its final flush. Logging is a courtesy to
+ * the next pass — a failed append never costs the round.
+ */
+async function logRoundLessons(loop: FacetLoop, notes: string): Promise<void> {
+  const lessons = unseenLessons(loop, notes);
+  if (!lessons.length) return;
+  await loop.appendRun(RunEvent.FacetLessons, lessonsPayload(loop, lessons)).catch(() => {});
+}
+
 /** The builder's notes for this facet as its working folder holds them now; empty when there are none. */
 async function builderNotes({ facet, workdir }: FacetLoop): Promise<string> {
   if (!workdir) return "";
@@ -208,6 +221,8 @@ async function builderNotes({ facet, workdir }: FacetLoop): Promise<string> {
 /** The round as the next brief remembers it: what flipped, what it cost, why it lost, and the builder's own notes. */
 async function attemptRecordOf(loop: FacetLoop, round: FacetRound): Promise<AnyRecord> {
   const notes: string = round.attemptNotes ?? (await builderNotes(loop));
+  // The demos this round's look left out, for the builder's next prompt (facet/prompt.ts).
+  const skipped: string[] = Array.isArray(round.evidence?.skippedDemos) ? round.evidence.skippedDemos : [];
   return {
     iteration: round.iteration,
     won: round.won,
@@ -221,6 +236,7 @@ async function attemptRecordOf(loop: FacetLoop, round: FacetRound): Promise<AnyR
       ? `iteration ${round.iteration}: accepted`
       : `iteration ${round.iteration}: ${clip(round.verdict.reason, ATTEMPT_REASON_CHARS)}`,
     notes: notes.slice(-ATTEMPT_NOTES_CHARS),
+    ...(skipped.length ? { skippedDemos: skipped } : {}),
   };
 }
 

@@ -265,7 +265,7 @@ type DeclaredParameter = { type?: string; acceptJsonString?: boolean };
 /**
  * What is wrong with `args` against the tool's declared parameters: a required one missing, or one
  * of the wrong type. A tool used to coerce a wrong value silently (`Number(x) || default`) and run
- * on its default (P06-F8). A number or a flag sent as its text still reads as one — local models do.
+ * on its default. A number or a flag sent as its text still reads as one — local models do.
  */
 export function argumentProblems(
   parameters: { properties?: Record<string, DeclaredParameter>; required?: string[] } | undefined,

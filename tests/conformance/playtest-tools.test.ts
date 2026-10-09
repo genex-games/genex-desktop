@@ -14,6 +14,8 @@ import {
   type PlaytestContext,
 } from "../../src/main/core/playtest-tools.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
+import { tools as previewTools } from "../../src/harness-seed/tools/preview-tools.ts";
+import { playBrief } from "../../src/harness-seed/loop/playtester.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 function fakeWindow(state: unknown = { x: 1 }) {
@@ -113,5 +115,53 @@ describe("playtest shorthands", () => {
     assert.deepEqual([...byName.keys()], ["press_keys", "look", "click", "screenshot", "game_state", "wait"]);
     assert.match(byName.get(PlaytestTool.PressKeys) ?? "", /default 400, max 8000/);
     assert.match(byName.get(PlaytestTool.Wait) ?? "", /max 5000/);
+  });
+
+  it("lets the game's racing line steer a held throttle when asked, and lets go after", async () => {
+    const { port, inputs, calls } = fakeWindow();
+    const { ctx } = await context(await tmpDir("playtest-"));
+    await runPlaytestTool(PlaytestTool.PressKeys, { keys: "w", holdMs: 3_000, autosteer: true }, port, ctx);
+    assert.deepEqual(calls, [
+      ["assist", { steer: true }],
+      ["assist", { steer: false }],
+    ]);
+    assert.deepEqual(inputs, [{ type: "hold", keys: ["w"], ms: 3_000 }]);
+    await runPlaytestTool(PlaytestTool.PressKeys, { keys: "w" }, port, ctx);
+    assert.equal(calls.length, 2, "a plain press steers nothing");
+    const described = JSON.stringify(PLAYTEST_TOOLS.find((tool) => tool.name === PlaytestTool.PressKeys));
+    assert.match(described, /autosteer/);
+  });
+});
+
+describe("the direct playtester's press_keys", () => {
+  it("lets the game's racing line steer a held throttle when asked, and lets go after", async () => {
+    const press = previewTools.find((tool) => tool.name === "press_keys");
+    assert.ok(press);
+    const sent: Array<{ method: string; payload: Record<string, unknown> }> = [];
+    const ctx = {
+      call: async (method: string, payload: Record<string, unknown> = {}) => {
+        sent.push({ method, payload });
+        return method === "preview.state" ? { x: 1 } : { ok: true };
+      },
+    };
+    await press.execute({ keys: ["w"], holdMs: 2_000, autosteer: true }, ctx as never);
+    const words = sent.map((c) =>
+      c.method === "preview.call" ? `${c.payload.method}:${JSON.stringify(c.payload.arg ?? null)}` : c.method,
+    );
+    assert.deepEqual(words, [
+      "start:null",
+      'assist:{"steer":true}',
+      "preview.input",
+      'assist:{"steer":false}',
+      "preview.state",
+    ]);
+    assert.match(JSON.stringify(press.parameters), /autosteer/);
+  });
+
+  it("tells a racer's playtester the racing line can steer a held throttle, and nobody else", () => {
+    const brief = (kind: string) =>
+      playBrief({ run: { runId: "r", project: "p", game: { kind } } as never, checks: [], maxActions: 20 });
+    assert.match(brief("racing"), /press_keys autosteer: true/);
+    assert.doesNotMatch(brief("first-person"), /autosteer/);
   });
 });

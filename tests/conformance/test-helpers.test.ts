@@ -17,7 +17,7 @@ import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { fakeStudioApi, installFakeStudio, STUDIO_METHODS } from "../helpers/fake-studio-api.ts";
 import { EXIT_GRACE_ENV } from "../helpers/leftover-children.ts";
 import { running } from "../helpers/processes.ts";
-import { REMOVE_PATIENCE_MS, removeTree, tmpDir } from "../helpers/tmp.ts";
+import { REMOVE_PATIENCE_MS, removeAll, removeTree, tmpDir } from "../helpers/tmp.ts";
 
 describe("fakeStudioApi", () => {
   it("answers every named call with a default, records it, and lets a test replace one", async () => {
@@ -164,6 +164,26 @@ describe("leftover children", { skip: process.platform === "win32" && "reads pro
     );
     assert.equal(exiting.error, undefined);
     assert.equal(exiting.status, 0, exiting.stdout);
+  });
+});
+
+describe("removeAll", () => {
+  it("removes one folder at a time, newest first, so a folder made inside another goes before it", async () => {
+    // A core-lite's temp folder made under a test's own folder, reached through a link: removing
+    // both at once raced over the same files and failed the macOS release with EINVAL.
+    const order: string[] = [];
+    let inFlight = 0;
+    let most = 0;
+    const rm = async (dir: string) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push(dir);
+      inFlight -= 1;
+    };
+    await removeAll(["/tmp/root", "/tmp/root/linked/core-lite", "/tmp/other"], { rm });
+    assert.deepEqual(order, ["/tmp/other", "/tmp/root/linked/core-lite", "/tmp/root"]);
+    assert.equal(most, 1, "never two removals at once");
   });
 });
 

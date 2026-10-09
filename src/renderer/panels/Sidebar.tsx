@@ -3,7 +3,7 @@ import type { ComponentPropsWithRef, JSX, ReactNode, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
-import { statusWords, UPDATE_WORDS } from "../words.ts";
+import { FEEDBACK_WORDS, statusWords, UPDATE_WORDS } from "../words.ts";
 import type { ConversationRecord, GameProject, ThreadMeta } from "../types.ts";
 import { Dot, IconButton } from "../ui/kit.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
@@ -42,6 +42,8 @@ interface Props {
   onReadNotices: () => void;
   onClearNotices: () => void;
   onToggle: () => void;
+  /** Open Send feedback, from the bug button at the far end of the top line. */
+  onFeedback: () => void;
   onSettings: () => void;
   pluginsOpen: boolean;
   onPlugins: () => void;
@@ -256,7 +258,10 @@ function SidebarGame({
   );
 }
 
-/** The fixed top: the toggle, the brand with search and notifications, the rooms, the games heading. */
+/**
+ * The fixed top: the toggle and Send feedback, the brand with search and notifications, the rooms,
+ * the games heading.
+ */
 function SidebarTop({
   studio,
   harnessOpen,
@@ -270,6 +275,7 @@ function SidebarTop({
   onReadNotices,
   onClearNotices,
   onToggle,
+  onFeedback,
   onSettings,
   pluginsOpen,
   onPlugins,
@@ -294,6 +300,18 @@ function SidebarTop({
             onClick={onToggle}
           >
             <Icon name="sidebar" />
+          </button>
+        </Hint>
+        <Hint label={FEEDBACK_WORDS.title}>
+          <button
+            type="button"
+            className="no-drag sidebar-toggle sidebar-feedback"
+            data-feedback-open
+            aria-label={FEEDBACK_WORDS.title}
+            aria-haspopup="dialog"
+            onClick={onFeedback}
+          >
+            <Icon name="bug" />
           </button>
         </Hint>
       </div>

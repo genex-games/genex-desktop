@@ -1,8 +1,9 @@
 /** The round's gate and opening, continuous integration, and the re-baseline it may call for. */
 import { gatherEvidence } from "../../evidence.ts";
 import { isMeasured, runDeterministicChecks, toScoreboard } from "../../checks.ts";
-import { demosNamedByChecks } from "../../spec.ts";
-import { unionMergeMain } from "../../merge.ts";
+import { CheckKind, demosNamedByChecks } from "../../spec.ts";
+import { statePathsNamedByChecks } from "../../state-shape.ts";
+import { resolveByOwnership } from "../../merge-ownership.ts";
 import { isCommit } from "../../shell.ts";
 import { GIT, isAncestor, mergeNoFf, shortSha } from "../../git.ts";
 import { GIT_TIMEOUT_MS } from "../../config.ts";
@@ -11,15 +12,30 @@ import { RunEvent } from "../../run-events.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { CLIP_REASON } from "../../text.ts";
 import type { Scoreboard } from "../../checks.ts";
+import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
+import { handMergeNote } from "../gate-prompts.ts";
+import { ownedByFacet } from "../owned.ts";
+import { othersChangesToOwnFiles } from "../merged-heads.ts";
+import { leadChangesNote } from "../merged-heads-prompts.ts";
 import { RoundFlow } from "../flow.ts";
 import { stopSignal, tooLateToStart } from "../rules.ts";
 import { MOTION_FRAMES } from "../policy.ts";
 import { roundFields } from "../record.ts";
+import { admitRound } from "../admission.ts";
+import { judgedOnMotion } from "../../motion-intent.ts";
+import type { Check } from "../../spec.ts";
 
 /** The round's gate — a stop, the clock, a round that would not fit, fair share — and its opening: the status, the event, the user's steering. */
 export async function openRound(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { appendRun, ctx, deadline, facet, finishRequested, result, roundEstimate, run, steering } = loop;
+  if (ctx.cancelled) {
+    stopWith(result, StopCode.UserStop, "stopped by the user");
+    return RoundFlow.Stop;
+  }
+  // Memory first: a machine short of it waits here, and the gates below then see the clock it
+  // cost. A stop ends the wait at its next poll, so the cancel and finish gates answer it.
+  await admitRound(loop, round.iteration);
   if (ctx.cancelled) {
     stopWith(result, StopCode.UserStop, "stopped by the user");
     return RoundFlow.Stop;
@@ -90,8 +106,9 @@ export async function takeIntegration(loop: FacetLoop, round: FacetRound): Promi
 }
 
 /**
- * Merge the integration head into the worktree. A conflict on the wiring block alone is resolved
- * by union merge (WP1c); anything else is aborted and handed to the builder as before.
+ * Merge the integration head into the worktree. A conflict is settled by ownership: another
+ * part's file takes the integration side and the wiring block is union-merged (WP1c); a conflict
+ * in this part's own files is aborted and handed to the builder, naming only those files.
  */
 async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string, worktree: string): Promise<void> {
   const { appendRun, ctx, facet, git, gitOptions, gitWhere, ownShape, shape } = loop;
@@ -105,7 +122,7 @@ async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string
     rpcErrors: "fail",
     cleanupLabel: gitOptions.label,
     resolve: () =>
-      unionMergeMain(
+      resolveByOwnership(
         (command) =>
           ctx.call(HostMethod.RunExec, {
             command,
@@ -114,7 +131,8 @@ async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string
             label: `facet:${facet.id}:union-merge`,
           }),
         {
-          message: `facet ${facet.id}: take integration ${shortSha(head)} (union on FACET WIRING)`,
+          owned: ownedByFacet(loop),
+          message: `facet ${facet.id}: take integration ${shortSha(head)} (resolved by ownership)`,
           wiring: !ownShape,
           ...(ownShape && shape?.main ? { main: shape.main } : {}),
         },
@@ -123,7 +141,11 @@ async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string
   const merged = { ...roundFields(loop, round.iteration), head };
   if (!merge.ok) {
     round.notedHead = head;
-    loop.integrationNote = `Other facets' accepted work is on commit ${head}. Your worktree could not merge it automatically (${merge.resolved?.reason}). FIRST run \`git merge ${head}\`, resolve the conflicts keeping both sides' work (yours and theirs), and commit the merge — then continue with your own checks.`;
+    loop.integrationNote = handMergeNote({
+      head,
+      reason: String(merge.resolved?.reason ?? merge.error),
+      ...namedFiles(merge.resolved),
+    });
     await appendRun(RunEvent.IntegrationMerge, {
       ...merged,
       conflict: true,
@@ -131,17 +153,58 @@ async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string
     });
     return;
   }
+  const before = loop.incumbentCommit;
   loop.incumbentCommit = await git(GIT.head);
   loop.mergedIntegration = head;
-  const union = merge.union ? { union: true, duplicates: merge.resolved.duplicates ?? 0 } : {};
-  await appendRun(RunEvent.IntegrationMerge, { ...merged, conflict: false, ...union });
+  await appendRun(RunEvent.IntegrationMerge, { ...merged, conflict: false, ...resolvedFields(merge.resolved) });
   round.rebaseline = true;
+  await noteLeadChanges(loop, { before, after: loop.incumbentCommit, head });
+}
+
+/**
+ * A clean merge that brought edits to this part's own files — the lead's integration fixes — tells
+ * the builder they are the lead's to keep, so an owner never undoes them as an accident.
+ * Best-effort: a git that refuses says nothing.
+ */
+async function noteLeadChanges(
+  loop: FacetLoop,
+  { before, after, head }: { before: string | null; after: string | null; head: string },
+): Promise<void> {
+  const { git, ownShape, shape } = loop;
+  const files = await othersChangesToOwnFiles(git, {
+    before,
+    after,
+    owned: ownedByFacet(loop),
+    template: !ownShape,
+    main: shape?.main ?? null,
+  }).catch(() => []);
+  if (files.length) loop.integrationNote = leadChangesNote(files, head);
+}
+
+/**
+ * The files a resolver said are whose. A resolver that names none (a kept older module, or one that
+ * threw) leaves them unknown, and the builder's note then keeps both sides as it always did.
+ */
+function namedFiles(resolved: AnyRecord | null | undefined): { left?: string[]; theirs?: string[] } {
+  return {
+    ...(Array.isArray(resolved?.left) ? { left: resolved.left } : {}),
+    ...(Array.isArray(resolved?.theirs) ? { theirs: resolved.theirs } : {}),
+  };
+}
+
+/** What a merge the harness settled records: a union on the wiring block, and the files that took the integration side. */
+function resolvedFields(resolved: AnyRecord | null | undefined): AnyRecord {
+  if (!resolved) return {};
+  const theirs = Array.isArray(resolved.theirs) && resolved.theirs.length ? { theirs: resolved.theirs } : {};
+  // A resolver from before ownership (a kept older module) answers no `union`: it only unions.
+  const unioned = resolved.union === true || resolved.theirs === undefined;
+  return { ...(unioned ? { union: true, duplicates: resolved.duplicates ?? 0 } : {}), ...theirs };
 }
 
 /** Re-baseline: the incumbent just changed under this facet, so its evidence and board are looked at again once. */
 export async function rebaselineIncumbent(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { legacy, previewLock, worktree } = loop;
-  // ── re-baseline (director, 2026-09-07): the incumbent just changed under this facet ──
+  // ── re-baseline: the incumbent just changed under this facet ──
   // Other facets' work is in the worktree now; the accepted evidence and board predate it.
   // Judged against stale evidence, a regression they caused would be this facet's loss and
   // a fix they landed would be this facet's flip. Look at the merged incumbent once.
@@ -157,6 +220,25 @@ export async function rebaselineIncumbent(loop: FacetLoop, round: FacetRound): P
   }
 }
 
+/**
+ * What a re-look over the merged incumbent records beyond the frames. The motion strip only for a
+ * facet judged on play or a demo, or one the taste judge watches move (loop/motion-intent.ts):
+ * every re-baseline used to drive a strip whatever the facet was judged on. The new evidence is
+ * the incumbent's side of the next blind A/B, so it keeps whatever the challenger's side will
+ * show there — the strip for a facet about feel, and the audio probe (one page call after the
+ * drive), whose line the judge reads for both builds.
+ */
+function mergedLookExtras(loop: FacetLoop): { motion: number; audio: boolean } {
+  const { board, facet, spec } = loop;
+  const checks: readonly Check[] = spec.checks;
+  const moving = checks.some((check) => check.kind === CheckKind.Play || check.kind === CheckKind.Demo);
+  const watched = judgedOnMotion(facet, board) || judgedOnMotion(spec, board);
+  return {
+    motion: moving || watched || demosNamedByChecks(checks).length > 0 ? MOTION_FRAMES : 0,
+    audio: true,
+  };
+}
+
 /** One evidence pass over the merged incumbent, and its measured checks laid over the board. */
 async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktree: string): Promise<void> {
   const { appendRun, ctx, facet, facetSetup, handle, references, run, seed, spec } = loop;
@@ -169,9 +251,9 @@ async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktre
     labelPrefix: `facet_${facet.id}/iter_${round.iterationId}/merged-incumbent`,
     cameras: spec.cameras,
     eyes: true,
-    motion: MOTION_FRAMES,
-    audio: true,
+    ...mergedLookExtras(loop),
     requiredDemos: demosNamedByChecks(spec.checks),
+    keepPaths: statePathsNamedByChecks(spec.checks),
     setup: facetSetup,
   });
   if (!merged.ok) return;

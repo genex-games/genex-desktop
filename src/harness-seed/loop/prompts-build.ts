@@ -1,18 +1,19 @@
 /**
  * Briefs more than one mode builds from: the base builder's (the classic pipeline's shared base,
- * and the starting point a director's night from scratch builds first) and the one sentence that
+ * and the starting point a director's run from scratch builds first) and the one sentence that
  * makes somebody's own game judgeable (the base builder's own-shape bullet, and the director's
  * `installContract`). They lived in autopilot.ts, so the director imported the whole classic
  * pipeline to reach them; autopilot.ts still exports both, for harness files that import them
  * from there.
  */
 import { roleEngine, RoleKey, toolCall } from "./model-roles.ts";
+import { scopeLines } from "./scope-prompts.ts";
 import type { AnyRecord, Run } from "../types/harness.d.ts";
 
 /**
  * The one job that makes somebody's own game judgeable: its entry loads the studio contract, so
  * every window, judge and check can see the game at all. The base builder's own-shape bullet is
- * this sentence, and so is the step a director's night runs first when the game arrived without
+ * this sentence, and so is the step a director's run takes first when the game arrived without
  * it (director.ts `contractBrief`) — one wording, because the two are the same task.
  */
 export function contractWiringAsk(shape: { main?: string } | null | undefined): string {
@@ -22,8 +23,8 @@ export function contractWiringAsk(shape: { main?: string } | null | undefined): 
 
 /**
  * The base builder's brief. The classic pipeline knows its facets by name here; a director's
- * night does not — it plans as it goes — so a plan with no facets asks for the same starting
- * point in the same words, minus the roll call (director, 2026-09-08).
+ * run does not — it plans as it goes — so a plan with no facets asks for the same starting
+ * point in the same words, minus the roll call.
  */
 /** What the base builder is told about the plan: its facets and the shared base they fork from. */
 export interface BasePlan {
@@ -35,7 +36,7 @@ export interface BasePlan {
 /** What the base builder is told about the game's shape: its entry, its page and its build. */
 type BriefShape = { main?: string; entry?: string; build?: string | null } | null;
 /** The run as the base brief reads it. */
-type BriefRun = Pick<Run, "goal" | "reference" | "engine" | "builderEngine"> & { runId?: string };
+type BriefRun = Pick<Run, "goal" | "reference" | "engine" | "builderEngine"> & { runId?: string; scope?: unknown };
 /** The base plan's facets. */
 type BriefFacets = NonNullable<BasePlan["facets"]>;
 
@@ -75,16 +76,21 @@ export function baseBrief({
     .join("\n");
 }
 
-/** A director's night from scratch: one visible, working first version, and no roll call. */
+/**
+ * A director's run from scratch: a crude playable skeleton of what the user asked for, and no roll
+ * call. It reads the user's scope, so the skeleton has the shape the user asked for (a circuit,
+ * not a straight sprint, for a race of laps).
+ */
 function startingSceneBrief(run: BriefRun, projectLabel: string, setup: AnyRecord | null): string {
   return [
     `You are building the starting scene for "${projectLabel}". Goal: ${run.goal}`,
+    scopeLines({ scope: run.scope }),
     run.reference?.name ? `Direction: ${run.reference.name}.` : "",
-    `Complete one visible, working first version now. Preserve the user's intended scene/game; later workers can enrich detail. Include the goal's main subject, a suitable setting, lighting and a camera that frames it. Do not spend this stage designing a large framework.`,
+    `Build one visible, working first version now — a crude playable skeleton, not a finished level: the shape the user asked for (SCOPE, when it is above) at its scale, the goal's main subject, a suitable setting, lighting and a camera that frames it. Preserve the user's intended scene/game; later workers own each part's real content. Do not spend this stage designing a large framework.`,
     `Read src/main.js first, then edit it. Read docs/CONTRACT.md only for a specific unanswered API question. src/studio.js is existing host instrumentation: use its public API; do not study or rewrite its implementation. index.html already supplies the Three.js import map.`,
     `Integration guide: keep import { installStudio } from "./studio.js" and the existing renderer resize handler. Add your THREE objects to scene; tag important objects with obj.userData.tag. Set camera.position and camera.lookAt to frame visible objects. Define cameras.default() with that same framing; it is called by reset.`,
     `Keep installStudio({canvas:renderer.domElement, scene, renderer, camera, input:{pointerLock:false}, reset(){cameras.default()}, update(dt){/* optional animation */}, render(){renderer.render(scene,camera)}, probes(){return {phase:"scene",drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles}}, cameras}). Studio drives update/render: no separate animation loop. Keep the FACET WIRING markers for later edits.`,
-    `Input/UI API when the goal needs it: update(dtSeconds, ctx) receives ctx.keys (Set of KeyboardEvent.code strings such as "Space" and "KeyW"), ctx.look and ctx.wheel. const api = installStudio(config) returns synchronously; AFTER that call, api.hud.text("title", "Your title", {x:0.05,y:0.05,size:24,color:"#ffffff"}) draws text in the captured canvas. HUD x/y are fractions of the frame. Update a score with the same text id. Declare state and renderStats before installStudio, and never call HUD functions before installation. For a scene without gameplay, omit score/input/UI.`,
+    `Input/UI API when the goal needs it: update(dtSeconds, ctx) receives ctx.keys (Set of KeyboardEvent.code strings such as "Space" and "KeyW"), ctx.look and ctx.wheel. const api = installStudio(config) returns synchronously; AFTER that call, api.hud.text("title", "Your title", {x:0.05,y:0.05,size:24,color:"#ffffff"}) draws text in the captured canvas. HUD x/y are fractions of the frame. Update a score with the same text id. The HUD also draws arcs for gauges, rounded panels, SVG paths, images and bundled fonts — api.hud.arc("speed", {anchor:"bottom-right", x:0.03, y:0.05, r:0.08, fraction:0.4}) — anchored to a frame corner, with lengths in fractions of the frame's height; keep the middle of the view for the scene. Declare state and renderStats before installStudio, and never call HUD functions before installation. For a scene without gameplay, omit score/input/UI.`,
     `Do not invent helpers or controls you have not implemented. Make the requested subject visible using Three.js geometry and materials first. Use Blender only when needed for the goal; preserve the requested final quality as work for later stages.`,
     `After writing, use computer to reload and inspect the actual scene, fix console errors or bad framing, then finish with what you observed. The host commits and validates your changes. No git commit is needed.`,
     setup ? `Requested inspection state: ${JSON.stringify(setup)}` : "",
@@ -130,7 +136,7 @@ function ownShapeRules(shape: BriefShape): string[] {
     `- ${contractWiringAsk(shape)} Register the cameras the facets name through config.cameras, in the same call.`,
     // Said as a prohibition, because the template's answer to "where do parallel builders
     // meet" is a marker block and a group per facet, and imposing either on a game that
-    // already has its own structure is how a night rewrites somebody's architecture.
+    // already has its own structure is how a run rewrites somebody's architecture.
     `- Do NOT impose the studio template's structure on this game: no marker block in the entry for builders to add import lines to, no empty per-builder container added to the scene, no shared module invented to hold them. Builders here are given a seam in the code this game already has — a file, a folder or a glob — and they wire their work in the way this game already wires things.`,
     ...(shape?.build
       ? [

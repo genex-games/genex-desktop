@@ -24,7 +24,7 @@ import { chatContext } from "../../src/shared/chat-history.ts";
 import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 
-/** No night here may hang the suite: each is over in well under a minute when it works. */
+/** No run here may hang the suite: each is over in well under a minute when it works. */
 const RIG_TIMEOUT_MS = 240_000;
 const rigs: Rig[] = [];
 afterEach(async () => {
@@ -45,7 +45,7 @@ async function until(condition: () => boolean, label: string, timeoutMs = 60_000
 
 /** The plan every scripted lead writes before its first worker, as a real one must. */
 const plan = {
-  summary: "Tonight: a dusk sky over the plaza.",
+  summary: "This run: a dusk sky over the plaza.",
   workers: JSON.stringify([
     { id: "sky", title: "Dusk sky", seam: "the sky", owns: "src/sky.js", done: ["the sky reads as dusk"], minutes: 20 },
   ]),
@@ -99,7 +99,7 @@ const hangUntilStopped = (request: DelegateRequest, aborted: () => void): Promis
     }),
   );
 
-async function night(name: string, extra: Record<string, unknown> = {}) {
+async function loopRun(name: string, extra: Record<string, unknown> = {}) {
   const rig = await startRig(
     { replies: [] },
     { previewPoolMax: 3, createHeadlessPreview: async () => makeFakePreview() },
@@ -107,7 +107,7 @@ async function night(name: string, extra: Record<string, unknown> = {}) {
   rigs.push(rig);
   const project = await rig.core.games.scaffold(name, { title: name });
   const runId = rig.core.newRunId();
-  // The dispatch answers when the night is over: a test that acts during it starts it and goes on.
+  // The dispatch answers when the run is over: a test that acts during it starts it and goes on.
   const dispatch = () =>
     rig.core
       .dispatchRun({
@@ -135,7 +135,7 @@ describe("the lead is woken, not kept in one long turn", () => {
   it("R1. a lead that ends its turn is woken in the same session by its worker's end, with the news on top", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("wake-by-worker");
+    const { rig, project, runId, dispatch, finished } = await loopRun("wake-by-worker");
     const lead: DelegateRequest[] = [];
     const results: Record<string, any> = {};
     let turnOneReturned = () => {};
@@ -189,14 +189,14 @@ describe("the lead is woken, not kept in one long turn", () => {
     const threadId = await rig.core.threadForGame(project.name);
     const journal = (await rig.core.store.readArtifact(threadId, `autopilot_${runId}`)) as Record<string, any>;
     assert.equal(journal.director.workers.sky.brief, "Build a dusk sky");
-    // The night's own clock is the night's record, not the wake loop's (journal.ts; it moved from `wake.clock`).
+    // The run's own clock is the run's record, not the wake loop's (journal.ts; it moved from `wake.clock`).
     assert.match(String(journal.director.clock.finalDeadline), /^\d{4}-\d\d-\d\dT/);
   });
 
   it("R2. a user's message wakes a sleeping lead within seconds, word for word, at the top", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("wake-by-user");
+    const { rig, project, runId, dispatch, finished } = await loopRun("wake-by-user");
     const lead: Array<{ request: DelegateRequest; at: number }> = [];
     const results: Record<string, any> = {};
     let rested = false;
@@ -243,7 +243,7 @@ describe("the lead is woken, not kept in one long turn", () => {
   it("R3. the plan window is a timer: worker_start answers at once and the lead is woken when the user answers", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("wake-plan-window", { reviewPlan: true });
+    const { rig, project, runId, dispatch, finished } = await loopRun("wake-plan-window", { reviewPlan: true });
     const lead: DelegateRequest[] = [];
     const results: Record<string, any> = {};
     let rested = false;
@@ -284,7 +284,7 @@ describe("the lead is woken, not kept in one long turn", () => {
   it("R4. Stop reaches a sleeping lead: the run closes as stopped and no turn follows", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, runId, dispatch, finished } = await night("wake-stop");
+    const { rig, runId, dispatch, finished } = await loopRun("wake-stop");
     const lead: DelegateRequest[] = [];
     let aborted = 0;
     let rested = false;
@@ -313,7 +313,7 @@ describe("the lead is woken, not kept in one long turn", () => {
   });
 
   it("R8. a job that ends while the lead rests is in its next digest", { timeout: RIG_TIMEOUT_MS }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("wake-by-job");
+    const { rig, project, runId, dispatch, finished } = await loopRun("wake-by-job");
     const lead: DelegateRequest[] = [];
     let rested = false;
     fakeEngine(rig, async (request) => {
@@ -357,10 +357,10 @@ describe("the lead is woken, not kept in one long turn", () => {
     assert.ok(((continued[0]?.reasons ?? []) as string[]).includes("job_ended"), JSON.stringify(continued));
   });
 
-  it("R7. a Stop while the night prepares opens no lead session: the run closes as stopped", {
+  it("R7. a Stop while the run prepares opens no lead session: the run closes as stopped", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    /** The empty scaffold as a window sees it, so the night builds a starting point first. */
+    /** The empty scaffold as a window sees it, so the run builds a starting point first. */
     const asEmptyScaffold = (preview: FakePreview): FakePreview => {
       preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
       preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
@@ -401,7 +401,7 @@ describe("the lead is woken, not kept in one long turn", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
       150_000,
-      "the stopped night to close",
+      "the stopped run to close",
     );
     await running;
     assert.equal(lead.length, 0, "no lead session opens after the Stop");
@@ -418,7 +418,7 @@ describe("the long turn, one field away", () => {
     const before = process.env.STUDIO_DIRECTOR_LOOP;
     process.env.STUDIO_DIRECTOR_LOOP = "turn";
     try {
-      const { rig, dispatch, finished } = await night("env-turn");
+      const { rig, dispatch, finished } = await loopRun("env-turn");
       const lead: DelegateRequest[] = [];
       const results: Record<string, string> = {};
       fakeEngine(rig, async (request) => {
@@ -445,7 +445,7 @@ describe("the long turn, one field away", () => {
   });
 
   it("R5. the old loop stays behind directorLoop: turn", { timeout: RIG_TIMEOUT_MS }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("turn-loop", {
+    const { rig, project, runId, dispatch, finished } = await loopRun("turn-loop", {
       directorLoop: "turn",
       reference: { name: "Dusk", kind: "direction", shots: [] },
       budgets: { wallClockMs: 3_600_000 },
@@ -494,7 +494,7 @@ describe("the long turn, one field away", () => {
 });
 
 /**
- * Live chat during a build: a message sent to the game's chat while a night's lead works is
+ * Live chat during a build: a message sent to the game's chat while a run's lead works is
  * handed to that lead at once — delivered, never Queued under the build — and the lead answers in
  * the chat. A lead in the middle of a turn hears it in that turn: read at its next step by an
  * engine that takes input mid-turn, or interrupted and resumed in the same session with the
@@ -502,7 +502,7 @@ describe("the long turn, one field away", () => {
  * the close the chat's own session answers what waited — the one the lead was — never a coordinator.
  */
 describe("live chat during a build", () => {
-  /** The session answering the chat once the night is over: a coordinator, or the chat's own with the run's controls. */
+  /** The session answering the chat once the run is over: a coordinator, or the chat's own with the run's controls. */
   const answersChat = (request: DelegateRequest): boolean =>
     !request.director && Boolean(request.coordinator || request.liveTools?.some((t) => t.name === "run_status"));
   /** A message to the game's chat, as the composer sends it, with the bubble id it is queued under. */
@@ -535,7 +535,7 @@ describe("live chat during a build", () => {
   it("L1. a message sent mid-build is delivered to the lead at once and answered in the chat within one wake, while the run keeps running", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-answer");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-answer");
     const lead: Array<{ request: DelegateRequest; at: number }> = [];
     const coordinators: DelegateRequest[] = [];
     const seen: Record<string, unknown> = {};
@@ -594,7 +594,7 @@ describe("live chat during a build", () => {
   it("L2. a message sent while the lead is mid-turn is steered into that turn: interrupted and resumed in the same session, words first", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-interrupt");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-interrupt");
     const lead: DelegateRequest[] = [];
     let rested = false;
     let working = false;
@@ -646,7 +646,7 @@ describe("live chat during a build", () => {
   it("L3. an engine that reads input mid-turn takes the message in the running turn, and it is not said again", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-native", { engine: "claude-code" });
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-native", { engine: "claude-code" });
     const lead: DelegateRequest[] = [];
     const handed: string[] = [];
     let rested = false;
@@ -708,7 +708,7 @@ describe("live chat during a build", () => {
   it("L4. Stop mid-build still hands over to the oldest queued message: a picture waits for the chat", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-stop");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-stop");
     const lead: DelegateRequest[] = [];
     const chats: DelegateRequest[] = [];
     let rested = false;
@@ -745,7 +745,7 @@ describe("live chat during a build", () => {
     assert.equal(lead.length, 1, "no turn of the lead after Stop");
     assert.equal(chats.length, 1, "the chat answers the message that waited");
     assert.equal(chats[0]!.coordinator, undefined, "in its own session, not a coordinator's");
-    assert.equal(chats[0]!.resume, "lead-1", "the session that led the night");
+    assert.equal(chats[0]!.resume, "lead-1", "the session that led the run");
     assert.match(chats[0]!.prompt, /does it look like this\?/);
     assert.equal(chats[0]!.images?.[0]?.data, "iVBORw0KGgo=", "with the picture");
   });
@@ -753,7 +753,7 @@ describe("live chat during a build", () => {
   it("L6. the chat is free as soon as the run closes: a message during its self-improvement pass is answered then", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-learning");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-learning");
     const chats: DelegateRequest[] = [];
     let learning = () => {};
     const learned = new Promise<void>((resolve) => {
@@ -761,7 +761,7 @@ describe("live chat during a build", () => {
     });
     let learningAsked = false;
     // The pass after the run starts by asking whether to learn: held here until the test lets it go.
-    // (The night asks too, before it closes; those answers are not held.)
+    // (The run asks too, before it closes; those answers are not held.)
     const api = rig.core.host.options.api as Record<string, (params: unknown) => Promise<unknown>>;
     const closed = async () =>
       customEvents(await rig.core.listAllEvents(), "run_finished").some((e) => e.runId === runId);
@@ -793,7 +793,7 @@ describe("live chat during a build", () => {
       );
       assert.equal(chats.length, 1, "the chat answered after the run closed, not after its pass");
       assert.equal(chats[0]!.coordinator, undefined, "in its own session, not a coordinator's");
-      assert.equal(chats[0]!.resume, "lead-1", "the session that led the night");
+      assert.equal(chats[0]!.resume, "lead-1", "the session that led the run");
       const log = await rig.core.store.listEvents(thread);
       assert.ok(customEvents(log, "run_finished").some((e) => e.runId === runId));
     } finally {
@@ -802,10 +802,10 @@ describe("live chat during a build", () => {
     }
   });
 
-  it("L7. a night that crashes gives back what its lead never heard before the run closes: the chat keeps it Queued, and answers it", {
+  it("L7. a run that crashes gives back what its lead never heard before the run closes: the chat keeps it Queued, and answers it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-crash");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-crash");
     const chats: DelegateRequest[] = [];
     let working = false;
     let handed = () => {};
@@ -815,10 +815,10 @@ describe("live chat during a build", () => {
     fakeEngine(rig, async (request) => {
       if (answersChat(request)) {
         chats.push(request);
-        return turnResult(request.resume ?? "chat", "The night stopped on a problem; the sky is not dusk yet.");
+        return turnResult(request.resume ?? "chat", "The run stopped on a problem; the sky is not dusk yet.");
       }
       if (!request.director) return hangUntilStopped(request, () => {});
-      // The lead's first turn fails outright after the user spoke to it: the night's crash close.
+      // The lead's first turn fails outright after the user spoke to it: the run's crash close.
       working = true;
       await sent;
       throw new Error("the provider broke");
@@ -858,10 +858,10 @@ describe("live chat during a build", () => {
     assert.match(chats[0]!.prompt, /is the sky dusk yet\?/);
   });
 
-  it("L9. a night stopped while it prepares gives back what its lead never heard before it closes, and the chat answers it", {
+  it("L9. a run stopped while it prepares gives back what its lead never heard before it closes, and the chat answers it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    /** The empty scaffold as a window sees it, so the night builds a starting point first. */
+    /** The empty scaffold as a window sees it, so the run builds a starting point first. */
     const asEmptyScaffold = (preview: FakePreview): FakePreview => {
       preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
       preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
@@ -905,14 +905,14 @@ describe("live chat during a build", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
       150_000,
-      "the stopped night to close",
+      "the stopped run to close",
     );
     await running;
     await waitForLog(
       rig.core,
       (log) => customEvents(log, "coordinator_message_handled").some((e) => e.messageId === messageId),
       60_000,
-      "the message to be answered after the stopped night",
+      "the message to be answered after the stopped run",
     );
     const log = await rig.core.store.listEvents(thread);
     const at = (type: string, match: (payload: Record<string, unknown>) => boolean) =>
@@ -932,7 +932,7 @@ describe("live chat during a build", () => {
   it("L8. Stop while a new build waits out the last run's learning pass stops that build too", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-learning-stop");
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-learning-stop");
     let learning = () => {};
     const learned = new Promise<void>((resolve) => {
       learning = resolve;
@@ -991,10 +991,10 @@ describe("live chat during a build", () => {
     );
   });
 
-  it("L5. the long turn keeps the old way: a message waits for the night, and the chat answers it after", {
+  it("L5. the long turn keeps the old way: a message waits for the run, and the chat answers it after", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    const { rig, project, runId, dispatch, finished } = await night("live-old-loop", { directorLoop: "turn" });
+    const { rig, project, runId, dispatch, finished } = await loopRun("live-old-loop", { directorLoop: "turn" });
     const lead: DelegateRequest[] = [];
     const coordinators: DelegateRequest[] = [];
     let started = false;
@@ -1021,7 +1021,7 @@ describe("live chat during a build", () => {
     await until(() => started, "the long turn to start its worker");
     const { thread, messageId } = await say(rig, project.name, "is it done?");
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    assert.equal((await stateOf(rig, thread, messageId))?.state, "queued", "the long turn's night keeps its queue");
+    assert.equal((await stateOf(rig, thread, messageId))?.state, "queued", "the long turn's run keeps its queue");
     assert.equal(coordinators.length, 0);
     release();
     await finished();
@@ -1030,7 +1030,7 @@ describe("live chat during a build", () => {
       rig.core,
       (log) => customEvents(log, "coordinator_message_handled").some((e) => e.messageId === messageId),
       60_000,
-      "the message to be answered after the night",
+      "the message to be answered after the run",
     );
     assert.equal(coordinators.length, 1, "the long turn's chat is still answered by the coordinator");
     assert.equal(coordinators[0]!.readOnly, true);
@@ -1050,7 +1050,7 @@ describe("live chat during a build", () => {
 it("G2. an until-satisfied build pauses on a required prerequisite instead of starting cosmetics", {
   timeout: RIG_TIMEOUT_MS,
 }, async () => {
-  const { rig, runId, dispatch, finished, project } = await night("goal-blocker", {
+  const { rig, runId, dispatch, finished, project } = await loopRun("goal-blocker", {
     reference: { kind: "direction", name: "Dusk", shots: [] },
     budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
   });
@@ -1084,7 +1084,7 @@ it("G2. an until-satisfied build pauses on a required prerequisite instead of st
 it("G3. current integrated acceptance permits early completion and keeps a recoverable checkpoint", {
   timeout: RIG_TIMEOUT_MS,
 }, async () => {
-  const { rig, runId, dispatch, finished, project } = await night("goal-complete", {
+  const { rig, runId, dispatch, finished, project } = await loopRun("goal-complete", {
     reference: { kind: "direction", name: "Dusk", shots: [] },
     budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
   });
@@ -1137,7 +1137,7 @@ it("G3. current integrated acceptance permits early completion and keeps a recov
 it("G4. multiplayer prerequisites are host-checked before any worker is delegated", {
   timeout: RIG_TIMEOUT_MS,
 }, async () => {
-  const { rig, runId, dispatch, finished } = await night("goal-prerequisites", {
+  const { rig, runId, dispatch, finished } = await loopRun("goal-prerequisites", {
     reference: { kind: "direction", name: "Chess", shots: [] },
     budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
   });

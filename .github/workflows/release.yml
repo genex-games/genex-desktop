@@ -222,6 +222,11 @@ jobs:
         run: xvfb-run -a npm run test:packaged
       - name: Packaged terminal
         run: xvfb-run -a node tests/e2e/run-terminal-packaged.mjs
+      # Byte-identical Genex-linux-amd64.deb, Genex-linux-x86_64.rpm and Genex-linux-x64.zip beside
+      # the versioned packages, so releases/latest/download/<name> links reach the newest release;
+      # provenance and SHA256SUMS list them, and upload-release.mjs refuses a draft without them.
+      - name: Version-free package names
+        run: node scripts/release-downloads.mjs
       - name: Artifact provenance
         run: node scripts/release-manifest.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

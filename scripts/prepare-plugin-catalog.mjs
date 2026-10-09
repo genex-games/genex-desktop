@@ -1,9 +1,7 @@
 /** Prepare a portable catalog repository and separate upload payload; never publishes. */
 import { readFile, writeFile, mkdir, cp, rm } from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
-import { inspectPackage } from "../src/substrate/plugins/manifest.ts";
-import { packageFiles } from "../src/substrate/plugins/pack.ts";
+import { catalogEntry, packEnvelope } from "../src/substrate/plugins/pack.ts";
 import { validateIndex } from "../src/substrate/plugins/marketplace.ts";
 import { checkCatalog } from "../marketplace/template/scripts/check-catalog.mjs";
 
@@ -30,29 +28,12 @@ try {
     official = {};
   for (const spec of cfg.packages) {
     const dir = path.resolve(path.dirname(path.resolve(configFile)), spec.directory);
-    const manifest = await inspectPackage(dir),
-      files = await packageFiles(dir);
-    const bytes = Buffer.from(JSON.stringify(files));
-    if (bytes.length > 256 * 1024 * 1024) throw new Error("Artifact exceeds 256 MiB");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    const rel = `${manifest.id}/${manifest.version}/${digest}.json`;
-    const entry = {
-      id: manifest.id,
-      name: manifest.name,
-      publisher: manifest.publisher,
-      description: manifest.description,
-      category: spec.category,
-      tier: spec.tier,
-      repo: spec.repo,
-      sha: spec.sha,
-      version: manifest.version,
-      capabilities: manifest.capabilities,
-      artifact: { url: `${cfg.artifactBaseUrl.replace(/\/$/, "")}/${rel}`, sha256: digest },
-    };
-    if (spec.subdir) entry.subdir = spec.subdir;
-    if (spec.docsUrl) entry.docsUrl = spec.docsUrl;
-    if (spec.minStudioVersion) entry.minStudioVersion = spec.minStudioVersion;
-    if (spec.tier === "official") official[manifest.id] = { publisher: manifest.publisher, repo: spec.repo };
+    const packed = await packEnvelope(dir);
+    const { manifest, bytes } = packed;
+    const rel = `${manifest.id}/${manifest.version}/${packed.sha256}.json`;
+    const entry = catalogEntry(packed, spec, cfg.artifactBaseUrl);
+    // The catalog policy shape: an official id's repositories, current first, then any it moved from.
+    if (spec.tier === "official") official[manifest.id] = { publisher: manifest.publisher, repos: [spec.repo] };
     entries.push(entry);
     await mkdir(path.dirname(path.join(uploads, rel)), { recursive: true });
     await writeFile(path.join(uploads, rel), bytes);

@@ -1,6 +1,7 @@
 /**
- * The scripted engines of a fixture session: Ollama, Claude Code and Codex stand-ins that answer
- * from fixed text, never reach an account or the network, and start no vendor worker. Markers in
+ * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode and OpenRouter
+ * stand-ins that answer from fixed text, never reach an account, a key or the network, and start no
+ * vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
@@ -23,7 +24,15 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
 const DAY_MS = 24 * HOUR_MS;
-const FIXTURE_ENGINES = [EngineId.Ollama, EngineId.ClaudeCode, EngineId.Codex] as const;
+const FIXTURE_ENGINES = [
+  EngineId.Ollama,
+  EngineId.ClaudeCode,
+  EngineId.Codex,
+  EngineId.OpenCode,
+  EngineId.OpenRouter,
+] as const;
+/** The fixture engines the studio's own loop drives: the local model, and OpenRouter's API. */
+const DIRECT_FIXTURES: ReadonlySet<string> = new Set([EngineId.Ollama, EngineId.OpenRouter]);
 const READY_STATUS: EngineStatus = { code: EngineStatusCode.Ready, detail: "AG-933 fixture; no account or network" };
 /** How long naming a game takes, so home's Naming step can be seen. */
 const NAMING_DELAY_MS = 2500;
@@ -62,13 +71,18 @@ const COMMAND_MARKER = "fixture:command";
 /** Where a coordinator's prompt puts the words it answers. */
 const LATEST_MESSAGE = "LATEST USER MESSAGE:\n";
 
-/** First launch: an empty library, Claude Code waiting for a sign-in and Codex not installed. */
+/**
+ * First launch: an empty library, Claude Code waiting for a sign-in, Codex and OpenCode not
+ * installed, and OpenRouter with no key.
+ */
 export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   [EngineId.ClaudeCode]: {
     code: EngineStatusCode.NeedsLogin,
     detail: "AG-933 fixture; sign-in is refused in fixture sessions",
   },
   [EngineId.Codex]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Codex app" },
+  [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
+  [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },
 };
 
 export function fixtureEngines(directChat = false, statuses: Record<string, EngineStatus> = {}): Engine[] {
@@ -83,12 +97,14 @@ function fixtureEngine(
   statuses: Record<string, EngineStatus>,
   pendingSessions: Set<string>,
 ): Engine {
-  const direct = id === EngineId.Ollama;
+  const direct = DIRECT_FIXTURES.has(id);
+  // Ollama completes one turn at a time; OpenRouter holds a Genex session, as the real one does.
+  const local = id === EngineId.Ollama;
   return {
     id,
     label: `${id} [fixture]`,
     kind: direct ? EngineKind.Direct : EngineKind.Delegated,
-    supportsSessions: !(directChat && direct),
+    supportsSessions: !(directChat && local),
     // Claude Code reads the person's messages mid-turn; Codex is interrupted and resumed instead.
     ...(id === EngineId.ClaudeCode ? { steersMidTurn: true } : {}),
     status: async () => statuses[id] ?? READY_STATUS,
@@ -107,12 +123,16 @@ function fixtureEngine(
       },
     ],
     defaultModel: async () => FIXTURE_MODEL,
-    // Deterministic plan limits so the composer's usage panel has something honest to show.
-    ...(direct ? {} : { readUsage: async () => fixtureUsage(id) }),
+    // Deterministic plan limits so the composer's usage panel has something honest to show; only a
+    // subscription has a plan.
+    ...(isSubscriptionFixture(id) ? { readUsage: async () => fixtureUsage(id) } : {}),
     complete: (request: CompleteRequest) => completeFixture(id, request),
     delegate: (request: DelegateRequest) => delegateFixture(id, request, pendingSessions),
   };
 }
+
+/** A subscription's stand-in: the only fixtures with plan limits. */
+const isSubscriptionFixture = (id: EngineId): boolean => id === EngineId.ClaudeCode || id === EngineId.Codex;
 
 function fixtureUsage(id: EngineId) {
   const inDays = (days: number) => new Date(Date.now() + days * DAY_MS).toISOString();

@@ -614,7 +614,17 @@ export interface PluginConsentEvent {
   by?: PluginConsentBy;
   expiresAt?: number;
 }
-export type PluginTier = "official" | "community";
+/** A catalog entry's standing: official ids are reserved by the catalog policy; anyone else is community. */
+export const PluginTier = {
+  Official: "official",
+  Community: "community",
+} as const;
+export type PluginTier = (typeof PluginTier)[keyof typeof PluginTier];
+/**
+ * The plugin guide, on the repository's default branch: the app's Create a plugin and Read the
+ * guide links, and what `plugin:new` points an author and their coding agent at.
+ */
+export const PLUGIN_GUIDE_URL = "https://github.com/genex-games/genex-desktop/blob/dev/docs/PLUGIN_GUIDE.md";
 export const PLUGIN_CATEGORIES = ["assets", "publishing", "tools", "analytics", "other"] as const;
 export type PluginCategory = (typeof PLUGIN_CATEGORIES)[number];
 export interface PluginIndexEntry {

@@ -16,6 +16,7 @@ import {
   toPiMessages,
 } from "../../src/substrate/engines/ollama.ts";
 import { EngineError } from "../../src/substrate/engines/types.ts";
+import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
 import { startFakeOllama, type FakeOllama } from "../helpers/fake-ollama.ts";
 import { cliName, writeCliLauncher } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -66,6 +67,28 @@ describe("ollama management API", () => {
     assert.equal(await client.version(), null);
   });
 
+  it("says Ollama is not running when a download finds no server, instead of a bare fetch failure", async () => {
+    const client = new OllamaClient("http://127.0.0.1:1");
+    await assert.rejects(
+      client.pull("qwen3.5:4b").next(),
+      (err) =>
+        err instanceof EngineError &&
+        err.kind === EngineFailureKind.Unavailable &&
+        err.message.includes("http://127.0.0.1:1"),
+    );
+  });
+
+  it("keeps a download's own failure when Ollama still answers", async () => {
+    const server = await fake();
+    const client = new OllamaClient(server.host);
+    const pull = client.pull("qwen3.6:27b", AbortSignal.abort());
+    await assert.rejects(
+      pull.next(),
+      (err) => !(err instanceof EngineError),
+      "an aborted pull is not a missing Ollama",
+    );
+  });
+
   it("streams pull progress", async () => {
     const server = await fake();
     const client = new OllamaClient(server.host);
@@ -112,6 +135,29 @@ describe("ollama management API", () => {
       ],
     });
     assert.equal(await new OllamaEngine({ host: server.host }).defaultModel(), "qwen3.6:27b");
+  });
+
+  it("deletes only a model Ollama lists, and the default moves to one still installed", async () => {
+    const server = await fake({
+      models: [
+        { name: "qwen3.8:27b", size: 17_700_000_000, capabilities: ["completion", "tools"] },
+        { name: "gemma4:12b", size: 7_600_000_000, capabilities: ["completion", "tools", "vision"] },
+      ],
+    });
+    const engine = new OllamaEngine({ host: server.host });
+    const deletes = () => server.requests.filter((request) => request.path === "/api/delete").map((r) => r.body);
+    assert.equal(await engine.defaultModel(), "qwen3.8:27b");
+    for (const name of ["", "missing:1b", "../qwen3.8:27b", "QWEN3.8:27B", "qwen3.8"]) {
+      await assert.rejects(engine.removeModel(name), /not installed in Ollama/, JSON.stringify(name));
+    }
+    assert.deepEqual(deletes(), [], "a name Ollama does not list never reaches its delete");
+    await engine.removeModel("qwen3.8:27b");
+    assert.deepEqual(deletes(), [{ model: "qwen3.8:27b" }]);
+    assert.deepEqual(
+      (await engine.models()).map((model) => model.id),
+      ["gemma4:12b"],
+    );
+    assert.equal(await engine.defaultModel(), "gemma4:12b", "the deleted default is not offered again");
   });
 });
 
@@ -249,7 +295,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
   it("a server that never answers surfaces the clear connection error, not silence", async () => {
     // The production shape: a Stop signal is attached (it always is), the server accepts the
     // request and goes quiet before headers. The client's timeout must still fire and land
-    // as the actionable chat error — this is what four watchdog rewinds in one night cost.
+    // as the actionable chat error, never a silence the watchdog rewinds.
     const server = await fake({ replies: [{ stall: true }] });
     const engine = new OllamaEngine({ host: server.host, timeoutMs: 400 });
     const abort = new AbortController();
@@ -364,7 +410,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
-  it("says Ollama is not running when nothing answers, as a failure a fallback can take over (P04-F8)", async () => {
+  it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
     await server.close();
@@ -379,7 +425,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
-  it("says the chosen model is not installed, not that the engine failed (P04-F8)", async () => {
+  it("says the chosen model is not installed, not that the engine failed", async () => {
     // What Ollama answers for a model it does not have.
     const server = await fake({
       replies: [

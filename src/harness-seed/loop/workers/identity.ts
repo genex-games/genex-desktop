@@ -5,7 +5,7 @@
 import { CoreFact, type FactRef } from "../folder-facts.ts";
 import { appIdentity } from "../project-prompts.ts";
 
-/** The game a director builds when its night found no facts: a web game at the folder's root. */
+/** The game a director builds when its run found no facts: a web game at the folder's root. */
 export const WEB_AT_ROOT: readonly FactRef[] = [{ id: CoreFact.WebGame, path: "." }];
 
 /** The game an Unreal lead and its workers build when nothing else is known: an Unreal project at the folder's root. */
@@ -16,7 +16,7 @@ export function folderLabelOf(dir: string | null | undefined, project: string | 
   return dir ? dir.split("/").slice(-2).join("/") : String(project ?? "");
 }
 
-/** What a run's identity is read from: the night's run, its game folder and what that folder holds. */
+/** What a run's identity is read from: its run record, its game folder and what that folder holds. */
 export interface RunIdentitySource {
   run: { project?: string | null };
   projectDir?: string | null;

@@ -68,6 +68,16 @@ import {
   type Subscription,
 } from "./state.ts";
 
+/**
+ * The welcome's buttons that move it on, as `data-onboarding-action` names them: the stable hooks
+ * an operator presses through dev control (words and classes may change; these do not).
+ */
+const OnboardingAction = {
+  Next: "next",
+  Start: "start",
+  Skip: "skip",
+} as const;
+
 /** The three onboarding screens, in the order the person meets them. */
 const Screen = {
   Welcome: "welcome",
@@ -534,6 +544,7 @@ function Welcome({
         variant="default"
         size="lg"
         className="onboarding-cta"
+        data-onboarding-action={OnboardingAction.Next}
         onClick={() => onNext(w.writing ? w.draft.trim() : "")}
       >
         Next
@@ -699,7 +710,12 @@ function TopBar({ onBack, onSkip }: { onBack: () => void; onSkip?: () => void })
         Back
       </Button>
       {onSkip && (
-        <Button variant="ghost" className="onboarding-swap" onClick={onSkip}>
+        <Button
+          variant="ghost"
+          className="onboarding-swap"
+          data-onboarding-action={OnboardingAction.Skip}
+          onClick={onSkip}
+        >
           Skip for now
         </Button>
       )}
@@ -1106,7 +1122,13 @@ function StartBuilding({ anyOn, onStart }: { anyOn: boolean; onStart: () => void
   return (
     <div className="onboarding-foot">
       {anyOn && (
-        <Button variant="default" size="lg" className="onboarding-cta onboarding-rise" onClick={onStart}>
+        <Button
+          variant="default"
+          size="lg"
+          className="onboarding-cta onboarding-rise"
+          data-onboarding-action={OnboardingAction.Start}
+          onClick={onStart}
+        >
           Start building
         </Button>
       )}

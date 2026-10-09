@@ -56,7 +56,7 @@ export interface FakePreview extends PreviewPort {
   /**
    * What a `user-view` vs canvas diff reports. Kept apart from {@link FakePreview.diffNext}:
    * that one is 0.4 so a vision check sees a real change, and an evidence pass reading 0.4 here
-   * would keep a `user:view` frame and raise the mismatch warning on every rig night.
+   * would keep a `user:view` frame and raise the mismatch warning on every rig run.
    */
   userViewDiffNext: { diffFraction: number; meanAbsDiff: number; grid: number[]; compared: number };
   /** What `preview.pageUi` reports; null means a studio that cannot see outside the canvas. */
@@ -64,6 +64,8 @@ export interface FakePreview extends PreviewPort {
   pageUi?(): Promise<unknown>;
   /** The options every `screenshotWithStats` was called with, so a test can prove the surface. */
   captureOpts: Array<Record<string, unknown>>;
+  /** The options every `studioState` read was given (`undefined` for a read with none). */
+  stateOpts: Array<{ keep?: readonly string[] } | undefined>;
   /** Stats `statsOf` reports for reference stills; unset means the same as a capture. */
   referenceStatsNext?: PreviewPixelStats;
   /** Every pair image the loop asked for. */
@@ -106,6 +108,7 @@ export function makeFakePreview(): FakePreview {
     userViewDiffNext: { diffFraction: 0.001, meanAbsDiff: 1, grid: new Array(9).fill(0.001), compared: 1000 },
     pageUiNext: null,
     captureOpts: [],
+    stateOpts: [],
     async load(project, entry, root) {
       preview.loads.push(project);
       preview.loadRoot = root ?? null;
@@ -169,7 +172,8 @@ export function makeFakePreview(): FakePreview {
         return { value: true };
       return preview.next;
     },
-    async studioState() {
+    async studioState(options) {
+      preview.stateOpts.push(options);
       return preview.next;
     },
     async studioCall(method, arg) {

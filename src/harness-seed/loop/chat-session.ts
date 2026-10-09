@@ -52,7 +52,7 @@ export interface BriefMessage {
   content?: string;
 }
 
-/** "Keep going" / "continue" — resume the same dialogue, don't start a new overnight Loop. */
+/** "Keep going" / "continue" — resume the same dialogue, don't start a new unattended Loop. */
 export function isContinueAsk(text: unknown): boolean {
   const ask = String(text ?? "")
     .trim()
@@ -209,7 +209,7 @@ export function originalAsk(messages: readonly BriefMessage[] | undefined): stri
  * `contractor_session` is the durable bookmark, and the chat's own delegations always write it;
  * `delegation_incomplete` and a mirrored init event are fallbacks for chats that started before
  * the bookmark existed. A later one of those never outranks a bookmark: a coordinator, worker or
- * reviewer that ran in this thread leaves them too, and its session is not the chat's (P07-V1).
+ * reviewer that ran in this thread leaves them too, and its session is not the chat's.
  */
 export function lastContractorSession(
   events: readonly AnyRecord[] | undefined,
@@ -275,7 +275,7 @@ export function isResumeFailure(err: any): boolean {
  * The rule that describes the game itself. The studio's own template is an empty project with
  * no build, no package manager and no network, and this sentence says so. A folder the user
  * brought is none of those things — see `ownShapeRules` — and telling its contractor otherwise
- * is how one night was spent moving a real game's DOM UI into a HUD it never had.
+ * would have it move a real game's DOM UI into a HUD it never had.
  */
 const TEMPLATE_RULE =
   "When you build, follow CLAUDE.md in the workspace root: keep window.__studio (seed/start/pause/step/state/debugCamera) working, keep gameplay deterministic (rng from reset(seed), never Math.random), assets come from procedural code, imports, or the currently enabled plugin tools. Follow the selected tool’s returned file paths and verification guidance.";
@@ -284,7 +284,7 @@ const TEMPLATE_RULE =
  * …and the same rule for a game that came with its own shape: what it already is stays, the
  * contract is installed into its own entry, and its build is run before the turn ends. The
  * wording mirrors the run's own briefs (facet-loop.ts `facetPrompt`) so a chat build and a
- * night's builder are told the same thing about the same folder.
+ * run's builder are told the same thing about the same folder.
  */
 function ownShapeRules(shape: BriefShape | null | undefined, contractMissing = false): string[] {
   const main = shape?.main ?? "src/main.js";
@@ -292,7 +292,7 @@ function ownShapeRules(shape: BriefShape | null | undefined, contractMissing = f
   const build = shape?.build ?? null;
   return [
     // The game cannot be judged, checked or compared until its page loads the contract, and a
-    // chat build is the fastest way somebody gets that done (M2.6): the night's own first step
+    // chat build is the fastest way somebody gets that done (M2.6): the run's own first step
     // is the same job in the same words (director.ts `contractBrief`). Said first, because a
     // turn that spends itself on the ask and never wires it leaves the folder unjudgeable.
     ...(contractMissing
@@ -420,7 +420,7 @@ function contractorRules(engine: string | undefined, game: GameBuild): string[] 
           `The moment the game first runs end-to-end, and after each substantial feature lands, call ${toolCall(engine, "checkpoint")} with a one-line note — the studio lights the user's Reload with your note, so they see your progress when they press it.`,
         ]
       : []),
-    "Keep NOTES.md in the workspace root current as you build — the game's pitch, the key decisions so far and why, and its current state (features, known issues). Update it when something lands, not only at the end. A newcomer should understand the game from NOTES.md alone.",
+    "Keep NOTES.md in the workspace root current as you build — the game's pitch (what the user asked for, in their words: not a wish list), the key decisions so far and why, and its current state (features, known issues). Update it when something lands, not only at the end. A newcomer should understand the game from NOTES.md alone.",
   ];
 }
 
@@ -433,11 +433,11 @@ function stillsBlock(extraReads: unknown): string {
 }
 
 /**
- * This brief tells the chat's own session after a lead's night that the build is over
- * (`afterNight`): chat-dispatch.ts asks before it sends the chat there (after-night.ts
- * `servesAfterNight`), since a kept copy from before would tell it to pick up where it left off.
+ * This brief tells the chat's own session after a lead's run that the build is over
+ * (`afterLoopRun`): chat-dispatch.ts asks before it sends the chat there (after-loop-run.ts
+ * `servesAfterLoopRun`), since a kept copy from before would tell it to pick up where it left off.
  */
-export const SERVES_AFTER_NIGHT = true;
+export const SERVES_AFTER_LOOP_RUN = true;
 
 /** How a resumed build is told to go on; a Loop chat reads the message instead (`RESUME_LOOP_CHAT`). */
 const RESUME_BUILD =
@@ -447,8 +447,8 @@ const RESUME_BUILD =
  * What the contractor is actually told. Resume = short pickup (its own context is restored).
  * No session = the chat's original ask plus the latest instruction, so "keep going" cannot
  * become a blank new job. `launch` = Loop is on: the chat may also start a build
- * (launch-prompts.ts), and still answers, researches and edits itself. `afterNight` = the build
- * this chat's session led is over (after-night-prompts.ts): its note replaces the pickup of a
+ * (launch-prompts.ts), and still answers, researches and edits itself. `afterLoopRun` = the build
+ * this chat's session led is over (after-loop-run-prompts.ts): its note replaces the pickup of a
  * resumed session, and follows the rules of a fresh one.
  *
  * @param {{
@@ -465,7 +465,7 @@ const RESUME_BUILD =
  *   gameEngine?: GameEngine,
  *   engineProject?: string | null,
  *   launch?: LaunchGrant | null,
- *   afterNight?: string | null,
+ *   afterLoopRun?: string | null,
  *   engineChoice?: boolean,
  *   unrealEngine?: UnrealOnComputer | null,
  *   compacted?: string | null,
@@ -495,8 +495,8 @@ export function buildContractorBrief({
   engineProject = null,
   /** Loop is on: this chat may also launch a build. */
   launch = null,
-  /** The build this chat's session led is over: what it is told of it (after-night-prompts.ts). */
-  afterNight = null,
+  /** The build this chat's session led is over: what it is told of it (after-loop-run-prompts.ts). */
+  afterLoopRun = null,
   /** A new game while the Unreal plugin is on: the user picks the web or Unreal first (unreal-prompts.ts). */
   engineChoice = false,
   /** What this computer has of Unreal, for the engine question's Unreal option (unreal/editor-wait.ts); null: unknown. */
@@ -529,7 +529,7 @@ export function buildContractorBrief({
   gameEngine?: GameEngine;
   engineProject?: string | null;
   launch?: LaunchGrant | null;
-  afterNight?: string | null;
+  afterLoopRun?: string | null;
   engineChoice?: boolean;
   unrealEngine?: UnrealOnComputer | null;
   compacted?: string | null;
@@ -548,7 +548,7 @@ export function buildContractorBrief({
   const workersLine = workers ? WORKERS_BRIEF_LINE : "";
 
   if (resume)
-    return [ask, "", identity, resumePickup(afterNight, launch), ...launchBlock, workersLine, workHere, stills]
+    return [ask, "", identity, resumePickup(afterLoopRun, launch), ...launchBlock, workersLine, workHere, stills]
       .filter(Boolean)
       .join("\n");
 
@@ -587,7 +587,7 @@ export function buildContractorBrief({
     CONVERSATION_RULE,
     ...rules,
     ...launchBlock,
-    ...(afterNight ? [afterNight] : []),
+    ...(afterLoopRun ? [afterLoopRun] : []),
     workersLine,
     workHere,
     stills,
@@ -630,7 +630,7 @@ function workHereLine(game: GameBuild, folderLabel: string): string {
  * A fresh brief's opening: for a follow-up, the same chat's original request and its latest
  * instruction; else the ask and where the game stands. After a compaction the first kept
  * message is not the original request (the handover says it), so only the latest is quoted.
- * A game nothing has been made in is a blank page: "continue from the existing code" once sent
+ * A game nothing has been made in is a blank page: "continue from the existing code" would send
  * a "Hello" off to inspect an empty template.
  */
 function briefHead(
@@ -666,9 +666,9 @@ function firstOrigin({ fresh, pending, notes }: { fresh: boolean; pending: boole
   return "Continue from the existing code in this workspace.";
 }
 
-/** How a resumed session goes on: after a night it led, that night's note; else a build's or a Loop chat's pickup. */
-function resumePickup(afterNight: string | null, launch: LaunchGrant | null): string {
-  if (afterNight) return afterNight;
+/** How a resumed session goes on: after a run it led, that run's note; else a build's or a Loop chat's pickup. */
+function resumePickup(afterLoopRun: string | null, launch: LaunchGrant | null): string {
+  if (afterLoopRun) return afterLoopRun;
   return launch ? RESUME_LOOP_CHAT : RESUME_BUILD;
 }
 

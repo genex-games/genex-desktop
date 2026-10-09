@@ -1,6 +1,6 @@
 /**
  * The build history of the fixture game (`build-history`, `run-controls`, `sentinel`,
- * `studio-activity`): a first night whose base failed, and a lead's night that landed its build.
+ * `studio-activity`): a first run whose base failed, and a lead's run that landed its build.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -13,8 +13,8 @@ import { FIXTURE_MODEL, fixtureRun, roundShotDir, SHOT } from "./fixture-kit.ts"
 const FIRST_RUN = "fixture-build-1";
 const LANDED_RUN = "fixture-build-2";
 
-/** The first night: two facets planned, the base refused, one round started, then stopped. */
-export async function seedFirstNight(core: StudioCore, project: string, threadId: string): Promise<void> {
+/** The first run: two facets planned, the base refused, one round started, then stopped. */
+export async function seedFirstLoopRun(core: StudioCore, project: string, threadId: string): Promise<void> {
   const run = fixtureRun({ runId: FIRST_RUN });
   const append = (...args: Parameters<typeof run>) => core.append([run(...args)], threadId);
   await append(CustomEvent.RunStarted, {
@@ -42,11 +42,11 @@ export async function seedFirstNight(core: StudioCore, project: string, threadId
 }
 
 /**
- * Has this thread the landed night yet? The key is the night's own first event — a profile of the
+ * Has this thread the landed run yet? The key is the run's own first event — a profile of the
  * older fixture carries an empty `fixture-build-2` pair, so the run id alone would leave exactly
  * that developer with the history this replaced.
  */
-export async function hasLandedNight(core: StudioCore, threadId: string): Promise<boolean> {
+export async function hasLandedLoopRun(core: StudioCore, threadId: string): Promise<boolean> {
   return (await core.store.listEvents(threadId)).some(
     (e) =>
       e.data.type === EventKind.Custom &&
@@ -56,11 +56,11 @@ export async function hasLandedNight(core: StudioCore, threadId: string): Promis
 }
 
 /**
- * A lead's night that landed its build: no shared base, builders instead of rounds of a plan, a
- * merged build the health pass passed, and a morning card with the night's report. Nothing here
+ * A lead's run that landed its build: no shared base, builders instead of rounds of a plan, a
+ * merged build the health pass passed, and a morning card with the run's report. Nothing here
  * rewrites the game's files or the history it already has.
  */
-export async function seedLandedNight(core: StudioCore, project: string, threadId: string): Promise<void> {
+export async function seedLandedLoopRun(core: StudioCore, project: string, threadId: string): Promise<void> {
   const run = fixtureRun({ runId: LANDED_RUN });
   const append = (...args: Parameters<typeof run>) => core.append([run(...args)], threadId);
   const shots = await writeLandedShots(core.layout.runs);
@@ -73,11 +73,11 @@ export async function seedLandedNight(core: StudioCore, project: string, threadI
     goal: "Make the river run at dusk",
   });
   await append(CustomEvent.AutopilotStarted, { maxParallel: 2, director: true, facets: [] });
-  // The lead says what tonight is for before a builder starts (M3.8). waitMinutes 0: this night
+  // The lead says what this run is for before a builder starts (M3.8). waitMinutes 0: this run
   // was not held for a go, so the card asks for a change rather than promising a wait.
   await append(CustomEvent.AutopilotPlanReview, {
     waitMinutes: 0,
-    summary: "Tonight: crash damage you can feel, and dirt that lands where the hits do.",
+    summary: "This run: crash damage you can feel, and dirt that lands where the hits do.",
     facets: [
       { id: "crumple", title: "Crash damage", identity: [], cameras: [], checks: [] },
       { id: "dirt", title: "Dirt", identity: [], cameras: [], checks: [] },

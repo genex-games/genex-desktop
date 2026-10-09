@@ -23,8 +23,9 @@ license. Keep provenance for copied sources and runtime downloads.
 
 ## Package and authorize
 
-`npm run package` creates a local app; `npm run make` creates installers. Use a checkout with
-its own dependencies. Check free disk first. Run `npm run test:packaged` against the exact app.
+`npm run package` creates a local app; `npm run make` creates installers: dmg and zip on macOS;
+deb, rpm and zip on Linux, which needs `rpm` installed; a Squirrel `Setup.exe` on Windows. Use a
+checkout with its own `node_modules` (a symlinked one is refused). Check free disk first. Run `npm run test:packaged` against the exact app.
 An ad-hoc macOS package is not Developer ID/notarization acceptance. The release workflow has
 separate macOS and Windows signing paths; an unsigned artifact must be labelled unsigned.
 
@@ -37,6 +38,19 @@ Linux packaging installs locked dependencies without lifecycle scripts, installs
 Electron runtime, rebuilds the terminal, then runs `runtime:check` so the required Unix
 native addon is built before runtime validation. The separate `spawn-helper` is macOS-only;
 Linux node-pty forks through its native addon.
+
+Without signing variables the macOS build is ad-hoc signed. Locally, `MACOS_SIGN_IDENTITY` (with `APPLE_API_KEY`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`)
+signs and notarizes the way the workflow does (`scripts/package-signing.cjs`). Distribution
+needs a protected `release` environment with these secrets:
+
+| Secret | What it holds |
+| --- | --- |
+| `MACOS_CERT_P12` | The Developer ID Application certificate and its private key, as a base64 `.p12` |
+| `MACOS_CERT_PASSWORD` | The `.p12` password |
+| `APPLE_TEAM_ID` | The 10-character team id in the certificate's name |
+| `APPLE_API_KEY` | The App Store Connect API key's `.p8` contents (role Developer), for notarization |
+| `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | That key's id and issuer id |
+| `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD` | Windows signing certificate, base64 `.pfx`, and password; alternatively `WINDOWS_SIGN_PARAMS` for a provisioned signing service |
 
 The owner controls signing secrets, the protected release environment, tags and publication.
 Require product checks and approval on the actual release repository, including fork workflow
@@ -53,9 +67,18 @@ unsigned Windows packages, remain Actions artifacts. Each packaged platform
 also exercises its terminal; Windows checks
 the installer/uninstaller and a scripted packaged chat turn. Apps and DMGs both
 need notarization/stapling. Platform provenance records the source and lock digest alongside
-artifact hashes; `SHA256SUMS` covers the final inventory. Existing public assets and drafts from
-a different source cannot be replaced. The owner creates the matching version tag; draft upload
-resolves that remote tag to the candidate commit and refuses missing or mismatched tags. A draft
+artifact hashes; `SHA256SUMS` covers the final inventory. Download links use
+`releases/latest/download/<name>`, so every release, prereleases included, also carries
+version-free names: `Genex.dmg`, byte-identical copies of the Linux packages
+(`Genex-linux-amd64.deb`, `Genex-linux-x86_64.rpm`, `Genex-linux-x64.zip`, made by
+`scripts/release-downloads.mjs` beside the versioned files, which keep their names) and, once
+Windows ships, `Genex-Setup.exe`. A draft missing one is refused (`assertStableDownloads`).
+GitHub's `latest` is the newest full release, never a prerelease. Existing public assets and drafts from
+a different source cannot be replaced. The owner merges the version bump into `main`, and
+`tag-release.yml` creates the matching annotated tag on that commit and dispatches `release.yml`
+on it (a tag the workflow token pushes starts no workflow); a version whose tag exists is left
+alone. Draft upload resolves that remote tag to the candidate commit and refuses missing or
+mismatched tags. A draft
 release is reviewed before publication. Maintain release notes that
 name behavior changes, migration requirements and known limitations.
 
@@ -89,8 +112,10 @@ the release CDN answers 304 and Electron forgets the update. Copies built before
 
 Rules for every release, because each mistake strands installed copies:
 
-1. Bump `package.json` `version`; tag exactly `v<version>` on `main`, in the public repository
-   (`release.yml` drafts into the repository it runs in).
+1. Bump `package.json` `version` and merge it into `main` in the public repository, which tags
+   exactly `v<version>` (`release.yml` drafts into the repository it runs in). Run the full
+   `npm test` first: the PR checks run only its fast group, and the release regression stops on
+   any failure.
 2. Publish each reviewed draft as a full release. The service skips drafts and pre-releases, so a
    `-rc` version reaches no installed copy. Draft upload refuses a release missing what the
    service serves: the `-darwin-arm64` zip, and Windows `RELEASES`, full `.nupkg` and installer.

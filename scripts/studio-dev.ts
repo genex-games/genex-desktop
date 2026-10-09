@@ -17,6 +17,7 @@ import { writeJson, readVersion, safeChild } from "./studio-dev/files.mjs";
 import { request } from "./studio-dev/client.ts";
 import { parseStudioDevArgs, parseOperation } from "./studio-dev/args.ts";
 import { freshMachineEnv, freshMachineShell, linkKeychains } from "./studio-dev/fresh-machine.ts";
+import { gamesRootWarnings, liveEnvStripped, liveLaunchEnv } from "./studio-dev/live-env.ts";
 import { FIXTURE_NAMES } from "../src/main/dev/fixtures.ts";
 import { setTimeout as delay } from "node:timers/promises";
 export const checkout = fs.realpathSync(fileURLToPath(new URL("..", import.meta.url)));
@@ -97,14 +98,31 @@ const MESSAGE = {
     `Terminal of the new account in fresh-machine profile ${profile} (HOME=${home}). Install and sign in here; exit to leave.`,
 } as const;
 
-/** The environment a launch starts with: scrubbed for fixtures, a new account's for a fresh machine. */
-function launchEnv(owner: any): NodeJS.ProcessEnv {
-  if (owner.providers === "fixture") return fixtureElectronEnv();
-  if (owner.freshMachine !== true) return { ...process.env, ELECTRON_RUN_AS_NODE: undefined };
+/** Whether a profile launches with the caller's own environment (less its agent session's variables). */
+const launchesLive = (owner: { providers?: string; freshMachine?: boolean }): boolean =>
+  owner.providers !== "fixture" && owner.freshMachine !== true;
+
+/**
+ * The environment a launch starts with: scrubbed for fixtures, the caller's without its agent
+ * session's variables for a live profile (`studio-dev/live-env.ts`), a new account's for a fresh
+ * machine.
+ */
+export function launchEnv(owner: any, parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (owner.providers === "fixture") return fixtureElectronEnv(parent);
+  if (launchesLive(owner)) return liveLaunchEnv(parent);
   // The temporary folder may have been emptied since; macOS finds the login keychain through HOME.
   fs.mkdirSync(owner.home, { recursive: true, mode: 0o700 });
   if (process.platform === "darwin") linkKeychains(owner.home);
-  return freshMachineEnv(process.env, { home: owner.home, secureStorage: owner.secureStorage });
+  return freshMachineEnv(parent, { home: owner.home, secureStorage: owner.secureStorage });
+}
+
+/** What a live profile's start and status add: the variables the launch dropped, and the warnings. */
+function liveNotes(owner: any, launched: boolean) {
+  if (!launchesLive(owner)) return {};
+  return {
+    ...(launched ? { envStripped: liveEnvStripped(process.env) } : {}),
+    warnings: gamesRootWarnings(owner.games),
+  };
 }
 
 /**
@@ -188,7 +206,7 @@ export async function startProfile(
   await assertNotRunning(owner);
   const claim = claimStartup(owner);
   try {
-    return await awaitReady(owner, await launchApp(owner, id, providers));
+    return { ...(await awaitReady(owner, await launchApp(owner, id, providers))), ...liveNotes(owner, true) };
   } catch (e) {
     writeJson(safeChild(owner.root, "failure.json"), {
       version: 1,
@@ -227,7 +245,7 @@ async function openShell(owner: any) {
 /** The live app's status, or what the profile's files say about an app that does not answer. */
 async function profileStatus(owner: any, id: string) {
   try {
-    return await request(descriptor(owner), { method: "status", params: {} });
+    return { ...(await request(descriptor(owner), { method: "status", params: {} })), ...liveNotes(owner, false) };
   } catch (e) {
     const attemptFile = safeChild(owner.root, "attempt.json");
     const failureFile = safeChild(owner.root, "failure.json");
@@ -240,6 +258,7 @@ async function profileStatus(owner: any, id: string) {
       processMayExist: attempt?.pid ? pidExists(attempt.pid) : null,
       attempt,
       lastFailure: fs.existsSync(failureFile) ? readVersion(failureFile) : (e as Error).message,
+      ...liveNotes(owner, false),
       roots: {
         electron: owner.electron,
         session: owner.session,

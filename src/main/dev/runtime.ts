@@ -25,6 +25,7 @@ import {
   writeJson,
 } from "../../../scripts/studio-dev/files.mjs";
 import { DesktopControl } from "./control.ts";
+import { listRuns } from "./runs.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import {
   DEV_PROTOCOL_VERSION,
@@ -36,6 +37,7 @@ import {
   DevReadiness,
   type DevResponse,
   DevSurface,
+  devRefusal,
   envelopeSchema,
   MAX_REQUEST_BYTES,
   type Operation,
@@ -71,15 +73,10 @@ const FIXTURE_PUBLISH_SETTLE_MS = SECOND_MS;
 const LOG_BUDGET_BYTES = 64 * 1024;
 /** The most entries a log source is read for; a list this long may have been cut at the source. */
 const LOG_SOURCE_LIMIT = 200;
+/** How long `runs` waits for the window to name its chat before listing without it. */
+const SELECTION_WAIT_MS = 2 * SECOND_MS;
 /** What ends a request line. */
 const NEWLINE = 0x0a;
-/** Operations that still answer on a stale build: they collect what an earlier call started. */
-const STALE_SAFE: ReadonlySet<DevMethod> = new Set([
-  DevMethod.Logs,
-  DevMethod.CpuStop,
-  DevMethod.MainCpuStop,
-  DevMethod.TraceStop,
-]);
 
 /** Every string of a value, redacted, as plain JSON: what the dev control hands another agent. */
 export const sanitizer =
@@ -318,7 +315,8 @@ async function selection(rt: Runtime) {
 async function perform(rt: Runtime, op: Operation) {
   if (op.method === DevMethod.Status) return status(rt);
   if (op.method === DevMethod.Stop) return requestStop(rt);
-  await assertActionable(rt, op);
+  if (op.method === DevMethod.Runs) return listRuns(rt.core.store, { activeThread: await activeThread(rt) });
+  assertActionable(rt, op);
   const { diagnostics } = rt;
   switch (op.method) {
     case DevMethod.FixtureGraph:
@@ -357,18 +355,20 @@ async function perform(rt: Runtime, op: Operation) {
 }
 
 /** Refuse to act on a harness that is not ready, under a sign-in sheet, or on a stale build. */
-async function assertActionable(rt: Runtime, op: Operation): Promise<void> {
-  if (rt.core.host.state !== HarnessState.Ready) throw new DevError(DevErrorCode.NotReady);
-  if (rt.authVisible())
-    throw new DevError(
-      DevErrorCode.MissingPrerequisite,
-      "dismiss native account UI before collecting diagnostics or acting",
-    );
-  if (!STALE_SAFE.has(op.method) && buildIsStale(rt.ctx, buildInputs(rt.ctx.checkout)))
-    throw new DevError(
-      DevErrorCode.StaleBuild,
-      "source/dependency/output changed; restart this profile for current evidence",
-    );
+function assertActionable(rt: Runtime, op: Operation): void {
+  const refused = devRefusal(op.method, {
+    ready: rt.core.host.state === HarnessState.Ready,
+    authVisible: rt.authVisible(),
+    stale: () => buildIsStale(rt.ctx, buildInputs(rt.ctx.checkout)),
+  });
+  if (refused) throw refused;
+}
+
+/** The chat the studio window shows, as its state dataset names it; null when the window cannot say. */
+async function activeThread(rt: Runtime): Promise<string | null> {
+  // A window that does not answer (a renderer reloading after a crash) must not cost the run list.
+  const shown = await Promise.race([selection(rt).catch(() => null), sleep(SELECTION_WAIT_MS).then(() => null)]);
+  return typeof shown?.activeThread === "string" ? shown.activeThread : null;
 }
 
 function requestStop(rt: Runtime) {

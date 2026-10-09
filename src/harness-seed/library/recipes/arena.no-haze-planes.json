@@ -16,6 +16,7 @@
   ],
   "checkClass": "arena",
   "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
   "pack": "arena",
   "note": "A translucent horizontal plane above the floor cuts through every crate and reads as water; ground fog is a fog term or a floor-hugging texture.",
   "intent": "A translucent horizontal quad floating half a metre up intersects every crate and character at exactly one height, which the eye reads as a water line: the room looks flooded. Do ground fog with a height-based fog term in the material or a vertical-gradient shader, or with a texture lying on the floor at y near zero, or with a few soft sprites at varying heights and orientations. Never one big plane at a fixed height above the floor.",

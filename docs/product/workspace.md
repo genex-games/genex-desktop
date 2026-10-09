@@ -2,7 +2,8 @@
 
 ## What the user sees
 
-The sidebar contains Search, Notifications, New game, Plugins, Harness, Settings, the Games
+The sidebar contains Search, Notifications, Send feedback
+([what it sends](../../PRIVACY.md#send-feedback)), New game, Plugins, Harness, Settings, the Games
 library and, once an update waits, **Relaunch to update** (Linux: **Download**); only games
 scroll. Pinned games lead, then recent activity. Every launch opens **home** (also the wordmark): nothing
 selected, one composer over an optional dithered picture. A game opens its conversation beside
@@ -24,13 +25,13 @@ Start building opens home; a typed idea waits in its composer.
 
 Then a bottom-right Genex Tools card offers **Connect Genex plugin** once.
 
-Without the process sandbox, the window shows **Set up the protected workspace**: what
-is missing, commands to copy, Retry.
+Without the process sandbox, **Set up the protected workspace** shows what is missing, commands
+to copy and Retry.
 
 ## Main actions
 
 - **Home's first message** starts a game the model names, where the chip says: an empty folder
-  until that message picks its kind. Duplicates never overwrite games. A greeting stays **Untitled game** until an idea. **New game**, the Games **+** and Command-N open home.
+  until that message picks its kind. Duplicates never overwrite; a greeting stays **Untitled game** until an idea. **New game**, the Games **+** and Command-N open home.
 - **Settings → Games** moves new games to another empty folder (default `~/AI Games`).
 - **Settings → Privacy**: Share build metrics (off by default), See what would be sent and
   Delete what I shared ([PRIVACY](../../PRIVACY.md)).
@@ -58,8 +59,9 @@ the Genex card occlude; desktop captures cannot prove it works.
 ## Where to work
 
 - [Shell](../../src/renderer/shell): navigation, [home](../../src/renderer/shell/HomeScreen.tsx),
-  selected conversation, stage and the [notification feed](../../src/renderer/notifications.ts).
+  selected conversation, stage, [notification feed](../../src/renderer/notifications.ts).
 - [Onboarding](../../src/renderer/onboarding/Onboarding.tsx): first launch.
 - [Chat header](../../src/renderer/panels/ChatHeader.tsx) and
   [Settings](../../src/renderer/panels/SettingsDialog.tsx): workspace actions.
-- [Architecture](../agent/architecture.md) covers persistence, the native preview and boot; the [Feature Map](../agent/feature-map.md) lists selectors and checks.
+- [Architecture](../agent/architecture.md): persistence, native preview, boot;
+  [Feature Map](../agent/feature-map.md): selectors and checks.

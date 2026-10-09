@@ -133,6 +133,23 @@ export async function settleWithin<T>(
   }
 }
 
+/** What a quit, or a relaunch into an update, must ask the person before it goes ahead. */
+export const QuitQuestion = {
+  None: "none",
+  /** An unattended run is active: quitting ends it. */
+  RunActive: "run-active",
+  /** A paused build waits to resume on its own (`core/auto-resume.ts`): quitting drops the resume. */
+  ResumePending: "resume-pending",
+} as const;
+export type QuitQuestion = (typeof QuitQuestion)[keyof typeof QuitQuestion];
+
+/** The question a quit asks first, from main's state; once the person answered, none. */
+export function quitQuestion(state: { runActive: boolean; resumeAt: number | null; confirmed: boolean }): QuitQuestion {
+  if (state.confirmed) return QuitQuestion.None;
+  if (state.runActive) return QuitQuestion.RunActive;
+  return state.resumeAt === null ? QuitQuestion.None : QuitQuestion.ResumePending;
+}
+
 export interface ShutdownStep {
   name: string;
   timeoutMs: number;

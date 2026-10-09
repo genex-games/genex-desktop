@@ -5,9 +5,11 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { checkCatalog } from "../../marketplace/template/scripts/check-catalog.mjs";
+import { stageArtifact } from "../../marketplace/template/scripts/stage-artifact.mjs";
 
-async function fixture() {
+async function fixture(tier = "community") {
   const root = await mkdtemp(path.join(os.tmpdir(), "catalog-release-"));
   const pkg = path.join(root, "package");
   await cp("src/plugins/example", pkg, { recursive: true });
@@ -16,7 +18,7 @@ async function fixture() {
     config,
     JSON.stringify({
       artifactBaseUrl: "https://plugins.example.invalid/releases",
-      packages: [{ directory: pkg, category: "tools", tier: "community", repo: "acme/plugins", sha: "a".repeat(40) }],
+      packages: [{ directory: pkg, category: "tools", tier, repo: "acme/plugins", sha: "a".repeat(40) }],
     }),
   );
   const output = path.join(root, "output");
@@ -120,6 +122,121 @@ test("base policy cannot be expanded by a candidate and official IDs are reserve
     f.entry.tier = "official";
     await f.save();
     await assert.rejects(f.check(), /Official identity not approved/);
+  } finally {
+    await f.clean();
+  }
+});
+test("an official package's policy names its repositories, current first, and passes the catalog's own tests", async () => {
+  const f = await fixture("official");
+  try {
+    const policy = JSON.parse(await readFile(path.join(f.catalog, "policy.json"), "utf8"));
+    assert.deepEqual(policy.official, { [f.entry.id]: { publisher: f.entry.publisher, repos: ["acme/plugins"] } });
+    assert.equal((await f.check(f.uploads)).entries, 1);
+    // The prepared repository carries its validator's tests; they include "this catalog passes".
+    execFileSync(process.execPath, ["--test", "scripts/check-catalog.test.mjs"], { cwd: f.catalog, stdio: "pipe" });
+  } finally {
+    await f.clean();
+  }
+});
+
+/** A catalog host for `checkCatalog({ remote })`: the bytes it serves by URL, and a 404 for anything else. */
+function host(served: Map<string, Buffer>, status: (url: string) => number | undefined = () => undefined) {
+  return async (input: string | URL | Request) => {
+    const url = String(input);
+    const code = status(url);
+    if (code) return new Response("", { status: code });
+    const bytes = served.get(url);
+    return bytes ? new Response(new Uint8Array(bytes)) : new Response("missing", { status: 404 });
+  };
+}
+
+test("a new release whose artifact is not uploaded yet is pending only when asked, and never an old one", async () => {
+  const f = await fixture();
+  try {
+    const released = await readFile(
+      path.join(f.uploads, f.entry.id, f.entry.version, `${f.entry.artifact.sha256}.json`),
+    );
+    const served = new Map([[f.entry.artifact.url, released]]);
+    const old = { ...f.entry, artifact: { ...f.entry.artifact } };
+    f.entry.version = "2.0.0";
+    f.entry.artifact.url = `https://plugins.example.invalid/releases/${f.entry.id}/2.0.0/${f.entry.artifact.sha256}.json`;
+    await f.save();
+    const remote = (fetch: ReturnType<typeof host>, allowPendingNew: boolean) =>
+      checkCatalog({
+        root: f.catalog,
+        previous: f.previous,
+        policyRoot: f.previous,
+        remote: true,
+        allowPendingNew,
+        fetch,
+      });
+
+    const report = await remote(host(served), true);
+    assert.deepEqual(report.pending, [{ id: f.entry.id, version: "2.0.0", url: f.entry.artifact.url }]);
+    assert.deepEqual(
+      report.artifactsVerified.map((a: { version: string }) => a.version),
+      [old.version],
+      "the released artifact is still downloaded and checked",
+    );
+    await assert.rejects(remote(host(served), false), /Artifact HTTP 404/, "strict by default");
+    await assert.rejects(remote(host(new Map()), true), /Artifact HTTP 404/, "a released artifact never goes pending");
+    await assert.rejects(
+      remote(
+        host(served, (url) => (url === f.entry.artifact.url ? 500 : undefined)),
+        true,
+      ),
+      /Artifact HTTP 500/,
+      "only a missing object is pending; a failing host is not",
+    );
+    await assert.rejects(
+      checkCatalog({ root: f.catalog, remote: true, allowPendingNew: true, fetch: host(served) }),
+      /Artifact HTTP 404/,
+      "without a previous catalog nothing is new, so nothing can be pending",
+    );
+  } finally {
+    await f.clean();
+  }
+});
+
+test("stage-artifact copies a contributor's release asset into uploads only when its bytes match the record", async () => {
+  const f = await fixture();
+  try {
+    const bytes = await readFile(path.join(f.uploads, f.entry.id, f.entry.version, `${f.entry.artifact.sha256}.json`));
+    const record = `records/${f.entry.id}/${f.entry.version}.json`;
+    const from = "https://github.com/acme/plugins/releases/download/v1.0.0/example-1.0.0.json";
+    const asset = "https://release-assets.githubusercontent.com/acme/example-1.0.0.json";
+    const redirect = (to: string) => new Response(null, { status: 302, headers: { location: to } });
+    const github = async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === from) return redirect(asset);
+      return url === asset ? new Response(new Uint8Array(bytes)) : new Response("", { status: 404 });
+    };
+    const stage = (out: string, extra: Record<string, unknown> = {}) =>
+      stageArtifact({ root: f.catalog, record, from, out: path.join(f.root, out), fetch: github, ...extra });
+
+    const staged = await stage("staged");
+    const key = `releases/${f.entry.id}/${f.entry.version}/${f.entry.artifact.sha256}.json`;
+    assert.equal(staged.key, key);
+    assert.equal(
+      staged.file,
+      path.join(f.root, "staged", f.entry.id, f.entry.version, `${f.entry.artifact.sha256}.json`),
+    );
+    assert.deepEqual(await readFile(staged.file), bytes);
+    assert.equal(staged.sha256, f.entry.artifact.sha256);
+
+    const refused: Array<[string, Record<string, unknown>, RegExp]> = [
+      ["tampered", { fetch: async () => new Response("tampered") }, /digest/],
+      ["plain http", { from: from.replace("https:", "http:") }, /HTTPS/],
+      ["downgrade", { fetch: async () => redirect("http://example.invalid/x.json") }, /HTTPS/],
+      ["loop", { fetch: async () => redirect(from) }, /redirect/i],
+      ["oversized", { maxBytes: 16 }, /too large/i],
+      ["outside records", { record: "../policy.json" }, /record/i],
+      ["not a record", { record: "index.json" }, /record/i],
+    ];
+    for (const [name, extra, error] of refused) {
+      await assert.rejects(stage(name, extra), error, name);
+      assert.equal(existsSync(path.join(f.root, name)), false, `${name} writes nothing`);
+    }
   } finally {
     await f.clean();
   }

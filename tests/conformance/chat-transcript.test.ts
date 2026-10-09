@@ -314,10 +314,11 @@ describe("runStartedAt: how long the build row says the build has run", () => {
     custom(9000, "autopilot_paused", { runId: "r1" }),
   ];
 
-  it("reads the recorded summary's start first, else the run's own start record", () => {
-    assert.equal(runStartedAt(log, "r1", "1970-01-01T00:00:00.500Z"), 500);
-    assert.equal(runStartedAt(log, "r1", null), 1000);
+  it("reads the recorded summary's working time first, else the run's own start record", () => {
+    assert.equal(runStartedAt(log, "r1", { ms: 200, since: "1970-01-01T00:00:00.700Z" }), 500);
     assert.equal(runStartedAt(log, "r2", undefined), 5000);
+    assert.equal(runStartedAt(log, "r2", { ms: 0, since: null }), 5000, "a summary from before a resume");
+    assert.equal(runStartedAt(log, "r1", null), undefined, "a paused build has no running clock");
   });
 
   it("knows nothing without a run or a start", () => {
@@ -325,7 +326,7 @@ describe("runStartedAt: how long the build row says the build has run", () => {
     assert.equal(runStartedAt(log, "gone", null), undefined);
   });
 
-  it("counts a finished build reopened from the reopen, and a resumed pause from its first start", () => {
+  it("counts a finished build reopened from the reopen, and a resumed pause from the time it worked", () => {
     const reopened = [
       custom(1000, "run_started", { runId: "r1" }),
       custom(2000, "run_finished", { runId: "r1" }),
@@ -337,7 +338,18 @@ describe("runStartedAt: how long the build row says the build has run", () => {
       custom(2000, "run_finished", { runId: "r1", executionStatus: "paused" }),
       custom(7000, "run_registered", { runId: "r1", resumed: true }),
     ];
-    assert.equal(runStartedAt(resumed, "r1", null), 1000);
+    assert.equal(runStartedAt(resumed, "r1", null), 6000, "a second of work before the pause");
+  });
+
+  it("ends work before a restart at the run's last record, not when the next launch closed it", () => {
+    const restarted = [
+      custom(1000, "run_started", { runId: "r1" }),
+      custom(3000, "autopilot_decision", { runId: "r1" }),
+      custom(50_000, "run_finished", { runId: "r1" }),
+      custom(50_001, "autopilot_paused", { runId: "r1" }),
+      custom(60_000, "run_registered", { runId: "r1", resumed: true }),
+    ];
+    assert.equal(runStartedAt(restarted, "r1", null), 58_000);
   });
 });
 

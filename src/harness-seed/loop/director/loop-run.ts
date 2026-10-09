@@ -1,16 +1,16 @@
 import type { GoalLedger } from "./goals.ts";
 /**
- * The director's night as one explicit object, and the functions of it every part shares (the
- * plain helpers, which need no night, are in rules.ts).
+ * The director's run as one explicit object, and the functions of it every part shares (the
+ * plain helpers, which need no run, are in rules.ts).
  *
  * `runDirector` used to be a single 2,300-line function whose sixty closures shared its locals
- * by capture. The night is now a plain object (`prepareNight` in setup.ts builds it): the run,
+ * by capture. The run is now a plain object (`prepareLoopRun` in setup.ts builds it): the run,
  * its clock, the integration worktree, `state` (the workers, the heads, the log), the journal
- * and the report — and every function of the night takes it as its first argument. `bindNight`
+ * and the report — and every function of the run takes it as its first argument. `bindLoopRun`
  * puts each of them on the object as well, so a function can reach the others it calls through
  * the same object it reads its data from.
  *
- * The counters that change all night (`logSeq`, `waitSeq`, `ledgerWrites`, `memoryKept`,
+ * The counters that change for the whole run (`logSeq`, `waitSeq`, `ledgerWrites`, `memoryKept`,
  * `toolCalls`) live on the object and are read and written there, never copied out.
  */
 
@@ -29,12 +29,13 @@ import {
 } from "../run-events.ts";
 import type { FactRef } from "../folder-facts.ts";
 import { isCommit } from "../shell.ts";
+import { isTruncatedState, statePathsNamedByChecks } from "../state-shape.ts";
 import { verdictRecord } from "../verdict.ts";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { slug, withoutFrames } from "./args.ts";
 import { medianMinutes } from "./budgets.ts";
-import { journalText, recordNight } from "./journal.ts";
+import { journalText, recordLoopRun } from "./journal.ts";
 import { directorMemoryKeep } from "./memory.ts";
 import { plainly } from "./rules.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
@@ -46,25 +47,28 @@ import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { RunInbox } from "../run-inbox.ts";
 import type { FacetSpec } from "../spec.ts";
 import type { RoundRecord } from "./digests.ts";
-import type { NightClock, PriorWorker } from "./journal.ts";
+import type { LoopRunClock, PriorWorker } from "./journal.ts";
 import type { ConflictMerge } from "./conflict-worker.ts";
+import type { LoopRunContract } from "./contract-gate.ts";
 import type { LeadSeat } from "./lead-session.ts";
 import type { ShelvedDefect } from "./rules.ts";
 import type { NoteKind } from "./wake-schedule.ts";
+import type * as artDirectionFunctions from "./art-direction.ts";
+import type { LastShip } from "./art-direction.ts";
 import type * as integrateFunctions from "./integrate.ts";
-import type * as nightFunctions from "./night.ts";
+import type * as loopRunFunctions from "./loop-run.ts";
 import type * as setupFunctions from "./setup.ts";
 import type * as toolFunctions from "./tools.ts";
 import type * as workerFunctions from "./workers.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a night
+ * This part serves a lead that is its chat's own session and writes nothing (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
 
 /**
- * One builder of the night: startWorker (workers.ts) makes the record (`newWorkerRecord`), opens
+ * One builder of the run: startWorker (workers.ts) makes the record (`newWorkerRecord`), opens
  * its worktree and its thread, and only then puts it on `state.workers`; its run fills the rest
  * in, and the journal keeps it.
  */
@@ -123,10 +127,15 @@ export interface Worker {
   limit?: AnyRecord;
   /** A conflict worker's merge (conflict-worker.ts): opened in its worktree before its session. */
   merging?: ConflictMerge | null;
+  /**
+   * Its kept work has been merged into the integration branch at least once (integrate.ts): the
+   * art director's first regular look waits for every building worker's (art-direction.ts).
+   */
+  integrated?: boolean;
 }
 
 /** The game's shape (`gameAtStart`, setup.ts): the host's, or the template's page and entry when it names none. */
-export type NightShape = Pick<ProjectShape, "entry" | "main" | "build"> & Partial<ProjectShape>;
+export type LoopRunShape = Pick<ProjectShape, "entry" | "main" | "build"> & Partial<ProjectShape>;
 
 /** A worker being started: its worktree and its thread are not open yet (`startWorker`). */
 export type StartingWorker = Omit<Worker, "worktree" | "threadId"> & {
@@ -134,7 +143,7 @@ export type StartingWorker = Omit<Worker, "worktree" | "threadId"> & {
   threadId: string | null;
 };
 
-/** The last judge on the integration branch (see `nightState`). */
+/** The last judge on the integration branch (see `loopRunState`). */
 export interface LastJudge extends AnyRecord {
   head?: string | null;
   ok?: boolean;
@@ -152,8 +161,8 @@ export interface WorkerLimit extends EngineLimit {
   worker: string;
 }
 
-/** One line of the night's log (`note`). */
-export interface NightLogEntry {
+/** One line of the run's log (`note`). */
+export interface LoopRunLogEntry {
   at: number;
   seq: number;
   text: string;
@@ -166,20 +175,46 @@ export interface HeadEvidence {
   state: AnyRecord;
   demoStates: AnyRecord | null;
   demos: string[] | null;
+  /** The cameras photographed (the harness's `default` always among them), not what the page registers. */
   cameras: string[];
+  /** The cameras the page itself registered, when the look could tell (`Evidence.registeredCameras`). */
+  registeredCameras?: string[] | null;
+  /**
+   * The setup the look was taken under (registry.ts `setupKey`), when the caller said: only a look
+   * under the same setup can tell which state paths a merge lost (integrate.ts).
+   */
+  setup?: string;
 }
 
-/** The night's `state` (`nightState`, setup.ts): the workers, the heads, the log — everything that changes all night. */
-export interface NightState {
+/** The run's `state` (`loopRunState`, setup.ts): the workers, the heads, the log — everything that changes for the whole run. */
+export interface LoopRunState {
   goals?: GoalLedger;
   run: Run;
   threadId: string;
   projectDir: string;
-  shape: NightShape;
+  shape: LoopRunShape;
   ownShape: boolean;
   baseCommit: string | null;
   integrationWorktree: string;
   integrationHead: string | null;
+  /**
+   * The head the last wave closed on (integrate.ts): what running loop workers merge, so they take
+   * the integration branch once per wave and not after every commit. Absent until a wave closes.
+   */
+  waveHead?: string | null;
+  /** The module contract loop workers are held to (contract-gate.ts), once committed. */
+  contract?: LoopRunContract | null;
+  /** Why the last contract could not be committed, until one is. */
+  contractError?: string | null;
+  /** How many loop workers were refused for want of a contract or a vision (contract-gate.ts `contractBeforeFork`). */
+  contractRefusals?: number;
+  /** The lead gave no vision through its refusals: loop workers start without one (contract-gate.ts). */
+  visionWaived?: boolean;
+  /**
+   * A run resumed from a journal written before the contract gate (journal.ts `restoreLoopRun`): its
+   * loop workers start as they always did until its lead commits a contract.
+   */
+  contractLegacy?: boolean;
   integrationHealthy: boolean | null;
   healthByHead: Map<string | null | undefined, boolean>;
   consoleByHead: Map<string | null | undefined, string[]>;
@@ -188,6 +223,7 @@ export interface NightState {
   fromScratch: boolean;
   startConsole: string[];
   lastJudge: LastJudge | null;
+  /** The provider loss that pauses the run — an engine limit, a lost sign-in, an outage the lead could not wait out. */
   limit: EngineLimit | null;
   workerLimit: WorkerLimit | null;
   workers: Map<string, Worker>;
@@ -198,7 +234,7 @@ export interface NightState {
   facetSpecs: FacetSpec[];
   ledger: ShelvedDefect[];
   monitor: Promise<unknown> | null;
-  log: NightLogEntry[];
+  log: LoopRunLogEntry[];
   finish: AnyRecord | null;
   finished: boolean;
   startEvidence: Evidence | null;
@@ -211,14 +247,18 @@ export interface NightState {
    * the journal keeps it, so a restart reads on from there. Absent: none read yet.
    */
   jobsCursor?: number;
+  /** The art director's last word on the integration branch (art-direction.ts); absent until it looks. */
+  lastShip?: LastShip | null;
+  /** A goal build's finish was turned back once for the art director's defects: never again. */
+  shipFinishRefused?: boolean;
 }
 
 /**
- * What the night knows (`prepareNight`, setup.ts): the run and its clock, the game's shape and
+ * What the run knows (`prepareLoopRun`, setup.ts): the run and its clock, the game's shape and
  * ledger, the starting point and the integration worktree, `state`, the journal and the report,
- * and the counters that change all night.
+ * and the counters that change for the whole run.
  */
-export interface NightData {
+export interface LoopRunData {
   ctx: HarnessCtx;
   threadId: string;
   run: Run;
@@ -228,18 +268,18 @@ export interface NightData {
   softDeadline: number;
   finalDeadline: number;
   /**
-   * The night's own clock (journal.ts `nightClock`), which the journal keeps and a Resume goes on
-   * with. A wrap-up that starts early moves `softDeadline`, never this. Absent on a night a kept
+   * The run's own clock (journal.ts `loopRunClock`), which the journal keeps and a Resume goes on
+   * with. A wrap-up that starts early moves `softDeadline`, never this. Absent on a run a kept
    * older setup.ts made.
    */
-  clock?: NightClock;
+  clock?: LoopRunClock;
   priorJournal: AnyRecord | null;
-  /** The workers the journal named when this night resumed: from before the pause, none of them running (journal.ts). */
+  /** The workers the journal named when this run resumed: from before the pause, none of them running (journal.ts). */
   priorWorkers?: PriorWorker[];
   memoryRestored: boolean;
   ownShape: boolean;
-  shape: NightShape;
-  /** What the game's folder holds once it is ready (`game.list`'s `facts`); absent on a night a kept older setup.ts made. */
+  shape: LoopRunShape;
+  /** What the game's folder holds once it is ready (`game.list`'s `facts`); absent on a run a kept older setup.ts made. */
   gameFacts?: FactRef[];
   capacity: HarnessResult<"preview.capacity"> | null;
   contractMissing: boolean;
@@ -256,13 +296,13 @@ export interface NightData {
   /** The last memory this session kept (`keepMemory`), so an unchanged file is not kept again. */
   memoryKept: string | null;
   nestedRepos: string[];
-  state: NightState;
+  state: LoopRunState;
   journal: AnyRecord;
   startEvidence: Evidence | null;
   pooledWindows: boolean;
   logSeq: number;
   waitSeq: number;
-  tonight: LedgerRecord[];
+  runLedger: LedgerRecord[];
   ledgerWrites: Promise<unknown>;
   toolCalls: number;
   /**
@@ -284,7 +324,7 @@ export interface NightData {
    */
   resting?: boolean;
   /**
-   * A waking night's lead (one session, lead-session.ts): its chat's own session, in the game
+   * A waking run's lead (one session, lead-session.ts): its chat's own session, in the game
    * folder, writing nothing while the build runs — workers do, a conflict goes to a worker of its
    * own (conflict-worker.ts), and no `.studio/DIRECTOR.md` is kept. Absent — the long turn, a kept
    * older director.ts — the director works in the integration worktree with its own hands.
@@ -296,24 +336,47 @@ export interface NightData {
   journalSaved?: string | null;
 }
 
-/** A function of the night as the night carries it: bound, so the night itself is already given. */
-type Bound<F> = F extends (night: never, ...args: infer A) => infer R ? (...args: A) => R : never;
-/** The names of a module's functions, as `bindNight` binds them (a constant such as `SERVES_LEAD` is not one). */
+/** A function of the run as the run carries it: bound, so the run itself is already given. */
+type Bound<F> = F extends (loopRun: never, ...args: infer A) => infer R ? (...args: A) => R : never;
+/** The names of a module's functions, as `bindLoopRun` binds them (a constant such as `SERVES_LEAD` is not one). */
 type FunctionKey<M> = { [K in keyof M]: M[K] extends (...args: never[]) => unknown ? K : never }[keyof M];
-/** Every function of one of the director's modules, bound to the night (`bindNight`). */
-type BoundModule<M> = { readonly [K in Exclude<FunctionKey<M>, "bindNight" | "prepareNight">]: Bound<M[K]> };
+/** Every function of one of the director's modules, bound to the run (`bindLoopRun`). */
+type BoundModule<M> = { readonly [K in Exclude<FunctionKey<M>, "bindLoopRun" | "prepareLoopRun">]: Bound<M[K]> };
+/**
+ * The art director's functions of the run (art-direction.ts): absent on a run bound without it
+ * (a kept older director.ts), so a caller checks that one is there before it calls it.
+ */
+type ArtDirectionParts = Partial<
+  BoundModule<
+    Pick<
+      typeof artDirectionFunctions,
+      | "artDirectionPass"
+      | "finishMarkAt"
+      | "firstWaveIn"
+      | "shipLookAfter"
+      | "shipLookAt"
+      | "shipLookPass"
+      | "shipOwed"
+      | "shipFinishGate"
+      | "shipReport"
+      | "shipReviewOn"
+      | "takeShelvedShipDefects"
+    >
+  >
+>;
 
 /**
- * The night: its data, and every function of the director's modules bound to it by bindNight,
+ * The run: its data, and every function of the director's modules bound to it by bindLoopRun,
  * so a function reaches the others it calls through the same object it reads its data from.
  */
-export interface Night
-  extends NightData,
-    BoundModule<typeof nightFunctions>,
+export interface LoopRun
+  extends LoopRunData,
+    BoundModule<typeof loopRunFunctions>,
     BoundModule<typeof workerFunctions>,
     BoundModule<typeof toolFunctions>,
     BoundModule<typeof integrateFunctions>,
-    BoundModule<typeof setupFunctions> {
+    BoundModule<typeof setupFunctions>,
+    ArtDirectionParts {
   /**
    * Generic, so written out (`Bound` would fix its `T` to unknown). A pass that may borrow a
    * window always gets one, so only a pass that may not can be told there is none.
@@ -350,30 +413,30 @@ export const BuildTarget = {
 } as const;
 export type BuildTarget = (typeof BuildTarget)[keyof typeof BuildTarget];
 
-/** The part functions that make a night rather than act on one: never bound to it. */
-const UNBOUND_FUNCTIONS = new Set(["bindNight", "prepareNight"]);
+/** The part functions that make a run rather than act on one: never bound to it. */
+const UNBOUND_FUNCTIONS = new Set(["bindLoopRun", "prepareLoopRun"]);
 
-/** The night's log keeps this many lines; the waker and `wait` read them by sequence number, not by index. */
-const MAX_NIGHT_LOG = 400;
+/** The run's log keeps this many lines; the waker and `wait` read them by sequence number, not by index. */
+const MAX_LOOP_RUN_LOG = 400;
 /** The report keeps this many verdicts, the most recent. */
 const MAX_REPORT_VERDICTS = 200;
 /** How many times a pass looks at a build whose load raced the window (`patientEvidence`). */
 const PATIENT_LOOKS = 3;
 
 /** One custom event on the run's thread, stamped with the run (run-events.ts: a failed write is logged, never thrown). */
-export function appendRun(night: Night, event_type: RunEvent, payload: AnyRecord): Promise<unknown> {
-  const { ctx, run, threadId } = night;
+export function appendRun(loopRun: LoopRun, event_type: RunEvent, payload: AnyRecord): Promise<unknown> {
+  const { ctx, run, threadId } = loopRun;
   return appendRunEvent(ctx, threadId, event_type, payload, { runId: run.runId });
 }
 
 /**
  * A decision card. `text` (and `decision`, its older name) is the record — shas, worker ids,
  * the engine's own words. `plain` is the one sentence the chat shows someone who is not
- * reading git; every card the director writes carries one, because the first night's cards
- * reached the owner as `run_fixture123456`, `attempt/shine/3-stopped` and a rate-limit error.
+ * reading git; every card the director writes carries one, so the owner never reads
+ * `run_fixture123456`, `attempt/shine/3-stopped` or a rate-limit error.
  */
-export function decision(night: Night, text: string, plain?: string | null): Promise<unknown> {
-  const { appendRun } = night;
+export function decision(loopRun: LoopRun, text: string, plain?: string | null): Promise<unknown> {
+  const { appendRun } = loopRun;
   return appendRun(RunEvent.AutopilotDecision, {
     decision: text,
     text,
@@ -382,29 +445,29 @@ export function decision(night: Night, text: string, plain?: string | null): Pro
   });
 }
 
-export async function protectHead(night: Night, head: string | null | undefined): Promise<void> {
-  const { ctx, integrationRef, run } = night;
+export async function protectHead(loopRun: LoopRun, head: string | null | undefined): Promise<void> {
+  const { ctx, integrationRef, run } = loopRun;
   if (!isCommit(head)) return;
   await updateRef(ctx, { project: run.project }, integrationRef, head, {
     label: `director:${run.runId}:protect`,
   }).catch(() => {});
 }
 
-export async function keepMemory(night: Night) {
-  const { ctx, lead, memoryFile, note, run, threadId } = night;
-  // A lead that is its chat's own session keeps no memory file: the journal and its digests carry the night.
+export async function keepMemory(loopRun: LoopRun) {
+  const { ctx, lead, memoryFile, note, run, threadId } = loopRun;
+  // A lead that is its chat's own session keeps no memory file: the journal and its digests carry the run.
   if (lead) return;
   const raw = await readFile(memoryFile, "utf8").catch(() => null);
   if (raw === null) return;
   // Clamped on the way out, so the artifact the next session restores from is already the
   // size a session can afford; the pre-clamp size is logged so the number can be set from
-  // what nights actually write rather than from a guess — once per change, never once per
+  // what runs actually write rather than from a guess — once per change, never once per
   // tool call (see directorMemoryKeep).
-  const kept = directorMemoryKeep(raw, night.memoryKept);
+  const kept = directorMemoryKeep(raw, loopRun.memoryKept);
   if (!kept.changed) return;
   if (kept.note) note(kept.note);
   const text = kept.text;
-  night.memoryKept = text;
+  loopRun.memoryKept = text;
   await ctx
     .call(HostMethod.ArtifactWrite, {
       threadId,
@@ -416,28 +479,28 @@ export async function keepMemory(night: Night) {
 }
 
 /**
- * Save the run's journal, with the night's record on it (journal.ts `recordNight`): what a Resume
+ * Save the run's journal, with the run's record on it (journal.ts `recordLoopRun`): what a Resume
  * goes on from. The store keeps every version it is given and a fork copies them all, so a save
  * that would write what the last one wrote (the count of worked time aside) is not made.
  */
-export async function saveJournal(night: Night): Promise<number | void> {
-  const { ctx, journal, run, threadId } = night;
-  recordNight(night);
-  const seq = night.logSeq;
+export async function saveJournal(loopRun: LoopRun): Promise<number | void> {
+  const { ctx, journal, run, threadId } = loopRun;
+  recordLoopRun(loopRun);
+  const seq = loopRun.logSeq;
   const text = journalText(journal);
   // Saves overlap (a round's, a wake's): the log a slower one holds is never taken for a newer one's.
   const heldUpTo = () => {
-    night.journaledSeq = Math.max(night.journaledSeq ?? 0, seq);
+    loopRun.journaledSeq = Math.max(loopRun.journaledSeq ?? 0, seq);
   };
-  if (text !== null && text === night.journalSaved) {
+  if (text !== null && text === loopRun.journalSaved) {
     heldUpTo();
     return;
   }
-  night.journalSaved = text;
+  loopRun.journalSaved = text;
   const version = await saveRunJournal(ctx, threadId, run.runId, journal);
   if (version !== undefined) heldUpTo();
   // A write that failed is owed again by the next save, however little changed.
-  else if (night.journalSaved === text) night.journalSaved = null;
+  else if (loopRun.journalSaved === text) loopRun.journalSaved = null;
   return version;
 }
 
@@ -447,14 +510,22 @@ export async function saveJournal(night: Night): Promise<number | void> {
  * a commit nobody has looked at simply has no entry.
  */
 export function rememberEvidence(
-  night: Night,
+  loopRun: LoopRun,
   commit: string | null | undefined,
   evidence: Evidence | null | undefined,
+  { setup }: { setup?: string } = {},
 ): void {
-  const { state } = night;
+  const { state } = loopRun;
   if (!commit || evidence?.ok !== true) return;
   if (!evidence.state || evidence.state.__missing) return;
+  // A state an older studio could only cut as text says nothing about what the build reports:
+  // a dry run against it would call every path unsatisfiable.
+  if (isTruncatedState(evidence.state)) return;
   state.evidenceByHead.set(commit, {
+    // What the page registered, and the setup the look was taken under: what a merge's health
+    // pass compares with (integrate.ts), only when there is one.
+    ...(Array.isArray(evidence.registeredCameras) ? { registeredCameras: evidence.registeredCameras.map(String) } : {}),
+    ...(setup === undefined ? {} : { setup }),
     state: evidence.state,
     demoStates: evidence.demoStates ?? null,
     demos: Array.isArray(evidence.registeredDemos) ? evidence.registeredDemos : null,
@@ -470,8 +541,8 @@ export function rememberEvidence(
 }
 
 /** git in the integration worktree for a question an empty answer settles (`unversionedNested`). */
-export function nestedGit(night: Night, command: string, label?: string | null): Promise<string> {
-  const { ctx, integrationWorktree } = night;
+export function nestedGit(loopRun: LoopRun, command: string, label?: string | null): Promise<string> {
+  const { ctx, integrationWorktree } = loopRun;
   return ctx
     .call(HostMethod.RunExec, {
       command,
@@ -484,62 +555,64 @@ export function nestedGit(night: Night, command: string, label?: string | null):
 }
 
 /**
- * A line in the night's log (`logSeq`, see prepareNight): what wakes a resting lead (wake.ts) and
+ * A line in the run's log (`logSeq`, see prepareLoopRun): what wakes a resting lead (wake.ts) and
  * what its next digest — or a `wait` — answers with. `kind` says what a line written outside the
  * lead's own turn is about; the waker decides by it, never by the words.
  */
-export function note(night: Night, text: string, kind?: NoteKind): void {
-  const { state } = night;
-  night.logSeq += 1;
-  state.log.push({ at: Date.now(), seq: night.logSeq, text, ...(kind ? { kind } : {}) });
-  if (state.log.length > MAX_NIGHT_LOG) state.log.shift();
+export function note(loopRun: LoopRun, text: string, kind?: NoteKind): void {
+  const { state } = loopRun;
+  loopRun.logSeq += 1;
+  state.log.push({ at: Date.now(), seq: loopRun.logSeq, text, ...(kind ? { kind } : {}) });
+  if (state.log.length > MAX_LOOP_RUN_LOG) state.log.shift();
 }
 
 /** Every line the lead has not been told yet (the waker's digest or `wait`), including ones that arrived between. */
-export function notesSince(night: Night, seq: number): NightLogEntry[] {
-  const { state } = night;
+export function notesSince(loopRun: LoopRun, seq: number): LoopRunLogEntry[] {
+  const { state } = loopRun;
   return state.log.filter((entry) => (entry.seq ?? 0) > seq);
 }
 
-/** What every ledger record of this night carries. */
-export function ledgerFacts(night: Night) {
-  const { gameKind, run } = night;
+/** What every ledger record of this run carries. */
+export function ledgerFacts(loopRun: LoopRun) {
+  const { gameKind, run } = loopRun;
   return { runId: run.runId, mode: RunMode.Director, game: run.project, gameKind };
 }
 
 /**
  * An outcome on the game's own ledger, chained behind the last one so five rounds finishing in
- * the same second land as five lines, in order (`ledgerWrites`, see prepareNight).
+ * the same second land as five lines, in order (`ledgerWrites`, see prepareLoopRun).
  */
-export function remember(night: Night, record: LedgerRecord): Promise<unknown> {
-  const { ctx, run, tonight } = night;
-  tonight.push(record);
-  night.ledgerWrites = night.ledgerWrites.then(() => appendLedger(ctx.workspace, run.project, record)).catch(() => {});
-  return night.ledgerWrites;
+export function remember(loopRun: LoopRun, record: LedgerRecord): Promise<unknown> {
+  const { ctx, run, runLedger } = loopRun;
+  runLedger.push(record);
+  loopRun.ledgerWrites = loopRun.ledgerWrites
+    .then(() => appendLedger(ctx.workspace, run.project, record))
+    .catch(() => {});
+  return loopRun.ledgerWrites;
 }
 
 /** Checks this kind of game has never been able to measure — the dry run warns about them. */
-export function neverMeasured(night: Night) {
-  const { gameKind, priorLedger, tonight } = night;
-  return rarelyMeasurable([...priorLedger, ...tonight], { kind: gameKind });
+export function neverMeasured(loopRun: LoopRun) {
+  const { gameKind, priorLedger, runLedger } = loopRun;
+  return rarelyMeasurable([...priorLedger, ...runLedger], { kind: gameKind });
 }
 
 /** What the integration worktree actually stands on right now — the one source of truth. */
-export function currentHead(night: Night) {
-  const { ctx, integrationWorktree, run } = night;
+export function currentHead(loopRun: LoopRun) {
+  const { ctx, integrationWorktree, run } = loopRun;
   return headOf(ctx, integrationWorktree, { label: `director:${run.runId}:head` });
 }
 
 /**
  * The director edits in its worktree and commits with its own hands; `integrationHead` used
  * to move only on integrate, so a director commit made the judge, the health pass, the close
- * and the merge disagree about which build they were talking about (one night judged a fix
- * the close then left unreachable). Every tool call starts here: whatever HEAD says is the
+ * and the merge disagree about which build they were talking about (a judged fix the close
+ * then left unreachable). Every tool call starts here: whatever HEAD says is the
  * integration head, it is protected by the ref, written to the journal, and named to the
  * director so it knows the studio saw what it did.
  */
-export async function syncHead(night: Night) {
-  const { appendRun, currentHead, journal, note, protectHead, saveJournal, state } = night;
+export async function syncHead(loopRun: LoopRun) {
+  const { appendRun, currentHead, journal, note, protectHead, saveJournal, state } = loopRun;
   const head = await currentHead().catch(() => null);
   if (!head || head === state.integrationHead) return state.integrationHead;
   state.integrationHead = head;
@@ -552,12 +625,12 @@ export async function syncHead(night: Night) {
 }
 
 export function resolveRoot(
-  night: Night,
+  loopRun: LoopRun,
   target: unknown,
 ):
   | { root: string; label: string; worker?: Worker; error?: undefined }
   | { error: string; root?: undefined; label?: undefined; worker?: undefined } {
-  const { integrationWorktree, projectDir, state } = night;
+  const { integrationWorktree, projectDir, state } = loopRun;
   const t = String(target ?? BuildTarget.Integration).trim() || BuildTarget.Integration;
   if (t === BuildTarget.Integration) return { root: integrationWorktree, label: BuildTarget.Integration };
   if (t === BuildTarget.Live) return { root: projectDir, label: BuildTarget.Live };
@@ -572,32 +645,32 @@ export function resolveRoot(
 }
 
 /** The workers still running. */
-export function runningWorkers(night: Night) {
-  const { state } = night;
+export function runningWorkers(loopRun: LoopRun) {
+  const { state } = loopRun;
   return [...state.workers.values()].filter((w: Worker) => isRunning(w));
 }
 
 /** Every round this run has finished, whichever worker ran it. */
-export function runRoundMs(night: Night) {
-  const { state } = night;
+export function runRoundMs(loopRun: LoopRun) {
+  const { state } = loopRun;
   return [...state.workers.values()].flatMap((w: Worker) => w.roundMs ?? []);
 }
 
-export function runRoundMinutes(night: Night) {
-  const { runRoundMs } = night;
+export function runRoundMinutes(loopRun: LoopRun) {
+  const { runRoundMs } = loopRun;
   return medianMinutes(runRoundMs());
 }
 
 /** The same in milliseconds, for the loop's own start gate. */
-export function medianRoundMs(night: Night) {
-  const { runRoundMs } = night;
+export function medianRoundMs(loopRun: LoopRun) {
+  const { runRoundMs } = loopRun;
   const sorted = runRoundMs().sort((a: number, b: number) => a - b);
   return sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
 }
 
 /** The run's ledger of defects nobody is building any more, oldest first, in words. */
-export function ledgerLines(night: Night) {
-  const { state } = night;
+export function ledgerLines(loopRun: LoopRun) {
+  const { state } = loopRun;
   return state.ledger.map(
     (d: AnyRecord) => `${d.text} — worker ${d.owner}'s, named while judging ${d.from}; nobody is building it`,
   );
@@ -608,19 +681,19 @@ export function ledgerLines(night: Night) {
  * no window is free; a pass that cannot be skipped looks through the studio's stand-in.
  */
 export function withLease<T>(
-  night: Night,
+  loopRun: LoopRun,
   label: WindowLease,
   fn: (handle: string | null) => Promise<T>,
   { borrow = false }: { borrow?: boolean } = {},
 ): Promise<T | { noWindow: string }> {
-  const { ctx, pooledWindows } = night;
+  const { ctx, pooledWindows } = loopRun;
   return leaseWindow(ctx, label, fn, { borrow, pooled: pooledWindows });
 }
 
 /**
  * One look at a build. Two things every pass here needs and none of them had until now: the
  * console errors the build INHERITED (an error it did not introduce is not its fault — one
- * shader line in a base nobody owned cost four first-round iterations, every judge of a night
+ * shader line in a base nobody owned cost four first-round iterations, every judge of a run
  * and its landing), and the base exemption for this run's own starting point (a scaffold is
  * allowed to be blank; a game is not).
  *
@@ -628,7 +701,7 @@ export function withLease<T>(
  * there, not this pass's label, and the frames still land under `director/<label>`.
  */
 export async function evidenceOf(
-  night: Night,
+  loopRun: LoopRun,
   root: string,
   {
     handle,
@@ -638,6 +711,11 @@ export async function evidenceOf(
     motion = 6,
     scaffold = false,
     inheritedConsole = [],
+    keepPaths = boardStatePaths(loopRun),
+    viewport = null,
+    maxDemos = Infinity,
+    requiredDemos = [],
+    challenge = false,
   }: {
     handle?: string | null;
     label: string;
@@ -646,10 +724,24 @@ export async function evidenceOf(
     motion?: number;
     scaffold?: boolean;
     inheritedConsole?: string[];
+    /** The state paths the boards read, cut last (default: every running worker's probes). */
+    keepPaths?: string[];
+    /** Look at this size (the art director's 1600×900): the leased window only. */
+    viewport?: { width: number; height: number } | null;
+    /**
+     * Demos beyond `requiredDemos` this look runs: every one, unless a pass says otherwise — a
+     * health pass inside a wave runs the demos workers' checks name (integrate.ts).
+     */
+    maxDemos?: number;
+    requiredDemos?: string[];
+    /** Race the throttle-only bot after the demos (evidence.ts): the art director's whole-game look. */
+    challenge?: boolean;
   },
 ): Promise<Evidence> {
-  const { ctx, run } = night;
+  const { ctx, run } = loopRun;
   return gatherEvidence(ctx, {
+    keepPaths,
+    ...(viewport ? { viewport } : {}),
     run,
     iterationId: scaffold ? "base" : label,
     seed: PAGE_SEED,
@@ -660,34 +752,45 @@ export async function evidenceOf(
     eyes: true,
     motion,
     audio: true,
-    maxDemos: Infinity,
+    maxDemos,
+    ...(requiredDemos.length ? { requiredDemos } : {}),
+    ...(challenge ? { challenge } : {}),
     setup: setup === undefined ? run.setup : setup,
     scaffold,
     inheritedConsole,
   });
 }
 
+/**
+ * The state paths every worker's board reads (`statePathsNamedByChecks`): a look at a build the
+ * workers share — integration's health, the close, a judge — asks the studio to cut them last, so
+ * a probe is read from a bounded state and never finds its path cut away.
+ */
+function boardStatePaths(loopRun: LoopRun): string[] {
+  const checks = [...(loopRun.state?.workers?.values() ?? [])].flatMap((worker) => worker.spec?.checks ?? []);
+  return statePathsNamedByChecks(checks);
+}
+
 /** Every distinct console error a build logged — the baseline the next pass forgives, not the five a prompt shows. */
-export function errorsLogged(_night: Night, evidence: Evidence | null | undefined): string[] {
+export function errorsLogged(_loopRun: LoopRun, evidence: Evidence | null | undefined): string[] {
   return evidence?.consoleBaseline ?? evidence?.consoleErrors ?? [];
 }
 
 /** What a build is not to blame for: the run's starting errors, plus a worker's own fork point's. */
-export function consoleInheritedBy(night: Night, worker: Worker | null = null): string[] {
-  const { state } = night;
+export function consoleInheritedBy(loopRun: LoopRun, worker: Worker | null = null): string[] {
+  const { state } = loopRun;
   return [...new Set([...(state.startConsole ?? []), ...(worker?.baseConsole ?? [])])];
 }
 
 // A load that raced the window (no __studio yet, a capture before the first frame) is not a
-// broken build: look again before saying so. Eight health passes in one night failed this way
-// while the judge, forty seconds later, found every one of those builds fine (evidence.ts
-// `loadRaced` decides what a race is).
+// broken build: look again before saying so, or a health pass fails builds the judge finds fine
+// seconds later (evidence.ts `loadRaced` decides what a race is).
 export async function patientEvidence(
-  night: Night,
+  loopRun: LoopRun,
   root: string,
   options: Omit<GatherOptions, "run"> & { label: string; [option: string]: unknown },
 ): Promise<Evidence> {
-  const { ctx, evidenceOf, note } = night;
+  const { ctx, evidenceOf, note } = loopRun;
   const evidence = await lookPatiently(ctx, () => evidenceOf(root, options), {
     attempts: PATIENT_LOOKS,
     onRace: (raced: Evidence) =>
@@ -698,19 +801,19 @@ export async function patientEvidence(
   return evidence;
 }
 
-export function writeVerdict(night: Night, name: string, value: unknown): Promise<unknown> {
-  const { ctx, run } = night;
+export function writeVerdict(loopRun: LoopRun, name: string, value: unknown): Promise<unknown> {
+  const { ctx, run } = loopRun;
   return writeRunArtifact(ctx, run.runId, name, withoutFrames(value));
 }
 
 /**
- * Every build this night judges gets the same record, on the same event path as `director_worker`.
+ * Every build this run judges gets the same record, on the same event path as `director_worker`.
  * Before this, the lead's four passes wrote `verdict.json` files and in-memory notes that no
  * screen could read, so the app's build box showed boilerplate about a run instead of what the
  * last look at the build actually found.
  */
-export async function recordVerdict(night: Night, fields: Parameters<typeof verdictRecord>[0]) {
-  const { appendRun, report } = night;
+export async function recordVerdict(loopRun: LoopRun, fields: Parameters<typeof verdictRecord>[0]) {
+  const { appendRun, report } = loopRun;
   const record = verdictRecord(fields);
   report.verdicts.push(record);
   if (report.verdicts.length > MAX_REPORT_VERDICTS) report.verdicts.shift();
@@ -718,7 +821,7 @@ export async function recordVerdict(night: Night, fields: Parameters<typeof verd
   return record;
 }
 
-export function shotsOf(_night: Night, evidence: Evidence | null | undefined): AnyRecord[] {
+export function shotsOf(_loopRun: LoopRun, evidence: Evidence | null | undefined): AnyRecord[] {
   return (evidence?.shots ?? []).map((s: Shot) => ({
     camera: s.camera,
     path: s.path,
@@ -732,36 +835,35 @@ export function shotsOf(_night: Night, evidence: Evidence | null | undefined): A
 }
 
 /** A worker's last commit: the one its loop accepted, or whatever its worktree stands on. */
-export async function workerCommit(night: Night, worker: Worker): Promise<string | null> {
-  const { ctx } = night;
+export async function workerCommit(loopRun: LoopRun, worker: Worker): Promise<string | null> {
+  const { ctx } = loopRun;
   if (worker.lastCommit) return worker.lastCommit;
   // A worker still building stands on whatever its round has just committed — an attempt the
-  // judge may yet reject — so only what it accepted is its work until it ends (P10-F3): the
-  // commit its last accepted round left (`lastAccepted`). Reading only `lastCommit`, which is
-  // set when a worker ends, told the golden-goal night's lead "no commit yet" about three
-  // workers with accepted rounds, and it merged every one of them by hand.
+  // judge may yet reject — so only what it accepted is its work until it ends: the
+  // commit its last accepted round left (`lastAccepted`). `lastCommit` alone is set only when a
+  // worker ends, and would tell the lead "no commit yet" about workers with accepted rounds.
   if (isRunning(worker)) return worker.lastAccepted ?? null;
   if (!worker.worktree) return null;
   return headOf(ctx, worker.worktree).catch(() => null);
 }
 
 /**
- * Put every function of the night on the object, bound to it, so a function destructures the
- * ones it calls from the night it was handed. `modules` are the director's module namespaces.
+ * Put every function of the run on the object, bound to it, so a function destructures the
+ * ones it calls from the run it was handed. `modules` are the director's module namespaces.
  */
-export function bindNight(
-  data: Pick<NightData, "ctx" | "threadId" | "run" | "resume">,
+export function bindLoopRun(
+  data: Pick<LoopRunData, "ctx" | "threadId" | "run" | "resume">,
   modules: ReadonlyArray<Record<string, unknown>>,
-): Night {
-  // The one place the night is assembled: its functions are attached here, and prepareNight
+): LoopRun {
+  // The one place the run is assembled: its functions are attached here, and prepareLoopRun
   // (setup.ts) assigns the rest of its data before any function reads it.
-  const night = data as Night;
-  const slots = night as unknown as Record<string, unknown>;
+  const loopRun = data as LoopRun;
+  const slots = loopRun as unknown as Record<string, unknown>;
   for (const module of modules) {
     for (const [name, fn] of Object.entries(module)) {
       if (typeof fn !== "function" || UNBOUND_FUNCTIONS.has(name)) continue;
-      slots[name] = (...args: unknown[]) => fn(night, ...args);
+      slots[name] = (...args: unknown[]) => fn(loopRun, ...args);
     }
   }
-  return night;
+  return loopRun;
 }

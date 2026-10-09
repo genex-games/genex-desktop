@@ -7,7 +7,8 @@ the game, not defects to correct. Change what the brief asks for and leave the r
 
 1. **In a build, read `.studio/BRIEF.md` first when it exists.** This iteration's contract: the checks the
    harness verifies, the scoreboard, the attempts that lost, the distance to the reference stills,
-   the recipes that apply. Work identity checks first.
+   the recipes that apply. Work identity checks first. `docs/MODULE-CONTRACT.md` (and the game's own
+   `docs/ARCHITECTURE.md`), when present, name each module's owner and API: never edit another part's.
 2. **Keep the studio able to see this game.** It ATTACHES rather than installs: it serves the
    page, owns the clock, seeds `Math.random` and finds the renderer, scene and camera from the
    frames you draw — so it may pause and step your own loop, and state must come from the delta
@@ -35,6 +36,6 @@ __BUILD_RULE__
 Two lessons every contractor re-learned: before re-tuning lighting, fog or a material, capture the
 game and look at what it already draws; and a check that cannot pass as written is not yours to
 force — write a `HARNESS:` line naming the check id and why in your notes
-(`docs/notes/NOTES.<facet-id>.md` in a facet run, `NOTES.md` in a chat build), whose
-`## Fixed by looking` section is mined into the next run. Helper scripts of your own go under
-`.studio/`, never into the game.
+(`docs/notes/NOTES.<facet-id>.md` in a facet run, `NOTES.md` in a chat build, read back next time); a
+facet's `## Fixed by looking` bullets become lessons Studio adds to later briefs or lists in
+Activity. Helper scripts of your own go under `.studio/`, never into the game.

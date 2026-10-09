@@ -271,7 +271,7 @@ describe("a chat's own Claude session asks the person", () => {
   });
 
   it("a read-only brief stays read-only, whatever else it carries", async () => {
-    // Upstream's read-only sessions (a waking night's lead, the coordinator, a playtester) are never
+    // Upstream's read-only sessions (a waking run's lead, the coordinator, a playtester) are never
     // the person's own: the host hands them no `permissions` (a lead the person talks to gets
     // `leadAsks`, below), and the engine keeps them read-only anyway.
     const { fn, seen } = fakeQuery();
@@ -486,7 +486,7 @@ describe("a chat's own Claude session asks the person", () => {
 
   it("keeps the settings of a Claude home with thousands of projects small enough for any command line", async () => {
     // The SDK passes settings as ONE argument (`--settings <json>`); Windows allows 8,191
-    // characters through a .cmd shim. One rule per project folder once made 13,692 here.
+    // characters through a .cmd shim; one rule per project folder would pass that here.
     const root = await realpath(await tmpDir("claude-home-size-"));
     const home = path.join(root, "dot-claude");
     const games = path.join(root, "games");
@@ -848,7 +848,7 @@ describe("a chat's own Claude session asks the person", () => {
  */
 describe("a build's lead asks from the chat's mode, and the host answers", () => {
   const leadRequest = (extra: Record<string, unknown> = {}) => ({
-    prompt: "lead the night",
+    prompt: "lead the run",
     cwd: "/tmp/game-workspace",
     readOnly: true,
     resume: "chat-session",
@@ -886,7 +886,7 @@ describe("a build's lead asks from the chat's mode, and the host answers", () =>
     // With it: Manual, so nothing beyond reads in its folders and the studio's tools goes unasked.
     assert.equal(asking.permissionMode, "default");
     assert.equal(typeof asking.canUseTool, "function");
-    // Flipped (owner, 2026-09-29): a lead started outside Bypass was launched without the flag, so
+    // Flipped: a lead started outside Bypass was launched without the flag, so
     // nothing could switch it there. The picker switches a running lead now, as the chat's own
     // session, and the CLI reaches Bypass mid-turn only for a session launched with the flag.
     assert.equal(asking.allowDangerouslySkipPermissions, true, "the picker can switch it to Bypass");
@@ -939,7 +939,7 @@ describe("a build's lead asks from the chat's mode, and the host answers", () =>
     assert.equal(accepting.permissionMode, "acceptEdits");
     for (const session of [auto, accepting]) {
       assert.equal(typeof session.canUseTool, "function", "what the mode still asks goes to the host");
-      // Flipped (owner, 2026-09-29): "never switched to Bypass". The picker may switch it there now.
+      // Flipped: "never switched to Bypass". The picker may switch it there now.
       assert.equal(session.allowDangerouslySkipPermissions, true, "the picker can switch it to Bypass");
       assert.equal("sandbox" in session, false);
       const matchers = (session.hooks as { PreToolUse: Array<{ matcher?: string }> }).PreToolUse;
@@ -948,7 +948,7 @@ describe("a build's lead asks from the chat's mode, and the host answers", () =>
     const allowed = auto.allowedTools as string[];
     for (const tool of ["Bash", "Edit", "Write"])
       assert.equal(allowed.includes(tool), false, `${tool} is the classifier's`);
-    // Flipped (owner, 2026-09-29): a lead started in Auto had its folder and the host's read grants
+    // Flipped: a lead started in Auto had its folder and the host's read grants
     // fenced from writes by Edit rules. Only the chat's mode and the studio's own fence (secrets,
     // settings) limit it now, as the chat's own session.
     for (const session of [auto, accepting, manual]) {

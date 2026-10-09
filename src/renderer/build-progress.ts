@@ -17,7 +17,7 @@ import {
 } from "./run-graph.ts";
 import {
   keptSoFarWords,
-  nightWords,
+  loopRunWords,
   outcomeTitle,
   PROGRESS_WORDS,
   partsBuildingWords,
@@ -165,13 +165,13 @@ export function historyLabel(run: { startedAt: string | null; state: string }, i
 }
 
 /**
- * The last thing anybody actually said about the build the night stands on.
+ * The last thing anybody actually said about the build the run stands on.
  *
  * The Builds drawer used to open with a sentence about the run as a whole — "Inspect the final
  * result and recorded checks", "The starting point passed its checks" — beside a build the lead
  * had judged four times since. Every one of those looks now writes a sentence of its own
  * (`loop/verdict.ts`), and this is the newest of them; `buildProgress` is the fallback for a
- * night that has not been looked at yet, or one recorded before the records existed.
+ * run that has not been looked at yet, or one recorded before the records existed.
  */
 export function buildVerdictLine(graph: RunGraph): string | null {
   return verdictSentence(headVerdict(graph)) || null;
@@ -182,16 +182,16 @@ type Progress = { nodeId: string; title: string; health: string; failedBase: boo
 /**
  * What the Builds tab says is happening right now, in one title and one sentence.
  *
- * Two kinds of night reach this. A programmed run builds a shared base and then rounds inside
- * each part, so its phase is the base and then the rounds. A lead's night (`run.director`) has
+ * Two kinds of run reach this. A programmed run builds a shared base and then rounds inside
+ * each part, so its phase is the base and then the rounds. A lead's run (`run.director`) has
  * no shared base unless it built a starting point of its own, and its builders are whole
  * sessions rather than rounds — so its phase is read off the builders themselves. Before this,
- * a lead's night said "Building the shared base · Checks pending" from dusk to dawn, because the
+ * a lead's run said "Building the shared base · Checks pending" from dusk to dawn, because the
  * one event that ends that phase is emitted by a stage the lead does not have.
  */
 export function buildProgress(graph: RunGraph): Progress {
   const progress = classicProgress(graph);
-  // A live night with the recorded summary keeps the graph's own words for what is happening
+  // A live run with the recorded summary keeps the graph's own words for what is happening
   // ("2 parts building", "Building the starting point") and carries the outcome card's counts
   // on the same line, so the header and the card can never disagree on the numbers.
   if (graph.active && graph.summary)
@@ -236,7 +236,7 @@ function classicProgress(graph: RunGraph): Progress {
   return loopProgress(graph, marks);
 }
 
-/** A night that is over: the recorded outcome when there is one, else the morning's own words. */
+/** A run that is over: the recorded outcome when there is one, else the morning's own words. */
 function endedProgress(graph: RunGraph, { run, final, failedBase }: Landmarks): Progress {
   if (graph.summary)
     return {
@@ -245,23 +245,23 @@ function endedProgress(graph: RunGraph, { run, final, failedBase }: Landmarks): 
       health: summaryCounts(graph.summary),
       failedBase,
     };
-  const night = nightWords({
+  const loopRun = loopRunWords({
     rounds: graph.facets.reduce((total, facet) => total + facet.iterations, 0),
     landed: final ? final.landed : null,
     stoppedBecause: final ? final.stoppedBecause : null,
-    // The same two facts the morning card reads: a paused night is not finished, and only a
-    // night that merged something may be told it has a build to play.
+    // The same two facts the morning card reads: a paused run is not finished, and only a
+    // run that merged something may be told it has a build to play.
     paused: run?.paused ?? false,
     hasBuild: hasMergedBuild(final ?? null),
     landing: final ? (final.landing?.line ?? null) : null,
   });
-  return { nodeId: GraphNodeKind.Final, title: night.headline, health: night.because, failedBase };
+  return { nodeId: GraphNodeKind.Final, title: loopRun.headline, health: loopRun.because, failedBase };
 }
 
 /** The run's starting point while it is still being built. */
 const startingPointOpen = (base: BaseNode | undefined): base is BaseNode => base !== undefined && !base.done;
 
-/** A lead's night: its own starting point first, then its builders. */
+/** A lead's run: its own starting point first, then its builders. */
 function directorProgress(graph: RunGraph, { base, failedBase }: Landmarks): Progress {
   if (startingPointOpen(base) && !base.absent)
     return {
@@ -318,7 +318,7 @@ function loopProgress(graph: RunGraph, { base, failedBase }: Landmarks): Progres
     nodeId: activeRound?.id ?? building[0]?.id ?? GraphNodeKind.Base,
     title: building.length ? partsBuildingWords(building.length) : PROGRESS_WORDS.preparingBuilds,
     // What went wrong with the starting point is the harness's own diagnostic; it belongs in the
-    // starting point's Details, not in the one line that says how the night is going.
+    // starting point's Details, not in the one line that says how the run is going.
     health: startingPointHealth(base, failedBase),
     failedBase,
   };

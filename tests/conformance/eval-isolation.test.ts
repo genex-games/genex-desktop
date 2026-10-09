@@ -108,7 +108,7 @@ describe("isolationInputs", () => {
       "**Acceptance:**",
       "```",
       '[ ] markers light <- "light every stone marker"',
-      '[ ] short trace   <- "at dusk tonight"',
+      '[ ] short trace   <- "at dusk"',
       '[ ] split trace   <- "carry a paper lantern ... along a winding river"',
       "[ ] no trace",
       "```",

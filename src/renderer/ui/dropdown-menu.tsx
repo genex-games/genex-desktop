@@ -19,10 +19,8 @@ function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMe
 }
 
 /**
- * ONE HIGHLIGHT THAT GLIDES, instead of every row toggling its own background
- * (owner, 2026-08-19: "their design, when you switch between the first and
- * second options, they have this animation where it jumps - this applies to all
- * our dropdowns as a component"). It is the same gesture as the header's
+ * ONE HIGHLIGHT THAT GLIDES from row to row, instead of every row toggling its
+ * own background, in every dropdown. It is the same gesture as the header's
  * segmented control and the nav's sliding pill, and it belongs to the PRIMITIVE
  * so no menu has to opt in.
  *
@@ -38,7 +36,7 @@ function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMe
  */
 function useGlidingHighlight() {
   // The node we hold is the HIGHLIGHT ITSELF, and the menu is read as its
-  // `parentElement`. Measured 2026-08-19: a ref forwarded to
+  // `parentElement`. Measured: a ref forwarded to
   // `DropdownMenuPrimitive.Content` was still null when this effect ran, so the
   // observer was never installed and the highlight sat at zero height forever
   // while Radix happily set `data-highlighted` on every hover. Our own element,
@@ -133,9 +131,8 @@ function DropdownMenuGroup({ ...props }: React.ComponentProps<typeof DropdownMen
 /** One row's look, shared by Item and RadioItem so the two cannot drift. */
 const rowClass = [
   // `relative` puts the row above the gliding highlight; Geist Sans because a
-  // menu is written AT a person (owner, 2026-08-19: "we don't write with a
-  // monospace font, but with our regular one"). Mono stays the voice of the
-  // chrome elsewhere - buttons, chips, tabs - which he did not ask to change.
+  // menu is written AT a person, in the regular font. Mono stays the voice of
+  // the chrome elsewhere - buttons, chips, tabs.
   "relative flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground/85 outline-none",
   // No `focus:bg-*`: the highlight is one gliding element now, so a per-row
   // background would double it and kill the movement it exists for.

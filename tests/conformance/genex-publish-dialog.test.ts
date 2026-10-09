@@ -137,6 +137,24 @@ test("publishing the shown files publishes the open game to the gallery, and the
   }
 });
 
+test("the name typed in the dialog reaches Genex as one clean line, and a blank one is left to Genex Tools", async () => {
+  const rig = await dialogRig();
+  try {
+    const titles: Array<[unknown, Record<string, unknown>]> = [
+      ["  Rain\nCircuit ", { title: "Rain Circuit" }],
+      ["   ", {}],
+      [42, {}],
+      [undefined, {}],
+    ];
+    for (const [title, args] of titles) {
+      await publishFromDialog(rig.core, GAME, await publishReview(rig.core, GAME), title);
+      assert.deepEqual(rig.calls.at(-1)?.args, args, JSON.stringify(title));
+    }
+  } finally {
+    await rig.close();
+  }
+});
+
 test("files that changed since the dialog showed them are asked about in chat", async () => {
   const rig = await dialogRig();
   try {

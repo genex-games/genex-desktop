@@ -3,7 +3,7 @@
  *
  * The rule this suite exists for is our addition to gauntlet-loop, which has no tie or regression
  * handling: **the incumbent only advances on a clear win.** A tie, a judge that cannot answer, or
- * a build that will not run must all leave the night's work no worse than it was.
+ * a build that will not run must all leave the run's work no worse than it was.
  *
  * The loop runs for real — real harness process, real substrate, real git snapshots — with a
  * scripted judge that reads the (blind, shuffled) prompt and answers like a real one would.
@@ -235,7 +235,7 @@ describe("gauntlet: the incumbent rule", () => {
     const restores = events.filter((e) => e.data.type === "workspace_restored");
     assert.ok(restores.length >= 1, "the rollback is recorded in the log");
     // Losing a round is a verdict about the game, not the coder: the rollback must not drag
-    // the harness back with it (one bad night of ties would erase every unjudged self-edit).
+    // the harness back with it (one bad run of ties would erase every unjudged self-edit).
     for (const restore of restores) {
       assert.equal((restore.data as { scope?: string }).scope, "game");
     }
@@ -266,7 +266,7 @@ describe("gauntlet: the incumbent rule", () => {
     assert.equal(counts.compare, 0, "no judge call should be spent on an unjudgeable build");
   });
 
-  it("survives an evidence pass that throws — the challenger is held, the night ends honestly", async () => {
+  it("survives an evidence pass that throws — the challenger is held, the run ends honestly", async () => {
     // Since the occluded-window postmortem, a blind observation layer is an outage, not a loss:
     // each blind iteration retries on a backoff, holds the challenger unjudged (no reset), and
     // two outages in a row stop the run before more build turns are spent blind.
@@ -295,7 +295,7 @@ describe("gauntlet: the incumbent rule", () => {
     assert.equal(counts.compare, 0, "nothing judgeable ever reached the judge");
     assert.equal(customEvents(events, "run_finished").length, 1, "the run still closes honestly");
     assert.ok(report, "report.json still lands for the morning");
-    // The post-run pass mines the night regardless of the dead preview — wait it out so its
+    // The post-run pass mines the run regardless of the dead preview — wait it out so its
     // work cannot outlive the test and EPIPE the runner at teardown.
     await waitForLog(
       rig.core,
@@ -343,7 +343,7 @@ describe("gauntlet: the incumbent rule", () => {
 
 describe("gauntlet: judge outages", () => {
   it("a judge that fails twice and then answers still produces a verdict", async () => {
-    // One transient hiccup must not end an 8-hour night: the verdict gets retried, and the
+    // One transient hiccup must not end an 8-hour run: the verdict gets retried, and the
     // run continues as if nothing happened.
     const { events, report, counts } = await runOnce({
       compare: "challenger",
@@ -360,7 +360,7 @@ describe("gauntlet: judge outages", () => {
   it("one exhausted outage costs an iteration as an auto-tie, and the run continues", async () => {
     // An outage buys exactly one invented verdict: a tie, which the incumbent rule turns into
     // a rollback. The cost is visible — an iteration spent, the incident in its reason string —
-    // and the night keeps going.
+    // and the run keeps going.
     const { events, report, counts } = await runOnce(
       { compare: "tie", failCompareAt: [1, 2, 3] },
       { maxIterations: 2 },
@@ -415,7 +415,7 @@ describe("gauntlet: judge outages", () => {
     assert.equal(iterations[0]!.winner, "incumbent");
     assert.match(String(iterations[0]!.reason), /auto-tie \(1 of 2\)/);
     assert.equal(counts.compare, 6, "both iterations spent their retries before the run gave up");
-    assert.equal(customEvents(events, "run_finished").length, 1, "the night closes, it does not crash");
+    assert.equal(customEvents(events, "run_finished").length, 1, "the run closes, it does not crash");
     const written = JSON.parse(await readFile(path.join(rig.core.layout.runs, runId, "report.json"), "utf8"));
     assert.match(String(written.stoppedBecause), /judge unavailable/);
     assert.ok(report.finalSnapshot, "the incumbent snapshot is still named for the morning");
@@ -428,7 +428,7 @@ describe("gauntlet: judge outages", () => {
 
   it("a dead reference panel spends the same allowance: the win stands and the run continues", async () => {
     // The blind win is already the new incumbent; only the exit question went unanswered. One
-    // dead panel must not end the night — the incident lands on the report for the morning.
+    // dead panel must not end the run — the incident lands on the report for the morning.
     const { events, report, rig, counts } = await runOnce(
       { compare: "challenger", failPanels: 3 },
       { maxIterations: 2 },
@@ -948,7 +948,7 @@ describe("gauntlet: briefs and intake", () => {
                 },
               },
             ],
-            text: "Starting the night.",
+            text: "Starting the run.",
           };
         }
         if (text.includes("unattended run")) {
@@ -957,7 +957,7 @@ describe("gauntlet: briefs and intake", () => {
               {
                 id: "c2",
                 name: "write_file",
-                arguments: { project: "rainy-night-city", file: "src/night.js", contents: "export const night = 1;\n" },
+                arguments: { project: "rainy-night-city", file: "src/run.js", contents: "export const run = 1;\n" },
               },
             ],
             text: "Building the first playable.",

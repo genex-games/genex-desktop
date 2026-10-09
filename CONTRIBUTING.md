@@ -19,7 +19,7 @@ private prompts, credentials and customer or provider records from issues and pu
 ## Set up
 
 You need macOS on Apple Silicon, Git, and Node 24 (see the
-[README](README.md#status-and-platforms) for the platform matrix).
+[release readiness](docs/release-readiness.md) for the platform matrix).
 
 ```bash
 nvm install          # once; reads .nvmrc (Node 24)

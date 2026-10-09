@@ -1,6 +1,6 @@
 /**
- * Links inside the studio window never navigate it (2026-09-06: a contractor's
- * "[Base handoff](/…/NOTES.base-builder.md)" link turned the whole app black). A file link opens
+ * Links inside the studio window never navigate it (a contractor's
+ * "[Base handoff](/…/NOTES.base-builder.md)" link would turn the whole app black). A file link opens
  * only a real document inside a game folder; anything else is shown in Finder or refused, so a
  * contractor's link can never run what it wrote (SECUI-1).
  */

@@ -356,7 +356,7 @@ describe("game chat permissions", () => {
     // The queue answers the waiting one after the Stop: its session is the person's, in their mode.
     await queue(waiting, "coordinator_message_processing");
     assert.ok((await brief({}, waiting)).permissions, "the next queued message still asks");
-    // One put back to wait (a night's lead never heard it) outlives a Stop too.
+    // One put back to wait (a run's lead never heard it) outlives a Stop too.
     const handedBack = await personSays();
     await queue(handedBack, "coordinator_message_queued", "coordinator_message_delivered");
     await queue(handedBack, "coordinator_message_requeued");
@@ -365,9 +365,9 @@ describe("game chat permissions", () => {
     await queue(handedBack, "coordinator_message_handled");
   });
 
-  it("the lead model: a night's lead is never the chat's own session, the chat's own session after the night asks", async () => {
+  it("the lead model: a run's lead is never the chat's own session, the chat's own session after the run asks", async () => {
     await core.setPermissionMode(threadId, "default");
-    // A waking night's lead answers the chat too, in the game folder, but its turn is its run's: it
+    // A waking run's lead answers the chat too, in the game folder, but its turn is its run's: it
     // never gets the chat's own permissions, and without a run of this chat behind its grant it asks
     // nobody (a real one asks from its own seat: lead-sessions-host.test.ts).
     const lead = await brief({
@@ -378,7 +378,7 @@ describe("game chat permissions", () => {
     });
     assert.equal(lead.permissions, undefined);
     assert.equal(lead.leadAsks, undefined);
-    // After the night it led, the chat's own session answers the person, with the run's controls.
+    // After the run it led, the chat's own session answers the person, with the run's controls.
     const after = await brief({ runControls: { runId: "run-n", messageId: "m" } });
     assert.equal(after.permissions?.mode, "default", "the person's mode, not a silent sandbox");
   });

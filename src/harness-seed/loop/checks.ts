@@ -18,14 +18,19 @@
  */
 import { nearestReference, styleDistance, type StyleStats } from "./style.ts";
 import type { Check, CheckKind, CheckLike, CheckOrigin, CheckWeight } from "./spec.ts";
+import { ProbeAfter } from "./throttle-bot.ts";
 import { HostMethod } from "./host-methods.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON, clipMarked } from "./text.ts";
 import { isRecord } from "./json.ts";
+import { appliesToBuild } from "./applies-to-build.ts";
+import type { ElidedKind, StateShape } from "./state-shape.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { PreviewPixelStats } from "../types/host-api.d.ts";
 
 /** The state paths a check may name as its needs. */
 const MAX_CHECK_NEEDS = 4;
+/** How much of a state's JSON an older studio read whole before it cut the text instead. */
+const LEGACY_STATE_CAP_CHARS = 64_000;
 /** How much of a failing check's reason one scoreboard line quotes. */
 const BOARD_REASON_CHARS = 240;
 /** Threshold under which a challenger frame counts as identical to the incumbent's. */
@@ -98,6 +103,13 @@ export interface CheckResult {
   nearest?: string;
   unavailable?: boolean;
   missing?: string[];
+  /**
+   * The studio could not read the state whole: an older studio cut its text, or the check reads
+   * inside a value the studio cut (`cut` names what it read there). Unmeasured, and — unlike
+   * `unavailable` — it still blocks "satisfied": the build reports it, it just reports too much.
+   */
+  stateTooLarge?: boolean;
+  cut?: string[];
   confidence?: number;
   answer?: unknown;
   note?: string;
@@ -136,6 +148,14 @@ const Kind = {
 } as const satisfies Record<string, CheckKind>;
 const Weight = { Identity: "identity", Normal: "normal" } as const satisfies Record<string, CheckWeight>;
 const Origin = { Judge: "judge" } as const satisfies Record<string, CheckOrigin>;
+/** The markers of a state the studio could not read whole; state-shape.ts imports this module too. */
+const Shape = {
+  Truncated: "__truncated",
+  Elided: "__elided",
+  Cut: "__cut",
+} as const satisfies Record<string, StateShape>;
+/** What a stub stands in for: only an object's stub does not keep the value's own `.length`. */
+const Elided = { Object: "object" } as const satisfies Record<string, ElidedKind>;
 
 // ── expression language ────────────────────────────────────────────────────────────────────
 
@@ -509,7 +529,7 @@ export function probeScope(state: unknown, early: unknown = null) {
   const aliased = !("state" in base);
   // The same alias, inside `has("…")` and `delta("…")`: their argument is a string the parser
   // never turns into a reference, so `state.props.moved` there resolved nowhere and scored a
-  // silent `false` — not `unmeasured` — for a whole night.
+  // silent `false` — not `unmeasured` — for a whole run.
   const at = (from: unknown, path: unknown): unknown =>
     lookup(from, aliased ? String(path).replace(/^state\./, "") : String(path));
   return {
@@ -536,17 +556,179 @@ export function probeScope(state: unknown, early: unknown = null) {
   };
 }
 
-/** A probe's `len()`: an array's or a string's length, an object's key count, else no value. */
+/**
+ * A probe's `len()`: an array's or a string's length, an object's key count, else no value. A
+ * value the studio cut out of an over-budget state keeps its length on the stub left in its place.
+ */
 function lengthOf(v: unknown): number | undefined {
   if (Array.isArray(v) || typeof v === "string") return v.length;
+  if (isElided(v)) return v.length;
   if (v && typeof v === "object") return Object.keys(v).length;
   return undefined;
+}
+
+/** The stub the studio left where it cut a value out of an over-budget state. */
+function isElided(v: unknown): v is { [Shape.Elided]: string; length: number; chars?: number } {
+  return isRecord(v) && !Array.isArray(v) && typeof v[Shape.Elided] === "string" && typeof v.length === "number";
+}
+
+/** How long an older studio's text-cut state was, or null for a state it read whole. */
+function truncatedLength(state: unknown): number | null {
+  if (!isRecord(state) || state[Shape.Truncated] !== true) return null;
+  return typeof state.length === "number" ? state.length : 0;
+}
+
+/**
+ * Where a path reads INTO a value the studio cut: the stub's path, or null. A path that ends at
+ * the stub reads it as the value it stands for only when `whole` says every reading agrees
+ * (`len()`, `has()`, truthiness, `!= null`); so does an array's or a string's `.length`, which
+ * the stub keeps. Anything else — `title == "x"`, an object's `.length` — is a cut read.
+ */
+function cutAlong(scope: unknown, path: string, whole = true): string | null {
+  const parts = path.split(".");
+  let current: unknown = scope;
+  for (let i = 0; i < parts.length; i++) {
+    if (!isRecord(current)) return null;
+    if (isElided(current)) {
+      const keptLength = i === parts.length - 1 && parts[i] === "length" && current[Shape.Elided] !== Elided.Object;
+      return keptLength ? null : parts.slice(0, i).join(".");
+    }
+    current = current[parts[i] as string];
+  }
+  return isElided(current) && !whole ? path : null;
+}
+
+/** A path a probe reads, and whether reading the value whole means the same on its stub. */
+interface PathRead {
+  path: string;
+  whole: boolean;
+}
+
+/**
+ * Every path a probe reads: its references, the paths `has`/`delta` name, its `needs`, and —
+ * because `delta()` reads both sides — each delta path in the early state too.
+ */
+function probePathsOf(check: CheckLike, state: unknown): { reads: PathRead[]; early: boolean } {
+  const needs = (Array.isArray(check?.needs) ? check.needs.map(String) : []).map((path) => ({ path, whole: true }));
+  let ast: ExprNode;
+  try {
+    ast = parseExpr(check.expr ?? "");
+  } catch {
+    return { reads: needs, early: false };
+  }
+  const refs = refReads(ast);
+  const deltas = deltaPathsNamed(ast);
+  const early = deltas.length > 0 || refs.some((read) => read.path.startsWith("early."));
+  // probeScope's `delta()` alias: `state.` names the state itself unless it has a field of that name.
+  const aliased = !(isRecord(state) && "state" in state);
+  const before = deltas.map((path) => ({
+    path: `early.${aliased ? path.replace(/^state\./, "") : path}`,
+    whole: true,
+  }));
+  const named = pathsNamedAsStrings(ast).map((path) => ({ path, whole: true }));
+  return { reads: [...refs, ...named, ...needs, ...before], early };
+}
+
+/**
+ * Every reference in an expression tree, and whether it is read in a way a stub answers like
+ * the value it stands for: alone as a truth value, under `!`/`&&`/`||`, compared to `null`, or
+ * as `len()`'s one argument.
+ */
+function refReads(ast: ExprNode): PathRead[] {
+  const reads: PathRead[] = [];
+  const walk = (node: ExprNode, whole: boolean): void => {
+    if (node.type === "ref") reads.push({ path: node.path, whole });
+    for (const [child, childWhole] of readsBelow(node)) walk(child, childWhole);
+  };
+  walk(ast, true);
+  return reads;
+}
+
+/** A node's sub-expressions, each with whether it is read only as a truth value or a length. */
+function readsBelow(node: ExprNode): Array<[ExprNode, boolean]> {
+  const isNull = (side: ExprNode): boolean => side.type === "literal" && side.value === null;
+  switch (node.type) {
+    case "not":
+      return [[node.operand, true]];
+    case "neg":
+      return [[node.operand, false]];
+    case "and":
+    case "or":
+      return [
+        [node.left, true],
+        [node.right, true],
+      ];
+    case "cmp": {
+      const equality = node.op === "==" || node.op === "!=";
+      return [
+        [node.left, equality && isNull(node.right)],
+        [node.right, equality && isNull(node.left)],
+      ];
+    }
+    case "arith":
+      return [
+        [node.left, false],
+        [node.right, false],
+      ];
+    case "in":
+      return [node.left, ...node.items].map((child) => [child, false]);
+    case "call": {
+      const lengthOnly = node.name === "len" && node.args.length === 1;
+      return node.args.map((arg) => [arg, lengthOnly]);
+    }
+    default:
+      return [];
+  }
+}
+
+/**
+ * A probe over a state the studio could not read whole is unmeasured with the reason, and never
+ * "the build does not report …": that told builders to add to a state that was already too big.
+ * An older studio cut the whole text; this one cuts the largest values, so only a probe that reads
+ * inside one of them — in the late state, or in the early one a `delta()` reads — is unmeasured.
+ */
+function unreadableState(check: CheckLike, state: unknown, early: unknown): CheckResult | null {
+  const read = probePathsOf(check, state);
+  const truncated = truncatedLength(state) ?? (read.early ? truncatedLength(early) : null);
+  if (truncated !== null) {
+    return unmeasured(
+      check,
+      `state() is ${truncated.toLocaleString("en-US")} chars, over the ${LEGACY_STATE_CAP_CHARS.toLocaleString("en-US")} the studio reads whole, so it came back cut and nothing in it could be read — report less in state() (keep long lists out of it)`,
+      { stateTooLarge: true },
+    );
+  }
+  const scope = probeScope(state, early);
+  const cuts = read.reads.map((r) => ({ path: r.path, at: cutAlong(scope, r.path, r.whole) }));
+  const inside = [...new Set(cuts.filter((c) => c.at !== null).map((c) => c.path))];
+  if (!inside.length) return null;
+  const stubs = [...new Set(cuts.flatMap((c) => (c.at === null ? [] : [c.at])))];
+  const fromEarly = (at: string): boolean => at === "early" || at.startsWith("early.");
+  const sizes: string[] = [];
+  if (stubs.some((at) => !fromEarly(at))) sizes.push(cutStateSize(state, "state()"));
+  if (stubs.some(fromEarly)) sizes.push(cutStateSize(early, "early state()"));
+  return unmeasured(
+    check,
+    `the studio cut ${stubs.join(", ")} from ${sizes.join(" and ")}, so ${inside.join(", ")} cannot be read — measure it with len(), or report less in state()`,
+    { stateTooLarge: true, cut: inside },
+  );
+}
+
+/** "a 82,303-char state()", or "an over-budget state()" when the state does not say its size. */
+function cutStateSize(state: unknown, name: string): string {
+  const whole = stateCutChars(state);
+  return whole === null ? `an over-budget ${name}` : `a ${whole.toLocaleString("en-US")}-char ${name}`;
+}
+
+/** The full size a bounded state says it had, or null for a state the studio read whole. */
+function stateCutChars(state: unknown): number | null {
+  const cut = isRecord(state) ? state[Shape.Cut] : null;
+  return isRecord(cut) && typeof cut.chars === "number" ? cut.chars : null;
 }
 
 /**
  * The dry run: read every probe expression against the state a build actually reports, before
  * anyone builds on it. A probe is the only check that names paths the game must expose, and
- * the first director night wrote thirteen of them against paths that never resolved — every
+ * the first director run wrote thirteen of them against paths that never resolved — every
  * board read `missing: state.…` on builds that worked, and nobody found out until morning.
  *
  * A ref that cannot be found is *unsatisfiable as written*: either the path is wrong or the
@@ -557,8 +739,15 @@ function lengthOf(v: unknown): number | undefined {
 export function dryRunChecks(
   checks: readonly Check[] | null | undefined,
   { state = null, demoStates = null }: { state?: unknown; demoStates?: unknown } = {},
-): { unsatisfiable: Array<{ id: string; missing: string[] }>; stateKeys: string[] | null } {
+): {
+  unsatisfiable: Array<{ id: string; missing: string[] }>;
+  stateKeys: string[] | null;
+  /** The state was cut as text by an older studio: nothing in it can be read, so nothing is judged. */
+  unreadable?: { chars: number };
+} {
   if (!isRecord(state) || state.__missing) return { unsatisfiable: [], stateKeys: null };
+  const truncated = truncatedLength(state);
+  if (truncated !== null) return { unsatisfiable: [], stateKeys: null, unreadable: { chars: truncated } };
   const unsatisfiable: Array<{ id: string; missing: string[] }> = [];
   for (const check of checks ?? []) {
     if (check?.kind !== Kind.Probe || !check.expr) continue;
@@ -576,11 +765,13 @@ export function dryRunChecks(
     }
     // A path named as a string — `has("x")`, `delta("x")` — never becomes a reference, so
     // `missing` cannot see it and the check quietly reads false forever. Read it here.
-    const named = pathsNamedAsStrings(ast).filter((path) => scope.has(path) !== true);
-    const missing = [...new Set([...outcome.missing, ...named])];
+    // A path inside a value the studio cut is reported — the state was just too big to read it.
+    const reported = (path: string): boolean => cutAlong(scope, path) !== null;
+    const named = pathsNamedAsStrings(ast).filter((path) => scope.has(path) !== true && !reported(path));
+    const missing = [...new Set([...outcome.missing.filter((path) => !reported(path)), ...named])];
     if (missing.length) unsatisfiable.push({ id: check.id, missing });
   }
-  return { unsatisfiable, stateKeys: Object.keys(state) };
+  return { unsatisfiable, stateKeys: Object.keys(state).filter((key) => key !== Shape.Cut) };
 }
 
 /** Every string literal a `delta()` call names: the paths a probe reads on BOTH sides of a pass. */
@@ -862,23 +1053,13 @@ function needsNotReported(check: CheckLike, state: unknown, early: unknown): str
 }
 
 export function evaluateProbeCheck(check: CheckLike, evidence: CheckEvidence | null | undefined): CheckResult {
-  let state = evidence?.state;
-  let early = evidence?.stateEarly;
-  if (check.demo) {
-    const demo = evidence?.demos?.[check.demo];
-    if (!demo) return demoNotRun(check, evidence, check.demo);
-    if (demo.ok !== true)
-      return result(
-        check,
-        false,
-        `demo "${check.demo}" failed: ${demo.error ?? JSON.stringify(demo).slice(0, CLIP_DETAIL)}`,
-      );
-    state = evidence?.demoStates?.[check.demo];
-    early = evidence?.state;
-    if (!state) return unmeasured(check, `no state() was captured after demo "${check.demo}"`);
-  }
+  const scoped = probeStates(check, evidence);
+  if ("result" in scoped) return scoped.result;
+  const { state, early } = scoped;
   if (!state) return unmeasured(check, "no state() probe was captured");
   if (state.__missing) return result(check, false, "window.__studio is missing — the build exposes no state()");
+  const unreadable = unreadableState(check, state, early);
+  if (unreadable) return unreadable;
   const notReported = needsNotReported(check, state, early);
   if (notReported)
     return unmeasured(
@@ -887,7 +1068,7 @@ export function evaluateProbeCheck(check: CheckLike, evidence: CheckEvidence | n
       { missing: notReported, unavailable: true },
     );
   const outcome = evaluateBoolean(check.expr, probeScope(state, early));
-  // P15-F1: `!=`, `!`, `==` and `||` over a path the build never reported still yield a value, so
+  // `!=`, `!`, `==` and `||` over a path the build never reported still yield a value, so
   // an absent field could pass a check. Whatever the expression read that the state lacks makes
   // the check unmeasured — "I did not see it", never a pass or a fail.
   if (outcome.missing.length)
@@ -895,12 +1076,64 @@ export function evaluateProbeCheck(check: CheckLike, evidence: CheckEvidence | n
       missing: outcome.missing,
       unavailable: true,
     });
-  const where = check.demo ? ` after demo "${check.demo}"` : "";
   return result(
     check,
     outcome.pass,
-    `${outcome.reason} — state${where} ${clipMarked(JSON.stringify(state), CLIP_REASON)}`,
+    `${outcome.reason} — state${whereRead(check)} ${clipMarked(JSON.stringify(state), CLIP_REASON)}`,
   );
+}
+
+/** The states a probe is scoped to, as `AnyRecord`s the expression reads; or why there is none. */
+type ProbeStates =
+  | { state: AnyRecord | null | undefined; early: AnyRecord | null | undefined }
+  | { result: CheckResult };
+
+/** What a probe reads: the drive's states, a demo's end state, or the throttle-bot race's — or why it cannot. */
+function probeStates(check: CheckLike, evidence: CheckEvidence | null | undefined): ProbeStates {
+  if (check.after === ProbeAfter.ThrottleBot) return raceStates(check, evidence);
+  if (!check.demo) return { state: evidence?.state, early: evidence?.stateEarly };
+  const demo = evidence?.demos?.[check.demo];
+  if (!demo) return { result: demoNotRun(check, evidence, check.demo) };
+  if (demo.ok !== true) {
+    const why = demo.error ?? JSON.stringify(demo).slice(0, CLIP_DETAIL);
+    return { result: result(check, false, `demo "${check.demo}" failed: ${why}`) };
+  }
+  const state = evidence?.demoStates?.[check.demo];
+  if (!state) return { result: unmeasured(check, `no state() was captured after demo "${check.demo}"`) };
+  return { state, early: evidence?.state };
+}
+
+/**
+ * The state the throttle-only bot's race left (evidence.ts `raceThrottleBot`), against the state it
+ * started from. With no race to read, a game whose own state reports no race result is not asked —
+ * the drive's state says which of the check's `needs` it lacks, and a harness check over a path the
+ * build never reports is not its question (harness-needs.ts). Any other race nobody ran is unmeasured.
+ */
+function raceStates(check: CheckLike, evidence: CheckEvidence | null | undefined): ProbeStates {
+  const race = isRecord(evidence?.challenge) ? evidence.challenge : null;
+  if (race?.ran === true) {
+    if (!isRecord(race.state))
+      return { result: unmeasured(check, "no state() was captured after the throttle-bot race") };
+    return { state: race.state, early: isRecord(race.early) ? race.early : evidence?.state };
+  }
+  const drive = evidence?.state;
+  const notReported = isRecord(drive) ? needsNotReported(check, drive, evidence?.stateEarly) : null;
+  if (notReported) {
+    const why = `the build does not report ${notReported.join(", ")} — there is no race for a throttle-only bot to win`;
+    return { result: unmeasured(check, why, { missing: notReported, unavailable: true }) };
+  }
+  const why =
+    typeof race?.reason === "string"
+      ? `the throttle-bot race did not run: ${race.reason}`
+      : "the throttle-bot race was not run in this evidence pass";
+  return { result: unmeasured(check, why) };
+}
+
+/** Where a probe's state was read, for its reason: after a demo, after the bot's race, or the drive. */
+function whereRead(check: CheckLike): string {
+  if (check.demo) return ` after demo "${check.demo}"`;
+  if (check.after) return ` after the ${check.after} race`;
+  return "";
 }
 
 export function evaluateDemoCheck(check: CheckLike, evidence: CheckEvidence | null | undefined): CheckResult {
@@ -980,7 +1213,7 @@ export async function evaluateSceneCheck(
   if (unavailable) return unmeasured(check, `scene check could not be measured: ${unavailable}`, { unavailable: true });
   if (outcome.__error) return result(check, false, `scene check error: ${outcome.__error}`);
   // The page-side wrapper always answers {value} or {__error}; anything else means the
-  // expression never ran there (an undefined once read as a pass — nothing may pass unlooked-at).
+  // expression never ran there (an undefined is never a pass — nothing may pass unlooked-at).
   if (!("value" in outcome))
     return unmeasured(check, "scene check produced no value — the page did not run the inspect() wrapper");
   const verdict = sceneVerdict(check, outcome.value);
@@ -1120,7 +1353,7 @@ export function toScoreboard(results: readonly (CheckResult | null | undefined)[
  * check measures itself, so its first pass is a real win over nothing. A vision check's first
  * pass is one judge's first look, and a first look barely above a guess is not evidence: the
  * same answer against a measured "no" would not have flipped it either (settleVision). One
- * night kept a round on exactly this — a question grown the iteration before, never measured on
+ * run kept a round on exactly this — a question grown the iteration before, never measured on
  * the build it was grown from, answered "yes" at 0.5.
  */
 function firstMeasurementFlips(previous: CheckResult | undefined, entry: CheckResult | undefined): boolean {
@@ -1213,7 +1446,7 @@ export function metricImprovement(prev: { value?: number }, next: { value?: numb
  *
  * `stuck` is the other half of the same story: a *failing* check the judge answers under
  * `stuckConfidence` settles nothing either way — a repeated hedged "no", or a "yes" too weak to
- * flip. One night asked "is the live probe's speedKept reading gone?" of a JPEG twelve times and
+ * flip. One run asked "is the live probe's speedKept reading gone?" of a JPEG twelve times and
  * got 0.20 every time. The caller counts the flag; a question that cannot be answered from a
  * picture belongs in the ledger, not on the board.
  */
@@ -1264,17 +1497,20 @@ function settleMeasured(
 /**
  * The board as a card can read it. `total`/`passing`/`unmeasured` count everything, as they
  * always have; `planned*` counts only the checks the plan and the harness wrote and `grown*`
- * only the questions a judge grew from its own defect list. They are two different things and
- * one night proved it: a part whose nine planned checks all passed read "1 of 10" because the
- * judge had grown a question about a number no camera can see. The screen says "Passed 3 ·
- * Failed 2 · Couldn't measure 4 · 3 judge notes" off these fields.
+ * only the questions a judge grew from its own defect list. They are two different things: mixed,
+ * a part whose nine planned checks all pass reads "1 of 10" because the judge grew a question
+ * about a number no camera can see. The screen says "Passed 3 ·
+ * Failed 2 · Couldn't measure 4 · 3 judge notes" off these fields. A harness-owned check that
+ * does not apply to this build (loop/applies-to-build.ts) is in none of those counts; identity
+ * still reads the whole board, so it never turns an unanswerable board into a satisfied one.
  */
 export function summarizeScoreboard(
   board: Scoreboard | null | undefined,
   spec: { checks?: readonly Check[] } | null | undefined,
 ) {
-  const entries = Object.values(board ?? {});
-  const identity = entries.filter((e) => e.weight === Weight.Identity);
+  const all = Object.values(board ?? {});
+  const entries = all.filter((e) => appliesToBuild(e, spec));
+  const identity = all.filter((e) => e.weight === Weight.Identity);
   const measuredPass = (e: CheckResult): boolean => e.pass === true;
   // The board entry carries `origin` only where the loop seeded it; the spec is the authority.
   const grownIds = new Set((spec?.checks ?? []).filter((c) => c?.origin === Origin.Judge).map((c) => c.id));
@@ -1287,6 +1523,8 @@ export function summarizeScoreboard(
   // A judge's guess failed nothing it could see: it reads as couldn't measure, never as failing.
   const couldNotTell = (e: CheckResult): boolean => !isMeasured(e) || guessed(e);
   const identityCounted = identity.filter((e) => !unanswerable(e));
+  // The card's identity ratio, from this build's questions; identityAllPass reads them all.
+  const identityApplying = entries.filter((e) => e.weight === Weight.Identity);
   const planned = entries.filter((e) => !isGrown(e));
   const grown = entries.filter(isGrown);
   return {
@@ -1298,8 +1536,8 @@ export function summarizeScoreboard(
     plannedUnmeasured: planned.filter((e) => !isMeasured(e)).length,
     grownTotal: grown.length,
     grownPassing: grown.filter(measuredPass).length,
-    identityTotal: identity.length,
-    identityPassing: identity.filter(measuredPass).length,
+    identityTotal: identityApplying.length,
+    identityPassing: identityApplying.filter(measuredPass).length,
     identityAllPass: identityAllPass(identity, identityCounted, entries, spec),
     failing: entries
       .filter((e) => e.pass === false && !guessed(e))
@@ -1354,13 +1592,18 @@ function boardTag(id: string, comparison: { flips?: string[]; regressions?: stri
   return "";
 }
 
-/** One line per check, for briefs, reports and the chat feed. */
+/**
+ * One line per check, for briefs, reports and the chat feed. Given the spec, only this build's
+ * questions (loop/applies-to-build.ts): a harness check the build cannot answer is no line.
+ */
 export function renderScoreboard(
   board: Scoreboard | null | undefined,
   comparison: { flips?: string[]; regressions?: string[] } | null = null,
+  spec?: { checks?: readonly Check[] } | null,
 ): string {
   const lines: string[] = [];
-  for (const entry of Object.values(board ?? {})) {
+  const entries = Object.values(board ?? {}).filter((e) => !spec || appliesToBuild(e, spec));
+  for (const entry of entries) {
     const value =
       entry.kind === Kind.Metric && typeof entry.value === "number"
         ? ` = ${entry.value.toFixed(3)}${entry.nearest ? ` (nearest still: ${entry.nearest})` : ""}`

@@ -1,6 +1,6 @@
 /**
- * The scout and the requested state (computer use, 2026-09-07) — born from run_mtq96bu1z3x0, where six facets
- * built and judged the wrong map for two hours because nothing had opened the game first:
+ * The scout and the requested state, so facets never build and judge the wrong map because
+ * nothing had opened the game first:
  *
  *  1. the scout's answer is normalised into a setup the studio can replay and a builder count
  *     the planner must respect;
@@ -23,6 +23,7 @@ import { clampFacets, decompose } from "../../src/harness-seed/loop/autopilot.ts
 import { applySetup, gatherEvidence } from "../../src/harness-seed/loop/gauntlet.ts";
 import { normalizeFacetSpec, withRequestedStateCheck } from "../../src/harness-seed/loop/spec.ts";
 import { evaluateProbeCheck } from "../../src/harness-seed/loop/checks.ts";
+import { workerSetupOf } from "../../src/harness-seed/loop/director/workers.ts";
 
 const REPORT = {
   seen: "Downtown Block: a brick street, sunset, the skater at spawn.",
@@ -346,6 +347,39 @@ describe("the scout says what kind of game it just drove", () => {
       "a setup that is only a gesture survives",
     );
     assert.deepEqual((normalizeScoutSetup({ gesture: { x: 480, y: 300 } }) as any).gesture, { x: 480, y: 300 });
+  });
+
+  it("keeps the front-end for the worker that owns it: begin:false is a setup of its own", () => {
+    assert.deepEqual(normalizeScoutSetup({ begin: false }), { begin: false }, "the title screen worker's whole setup");
+    assert.deepEqual(normalizeScoutSetup({ demo: "pick-map", begin: false }), { demo: "pick-map", begin: false });
+    assert.deepEqual(normalizeScoutSetup({ demo: "pick-map", begin: true }), { demo: "pick-map", begin: true });
+    for (const begin of ["false", 0, null, {}])
+      assert.equal(
+        Object.hasOwn(normalizeScoutSetup({ demo: "pick-map", begin } as never) ?? {}, "begin"),
+        false,
+        JSON.stringify(begin),
+      );
+    assert.equal(normalizeScoutSetup({ begin: "no" } as never), null, "a begin that is not a boolean sets nothing up");
+  });
+
+  it("keeps the run's requested state for the front-end's own worker, and adds only its begin flag", () => {
+    const runSetup = {
+      actions: [{ type: "tap", keys: ["i"] }],
+      verify: { path: "maps.activeId", equals: "macba" },
+      note: "I opens the picker",
+    };
+    assert.deepEqual(
+      workerSetupOf({ begin: false }, runSetup),
+      { ...runSetup, begin: false },
+      "the menu worker is judged on the run's map, on its menu",
+    );
+    assert.deepEqual(workerSetupOf({ begin: false }, null), { begin: false });
+    assert.deepEqual(
+      workerSetupOf({ demo: "harbour" }, runSetup),
+      { demo: "harbour" },
+      "a worker's own state is its own",
+    );
+    assert.equal(workerSetupOf({ nothing: true }, runSetup), null);
   });
 
   it("reads to the planner as the kind, and says when the studio must click first", () => {

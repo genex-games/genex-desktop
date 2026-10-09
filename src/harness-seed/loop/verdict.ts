@@ -1,7 +1,7 @@
 /**
  * The verdict record — one per judged build, whoever judged it.
  *
- * Five passes look at a build over a night and, until this module, each wrote its answer in its
+ * Five passes look at a build over a run and, until this module, each wrote its answer in its
  * own shape and its own words: the worker loop kept `verdictSource` + a scoreboard on
  * `facet_iteration`; the lead's judge, fork gate, health pass and close wrote `verdict.json`
  * files and in-memory notes nothing on screen could read. So the app's own build-health box was
@@ -43,7 +43,7 @@ export type VerdictPass = (typeof VerdictPass)[keyof typeof VerdictPass];
 export const VERDICT_PASSES: string[] = Object.values(VerdictPass);
 
 /**
- * What a build was judged against, besides another worker's build: the night's start, the live
+ * What a build was judged against, besides another worker's build: the run's start, the live
  * folder, nothing, or the round before. Verdict records keep it: never rename a value.
  */
 export const Against = {
@@ -102,6 +102,8 @@ export const NotLandedReason = {
   UncommittedChanges: "uncommitted-changes",
   Stopped: "stopped",
   Crashed: "crashed",
+  /** A lost provider paused the run (a sign-in gone, a limit, an outage): Resume lands it once it can be checked. */
+  Paused: "paused",
 } as const;
 export type NotLandedReason = (typeof NotLandedReason)[keyof typeof NotLandedReason];
 
@@ -195,6 +197,8 @@ const NOT_LANDED: Record<string, string> = {
     "Nothing was made live: files in your game folder had changes not yet in its history, so this build was left beside it, waiting for Make it live.",
   stopped: "Nothing was made live: the build was stopped before it finished.",
   crashed: "Nothing was made live: the build hit a problem and stopped early.",
+  paused:
+    "Nothing was made live: the model provider stopped answering, so the build paused before anything could check it — Resume picks it up.",
 } satisfies Record<NotLandedReason, string>;
 
 /** A commit, a branch, a ref, a run id, an absolute path — nothing a player has a use for. */
@@ -421,7 +425,7 @@ function observedOf(fields: VerdictFields): VerdictRecord["observed"] {
     consoleInherited: words(consoleInherited, MAX_PROBLEMS),
     // How long the page took to be ready, when the page said so. A build judged black is a
     // different fact from a build photographed before it had drawn anything, and the record
-    // is where that difference has to survive the night. Absent when nobody could measure it.
+    // is where that difference has to survive the run. Absent when nobody could measure it.
     ...(Number.isFinite(readyAfterMs) ? { readyAfterMs: Math.round(Number(readyAfterMs)) } : {}),
   };
 }

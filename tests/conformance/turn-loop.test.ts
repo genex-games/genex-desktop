@@ -502,7 +502,7 @@ describe("engine fallback (M2)", () => {
     assert.notEqual(messages.at(-1)?.content, "Local engine took over.");
   });
 
-  it("a commissioned night still survives a throttle — falling back out loud", async () => {
+  it("a commissioned run still survives a throttle — falling back out loud", async () => {
     const rig = await turnRig([{ text: "Local engine took over." }]);
     let attempts = 0;
     const throttled: Engine = {
@@ -540,7 +540,7 @@ describe("engine fallback (M2)", () => {
 
     assert.equal(attempts, 1, "the throttled engine was tried once");
     const fallbacks = customEvents(events, "engine_fallback");
-    assert.equal(fallbacks.length, 1, "the night falls back rather than dying");
+    assert.equal(fallbacks.length, 1, "the run falls back rather than dying");
     assert.equal(fallbacks[0]!.from, "contractor");
     assert.equal(fallbacks[0]!.to, "ollama");
     const messages = await rig.core.store.listMessages(rig.core.mainThread);
@@ -925,8 +925,8 @@ describe("engine fallback (M2)", () => {
   });
 
   it("launches a recorded intake call even when the engine reports the interview ended badly", async () => {
-    // 2026-09-06, skate-prod: Codex recorded start_autopilot through the bridge, then its session
-    // was reported as failed over a non-fatal notice. The launch must survive the ending — the
+    // Codex records start_autopilot through the bridge, then its session is reported as failed
+    // over a non-fatal notice. The launch must survive the ending — the
     // studio told the contractor "the run starts when your reply ends" — and the chat must not
     // send the user back to a session that believes it already launched.
     const rig = await turnRig([]);
@@ -1446,7 +1446,7 @@ describe("secrets", () => {
   });
 });
 
-/** Wait for a stopped night to write its ending, then tear the rig down. */
+/** Wait for a stopped run to write its ending, then tear the rig down. */
 async function settleRun(rig: Rig): Promise<void> {
   await waitForLog(
     rig.core,
@@ -1459,7 +1459,7 @@ async function settleRun(rig: Rig): Promise<void> {
 
 describe("intake launch", () => {
   // The chat's folder is the answer to "where is my game". The interviewer only ferries a slug,
-  // and the night it won, a second empty folder appeared in the rail with no chat attached: the
+  // and the run it won, a second empty folder appeared in the rail with no chat attached: the
   // run built there while the user typed into the chat bound to the first folder.
   it("an intake from a bound chat builds in that chat's folder, whatever slug the interviewer passed", async () => {
     const rig = await turnRig([]);
@@ -1518,7 +1518,7 @@ describe("intake launch", () => {
       };
       assert.equal(registered.project, "pond-life", "the run builds in the chat's folder, not the interviewer's slug");
       // What the folder needed the moment it was commissioned rides on the run (M2.6): the
-      // night's first step is installing the studio contract when the page never loads it.
+      // run's first step is installing the studio contract when the page never loads it.
       assert.equal(registered.readiness?.contract, "loaded", "the studio's own template already loads it");
       const games = await rig.core.games.list();
       assert.deepEqual(
@@ -1529,17 +1529,17 @@ describe("intake launch", () => {
 
       // What the user is owed before walking away: when to come back, and that a pause is survivable.
       const messages = await rig.core.store.listMessages(thread);
-      const tonight = messages.find((m) => /Building until about \d{1,2}:\d\d/.test(m.content ?? ""));
-      assert.ok(tonight, "the launch names a wall-clock end time");
-      assert.match(tonight!.content ?? "", /keep the app open/i);
-      assert.match(tonight!.content ?? "", /resumes itself|tap on Resume/);
+      const runLedger = messages.find((m) => /Building until about \d{1,2}:\d\d/.test(m.content ?? ""));
+      assert.ok(runLedger, "the launch names a wall-clock end time");
+      assert.match(runLedger!.content ?? "", /keep the app open/i);
+      assert.match(runLedger!.content ?? "", /resumes itself|tap on Resume/);
       assert.doesNotMatch(
-        tonight!.content ?? "",
+        runLedger!.content ?? "",
         /studio's connection/,
         "and nothing is promised about a connection this game already has",
       );
     } finally {
-      // The launched night outlives the assertions; stop it and let it write its own ending
+      // The launched run outlives the assertions; stop it and let it write its own ending
       // here, or those writes race the temp-dir cleanup that runs before the rigs are torn down.
       await rig.core.stopThread(thread).catch(() => {});
       await settleRun(rig);
@@ -1648,7 +1648,7 @@ describe("intake launch", () => {
       const messages = await rig.core.store.listMessages(rig.core.mainThread);
       assert.ok(
         messages.some((m) => /continuing on ollama\.$/.test(m.content ?? "")),
-        "a chat's fallback is said without promising a night",
+        "a chat's fallback is said without promising a run",
       );
       const games = await rig.core.games.list();
       assert.deepEqual(

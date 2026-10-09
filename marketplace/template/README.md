@@ -1,12 +1,23 @@
 # Studio curated plugin catalog
 
 This repository lists reviewed releases. It does not host games or require a Genex account.
+Anyone can submit a plugin release: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[plugin guide](https://github.com/genex-games/genex-desktop/blob/dev/docs/PLUGIN_GUIDE.md).
+Maintainers review every submission before it is listed.
 
 - `index.json`: current discoverable releases.
 - `records/<id>/<version>.json`: immutable release identity, retained after withdrawal.
-- `policy.json`: maintainer-owned artifact origins and reserved official identities.
-- `scripts/check-catalog.mjs`: dependency-free static release gate.
-- `.github/workflows/catalog.yml`: PR validation against the base branch's validator and policy.
+- `policy.json`: maintainer-owned artifact origins and reserved official identities. Each
+  official id lists its publisher and `repos`: the current source first, then repositories it
+  used to live in. Released records may name any of them and keep one identity; a new release
+  must name the first. No other id may name an official repository.
+- `scripts/check-catalog.mjs`: dependency-free static release gate; its identity rules are
+  tested by `node --test scripts/check-catalog.test.mjs`.
+- `scripts/stage-artifact.mjs`: maintainer step that fetches a submitter's release asset and
+  stages it for upload only if it matches its record.
+- `.github/workflows/catalog.yml`: PR validation against the base branch's validator and policy:
+  the submitter's record first, then whether its artifact has been published.
+- `.github/pull_request_template.md`: what a submission states and shows.
 
 Artifacts live on the approved public HTTPS origin, at `<id>/<version>/<sha256>.json`.
 They are prebuilt base64 JSON envelopes, never npm installs or extraction hooks. Upload

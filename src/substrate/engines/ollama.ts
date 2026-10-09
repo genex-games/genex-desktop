@@ -1,6 +1,6 @@
 /**
  * Local-model engine (Ollama is v1's primary workhorse,
- * because an unlimited overnight loop at zero marginal cost is the whole point of local).
+ * because an unlimited unattended loop at zero marginal cost is the whole point of local).
  *
  * Two pieces:
  *  - {@link OllamaClient}: the management API (detect, list, pull with progress, capabilities).
@@ -9,9 +9,7 @@
  *  - {@link OllamaEngine}: the studio's *own* turn loop talking to it through pi-ai's
  *    OpenAI-compatible provider, so the same code path serves any future provider.
  */
-import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Message, Usage } from "../types.ts";
 import {
   type CompleteRequest,
   type CompleteResponse,
@@ -20,9 +18,19 @@ import {
   type EngineModel,
   ModelContextSource,
   type EngineStatus,
-  type ToolDefinition,
   classifyHttpFailure,
 } from "./types.ts";
+import {
+  drainPiStream,
+  fromPiAssistant,
+  isCutConnection,
+  longHaulFetch,
+  needsVision,
+  type PiAssistant,
+  piContext,
+  type PiStreamFn,
+  streamHttpStatus,
+} from "./pi-completions.ts";
 import { supersededBy } from "../hardware.ts";
 import { childEnv } from "../child-env.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -32,6 +40,10 @@ import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { CompletionStop, STOPPED_BY_USER } from "./common.ts";
+
+/** The conversion helpers live with the pi-ai transport every API engine shares; kept here for importers. */
+export { fromPiAssistant };
+export { toPiMessages } from "./pi-completions.ts";
 
 /** The port Ollama serves on when its host names none. */
 const DEFAULT_OLLAMA_PORT = "11434";
@@ -51,16 +63,19 @@ const SIDECAR_POLL_MS = 400;
 
 /** What this engine says to the user. */
 const MESSAGE = {
-  StartRemedy: "Start Ollama (or let the studio start its bundled copy) and try again.",
+  StartRemedy: "Install or start Ollama, then try again.",
   PullRemedy: "Pull a recommended model from the Models tab.",
   NoModel: "no local model is installed",
   NoVision: "vision input is not supported by this model's reported capabilities",
   NoTools: "tool calling is not supported by this model's reported capabilities",
   EstimatedContext: "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.",
   NotAnswering: (host: string) =>
-    `Ollama is not running at ${host} (it no longer answers). Start Ollama (or let the studio start its bundled copy) and try again.`,
+    `Ollama is not running at ${host} (it no longer answers). Start Ollama and try again.`,
+  NotRunningForDownload: (host: string) =>
+    `Ollama is not running at ${host}. Install or start Ollama, then download again.`,
   ModelMissing: (model: string) =>
     `the model ${model} is not installed in Ollama — pull it from the Models tab or pick another`,
+  NotInstalled: (model: string) => `${model || "This model"} is not installed in Ollama.`,
 } as const;
 
 /** A reply may use a quarter of its context, never more than the cap. */
@@ -133,7 +148,7 @@ export class OllamaClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, stream: true }),
       ...(signal ? { signal } : {}),
-    });
+    }).catch((err: unknown) => this.#rethrowUnlessGone(err));
     if (!response.ok || !response.body) {
       throw classifyHttpFailure(EngineId.Ollama, response.status, await response.text().catch(() => ""));
     }
@@ -141,7 +156,7 @@ export class OllamaClient {
     const decoder = new TextDecoder();
     let buffer = "";
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch((err: unknown) => this.#rethrowUnlessGone(err));
       if (done) break;
       const lines = `${buffer}${decoder.decode(value, { stream: true })}`.split("\n");
       // The last piece has no newline yet: it is a line still arriving.
@@ -151,6 +166,15 @@ export class OllamaClient {
         if (line) yield JSON.parse(line) as PullProgress;
       }
     }
+  }
+
+  /**
+   * A download whose connection failed: with no server answering, that is Ollama missing or
+   * stopped, said so instead of the fetch's own "fetch failed"; any other failure stays as it was.
+   */
+  async #rethrowUnlessGone(err: unknown): Promise<never> {
+    if (await this.version()) throw err;
+    throw new EngineError(EngineFailureKind.Unavailable, EngineId.Ollama, MESSAGE.NotRunningForDownload(this.host));
   }
 
   async remove(model: string): Promise<void> {
@@ -191,174 +215,6 @@ function positiveContext(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
-// ── message conversion (substrate ⇄ pi-ai) ─────────────────────────────────────────────────
-interface PiTextContent {
-  type: "text";
-  text: string;
-}
-interface PiToolCall {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-export function toPiMessages(messages: Message[]): { systemPrompt?: string; piMessages: unknown[] } {
-  const piMessages: unknown[] = [];
-  let systemPrompt: string | undefined;
-  for (const message of messages) {
-    if (message.role === "system") {
-      systemPrompt = systemPrompt ? `${systemPrompt}\n\n${message.content}` : message.content;
-      continue;
-    }
-    piMessages.push(piMessage(message));
-  }
-  return systemPrompt !== undefined ? { systemPrompt, piMessages } : { piMessages };
-}
-
-/** A non-system message as pi-ai spells it. */
-function piMessage(message: Message): unknown {
-  if (message.role === "user") return piUserMessage(message);
-  if (message.role === "assistant") return piAssistantMessage(message);
-  // role === "tool"
-  return piToolResult(message);
-}
-
-/** A user message: plain text, or text plus its stills as image parts. */
-function piUserMessage(message: Message): unknown {
-  const images = message.images ?? [];
-  if (images.length === 0) return { role: "user", content: message.content, timestamp: Date.now() };
-  const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
-  if (message.content) content.push({ type: "text", text: message.content });
-  for (const image of images) {
-    if (!image.data) continue;
-    content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
-  }
-  return { role: "user", content, timestamp: Date.now() };
-}
-
-/** An assistant message: its text, then its tool calls. */
-function piAssistantMessage(message: Message): unknown {
-  const content: (PiTextContent | PiToolCall)[] = [];
-  if (message.content) content.push({ type: "text", text: message.content });
-  for (const call of message.tool_calls ?? []) {
-    content.push({
-      type: "toolCall",
-      id: call.id,
-      name: call.name,
-      arguments: (call.arguments ?? {}) as Record<string, unknown>,
-    });
-  }
-  return {
-    role: "assistant",
-    content,
-    api: "openai-completions",
-    provider: EngineId.Ollama,
-    model: "",
-    usage: emptyPiUsage(),
-    stopReason: CompletionStop.Stop,
-    timestamp: Date.now(),
-  };
-}
-
-/** A tool's answer. */
-function piToolResult(message: Message): unknown {
-  return {
-    role: "toolResult",
-    toolCallId: message.tool_call_id ?? "",
-    toolName: message.name ?? "tool",
-    content: [{ type: "text", text: message.content }],
-    isError: message.is_error === true,
-    timestamp: Date.now(),
-  };
-}
-
-function emptyPiUsage() {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-}
-
-/** A pi-ai assistant message, the fields this engine reads. */
-interface PiAssistant {
-  content: Array<{ type: string; text?: string; id?: string; name?: string; arguments?: unknown }>;
-  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-  stopReason?: string;
-  model?: string;
-}
-
-export function fromPiAssistant(assistant: PiAssistant): { message: Message; usage: Usage } {
-  let text = "";
-  let reasoning = "";
-  const toolCalls: NonNullable<Message["tool_calls"]> = [];
-  for (const part of assistant.content ?? []) {
-    if (part.type === "text") text += part.text ?? "";
-    else if (part.type === "thinking") reasoning += part.text ?? "";
-    else if (part.type === "toolCall") {
-      // A call the model left unnamed still needs an id no other round repeats: its result is bound by it.
-      toolCalls.push({
-        id: part.id || `ollama-${randomUUID()}`,
-        name: part.name ?? "",
-        arguments: part.arguments ?? {},
-      });
-    }
-  }
-  const message: Message = { role: "assistant", content: text };
-  if (toolCalls.length) message.tool_calls = toolCalls;
-  if (reasoning) message.reasoning = reasoning;
-  return { message, usage: piUsage(assistant) };
-}
-
-/** A reply's token counts; local inference is free — the reason unattended runs are viable. */
-function piUsage(assistant: PiAssistant): Usage {
-  const usage = assistant.usage;
-  return {
-    input_tokens: usage?.input ?? 0,
-    output_tokens: usage?.output ?? 0,
-    cache_read_tokens: usage?.cacheRead ?? 0,
-    cache_write_tokens: usage?.cacheWrite ?? 0,
-    cost_usd: 0,
-    ...(assistant.model ? { model: assistant.model } : {}),
-    engine: EngineId.Ollama,
-  };
-}
-
-/**
- * Node's fetch (undici) kills any response that stays *silent* for 300 seconds
- * (`bodyTimeout`), surfacing the opaque `TypeError: terminated`. Ollama's tool-call parser
- * buffers a whole call server-side before emitting it, so while a model writes one big
- * write_file call — a 27B model authoring a full game is ~5 minutes of arguments at
- * ~10 tok/s — the wire carries nothing and the timeout fires mid-turn. Long silent phases
- * (prompt eval on a huge context) hit the same wall. Local generations are legitimately
- * unbounded and the Stop button, not a transport default, is the clock. pi-ai lets us
- * supply the fetch it hands its OpenAI client, so completions run through one whose
- * dispatcher never times out.
- *
- * The dispatcher class is taken from Node's own lazily-created global (the well-known
- * `undici.globalDispatcher.1` symbol) rather than an npm `undici` — a separately installed
- * copy can disagree with the built-in fetch about the handler protocol.
- */
-let longHaulDispatcher: object | null = null;
-async function ensureLongHaulDispatcher(): Promise<object | null> {
-  if (longHaulDispatcher) return longHaulDispatcher;
-  const key = Symbol.for("undici.globalDispatcher.1");
-  const globals = globalThis as unknown as Record<symbol, { constructor: new (opts: object) => object } | undefined>;
-  if (!globals[key]) {
-    // Node initialises the global dispatcher on first fetch; force that cheaply (data: URL,
-    // no network) so we can borrow its constructor.
-    await fetch("data:,").catch(() => {});
-  }
-  const current = globals[key];
-  if (!current) return null;
-  longHaulDispatcher = new current.constructor({ headersTimeout: 0, bodyTimeout: 0 });
-  return longHaulDispatcher;
-}
-
 /**
  * Ceiling on a single completion request. The long-haul dispatcher above only lifts undici's
  * transport timeouts — the OpenAI client underneath pi-ai still applies its own 10-minute
@@ -386,10 +242,9 @@ function translateStreamFailure(
   // An HTTP failure that arrives through the stream ("429: <body>") is the same failure as one
   // that arrives before it — without this, a throttled server reads as "other" and every
   // rate-limit policy above (backoff, direct-only fallback) is unreachable for this engine.
-  const http = /^(\d{3}):\s/.exec(message.trim());
-  if (http) return httpFailure(engineId, Number(http[1]), message, attempt.model);
-  const cut = /^(terminated|fetch failed|Connection error\.?|Request timed out\.?)$/i.test(message.trim());
-  if (!cut) return new EngineError(EngineFailureKind.Other, engineId, message);
+  const status = streamHttpStatus(message);
+  if (status !== null) return httpFailure(engineId, status, message, attempt.model);
+  if (!isCutConnection(message)) return new EngineError(EngineFailureKind.Other, engineId, message);
   const detail = cause?.message ?? cause?.code;
   return cutConnection(
     engineId,
@@ -412,25 +267,11 @@ function cutConnection(engineId: string, message: string): EngineError {
   return failure;
 }
 
-/** An HTTP failure; a 404 is Ollama saying it does not have the model (P04-F8). */
+/** An HTTP failure; a 404 is Ollama saying it does not have the model. */
 function httpFailure(engineId: string, status: number, body: string, model: string): EngineError {
   if (status === HTTP_NOT_FOUND && model)
     return new EngineError(EngineFailureKind.Unavailable, engineId, MESSAGE.ModelMissing(model));
   return classifyHttpFailure(engineId, status, body);
-}
-
-function throwAborted(engineId: string): never {
-  throw new EngineError(EngineFailureKind.Aborted, engineId, STOPPED_BY_USER);
-}
-
-/** Unblock a silent stream (thinking, huge tool-call buffer) the moment Stop fires. */
-function whenAborted(signal: AbortSignal | undefined, engineId: string): Promise<never> {
-  return new Promise((_, reject) => {
-    if (!signal) return;
-    const fail = (): void => reject(new EngineError(EngineFailureKind.Aborted, engineId, STOPPED_BY_USER));
-    if (signal.aborted) fail();
-    else signal.addEventListener("abort", fail, { once: true });
-  });
 }
 
 // ── the engine ──────────────────────────────────────────────────────────────────────────────
@@ -526,6 +367,16 @@ export class OllamaEngine implements Engine {
     return this.#defaultModel;
   }
 
+  /** Delete a model Ollama lists; any other name is refused before Ollama is asked to delete. */
+  async removeModel(id: string): Promise<void> {
+    const tags = await this.client.tags();
+    if (!tags.some((tag) => tag.name === id)) throw new Error(MESSAGE.NotInstalled(id));
+    await this.client.remove(id);
+    this.#providerModels.delete(id);
+    // A default that named the deleted model is chosen again from what is still installed.
+    if (this.#defaultModel === id) this.#defaultModel = null;
+  }
+
   /** Lazily build pi-ai's provider around this host. */
   async #ensureProvider(modelId: string): Promise<{ models: never; model: never; thinking: boolean; tools: boolean }> {
     const { createModels, createProvider } = await import("@earendil-works/pi-ai");
@@ -612,8 +463,8 @@ export class OllamaEngine implements Engine {
         ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
         ...(thinking && request.effort ? { reasoningEffort: normalizeEffort(request.effort) } : {}),
       });
-      await this.#drain(stream, request);
-      const assistant = (await stream.result()) as PiAssistant & { errorMessage?: string };
+      await drainPiStream(stream, request, this.id);
+      const assistant = (await stream.result()) as PiAssistant;
       if (assistant.stopReason === CompletionStop.Aborted) {
         throw new EngineError(EngineFailureKind.Aborted, this.id, STOPPED_BY_USER);
       }
@@ -635,7 +486,7 @@ export class OllamaEngine implements Engine {
 
   /**
    * A cut connection with the server no longer answering at all is Ollama not running — nothing
-   * a partial turn lost, and a failure another engine can take over (P04-F8).
+   * a partial turn lost, and a failure another engine can take over.
    */
   async #unlessServerGone(failure: EngineError): Promise<EngineError> {
     if (!CUT_CONNECTIONS.has(failure)) return failure;
@@ -645,29 +496,8 @@ export class OllamaEngine implements Engine {
 
   /** Refuse unsupported images before any inference request. */
   #checkVision(request: CompleteRequest, model: { input: string[] }): void {
-    const needsVision = request.messages.some((message) => Boolean(message.images?.length));
-    if (needsVision && !model.input.includes("image")) {
+    if (needsVision(request) && !model.input.includes("image")) {
       throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoVision);
-    }
-  }
-
-  /** Read the stream to its end, passing text on as it comes; Stop unblocks even a silent stream. */
-  async #drain(stream: PiStream, request: CompleteRequest): Promise<void> {
-    const iterator = stream[Symbol.asyncIterator]();
-    let aborted = false;
-    try {
-      for (;;) {
-        if (request.signal?.aborted) throwAborted(this.id);
-        const step = iterator.next();
-        const event = request.signal ? await Promise.race([step, whenAborted(request.signal, this.id)]) : await step;
-        if (event.done) break;
-        if (event.value.type === "text_delta" && event.value.delta) request.onDelta?.(event.value.delta);
-      }
-    } catch (err) {
-      aborted = true;
-      throw err;
-    } finally {
-      if (aborted) await iterator.return?.().catch(() => {});
     }
   }
 
@@ -680,42 +510,6 @@ export class OllamaEngine implements Engine {
     if (error.status) return httpFailure(this.id, error.status, error.message, attempt.model);
     return translateStreamFailure(this.id, error.message, error.cause, attempt);
   }
-}
-
-/** pi-ai's streaming call, as this engine uses it. */
-type PiStream = AsyncIterable<{ type: string; delta?: string }> & { result: () => Promise<unknown> };
-type PiStreamFn = (m: unknown, c: unknown, o?: unknown) => PiStream;
-
-/** The request as pi-ai's context: one system prompt, the messages, and the tools. */
-function piContext(request: CompleteRequest): Record<string, unknown> {
-  const { systemPrompt, piMessages } = toPiMessages(request.messages);
-  return {
-    ...(request.systemPrompt || systemPrompt
-      ? { systemPrompt: [request.systemPrompt, systemPrompt].filter(Boolean).join("\n\n") }
-      : {}),
-    messages: piMessages,
-    ...(request.tools?.length ? { tools: request.tools.map(toPiTool) } : {}),
-  };
-}
-
-/** The fetch pi-ai hands its OpenAI client: the long-haul dispatcher, and the user's Stop joined in. */
-function longHaulFetch(stop: AbortSignal | undefined): typeof fetch {
-  return async (input, init) => {
-    const dispatcher = await ensureLongHaulDispatcher();
-    // The client routes its request timeout through the signal it hands this fetch, so the
-    // user's Stop has to join that signal, not replace it — replacing would mask the
-    // timeout and a dead connection would hang the loop instead of erroring.
-    const signals = [init?.signal, stop].filter((s): s is AbortSignal => Boolean(s));
-    return fetch(input, {
-      ...init,
-      ...(signals.length ? { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) } : {}),
-      ...(dispatcher ? { dispatcher } : {}),
-    } as RequestInit);
-  };
-}
-
-function toPiTool(tool: ToolDefinition): unknown {
-  return { name: tool.name, description: tool.description, parameters: tool.parameters };
 }
 
 /** Ollama's endpoint understands low/medium/high; clamp the wider scale into that range. */

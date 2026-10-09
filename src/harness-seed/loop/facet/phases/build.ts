@@ -15,6 +15,9 @@ import { RoundFlow, stoppedByUser } from "../flow.ts";
 import { steerPrompt, WIND_DOWN_ASK } from "../prompt.ts";
 import { OutagePhase, roundFields } from "../record.ts";
 import { facetPromptFor } from "./brief.ts";
+import { blockClock, minutesToBlockEnd, nextBlockStretch, withinBlock } from "../build-block.ts";
+import { blockBench, blockContinueAsk } from "../build-block-prompts.ts";
+import { announceLoss, lostProviderOf, stopOutOfUsage, waitForProvider } from "../provider.ts";
 
 /**
  * How a delegated build turn failed, beside the engine's own failure kinds: the clock cut it
@@ -47,6 +50,9 @@ export async function buildChallenger(loop: FacetLoop, round: FacetRound): Promi
   ) => delegateTurn(loop, round, { text, resume, timeoutMs, images });
   round.buildStartedAt = Date.now();
   round.buildEndedAt = null;
+  // The block's own clock and how often it has asked the builder to keep going (facet/build-block.ts).
+  round.blockStartedAt = blockClock(loop);
+  round.blockTurns = 0;
   try {
     if (delegated) await delegatedBuild(loop, round);
     else
@@ -64,6 +70,8 @@ export async function buildChallenger(loop: FacetLoop, round: FacetRound): Promi
   if (ctx.cancelled) return stoppedByUser(loop);
   const retried = await waitOutProviderOutage(loop, round);
   if (retried) return retried;
+  const held = await holdForProvider(loop, round);
+  if (held) return held;
   if (!round.buildFailed) loop.outageRetries = 0;
 
   // ── stopped on purpose is not a lost round ──
@@ -72,7 +80,7 @@ export async function buildChallenger(loop: FacetLoop, round: FacetRound): Promi
   // The turn ended mid-edit, so there is nothing here to judge: an evidence pass would
   // photograph a half-written game, the verdict would read "broken", the circuit breaker
   // would take a strike for it, and the rollback would erase work nobody asked to lose. One
-  // night lost four first-round iterations exactly that way and told the owner they had
+  // run lost four first-round iterations exactly that way and told the owner they had
   // stopped them. Instead: commit what is on disk, keep it on the round's `…-stopped` ref, leave
   // the worktree standing, record the round as `stopped`, and end the facet.
   if (round.buildEngineError?.stopReason === StopReason.Stopped) {
@@ -146,8 +154,15 @@ function roomClock(loop: FacetLoop): RoomClock {
   };
 }
 
-/** What the builder's own capture tool photographs: this worktree, in the facet's setup. */
-function selfCapture({ facet, facetSetup, handle, run }: FacetLoop, round: FacetRound, worktree: string): AnyRecord {
+/** What the builder's own capture tool photographs: this worktree, in the facet's setup, through the facet's own cameras. */
+function selfCapture(
+  { facet, facetSetup, handle, run, spec }: FacetLoop,
+  round: FacetRound,
+  worktree: string,
+): AnyRecord {
+  // Its own cameras, not every one the game registers: a capture a worker does not narrow
+  // shoots what its part is judged through, and a big game registers many more.
+  const cameras = (spec?.cameras ?? []).filter((camera: unknown) => typeof camera === "string" && camera);
   return {
     project: run.project,
     root: worktree,
@@ -156,6 +171,7 @@ function selfCapture({ facet, facetSetup, handle, run }: FacetLoop, round: Facet
     iteration: round.iteration,
     ...(handle ? { handle } : {}),
     ...(facetSetup ? { setup: facetSetup } : {}),
+    ...(cameras.length ? { cameras } : {}),
     label: facet.title ?? facet.id,
   };
 }
@@ -183,43 +199,86 @@ function ownership({ facet, ownShape, ownsMain, shape, spec }: FacetLoop): AnyRe
  * is still in that session, so neither costs the round.
  */
 async function delegatedBuild(loop: FacetLoop, round: FacetRound): Promise<void> {
-  const { ctx, deadline, result, windDownMs } = loop;
   let delegation: AnyRecord;
-  let turnPrompt = round.prompt;
-  let turnImages = round.promptImages;
-  // The turn gets what is left minus what this worker's own rounds have needed after it.
-  let turnBudget = deadline - Date.now() - (loop.emaAfterMs ?? 0) - windDownMs;
-  let woundDown = false;
-  for (;;) {
-    delegation = await delegateResuming(loop, round, { turnPrompt, turnBudget, turnImages });
+  let turn: Turn | null = { prompt: round.prompt, images: round.promptImages, budget: turnBudgetNow(loop, round) };
+  const windDown = { asked: false };
+  do {
+    delegation = await delegateResuming(loop, round, {
+      turnPrompt: turn.prompt,
+      turnBudget: turn.budget,
+      turnImages: turn.images,
+    });
     if (delegation.sessionId) {
       loop.sessionId = delegation.sessionId;
-      result.sessionId = loop.sessionId;
+      loop.result.sessionId = loop.sessionId;
     }
-    if (delegation.ok || !loop.sessionId || ctx.cancelled) break;
-    const arrived = await steerThatArrived(loop, round, delegation);
-    if (arrived) {
-      turnPrompt = steerPrompt(arrived);
-      turnImages = null;
-      turnBudget = deadline - Date.now() - (loop.emaAfterMs ?? 0) - windDownMs;
-      continue;
-    }
-    // The clock, met with a tidy ending instead of a cut. One wind-down per round: if the
-    // builder cannot stop within it, what is on disk is judged as a partial, as before.
-    if (!woundDown && mayWindDown(loop, delegation)) {
-      woundDown = true;
-      await loop.appendRun(RunEvent.FacetWindDown, {
-        ...roundFields(loop, round.iteration),
-        minutesLeft: Math.round((deadline - Date.now()) / MINUTE_MS),
-      });
-      turnPrompt = WIND_DOWN_ASK;
-      turnImages = null;
-      turnBudget = windDownMs;
-      continue;
-    }
-    break;
-  }
+    turn = await followingTurn(loop, round, delegation, windDown);
+  } while (turn);
   if (!delegation.ok) noteFailedDelegation(loop, round, delegation);
+}
+
+/** One more turn in the builder's session: what it is told, the images it is shown, and what it may spend. */
+interface Turn {
+  prompt: string;
+  images: AnyRecord[] | null;
+  budget: number;
+}
+
+/**
+ * What a turn that ended is followed by in the same session: a build block's next stretch when the
+ * builder stopped early, the steer that interrupted it, or — once a round — the ask to wind down
+ * before the clock cuts it. Null when the build turn is over.
+ */
+async function followingTurn(
+  loop: FacetLoop,
+  round: FacetRound,
+  delegation: AnyRecord,
+  windDown: { asked: boolean },
+): Promise<Turn | null> {
+  const { ctx, deadline, windDownMs } = loop;
+  if (ctx.cancelled) return null;
+  if (delegation.ok) return blockStretch(loop, round);
+  if (!loop.sessionId) return null;
+  const arrived = await steerThatArrived(loop, round, delegation);
+  if (arrived) return { prompt: steerPrompt(arrived), images: null, budget: turnBudgetNow(loop, round) };
+  // The clock, met with a tidy ending instead of a cut. One wind-down per round: if the
+  // builder cannot stop within it, what is on disk is judged as a partial, as before.
+  if (windDown.asked || !mayWindDown(loop, delegation)) return null;
+  windDown.asked = true;
+  await loop.appendRun(RunEvent.FacetWindDown, {
+    ...roundFields(loop, round.iteration),
+    minutesLeft: Math.round((deadline - Date.now()) / MINUTE_MS),
+  });
+  return { prompt: WIND_DOWN_ASK, images: null, budget: windDownMs };
+}
+
+/** What the facet's clock leaves a build turn: the rest, minus what this worker's own rounds have needed after one and the wind-down. */
+const clockLeftMs = (loop: FacetLoop): number => loop.deadline - Date.now() - (loop.emaAfterMs ?? 0) - loop.windDownMs;
+
+/** What a build turn may spend now: what the clock leaves it — and, in a build block, never past the block's longest. */
+function turnBudgetNow(loop: FacetLoop, round: FacetRound): number {
+  const budget = clockLeftMs(loop);
+  return round.buildBlock ? withinBlock(round.blockStartedAt, blockClock(loop), budget) : budget;
+}
+
+/**
+ * The build block's next stretch (facet/build-block.ts): the screenshot-and-fix ask and what it may
+ * spend, or null once the block's shortest end is reached, its asks are spent, or too little is
+ * left of the block's longest or of the facet's clock. Only for a block round in a live session.
+ */
+function blockStretch(loop: FacetLoop, round: FacetRound): Turn | null {
+  if (!round.buildBlock || !loop.sessionId) return null;
+  const block = {
+    startedAt: round.blockStartedAt,
+    now: blockClock(loop),
+    turns: round.blockTurns,
+    leftMs: clockLeftMs(loop),
+  };
+  const budget = nextBlockStretch(block);
+  if (budget === null) return null;
+  round.blockTurns += 1;
+  const prompt = blockContinueAsk({ minutesLeft: minutesToBlockEnd(block), bench: blockBench(loop) });
+  return { prompt, images: null, budget };
 }
 
 /** One turn in the builder's session; a vanished session (compacted away, expired) costs a fresh start, not the iteration. */
@@ -289,8 +348,8 @@ function noteFailedDelegation(loop: FacetLoop, round: FacetRound, delegation: An
 /**
  * A provider hiccup (529 Overloaded, 500, a dropped socket) is weather: the half-written
  * attempt is rolled back, the loop waits, and the SAME iteration is tried again. It is never a
- * "broken build with the same cause" — that policy tripped four circuit breakers in one outage
- * on the village run. Null when the failure was no outage, or no wait is left.
+ * "broken build with the same cause" — that policy trips every circuit breaker in one outage.
+ * Null when the failure was no outage, or no wait is left.
  */
 async function waitOutProviderOutage(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { appendRun, ctx, deadline, facet, gitOptions, gitWhere, run, sleepFor, worktree } = loop;
@@ -317,7 +376,41 @@ async function waitOutProviderOutage(loop: FacetLoop, round: FacetRound): Promis
     });
   await sleepFor(wait);
   if (ctx.cancelled) return stoppedByUser(loop);
+  return buildAgain(loop, round, false);
+}
+
+/**
+ * The same iteration again: the half-written attempt rolled back (unless that was done already),
+ * and the round's count given back, so the provider's weather costs the facet no round.
+ */
+async function buildAgain(loop: FacetLoop, round: FacetRound, reset = true): Promise<RoundFlow> {
+  const { ctx, gitOptions, gitWhere, worktree } = loop;
+  if (reset && worktree)
+    await resetClean(ctx, gitWhere, isCommit(loop.incumbentCommit) ? loop.incumbentCommit : null, {
+      ...gitOptions,
+      bestEffort: true,
+    });
   round.iteration -= 1;
   loop.iterationsThisRound -= 1;
   return RoundFlow.Next;
+}
+
+/**
+ * A build turn a lost provider failed — its sign-in, one of its limits, an outage the ladder could
+ * not outlast — is never a broken build, struck and rolled back: it is
+ * recorded as an outage and waits for the provider (facet/provider.ts), then the same iteration is
+ * built again; a stop while it waits keeps the attempt on its `…-stopped` ref. A usage cap stops
+ * the facet at once, as it always has, with the limit for the director. Null for any other failure.
+ */
+async function holdForProvider(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
+  const failure = round.buildEngineError;
+  if (!round.buildFailed || loop.ctx.cancelled || failure?.stopReason === StopReason.Stopped) return null;
+  const err = failure?.kind ? { ...failure, message: round.buildFailed } : round.buildFailed;
+  const lost = lostProviderOf(loop, err, loop.engineId);
+  if (!lost) return null;
+  if (lost.kind === EngineFailure.UsageLimit) {
+    await announceLoss(loop, round, lost, OutagePhase.Build);
+    return stopOutOfUsage(loop, round);
+  }
+  return (await waitForProvider(loop, round, lost, OutagePhase.Build)) ?? buildAgain(loop, round);
 }

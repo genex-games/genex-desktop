@@ -3,14 +3,14 @@
  * led as the chat's own session has finished, a message with Loop on that asks for more work reopens
  * the SAME run with the Loop's working time, once the session's reply has ended. What the Loop's time
  * is, which messages keep their commission, the run a reopen registers, and the reopen itself — its
- * order, its refusals and its Stop — without a rig; the rig night is director-one-session.test.ts S11.
+ * order, its refusals and its Stop — without a rig; the rig run is director-one-session.test.ts S11.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   commissionHours,
-  finishedNight,
+  finishedLoopRun,
   keepsCommission,
   loopBudgets,
   reopenAfterReply,
@@ -25,7 +25,7 @@ import * as coordinator from "../../src/harness-seed/loop/coordinator.ts";
 import * as coordinatorPrompts from "../../src/harness-seed/loop/coordinator-prompts.ts";
 import { steersInto } from "../../src/harness-seed/loop/message-queue.ts";
 import { tools as gameTools } from "../../src/harness-seed/tools/game-tools.ts";
-import * as afterNightPrompts from "../../src/harness-seed/loop/after-night-prompts.ts";
+import * as afterLoopRunPrompts from "../../src/harness-seed/loop/after-loop-run-prompts.ts";
 import * as delegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
 import * as runDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
 import * as turnLoop from "../../src/harness-seed/loop/turn-loop.ts";
@@ -71,7 +71,7 @@ const finishedLog = (): Entry[] => [
   custom("e2", "run_finished", { runId: RUN, project: "plaza", landed: true, integrationHead: H1 }),
 ];
 
-/** The finished night's journal: its lead the chat's own session, its clock spent, asked what next. */
+/** The finished run's journal: its lead the chat's own session, its clock spent, asked what next. */
 const finishedJournal = (): Json => ({
   phase: "done",
   run: { ...launched, readiness: { contract: "loaded", problems: [] } },
@@ -88,8 +88,8 @@ const finishedJournal = (): Json => ({
   },
 });
 
-/** The finished night the chat's own session answers after, as chat-dispatch.ts hands it on. */
-const night = {
+/** The finished run the chat's own session answers after, as chat-dispatch.ts hands it on. */
+const loopRun = {
   runId: RUN,
   state: "finished",
   goal: "a dusk plaza",
@@ -154,7 +154,7 @@ function studioWith({ log = finishedLog(), journal = finishedJournal() as Json |
   return { studio, ctx, host, calls, notified, store, log, starts, start };
 }
 
-/** 21:00 UTC on the night of the reopen. */
+/** 21:00 UTC on the run of the reopen. */
 const NOW = Date.parse("2026-09-29T21:00:00Z");
 const clock = () => NOW;
 
@@ -219,11 +219,11 @@ describe("the Loop's working time for a reopened build", () => {
   });
 });
 
-describe("which messages and nights a reopen is for", () => {
+describe("which messages and runs a reopen is for", () => {
   it("R2. a routed message keeps its commission for no run or a finished build the chat may reopen; the reopen is offered only then", () => {
-    const finished = { ...night };
-    const notMarked = { ...night, reopenable: undefined };
-    const paused = { ...night, state: "paused" };
+    const finished = { ...loopRun };
+    const notMarked = { ...loopRun, reopenable: undefined };
+    const paused = { ...loopRun, state: "paused" };
     const rows = [
       { label: "no run yet", existing: null, after: null, keeps: true },
       { label: "a finished build the chat may reopen", existing: launched, after: finished, keeps: true },
@@ -240,7 +240,7 @@ describe("which messages and nights a reopen is for", () => {
     assert.equal(reopens(finished as never, null), false, "Loop off: the session does the work itself");
     assert.equal(reopens(notMarked as never, loop), false);
     assert.equal(reopens(paused as never, loop), false, "a paused build resumes");
-    assert.equal(reopens(undefined, loop), false, "a chat with no night behind it launches");
+    assert.equal(reopens(undefined, loop), false, "a chat with no run behind it launches");
 
     assert.deepEqual(
       [2, 0.5, 0, -1, Number.NaN, "2", undefined].map((hours) => commissionHours({ hours })),
@@ -248,9 +248,12 @@ describe("which messages and nights a reopen is for", () => {
     );
     assert.equal(commissionHours(null), null);
 
-    const parts = [turnLoop, delegatedTurn, afterNightPrompts, runDispatch];
+    const parts = [turnLoop, delegatedTurn, afterLoopRunPrompts, runDispatch];
     assert.equal(servesReopen(parts), true);
-    assert.equal(servesReopen([turnLoop, delegatedTurn, { afterNightNote: afterNightPrompts.afterNightNote }]), false);
+    assert.equal(
+      servesReopen([turnLoop, delegatedTurn, { afterLoopRunNote: afterLoopRunPrompts.afterLoopRunNote }]),
+      false,
+    );
     assert.equal(servesReopen([{ ...runDispatch, SERVES_REOPEN: "yes" }]), false);
   });
 
@@ -278,7 +281,7 @@ describe("which messages and nights a reopen is for", () => {
       "a message that names none keeps none of the finished",
     );
     assert.equal("readiness" in run, false, "the folder is asked again, not the launch's answer");
-    assert.equal(run.rolesApplied, true, "resolved once, here: the night's start does not resolve it again");
+    assert.equal(run.rolesApplied, true, "resolved once, here: the run's start does not resolve it again");
 
     // The roles page: workers on the other subscription, other judges, per-role efforts, the effort and preferences.
     const picked = reopenedRun(saved, budgets, {
@@ -330,7 +333,7 @@ describe("which messages and nights a reopen is for", () => {
 });
 
 describe("a finished build the run's coordinator answers for", () => {
-  it("R12. its continue_build may reopen a finished night that seated a lead, with the build's own models; the coordinator is told the Loop only when its parts serve it", async () => {
+  it("R12. its continue_build may reopen a finished run that seated a lead, with the build's own models; the coordinator is told the Loop only when its parts serve it", async () => {
     const hostWith = (journal: Json | null) => ({
       call: async (method: string, params: Json) =>
         method === "artifact.read" && params.artifactId === `autopilot_${RUN}` ? journal : null,
@@ -350,7 +353,7 @@ describe("a finished build the run's coordinator answers for", () => {
         reopens: true,
       },
       {
-        label: "a paused night",
+        label: "a paused run",
         run: { ...finished, state: "paused" },
         journal: { director: { lead: { chatSession: false } } },
         reopens: false,
@@ -371,11 +374,16 @@ describe("a finished build the run's coordinator answers for", () => {
       { label: "a lead record that is not one", run: finished, journal: { director: { lead: null } }, reopens: false },
     ];
     for (const row of rows) {
-      const night = await finishedNight(hostWith(row.journal), THREAD, row.run, "m9");
-      assert.equal(night !== null, row.reopens, row.label);
-      if (night)
+      const loopRun = await finishedLoopRun(hostWith(row.journal), THREAD, row.run, "m9");
+      assert.equal(loopRun !== null, row.reopens, row.label);
+      if (loopRun)
         assert.deepEqual(
-          { engine: night.engine, model: night.model, messageId: night.messageId, reopenable: night.reopenable },
+          {
+            engine: loopRun.engine,
+            model: loopRun.model,
+            messageId: loopRun.messageId,
+            reopenable: loopRun.reopenable,
+          },
           { engine: "codex", model: null, messageId: "m9", reopenable: true },
           `${row.label}: the build's own models, the message it answers`,
         );
@@ -403,14 +411,14 @@ describe("a finished build the run's coordinator answers for", () => {
 describe("reopening the finished build once the reply has ended", () => {
   it("R4. the journal reopened, the ask recorded on the run, the chat told, then the same run started from the ask on", async () => {
     const { studio, ctx, calls, store, log, starts, start } = studioWith();
-    await reopenAfterReply(studio as never, ctx, night as never, ask, start, clock);
+    await reopenAfterReply(studio as never, ctx, loopRun as never, ask, start, clock);
 
     assert.deepEqual(
       calls.map((c) => c.method),
       ["artifact.read", "events.list", "artifact.write", "events.append", "events.append"],
     );
     const journal = store.journal as Json;
-    assert.equal(journal.phase, "done", "the night rewrites its phase when it starts");
+    assert.equal(journal.phase, "done", "the run rewrites its phase when it starts");
     assert.deepEqual(journal.run.budgets, {
       review: false,
       wallClockMs: 2 * HOUR_MS,
@@ -440,7 +448,7 @@ describe("reopening the finished build once the reply has ended", () => {
     assert.equal(starts.length, 1);
     assert.equal(starts[0]?.run.runId, RUN);
     assert.deepEqual(starts[0]?.run.budgets, journal.run.budgets);
-    assert.deepEqual(starts[0]?.reopen, { after: "e2" }, "the night hears from the ask on: the last record before it");
+    assert.deepEqual(starts[0]?.reopen, { after: "e2" }, "the run hears from the ask on: the last record before it");
     assert.equal(studio.moodBoards.has(THREAD), false, "the chat's mood board did its job");
   });
 
@@ -449,7 +457,7 @@ describe("reopening the finished build once the reply has ended", () => {
     await reopenAfterReply(
       unbounded.studio as never,
       unbounded.ctx,
-      night as never,
+      loopRun as never,
       { hours: null, words: " more  ", models: { model: "gpt-5.6-sol" } },
       unbounded.start,
       clock,
@@ -465,6 +473,69 @@ describe("reopening the finished build once the reply has ended", () => {
       ["more"],
     );
     assert.match(String(toldOf(unbounded.calls)[0]?.words), /until its critics are satisfied/);
+  });
+
+  it("R4c. the reopening message joins the user's words in the build's scope, once; a build without scope gets none, and words the log does not have change nothing", async () => {
+    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
+    const scope = createScope({ asked: ["a dusk plaza"], inScope: ["the plaza"], cut: ["a city"] });
+    const userSaid = (words: string): Entry => ({
+      id: "e3",
+      data: { type: "messages", messages: [{ role: "user", content: words }] },
+    });
+    const scoped = (): Json => ({ ...finishedJournal(), run: { ...finishedJournal().run, scope } });
+
+    const s = studioWith({ log: [...finishedLog(), userSaid(ask.words)], journal: scoped() });
+    await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
+    const reopened = s.starts[0]?.run.scope;
+    assert.deepEqual(reopened?.asked, ["a dusk plaza", ask.words], "the user's message, not the session's words");
+    assert.deepEqual(reopened?.inScope, ["the plaza"]);
+    assert.deepEqual(reopened?.cut, ["a city"]);
+    assert.deepEqual((s.store.journal as Json).run.scope, reopened, "the journal keeps it for the next Resume");
+
+    const replayed = studioWith({ log: [...finishedLog(), userSaid(ask.words)], journal: s.store.journal });
+    (replayed.store.journal as Json).phase = "done";
+    await reopenAfterReply(replayed.studio as never, replayed.ctx, loopRun as never, ask, replayed.start, clock);
+    assert.deepEqual(replayed.starts[0]?.run.scope, reopened, "a replayed message adds nothing twice");
+
+    const unlogged = studioWith({ journal: scoped() });
+    await reopenAfterReply(unlogged.studio as never, unlogged.ctx, loopRun as never, ask, unlogged.start, clock);
+    assert.deepEqual(unlogged.starts[0]?.run.scope, scope, "words the log does not have are not the user's");
+
+    const legacy = studioWith({ log: [...finishedLog(), userSaid(ask.words)] });
+    await reopenAfterReply(legacy.studio as never, legacy.ctx, loopRun as never, ask, legacy.start, clock);
+    assert.equal("scope" in (legacy.starts[0]?.run ?? {}), false, "a build from before scope stays without one");
+  });
+
+  it("R4d. a reopening message the user edited in the queue joins the scope as edited; a command's result never proves words the user's", async () => {
+    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
+    const scope = createScope({ asked: ["a dusk plaza"], inScope: ["the plaza"], cut: ["a city"] });
+    const scoped = (): Json => ({ ...finishedJournal(), run: { ...finishedJournal().run, scope } });
+    const queuedAs = (id: string, words: string, action: Json): Entry[] => [
+      { id, data: { type: "messages", messages: [{ role: "user", content: words }] } },
+      custom(`${id}q`, "coordinator_message_queued", { messageId: `m_${id}`, action: { text: words, ...action } }),
+    ];
+
+    const edited = studioWith({
+      log: [
+        ...finishedLog(),
+        ...queuedAs("e3", "please add some plants to the plaza", {}),
+        custom("e4", "coordinator_message_updated", { messageId: "m_e3", text: ask.words }),
+      ],
+      journal: scoped(),
+    });
+    await reopenAfterReply(edited.studio as never, edited.ctx, loopRun as never, ask, edited.start, clock);
+    assert.deepEqual(
+      edited.starts[0]?.run.scope?.asked,
+      ["a dusk plaza", ask.words],
+      "the words the user sent, edited",
+    );
+
+    const reported = studioWith({
+      log: [...finishedLog(), ...queuedAs("e3", ask.words, { origin: "command-result" })],
+      journal: scoped(),
+    });
+    await reopenAfterReply(reported.studio as never, reported.ctx, loopRun as never, ask, reported.start, clock);
+    assert.deepEqual(reported.starts[0]?.run.scope, scope, "the chat's own report is not the user's words");
   });
 
   it("R5. refused with nothing written, recorded or started, and one word to the chat: not the latest, not finished, a build under way, no journal, Stop", async () => {
@@ -501,7 +572,7 @@ describe("reopening the finished build once the reply has ended", () => {
         why: /could not be read/,
       },
       {
-        label: "a journal without its night",
+        label: "a journal without its run",
         set: (s) => {
           s.store.journal = { phase: "done", run: launched };
         },
@@ -513,7 +584,7 @@ describe("reopening the finished build once the reply has ended", () => {
       const s = studioWith();
       set(s);
       const before = s.log.length;
-      await reopenAfterReply(s.studio as never, s.ctx, night as never, ask, s.start, clock);
+      await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
       assert.equal(
         s.calls.some((c) => c.method === "artifact.write"),
         false,
@@ -545,7 +616,7 @@ describe("reopening the finished build once the reply has ended", () => {
     }
     const held = studioWith();
     const passOver = learning(held);
-    const reopening = reopenAfterReply(held.studio as never, held.ctx, night as never, ask, held.start, clock);
+    const reopening = reopenAfterReply(held.studio as never, held.ctx, loopRun as never, ask, held.start, clock);
     await sleep(20);
     assert.equal(
       held.calls.some((c) => c.method === "artifact.write"),
@@ -558,7 +629,14 @@ describe("reopening the finished build once the reply has ended", () => {
 
     const stopped = studioWith();
     const stopOver = learning(stopped);
-    const stopping = reopenAfterReply(stopped.studio as never, stopped.ctx, night as never, ask, stopped.start, clock);
+    const stopping = reopenAfterReply(
+      stopped.studio as never,
+      stopped.ctx,
+      loopRun as never,
+      ask,
+      stopped.start,
+      clock,
+    );
     await sleep(20);
     // The composer's Stop ends the pass (live-chat.ts `stopRunsOf`) and stops the chat.
     stopped.studio.cancels.add(THREAD);
@@ -575,12 +653,12 @@ describe("reopening the finished build once the reply has ended", () => {
     );
   });
 
-  it("R7. a reopen rewound away: the log's close says where the build stood, not the journal the withdrawn night left", async () => {
+  it("R7. a reopen rewound away: the log's close says where the build stood, not the journal the withdrawn run left", async () => {
     const withdrawn = finishedJournal();
     withdrawn.phase = "paused";
     withdrawn.director.integrationHead = "c".repeat(40);
     const s = studioWith({ journal: withdrawn });
-    await reopenAfterReply(s.studio as never, s.ctx, night as never, ask, s.start, clock);
+    await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
     assert.equal(s.starts.length, 1, "the log says finished: it reopens");
     const journal = s.store.journal as Json;
     assert.equal(journal.director.integrationHead, H1);
@@ -590,29 +668,29 @@ describe("reopening the finished build once the reply has ended", () => {
     const log = finishedLog();
     log[1] = custom("e2", "run_finished", { runId: RUN, project: "plaza", integrationHead: "$(touch /tmp/x)" });
     const headless = studioWith({ log });
-    await reopenAfterReply(headless.studio as never, headless.ctx, night as never, ask, headless.start, clock);
+    await reopenAfterReply(headless.studio as never, headless.ctx, loopRun as never, ask, headless.start, clock);
     const kept = headless.store.journal as Json;
     assert.equal(kept.director.integrationHead, H1);
     assert.equal(kept.director.reopened.finishedHead, null);
   });
 
-  it("R8. a replayed message records its ask once, and its night hears it from that ask on; a restated one is recorded anew and heard alone", async () => {
+  it("R8. a replayed message records its ask once, and its run hears it from that ask on; a restated one is recorded anew and heard alone", async () => {
     const log = finishedLog();
     log.push(custom("e3", "run_steering", { runId: RUN, text: "add enemies", sourceMessageId: "m9", at: "earlier" }));
     const s = studioWith({ log });
-    await reopenAfterReply(s.studio as never, s.ctx, night as never, ask, s.start, clock);
+    await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
     assert.deepEqual(
       steersOf(s.log).map((steer) => steer?.text),
       ["add enemies"],
     );
-    // Flipped: the cursor was the log's last record (e3, the ask itself), so the night never heard it.
+    // Flipped: the cursor was the log's last record (e3, the ask itself), so the run never heard it.
     assert.deepEqual(s.starts[0]?.reopen, { after: "e2" }, "from the record before the ask its first answer recorded");
 
     const restated = studioWith({ log: [...log] });
     await reopenAfterReply(
       restated.studio as never,
       restated.ctx,
-      night as never,
+      loopRun as never,
       { ...ask, text: "add enemies and a boss" },
       restated.start,
       clock,
@@ -624,7 +702,7 @@ describe("reopening the finished build once the reply has ended", () => {
     assert.deepEqual(restated.starts[0]?.reopen, { after: "e4" }, "the restated ask alone is heard");
   });
 
-  it("R8b. once per close: an ask recorded before a reopened night the restart closed is that night's, so the replay records its own", async () => {
+  it("R8b. once per close: an ask recorded before a reopened run the restart closed is that run's, so the replay records its own", async () => {
     const log = [
       ...finishedLog(),
       custom("e3", "run_steering", { runId: RUN, text: "add enemies", sourceMessageId: "m9", at: "earlier" }),
@@ -632,20 +710,20 @@ describe("reopening the finished build once the reply has ended", () => {
       custom("e5", "run_finished", { runId: RUN, project: "plaza", victory: false, stoppedBecause: "crashed" }),
     ];
     const s = studioWith({ log });
-    await reopenAfterReply(s.studio as never, s.ctx, night as never, ask, s.start, clock);
+    await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
     assert.deepEqual(
       steersOf(s.log).map((steer) => steer?.text),
       ["add enemies", "add enemies"],
     );
-    assert.deepEqual(s.starts[0]?.reopen, { after: "e5" }, "never back into a night before this close");
+    assert.deepEqual(s.starts[0]?.reopen, { after: "e5" }, "never back into a run before this close");
   });
 });
 
-describe("the chat's message, from the queue to the reopened night (chat-dispatch.ts)", () => {
+describe("the chat's message, from the queue to the reopened run (chat-dispatch.ts)", () => {
   /**
    * A chat whose last build its own session led and finished, on a host that keeps the log and the
    * journal. The session records `recorded`; once the chat's turn has ended no game has the build's
-   * name, so a night started again throws before it builds and closes.
+   * name, so a run started again throws before it builds and closes.
    */
   function chatAfter(
     journal: Json,
@@ -753,7 +831,7 @@ describe("the chat's message, from the queue to the reopened night (chat-dispatc
     );
     assert.ok(steer > 1 && steer < chat.log.indexOf(registered()[1] as Entry), "the ask is recorded before the start");
     assert.equal(chat.log[steer]?.data.payload?.sourceMessageId, "m9");
-    assert.ok(chat.store.journal.director.reopened, "the night started from the reopened journal");
+    assert.ok(chat.store.journal.director.reopened, "the run started from the reopened journal");
   });
 
   it("R9c. a command's result after a finished build its session led inherits no Loop from the question the session asked: nothing reopens", async () => {
@@ -818,7 +896,7 @@ describe("the chat's message, from the queue to the reopened night (chat-dispatc
     assert.equal(loopOff.store.journal.director.reopened, undefined);
   });
 
-  it("R11. the reopened night builds and judges on the message's picks, as a start over from that same message would; only its planner is the session's model", async () => {
+  it("R11. the reopened run builds and judges on the message's picks, as a start over from that same message would; only its planner is the session's model", async () => {
     const finishedRun = {
       ...launched,
       roles: { planner: "gpt-5.6-sol", builder: "gpt-5.6-sol", judge: "sonnet", engines: { judge: "claude-code" } },

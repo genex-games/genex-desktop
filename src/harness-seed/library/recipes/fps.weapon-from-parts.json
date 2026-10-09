@@ -17,6 +17,7 @@
   ],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "The weapon is at least four meshes of two geometry types (body, barrel, grip, sight) or a modelled asset; one box is not a gun.",
   "intent": "A single box in the corner of the screen is read as a placeholder within one frame. Build the weapon from a body, a cylindrical barrel, a grip angled back from the body, and a sight or rail on top, at minimum — four meshes of at least two geometry families, which is what makes a silhouette. Keep it in real proportions against the hands, and put the muzzle where the barrel ends. A mesh modelled in Blender and loaded with loadAsset counts as built from parts.",

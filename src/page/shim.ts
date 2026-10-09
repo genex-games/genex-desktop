@@ -401,7 +401,7 @@ function start(k: Clock) {
  * is taken, so a `cancelAnimationFrame` issued from inside one of this frame's callbacks
  * really cancels the one it names — a browser skips a callback cancelled during its own
  * frame, and the cancel-then-request restart every pause screen does would otherwise fork the
- * loop and run the game at twice the rate for the rest of the night. A callback that requests
+ * loop and run the game at twice the rate for the rest of the run. A callback that requests
  * another frame lands under a fresh id that is not in this snapshot, which is what makes
  * "exactly the frames requested" literally true.
  *
@@ -589,10 +589,10 @@ export function createClock(host: Foreign, rawOptions = {}) {
 /**
  * What the boot budget says about a page that has not settled yet.
  *
- * Pure, so the rule a whole night hangs on can be read and tested without a browser: a page that
+ * Pure, so the rule a whole run hangs on can be read and tested without a browser: a page that
  * is merely SLOW is `timedOut`, never failed. `phase: "failed"` is the studio's word for a page
  * that reported a boot failure of its own and every consumer treats it as a refusal to load — so
- * a 40 MB level or an 18 s shader compile used to blind the scout for the whole night instead of
+ * a 40 MB level or an 18 s shader compile used to blind the scout for the whole run instead of
  * costing it one note. A timed-out page keeps booting: a late quiet, or the game's own
  * `__studio.ready()`, still settles it ready.
  */
@@ -670,6 +670,7 @@ const FACADE_DELEGATED = [
   "sceneSummary",
   "demos",
   "demo",
+  "begin",
   "audio",
   "probes",
   "player",
@@ -1505,8 +1506,11 @@ function pageState(win: Foreign, watch: CanvasWatch, clock: ShimClock, lock: Loc
   };
 }
 
-/** The facade's answers for what only the hook or the capture can see, with their fallbacks. */
-function hookedAnswers() {
+/**
+ * The facade's answers for what only the hook or the capture can see, with their fallbacks — what
+ * a page that never heard of the contract answers. Exported so a test can read them.
+ */
+export function hookedAnswers() {
   const page = globalThis as PageGlobal;
   return {
     inspect: () =>
@@ -1528,6 +1532,9 @@ function hookedAnswers() {
     sceneSummary: () => page.__studioHook?.sceneSummary?.() ?? { available: false },
     demos: () => [],
     demo: () => ({ ok: false, available: [] }),
+    // A page with no front-end of its own is already in play: the harness reads `ok: false` as
+    // nothing to skip, never as a missing contract.
+    begin: () => ({ ok: false, reason: "this page declares no begin()" }),
     audio: () => ({ available: false, rms: 0, centroid: 0 }),
     probes: () => ({}),
     player: () => null,

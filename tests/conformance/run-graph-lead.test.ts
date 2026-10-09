@@ -307,7 +307,10 @@ describe("the Unreal lead's run on the Builds graph", () => {
     const { graph, summary } = await leadRun();
     assert.ok(graph);
     const line = statusLine(graph, summary, partRows(graph, summary));
-    assert.deepEqual([line.strong, line.rest], ["Live in your game", "2 save points · Meshy: Goblin didn't deliver"]);
+    assert.deepEqual(
+      [line.strong, line.rest],
+      ["Live in your game · 0 min", "2 save points · Meshy: Goblin didn't deliver"],
+    );
   });
 
   it("names a sub-agent by its kind once, whatever kind word the lead put in its title", () => {

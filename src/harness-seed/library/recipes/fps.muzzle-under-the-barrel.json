@@ -4,6 +4,7 @@
   "tags": ["muzzle", "flash", "emitter", "barrel", "weapon", "parent", "fps", "float", "recoil"],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "Exactly one object tagged muzzle, parented under the weapon so it moves with the barrel instead of floating in the frame.",
   "intent": "A flash emitter left in world space stays where the barrel was, which reads as a light hanging in the air. Create exactly one object tagged muzzle, add it as a child of the weapon group at the end of the barrel, and drive its visibility and scale from the fire event rather than from a timer of its own. One emitter, not one per shot: reuse it and reset its life. The same rule holds for the shell ejector and any smoke socket.",

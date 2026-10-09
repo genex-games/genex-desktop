@@ -4,6 +4,7 @@ import { type PluginManifest, type PluginScan, type PluginSource, PluginSourceKi
 import type { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { inspectPackage } from "../substrate/plugins/manifest.ts";
 import { scanPackage } from "../substrate/plugins/scan.ts";
+import { packageCopyFilter } from "../substrate/plugins/pack.ts";
 
 /** Why a local folder could not be installed again, as the plugin panel shows it. */
 const MESSAGE = {
@@ -82,7 +83,12 @@ export async function installLocalPlugin(
   const holder = await mkdtemp(path.join(staging, "local-review-"));
   const snapshot = path.join(holder, "package");
   try {
-    await cp(directory, snapshot, { recursive: true, errorOnExist: true, force: false });
+    await cp(directory, snapshot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      filter: packageCopyFilter(directory),
+    });
     const manifest = await inspectPackage(snapshot);
     if (expectedId && manifest.id !== expectedId) throw new Error(MESSAGE.differentPlugin);
     const scan = await scanPackage(snapshot, manifest);

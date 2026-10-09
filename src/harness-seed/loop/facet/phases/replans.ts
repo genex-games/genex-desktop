@@ -62,7 +62,7 @@ export async function applyReplans(loop: FacetLoop, round: FacetRound): Promise<
     const decision = await replanDecision(loop, check, request);
     // The run was stopped while the planner was being asked: nothing more is asked.
     if (!decision) break;
-    // A planner that never answered spent none of the check's goes (P12-F4).
+    // A planner that never answered spent none of the check's goes.
     if (!unanswered(decision)) loop.replans[check.id] = (loop.replans[check.id] ?? 0) + 1;
     await applyReplan(loop, round, { check, request, decision });
   }

@@ -284,6 +284,14 @@ export interface PluginExportResult {
   files: number;
   included: string[];
   excluded: string[];
+  /**
+   * What the game's own package.json tells Genex, which the copy does not carry: its Genex SDK
+   * versions and `genex` settings. Absent when the game names none.
+   */
+  genex?: {
+    dependencies: Partial<Record<"@genex-ai/multiplayer" | "@genex-ai/embed-sdk", string>>;
+    genex?: { matchmaking?: Record<string, unknown>; mobileControls?: boolean };
+  };
 }
 
 /** Sanitized progress for Studio. `kind: 'toolbar'` updates a toolbar item's badge. */

@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertDraftTarget, assertUpdateFeedAssets, distributionPlatforms } from "./release-policy.mjs";
+import {
+  assertDraftTarget,
+  assertStableDownloads,
+  assertUpdateFeedAssets,
+  distributionPlatforms,
+} from "./release-policy.mjs";
 import { createHash } from "node:crypto";
 import { verifyReleaseArtifacts } from "./release-manifest.mjs";
 
@@ -15,10 +20,9 @@ export async function uploadRelease({ version, repo, source, macos, windows, dir
   const entries = await readdir(directory, { withFileTypes: true });
   if (!entries.length) throw new Error("No release artifacts");
   if (entries.some((entry) => !entry.isFile())) throw new Error("Release artifacts must be regular files");
-  assertUpdateFeedAssets(
-    entries.map((entry) => entry.name),
-    { windows },
-  );
+  const names = entries.map((entry) => entry.name);
+  assertUpdateFeedAssets(names, { windows });
+  assertStableDownloads(names, { windows });
   const files = entries.map((entry) => path.join(directory, entry.name)).sort();
   const tag = `v${version}`;
   // Resolve annotated and lightweight tags to the commit. Missing tags and API failures both refuse writes.

@@ -58,14 +58,14 @@ export class KeepAwake {
     if (event.type === UiEvent.RunKeepawake) {
       this.hold();
       // A run announcing itself disarms the fallback a previous stop left running — the timer is
-      // for a harness that died mid-settle, not for the next night.
+      // for a harness that died mid-settle, not for the next run.
       this.disarmFallback();
     }
     if (event.type === UiEvent.RunSettled || event.type === UiEvent.RunFailed) this.release();
   }
 
   /**
-   * A stop was requested: asking a night to stop is not the night ending, so the hold stays, but
+   * A stop was requested: asking a run to stop is not the run ending, so the hold stays, but
    * a harness that never reports back cannot keep it forever. A no-op with nothing held or a
    * fallback already armed; the timer never holds the app open.
    */

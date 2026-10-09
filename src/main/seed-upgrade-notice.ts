@@ -70,10 +70,10 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
     "Your edited loop/director/wake.ts was kept, but its digest still names workers rejected with worker_mark (rejectedNews), or a resting lead never hears its run's job ends (watchJobs, loop/jobs/watch.ts). Copy both from the shipped file.",
   "loop/director/wake-schedule.ts":
     "Your edited loop/director/wake-schedule.ts was kept, but it has no kind for a job of the run that ended (NoteKind.JobEnded, which wakes the lead soon). Copy the kind and its NOTE_WAKE row from the shipped file.",
-  "loop/director/night.ts":
-    "Your edited loop/director/night.ts was kept, but its NightState has no jobsCursor: where the run's job ends were read to, which the journal keeps. Copy the field from the shipped file.",
+  "loop/director/loop-run.ts":
+    "Your edited loop/director/loop-run.ts was kept, but its LoopRunState has no jobsCursor: where the run's job ends were read to, which the journal keeps. Copy the field from the shipped file.",
   "loop/director/journal.ts":
-    "Your edited loop/director/journal.ts was kept, but it does not keep the run's job cursor (jobsCursor), so a resumed night hears its job ends again. Copy recordNight's and restoreNight's lines from the shipped file.",
+    "Your edited loop/director/journal.ts was kept, but it does not keep the run's job cursor (jobsCursor), so a resumed run hears its job ends again. Copy recordLoopRun's and restoreLoopRun's lines from the shipped file.",
   "loop/director/integrate.ts":
     "Your edited loop/director/integrate.ts was kept, but its close does not stop the run's readers (closeReaders, loop/workers/director-pool.ts). Copy the call from the shipped file.",
   "tools/game-tools.ts":

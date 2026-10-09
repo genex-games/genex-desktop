@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PAGE_DISPATCH } from "../../src/main/page-dispatch.ts";
 import { GAME_DISABLED_BLINK_FEATURES, gameViewPreferences } from "../../src/main/game-view.ts";
-import { installStudio, makeRng } from "../../src/game-template/src/studio.js";
+import { FlowPhase, installStudio, makeRng } from "../../src/game-template/src/studio.js";
 import {
   AUTO_RESUME_MS,
   DEFAULT_SHIM_OPTIONS,
@@ -19,6 +19,8 @@ import {
   createClock,
   createFacade,
   createPointerLock,
+  FACADE_MEMBERS,
+  hookedAnswers,
   installFacade,
   installPageGlobal,
   installSeededRandom,
@@ -394,6 +396,21 @@ describe("the __studio facade", () => {
   });
 });
 
+describe("begin() through the facade", () => {
+  it("is the game's when it has one, and answers that it has none on every other page", () => {
+    assert.ok(FACADE_MEMBERS.includes("begin"), "begin is a member the facade answers");
+    const target: Record<string, unknown> = {};
+    installFacade(target, { version: 1, hud: "shim-hud", state: () => ({}), ...hookedAnswers() });
+    const studio = () => target.__studio as { begin(): { ok: boolean; reason?: string; flow?: unknown } };
+    const none = studio().begin();
+    assert.equal(none.ok, false, "a page that declares no begin() answers uniformly, never {__missing}");
+    assert.match(String(none.reason), /no begin/);
+    const flow = { phase: "playing", playing: true };
+    (target as { __studio: unknown }).__studio = Object.freeze({ begin: () => ({ ok: true, flow }) });
+    assert.deepEqual(studio().begin(), { ok: true, flow });
+  });
+});
+
 describe("readiness", () => {
   it("calls a page that outran its boot budget timed out, never failed", () => {
     const slow = readinessVerdict({
@@ -407,7 +424,7 @@ describe("readiness", () => {
     assert.equal(slow.timedOut, true);
     assert.equal(slow.ready, false);
     // `phase: "failed"` is a page's own report of a boot failure and every consumer refuses to
-    // load on it — a slow first draw must cost a note, not the whole night's evidence.
+    // load on it — a slow first draw must cost a note, not the whole run's evidence.
     assert.equal(slow.settle, null, "a spent budget must not settle the page as failed");
     const early = readinessVerdict({
       elapsed: 900,
@@ -465,7 +482,7 @@ describe("what a game page's renderer is given", () => {
   const prefs = gameViewPreferences("game-session", false);
 
   it("has no on-device speech recognition, whose missing binder kills the whole renderer", () => {
-    // Both, never one (2026-09-23): OnDeviceWebSpeechAvailable alone leaves
+    // Both, never one: OnDeviceWebSpeechAvailable alone leaves
     // install({ processLocally: true }) killing the page, and InstallOnDeviceSpeechRecognition
     // alone leaves available() and a processLocally start() doing it.
     assert.ok(
@@ -666,4 +683,121 @@ it("budgets GPU error drains to one per thirty frames", () => {
   });
   for (let i = 0; i < 90; i++) frame();
   assert.equal(reads, 3);
+});
+
+describe("a game with a front-end: begin() takes it into play, flow says whether it is", () => {
+  /** A title → countdown → race machine, the shape a racing game's front-end has. */
+  function racer({ begin = true, flow = true }: { begin?: boolean; flow?: boolean } = {}) {
+    const game = { phase: "menu", countdown: 0, x: 0 };
+    return {
+      fixedStepMs: 1000 / 60,
+      reset() {
+        game.phase = "menu";
+        game.countdown = 0;
+        game.x = 0;
+      },
+      update(dt: number, ctx: { keys: Set<string> }) {
+        if (game.phase === "countdown") {
+          game.countdown -= dt;
+          if (game.countdown <= 0) game.phase = "playing";
+        } else if (game.phase === "playing" && ctx.keys.has("w")) game.x += dt;
+      },
+      probes: () => ({ car: { x: game.x } }),
+      ...(flow ? { flow: () => game.phase } : {}),
+      ...(begin
+        ? {
+            begin() {
+              game.phase = "playing";
+              game.countdown = 0;
+            },
+          }
+        : {}),
+    };
+  }
+
+  type Api = {
+    seed(n: number): number;
+    step(ms?: number): unknown;
+    state(): Record<string, unknown>;
+    begin(): { ok: boolean; reason?: string; flow?: { phase: string; playing: boolean } | null };
+  };
+
+  /** The template installed on a fake page that keeps its globals until the test is done. */
+  function install(config: Record<string, unknown>) {
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const before = {
+      window: globals.window,
+      document: globals.document,
+      requestAnimationFrame: globals.requestAnimationFrame,
+    };
+    globals.window = { addEventListener: () => {} };
+    globals.document = { addEventListener: () => {}, querySelector: () => null };
+    globals.requestAnimationFrame = () => 1;
+    const restore = () => Object.assign(globals, before);
+    try {
+      return { api: installStudio({ hud: false, ...config } as never) as unknown as Api, restore };
+    } catch (error) {
+      restore();
+      throw error;
+    }
+  }
+
+  it("reports the game's first screen after a seed, and begin() leaves it in play, paused", () => {
+    const { api, restore } = install(racer());
+    try {
+      api.seed(1);
+      assert.deepEqual(api.state().flow, { phase: FlowPhase.Menu, playing: false });
+      const began = api.begin();
+      assert.deepEqual(began, { ok: true, flow: { phase: FlowPhase.Playing, playing: true } });
+      assert.deepEqual(api.state().flow, { phase: "playing", playing: true });
+      assert.equal(api.state().running, false, "begin() leaves the game paused, like a demo");
+    } finally {
+      restore();
+    }
+  });
+
+  it("is deterministic: two seeds and two begins drive to the same state", () => {
+    const { api, restore } = install(racer());
+    try {
+      const drive = () => {
+        api.seed(7);
+        api.begin();
+        api.step(500);
+        const { fps: _fps, ...rest } = api.state();
+        return rest;
+      };
+      assert.deepEqual(drive(), drive());
+    } finally {
+      restore();
+    }
+  });
+
+  it("changes nothing for a game that declares neither", () => {
+    const { api, restore } = install(racer({ begin: false, flow: false }));
+    try {
+      api.seed(1);
+      assert.equal("flow" in api.state(), false, "no flow key at all: an existing game's state is unchanged");
+      const none = api.begin();
+      assert.equal(none.ok, false);
+      assert.match(String(none.reason), /config\.begin/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("answers no flow from begin() for a game that reports none, as state() does", () => {
+    const { api, restore } = install(racer({ flow: false }));
+    try {
+      api.seed(1);
+      assert.deepEqual(api.begin(), { ok: true, flow: null });
+      assert.equal("flow" in api.state(), false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("names its phases in one frozen vocabulary", () => {
+    assert.ok(Object.isFrozen(FlowPhase));
+    assert.deepEqual(Object.values(FlowPhase), ["boot", "menu", "intro", "countdown", "playing", "paused", "results"]);
+  });
 });

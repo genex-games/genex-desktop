@@ -91,6 +91,10 @@ jobs:
       - name: Package sizes
         if: always()
         run: find out/make -type f -exec ls -l {} \; || true
+      # The release's version-free Linux copies, so a change in the makers' output fails here first.
+      - name: Version-free package names
+        if: runner.os == 'Linux'
+        run: node scripts/release-downloads.mjs
       - name: Artifact provenance
         run: node scripts/release-manifest.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

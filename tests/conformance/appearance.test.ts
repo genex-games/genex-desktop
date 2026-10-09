@@ -18,12 +18,12 @@ import {
   themeVariables,
 } from "../../src/renderer/appearance/themes.ts";
 
-/** Genex's own presets are tuned by hand in the colour tweaker (owner, 2026-09-27); ported families keep full AA. */
+/** Genex's own presets are tuned by hand in the colour tweaker; ported families keep full AA. */
 const handTuned = (id: string): boolean => id.startsWith("genex-");
 
 test("built-in palettes keep body text readable; ported families also keep secondary text, accents, statuses and buttons", () => {
   assert.equal(PRESETS.length, 10);
-  // A first launch follows the system's light or dark (owner, 2026-09-30); it was always dark.
+  // A first launch follows the system's light or dark; it was always dark.
   assert.equal(DEFAULT_APPEARANCE.mode, "system");
   assert.equal(DEFAULT_APPEARANCE.dark.preset, "genex-dark");
   for (const preset of PRESETS) {

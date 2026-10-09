@@ -1,7 +1,7 @@
 /**
- * The night's budgets and clocks: how long a session, a worker, a wait and a close may take, how
- * many workers and windows a night may have, and how often the studio looks at a running worker.
- * Plain numbers and pure functions, with no night of their own.
+ * The run's budgets and clocks: how long a session, a worker, a wait and a close may take, how
+ * many workers and windows a run may have, and how often the studio looks at a running worker.
+ * Plain numbers and pure functions, with no run of their own.
  */
 import { PAGE_SEED, PLAN_REVIEW_WAIT_MS } from "../config.ts";
 import { ITERATION_HEADROOM } from "../facet-loop.ts";
@@ -22,7 +22,7 @@ export { durationCommission, goalCommission } from "./commission.ts";
  */
 export const SEED = PAGE_SEED;
 /**
- * How long a close waits for the workers it just stopped. Both roads out of a night — the
+ * How long a close waits for the workers it just stopped. Both roads out of a run — the
  * director's own `finish` and the harness's clock path — wait the same, because both then look
  * at the head the worktree stands on and both may land it: a worker still committing while the
  * close reads HEAD is a build landed without its last accepted round.
@@ -36,6 +36,8 @@ export const MAX_WAIT_S = 240;
 export const MAX_WORKERS = 12;
 /** A worker window needs at least this much free memory to open (a big game's window is over a gigabyte). */
 export const MIN_FREE_MB = 1_024;
+/** A running worker's round needs less (loop/facet/admission.ts waits for it at the round's boundary). */
+export { ROUND_MIN_FREE_MB } from "../facet/admission.ts";
 /** The longest the studio goes without looking at a running loop worker. */
 export const MONITOR_TICK_MS = 3 * MINUTE_MS;
 /** Looks it takes over a worker's whole budget, so a short worker is looked at oftener. */
@@ -48,7 +50,7 @@ export const SILENT_ROUND_MIN = 12;
 export const MAX_LEDGER = 16;
 /** The longest one `worker_start` blocks inside a single call (the bridge shim waits ten minutes). */
 export const PLAN_HOLD_SLICE_MS = MAX_WAIT_S * SECOND_MS;
-/** Parts a plan may name: past this it is a list, not a night. */
+/** Parts a plan may name: past this it is a list, not a run. */
 export const MAX_PLAN_WORKERS = 12;
 
 /** The wrap-up reserve: a tenth of the run, never less than five minutes nor more than fifteen. */
@@ -60,8 +62,16 @@ const PREPARATION_MAX_MS = 30 * MINUTE_MS;
 const PREPARATION_SHARE = 3;
 /** A preparation budget below this is not worth a session: the lead builds directly instead. */
 const PREPARATION_FLOOR_MS = MINUTE_MS;
-/** The pool windows a night keeps for the director itself (its own look, and every pass's lease). */
+/** The pool windows a run keeps for the director itself (its own look, and every pass's lease). */
 const DIRECTOR_WINDOWS = 2;
+/**
+ * The finish mark: the share of a timed build's working time kept for finishing what exists,
+ * never less than half an hour nor more than two, and none for a build under an hour and a half.
+ */
+const FINISH_MARK_SHARE = 0.3;
+const FINISH_MARK_MIN_MS = 30 * MINUTE_MS;
+const FINISH_MARK_MAX_MS = 120 * MINUTE_MS;
+const FINISH_MARK_FLOOR_MS = 90 * MINUTE_MS;
 
 /** The director's session ends this long before the hard deadline; a wrap-up session gets the rest. */
 export function wrapReserveMs(total: number): number {
@@ -78,6 +88,20 @@ export function timedWorkRemaining(
   return durationCommission(run) && !finishing && now < softDeadline;
 }
 
+/**
+ * How long before the end of its working time a timed build reaches its finish mark: from there
+ * the art director looks at the whole game and the owners finish their parts, with no new parts.
+ * Null for a goal build (it is reviewed when its lead idles or finishes) and for one too short to
+ * split.
+ */
+export function finishMarkMs(
+  run: Pick<Run, "reference"> & { budgets?: Run["budgets"] },
+  workingMs: number,
+): number | null {
+  if (!durationCommission(run) || !(workingMs >= FINISH_MARK_FLOOR_MS)) return null;
+  return Math.max(FINISH_MARK_MIN_MS, Math.min(FINISH_MARK_MAX_MS, Math.round(workingMs * FINISH_MARK_SHARE)));
+}
+
 /** Preparation must leave the lead time to build, recover and inspect before wrap-up.
  * A 15-minute run used to spend all ten working minutes on its starting point. */
 export function preparationBudgetMs(remaining: number): number {
@@ -86,11 +110,11 @@ export function preparationBudgetMs(remaining: number): number {
 }
 
 /**
- * How many of the pool's windows a night may hand to workers.
+ * How many of the pool's windows a run may hand to workers.
  *
- * Two of them are the director's own: the window its session looks through all night (`look`,
+ * Two of them are the director's own: the window its session looks through for the whole run (`look`,
  * the computer tool) and the one every judge, health and close pass leases for a moment. The
- * first real night gave five of six windows to workers and took the sixth for its session, so
+ * first real run gave five of six windows to workers and took the sixth for its session, so
  * `preview.acquire` threw for every evidence pass after that and each one silently fell through
  * to the user's live window. A pool of two or three still runs one worker — the director shares
  * its own window there, and the borrow says so out loud rather than happening in silence.
@@ -129,7 +153,7 @@ export function monitorEveryMs(budgetMs: unknown): number {
 /**
  * How long the first worker may wait for a user who asked to read the plan. Zero unless they
  * asked, zero on a resume (they reviewed it the first time), never past the window and never
- * into the time a worker needs to be worth starting: an unanswered night must still build.
+ * into the time a worker needs to be worth starting: an unanswered run must still build.
  */
 export function planReviewWaitMs({
   reviewPlan = false,
@@ -147,7 +171,7 @@ export function planReviewWaitMs({
 /**
  * The middle of a set of measured milliseconds, in whole minutes — null until something has
  * been measured. A run used to size every worker on the assumption that a round takes eight
- * minutes; the rounds of one real night took nine to forty-six, so every second-round worker
+ * minutes; the rounds of one real run took nine to forty-six, so every second-round worker
  * began a round it could not finish. This is what a round actually costs on this game.
  */
 export function medianMinutes(samples: readonly number[] | null | undefined): number | null {

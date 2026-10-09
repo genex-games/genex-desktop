@@ -181,8 +181,8 @@ const ACTIONS: Record<string, Action> = {
   [GenexAction.PublishDraft]: withProject((genex, project, _args, service) =>
     genex.publishDraft(project, () => service(PluginService.ExportStage, {})),
   ),
-  [GenexAction.PublishGallery]: withProject((genex, project, _args, service) =>
-    genex.publishGallery(project, () => service(PluginService.ExportStage, {})),
+  [GenexAction.PublishGallery]: withProject((genex, project, args, service) =>
+    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title),
   ),
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),

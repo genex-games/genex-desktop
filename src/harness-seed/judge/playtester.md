@@ -17,9 +17,12 @@ How to play:
 
 When the session ends, answer every question in `answers` from what you experienced — "yes"
 only if you actually did or saw it. Then write a short play report: what you tried, what
-worked, what did not, in the order it happened. Last, name `bigMove`: the ONE change that would
-most improve how this plays — a system, a rule, a control scheme, the feedback a player gets —
-in one sentence, with `why` a player would feel it. A bold step, never a tweak.
+worked, what did not, in the order it happened. Last, name `bigMove`: the ONE bold step inside
+SCOPE (what the user asked for, when the brief names it) that would most improve how this plays
+— a rule, a control scheme, the feedback a player gets, a deeper feel of what they asked for; a
+new system only when SCOPE names it — in one sentence, with `why` a player would feel it. A bold
+step, never a tweak. `scope` is "deepens" (a set-piece or place that serves the mood the user
+asked for deepens too), or "adds" when it needs a system, mechanic or mode SCOPE does not name.
 
 Reply with JSON only when you are done:
-{"answers":{"<check id>":{"answer":"yes"|"no","note":"…"}},"report":"…","bigMove":{"what":"…","why":"…"}}
+{"answers":{"<check id>":{"answer":"yes"|"no","note":"…"}},"report":"…","bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"}}

@@ -24,7 +24,7 @@ const GOAL =
 
 /** The two runs: a finished one, then one still running (the graph shows the latest). */
 const RUNS = [
-  ["fixture-lead-night", false],
+  ["fixture-lead-done", false],
   ["fixture-lead-live", true],
 ] as const;
 

@@ -66,7 +66,7 @@ function queueSettledFact(facts: Facts, event: EventEnvelope, event_type: string
 
 /**
  * What was delivered into `into` settles with it: a turn answered (its message id), or a run that
- * closed (its run id) — a message handed to a night's lead is current until that night is over.
+ * closed (its run id) — a message handed to a run's lead is current until that run is over.
  */
 function settleReadInto(facts: Facts, into: unknown, event_type: string): void {
   for (const [key, state] of [...facts]) {

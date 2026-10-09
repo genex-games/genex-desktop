@@ -121,7 +121,7 @@ describe("harness-borrowed preview windows", () => {
 
 /**
  * A session whose pool was full took a window past the ceiling, with no ceiling of its own: a busy
- * night could open hidden windows without end, and every one is a renderer with a GPU context of
+ * run could open hidden windows without end, and every one is a renderer with a GPU context of
  * its own (Live's WebGL context among the ones Chromium drops first). Past `OVERFLOW_WINDOWS_MAX`
  * a session waits for a window to close, and one that ends while it waits opens none.
  */

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { TerminalFlow } from "./terminal-flow.ts";
+import { LinkScanner } from "./terminal-links.ts";
 import { LoginTerminalOutput } from "./terminal-login-output.ts";
 import { HostCommand, HostEventType, INTERRUPTED_EXIT_CODE, type TerminalLaunch } from "./terminal-service.ts";
 import { TerminalKind, terminalSize, TERMINAL_LIMITS } from "../shared/terminal.ts";
@@ -43,6 +44,8 @@ let started = false,
   cleanupDone = false;
 let result: { code: number; error?: string } | undefined;
 let filter: LoginTerminalOutput | undefined;
+/** OpenCode's sign-in draws its own prompts: its pages are noticed, its output left as it is. */
+let links: LinkScanner | undefined;
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
 let stopTask: Promise<void> | undefined;
 let size = { cols: 80, rows: 16 };
@@ -165,6 +168,8 @@ function startShell(launch: TerminalLaunch): void {
   started = true;
   if (launch.kind === TerminalKind.ClaudeLogin)
     filter = new LoginTerminalOutput((url) => send({ type: HostEventType.Link, url }));
+  if (launch.kind === TerminalKind.OpenCodeLogin)
+    links = new LinkScanner((url) => send({ type: HostEventType.Link, url }));
   const shell = pty.spawn(launch.file, launch.args, {
     name: "xterm-256color",
     ...size,
@@ -174,7 +179,10 @@ function startShell(launch: TerminalLaunch): void {
     ),
   });
   terminal = shell;
-  shell.onData((data) => output(filter ? filter.write(data) : data));
+  shell.onData((data) => {
+    links?.write(data);
+    output(filter ? filter.write(data) : data);
+  });
   shell.onExit(({ exitCode }) => {
     if (filter) output(filter.end());
     result ??= { code: exitCode };

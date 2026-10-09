@@ -312,7 +312,7 @@ test("publish creates the hosted project in Studio-owned storage and makes the e
 
     // One press publishes: Studio exports the game, and the CLI puts that build on the draft page
     // and makes the same build the public version, listing the game the first time.
-    const first = await registry.action("genex", "publish-gallery", {}, binding);
+    const first = await registry.action("genex", "publish-gallery", { title: "Fixture Racing" }, binding);
     assert.equal(first.job.state, "running");
     assert.equal(first.job.kind, "gallery");
     const published = await registry.action(
@@ -325,6 +325,7 @@ test("publish creates the hosted project in Studio-owned storage and makes the e
     assert.equal(published.job.phase, "ready", published.job.checkError);
     assert.equal(published.slug, "fixture-game");
     assert.equal(published.status, "published");
+    assert.equal(published.title, "Fixture Racing", "the dialog's name reaches the listing");
     assert.equal(published.draftUrl, "https://genex.games/draft/fixture-game");
     assert.ok(published.readyDraft, "the draft page serves the published build");
     assert.equal(creates, 1);

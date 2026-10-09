@@ -1,7 +1,7 @@
 /**
  * The computer-smoke fixture: a game with a map picker on I, a click that picks the map, W
- * that moves the player, and state that reports all of it — the shape of the skate-prod
- * problem, in forty lines.
+ * that moves the player, and state that reports all of it: a game that boots into the wrong map,
+ * in forty lines.
  */
 export const COMPUTER_SMOKE_GAME = `import * as THREE from "three";
 import { installStudio } from "./studio.js";

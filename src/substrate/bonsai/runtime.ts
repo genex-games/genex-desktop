@@ -1,5 +1,5 @@
 import { InstallPhase, type ModelInstallJob } from "../../shared/model-install.ts";
-import { atomicWriteJson, readJsonIfExists } from "../fsx.ts";
+import { atomicWriteJson, pathExists, readJsonIfExists } from "../fsx.ts";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, rm, rename, stat, statfs } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -10,6 +10,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   BONSAI_BINARY,
+  BONSAI_MODELS,
   BONSAI_PROJECTOR,
   BONSAI_RUNTIME,
   BONSAI_NOTICES,
@@ -58,6 +59,8 @@ const MESSAGE = {
   RuntimeClosed: "Bonsai runtime is closed",
   StartupCancelled: "Bonsai startup cancelled",
   NotDownloaded: "Download this Bonsai model in Model setup first",
+  RemoveWhileDownloading: "A model is downloading. Delete this one when the download finishes.",
+  RemoveWhileAnswering: "Bonsai is answering a chat or build. Delete the model when it finishes.",
   StoppedDuringStartup: (stderr: string) => `Bonsai stopped during startup: ${stderr}`,
   StartupTimedOut: (stderr: string) => `Bonsai startup timed out: ${stderr}`,
 } as const;
@@ -343,6 +346,48 @@ export class BonsaiRuntime {
   }
   cancelInstall() {
     this.#install?.abort();
+  }
+  /**
+   * Delete a downloaded model: its receipt first, so nothing starts it again, then its server and
+   * weights. The projector, notices and runtime it shares go too once no other model keeps bytes
+   * here. Refused, removing nothing, while a download runs or a request holds the server.
+   */
+  async remove(id: string): Promise<void> {
+    const spec = bonsaiModel(id);
+    if (this.#installPromise) throw new Error(MESSAGE.RemoveWhileDownloading);
+    if (this.#leases || this.#starting) throw new Error(MESSAGE.RemoveWhileAnswering);
+    await rm(this.#receiptFile(id), { force: true });
+    if (this.#model === id) await this.#stopProcess();
+    await this.#removeDownload(spec.file);
+    await this.#forgetJob(id);
+    if (await this.#othersKeepBytes(id)) return;
+    for (const file of [BONSAI_BINARY, ...BONSAI_NOTICES, BONSAI_PROJECTOR]) await this.#removeDownload(file);
+    for (const folder of [BONSAI_RUNTIME, `${BONSAI_RUNTIME}.staging`])
+      await rm(path.join(this.root, folder), { recursive: true, force: true });
+  }
+  /** A pinned file and its resumable partial. */
+  async #removeDownload(file: DownloadFile): Promise<void> {
+    const target = path.join(this.#directoryFor(file), file.name);
+    await rm(target, { force: true });
+    await rm(`${target}.part`, { force: true });
+  }
+  /** Whether another model still has a receipt, weights or a partial download here. */
+  async #othersKeepBytes(id: string): Promise<boolean> {
+    for (const other of BONSAI_MODELS) {
+      if (other.id === id) continue;
+      const weights = path.join(this.#directoryFor(other.file), other.file.name);
+      for (const file of [this.#receiptFile(other.id), weights, `${weights}.part`])
+        if (await pathExists(file)) return true;
+    }
+    return false;
+  }
+  /** The download record of a deleted model goes with it; another model's stopped download stays. */
+  async #forgetJob(id: string): Promise<void> {
+    const job = await this.installStatus().catch(() => null);
+    if (job?.model !== id) return;
+    this.#job = null;
+    await this.#jobWrites;
+    await rm(this.#jobFile, { force: true });
   }
   install(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
     if (this.#installPromise) {

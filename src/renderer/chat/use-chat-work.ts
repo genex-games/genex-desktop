@@ -111,8 +111,8 @@ function useWorkWords(
   const { threadEvents, stateEvents, activeRunId } = chat;
   const { activity, outcome, details, plan } = input;
   const runStarted = useMemo(
-    () => runStartedAt(threadEvents, activeRunId, outcome?.startedAt),
-    [threadEvents, activeRunId, outcome?.startedAt],
+    () => runStartedAt(threadEvents, activeRunId, outcome?.worked),
+    [threadEvents, activeRunId, outcome?.worked],
   );
   const budgetMs = useMemo(() => runBudgetMs(threadEvents, activeRunId), [threadEvents, activeRunId]);
   const workItems = useMemo(

@@ -12,13 +12,10 @@ import { accentChipClass } from "./accent-chip.tsx";
  * by hand. `font-mono` carries the house -0.02em from globals.css, so a button
  * never needs its own `tracking-*` either.
  *
- * IT ALSO OWNS THE SIZE, and that claim was FALSE for a day (owner round 5,
- * 2026-08-17: "I don't see that this is a small size, as if you are deceiving
- * me" - and he was right, measured at 36px). `defaultVariants` said `sm`, but
- * the component signature also wrote `size = "default"`, and a default
- * PARAMETER wins: cva only falls back to its own default when the prop is
- * `undefined`, so every one of the 130 call sites that passes no size was
- * silently handed the 36px one. The rule is therefore structural: `size` and
+ * IT ALSO OWNS THE SIZE. A default PARAMETER in the component signature
+ * (`size = "default"`) would win over `defaultVariants`: cva only falls back
+ * to its own default when the prop is `undefined`, so every call site that
+ * passes no size would silently get the 36px one. The rule is therefore structural: `size` and
  * `variant` take their defaults from `defaultVariants` BELOW and must never
  * carry a default in the parameter list. `data-size` restates the resolved
  * value for the drift gate, which is the only reason it needs the `??`.
@@ -82,17 +79,39 @@ const buttonVariants = cva(
   },
 );
 
+/** The spinner a busy button leads with: current colour, still under reduced motion. */
+function ButtonSpinner() {
+  return (
+    <span
+      aria-hidden
+      data-button-spinner
+      className="size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
+    />
+  );
+}
+
+/**
+ * `busy`: the press is being carried out. The button keeps its fill and size (a working button
+ * never looks unavailable), leads with a spinner, says so to assistive tech and takes no second
+ * press; the caller swaps its label to the verb in progress ("Publishing…").
+ */
 function Button({
   className,
   variant,
   size,
   asChild = false,
+  busy = false,
+  children,
+  onClick,
+  "aria-disabled": ariaDisabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    busy?: boolean;
   }) {
   const Comp = asChild ? Slot : "button";
+  const working = busy && !asChild;
 
   return (
     <Comp
@@ -100,9 +119,18 @@ function Button({
       data-variant={variant ?? "secondary"}
       data-size={size ?? "sm"}
       type="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        working && "cursor-progress enabled:active:scale-100",
+      )}
+      aria-busy={working || undefined}
+      aria-disabled={working || ariaDisabled}
+      onClick={working ? undefined : onClick}
       {...props}
-    />
+    >
+      {working && <ButtonSpinner />}
+      {children}
+    </Comp>
   );
 }
 

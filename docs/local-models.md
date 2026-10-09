@@ -12,13 +12,25 @@ Qwen 3.8 Flash Next. Every other model the architecture can run is under More mo
 first, with "Needs a N GB Mac" when it does not fit. One build per model is shown: MLX on Apple
 Silicon, the portable GGUF elsewhere. The fit rule is weights + KV cache (0.5–3 GB) + 1.5 GB
 within 72% of unified memory on Apple Silicon (⅔ elsewhere). Recommendations are estimates; the
-large-Mac models added on 22 September 2026 have not been measured in Studio.
+large-Mac models have not been measured in Studio yet.
+
+An installed model's row offers Delete (a trash button, then Cancel or Delete on the row). A Bonsai
+delete removes the receipt first, stops a server loaded with that model, then deletes its weights
+and its finished download record; the shared projector, notices and runtime go too once no other
+Bonsai model keeps a receipt, weights or partial download. It is refused, removing nothing, while
+a download runs or a request holds the server. An Ollama delete only reaches Ollama for a name its
+`/api/tags` lists, and a cached default naming the deleted model is chosen again.
 
 Add from Ollama takes an exact model name (`name`, `name:tag`, `namespace/name:tag`). ollama.com
 has no search API, so main reads that tag's manifest from `registry.ollama.ai` (strict name validation,
 8-second timeout), sums its layers and applies the same fit rule before offering
 Download through the normal Ollama pull. Fixture profiles refuse the lookup. Installed Ollama models
 outside the catalog are listed as added from Ollama.
+
+Every Ollama download goes through the person's own Ollama at its host; Studio neither installs
+nor starts one. A pull that finds nothing answering there fails as `Unavailable` with that host
+named, not as the fetch's bare error, and its row then offers Install Ollama beside Download: the
+platform's page on ollama.com. The person installs and starts Ollama, then downloads again.
 
 Settings → Local Models downloads Bonsai weights and the Q8 vision projector directly from pinned
 Prism ML Hugging Face revisions, plus the pinned Prism llama.cpp macOS arm64 release.
@@ -72,11 +84,28 @@ Studio's app-wide assistant uses `complete` without tools; game chats and builds
 existing session/coordinator paths.
 
 The same director, worker, integration, preview and judging code runs for Bonsai sessions.
-Model roles accept Bonsai, Claude Code and Codex as orchestrator/worker/judge providers;
-engine/model pairs remain together. A single-model pick fills all roles; explicit crosses win.
+Model roles accept Bonsai, Claude Code, Codex, OpenCode and OpenRouter as orchestrator/worker/judge
+providers; engine/model pairs remain together. OpenRouter runs these same local sessions under its
+own engine id (`LocalSessions` `engine` option), with each model's catalog context. A single-model pick fills all roles; explicit crosses win.
 Existing saved subscription roles keep their version and choices. Session-capable local
-models get the Models role flyouts and model-specific effort sliders. Plain completion-only Ollama models keep the classic
-local loop.
+models get the Models role flyouts and model-specific effort sliders.
+
+Ollama holds no sessions (`roles: "completion"` in `shared/providers.ts`), yet a game chat on an
+Ollama model with tools gets the same three roles (`splitsRoles`): each job takes its own
+installed model and the run uses the classic local loop. One rule, `crossesTo` in both copies of
+`model-roles.ts`, decides which jobs leave the main agent's engine. An Ollama main agent may hand
+its workers and reviewers to a session provider; a session main agent may hand its reviewers to
+Ollama, never its workers, because the director hires every worker as a session. Reviewers look
+at screenshots, so an Ollama model without vision is listed but disabled in their menu, and a pick
+that cannot see leaves reviewing to the first installed model that can (or to itself when none
+can). The playtester plays on the reviewers' model when it calls tools and sees, else on the main
+agent's engine with that engine's own model; the scout is skipped under an Ollama main agent. A
+build turn on a model that cannot see receives a note instead of the turn's pictures
+(`unseen-pictures-prompts.ts`). A send that crosses a job to or from Ollama needs the
+`local-roles` harness capability, which `main.ts` claims only when `model-roles.ts`,
+`playtester.ts` and `scout.ts` all export `SERVES_LOCAL_ROLES` (`local-roles-served.ts`): an
+agent-edited older copy would put an Ollama model id on a subscription, so main refuses the send
+instead.
 
 `engines/local-session.ts` owns local session history under the engine home, separately for
 workers, directors and coordinators; its tools and path confinement live in
@@ -145,6 +174,9 @@ the core/harness, worktrees, integration and finish. Scripted responses prove pl
 model quality. The focused Settings UI runner covers routing, section switching, download error recovery and
 hydration after closing/reopening, using synthetic jobs. The build UI smoke covers both packing rows, failed-download recovery,
 installed state, local worker selection under Codex and subscription roles under Bonsai.
+
+`bonsai.test.ts` and `engine-ollama.test.ts` also cover Delete: what goes, what another model
+keeps, and refusals that remove nothing.
 
 `model-catalog.test.ts` covers ranking, Best fit per tier, one build per architecture and
 "Needs a N GB Mac"; `ollama-registry.test.ts` covers name validation, manifest URLs and size sums

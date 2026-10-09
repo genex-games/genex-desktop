@@ -3,7 +3,7 @@
  *
  * Every mode wrote these for itself — the director, the classic pipeline, a facet, the gauntlet —
  * and every copy ended in `.catch(() => {})`. A feed card or a journal write is never worth a
- * night, so a failure still must not throw; but one that nobody hears about is how a night ends
+ * run, so a failure still must not throw; but one that nobody hears about is how a run ends
  * with no journal to resume from and nothing in any log to say why. A failure is now written to
  * the harness's stderr (the host keeps it in its log), at most once a minute per kind, with how
  * many were not written out in between.
@@ -67,6 +67,7 @@ export const RunEvent = {
   FacetIteration: "facet_iteration",
   FacetLessons: "facet_lessons",
   FacetLiveness: "facet_liveness",
+  FacetMachinePressure: "facet_machine_pressure",
   FacetMove: "facet_move",
   FacetObservationOutage: "facet_observation_outage",
   FacetPartialEvaluated: "facet_partial_evaluated",
@@ -124,7 +125,7 @@ export type RunEvent = (typeof RunEvent)[keyof typeof RunEvent];
 export const JournalPhase = {
   /** The classic pipeline's one-part run. */
   Single: "single",
-  /** A director night: the lead's own session. */
+  /** A director run: the lead's own session. */
   Director: "director",
   Base: "base",
   Facets: "facets",

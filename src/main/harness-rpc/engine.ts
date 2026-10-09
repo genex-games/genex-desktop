@@ -42,7 +42,7 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
         x.consent.cancel(scope, "stop");
         x.permissions.cancel(scope, ToolPermissionBy.Stop);
       }
-      // One worker (director, 2026-09-07): the delegation building in this worktree, nothing else.
+      // One worker: the delegation building in this worktree, nothing else.
       if (p.cwd) {
         const running = delegationAt(x, p.cwd, p.worker);
         if (running) {
@@ -88,7 +88,7 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
     },
     [HostMethod.EngineDelegate]: async (p) => x.delegation.delegate(p),
     /**
-     * Steer (the chat's own turn, or a night's lead): messages the person sent while that turn
+     * Steer (the chat's own turn, or a run's lead): messages the person sent while that turn
      * works, into the session answering it — read mid-turn by an engine that can, or taken by
      * interrupting the session so its caller resumes it with them in front. A builder's session
      * never carries `chatTurn`: only the lead answers the chat during a build.

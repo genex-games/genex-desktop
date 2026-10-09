@@ -1,14 +1,14 @@
 /**
- * Publish pressed in Studio's own Publish dialog. Studio draws that dialog: it says what
- * publishing does, then shows the exact files that would go online, so publishing that list is the
- * person's consent and neither the native dialog nor a chat card asks again. A plugin panel's or toolbar's
+ * Publish pressed in Studio's own Publish dialog. Studio draws that dialog: it names the game and
+ * offers the exact files that would go online, and its Publish press uploads exactly those, so the
+ * press is the person's consent and neither the native dialog nor a chat card asks again. A plugin panel's or toolbar's
  * request for the same action is only relayed by the main frame, so it still goes through the
  * review, ticket and native dialog of `studio:plugins.action`, and an agent's publish asks in chat.
  * Neither the dialog, an agent nor a plugin's own export publishes a game that holds no web game at
  * its root, such as an Unreal game (`assertPublishable`).
  */
 import { CoreFact, hasFact, servedAsWebGame } from "../../shared/project-facts.ts";
-import { GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
+import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 
@@ -88,12 +88,21 @@ export async function publishReview(core: DialogCore, project: unknown): Promise
   return core.publicCopyFiles(binding.project);
 }
 
-/** Publish `project` to the Genex gallery, after the person approved `review` in the dialog. */
-export async function publishFromDialog(core: DialogCore, project: unknown, review: unknown): Promise<void> {
+/**
+ * Publish `project` to the Genex gallery under `title` (cleaned; the plugin picks the name when none is
+ * left), after the person approved `review` in the dialog.
+ */
+export async function publishFromDialog(
+  core: DialogCore,
+  project: unknown,
+  review: unknown,
+  title?: unknown,
+): Promise<void> {
   if (!isExportReview(review)) throw new Error(MESSAGE.NoFileList);
   const binding = await dialogBinding(core, project);
+  const name = cleanGenexTitle(title);
   // Genex exports inside this call, so the approval lives exactly as long as it.
   await core.withApprovedExport(GENEX_PLUGIN_ID, binding.project, review, () =>
-    core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, {}, binding),
+    core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, name ? { title: name } : {}, binding),
   );
 }

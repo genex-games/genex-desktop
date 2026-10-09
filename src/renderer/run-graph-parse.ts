@@ -1,6 +1,6 @@
 /**
  * The defensive readers behind `run-graph.ts`: every payload field the Builds graph reads comes
- * through here, so a record the harness wrote in another shape (or an older night's) reads as
+ * through here, so a record the harness wrote in another shape (or an older run's) reads as
  * absent rather than breaking the page.
  */
 import { customRecord } from "../shared/custom-events.ts";
@@ -116,7 +116,7 @@ function parseChecks(value: unknown): CheckResult[] {
   return value.map((raw) => parseCheck(raw, false));
 }
 
-/** A verdict record off an event payload. Null when the payload has no sentence — an older night. */
+/** A verdict record off an event payload. Null when the payload has no sentence — an older run. */
 export function parseVerdict(value: unknown): VerdictRecord | null {
   const row = record(value);
   const because = row ? str(row.because, "") : "";

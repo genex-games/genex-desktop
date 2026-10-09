@@ -9,10 +9,10 @@ import { cliName, fixtureCodingCli, wasStopped, writeCliLauncher } from "../help
  * the fix: the bundled binary is found first everywhere, and the sign-in it drives happens in
  * the app, with a Terminal window only for a CLI that cannot be driven from a pipe.
  *
- * The second half of the file is the judge's bill: every verdict is a one-shot CLI session, and
- * one night left 1353 transcript directories (1.3 GB) behind while re-uploading the same rubric
- * each call — because each session ran in a directory of its own. And it was judged by the
- * wrong model, from a preference an older build had saved.
+ * The second half of the file is the judge's bill: every verdict is a one-shot CLI session, and a
+ * session in a directory of its own leaves a transcript directory behind and re-uploads the same
+ * rubric each call. The judge must also be the model the roles name, never a preference an older
+ * build saved.
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
@@ -477,7 +477,7 @@ describe("the app is wired to its own binary", () => {
   });
 });
 
-describe("what one night of judging leaves behind", () => {
+describe("what a run of judging leaves behind", () => {
   /** A `projects/` tree the way Claude Code writes one: a directory per working directory. */
   async function seedHome(): Promise<string> {
     const home = await tmpDir("studio-judge-home-");
@@ -492,9 +492,9 @@ describe("what one night of judging leaves behind", () => {
     // The mkdtemp era: one directory per verdict, all of them from last month.
     await write("-private-var-folders-T-studio-judge-03aWRw", "a1.jsonl", 30 * 24 * 60 * 60_000);
     await write("-private-var-folders-T-studio-judge-06gFTw", "b2.jsonl", 30 * 24 * 60 * 60_000);
-    // Tonight's verdicts, in the one stable directory: the old transcript goes, the new stays.
+    // This run's verdicts, in the one stable directory: the old transcript goes, the new stays.
     await write("-private-var-folders-T-studio-judge-sessions", "old.jsonl", 30 * 24 * 60 * 60_000);
-    await write("-private-var-folders-T-studio-judge-sessions", "tonight.jsonl", 60_000);
+    await write("-private-var-folders-T-studio-judge-sessions", "this-run.jsonl", 60_000);
     // A game the user actually built in, older than any of it: never ours to delete.
     await write("-Users-me-ai-games-wreckage", "session.jsonl", 90 * 24 * 60 * 60_000);
     assert.ok(old < Date.now());
@@ -507,7 +507,7 @@ describe("what one night of judging leaves behind", () => {
     const left = (await readdir(path.join(home, "projects"))).sort();
     assert.deepEqual(left, ["-Users-me-ai-games-wreckage", "-private-var-folders-T-studio-judge-sessions"]);
     assert.deepEqual(await readdir(path.join(home, "projects", "-private-var-folders-T-studio-judge-sessions")), [
-      "tonight.jsonl",
+      "this-run.jsonl",
     ]);
     assert.deepEqual(await readdir(path.join(home, "projects", "-Users-me-ai-games-wreckage")), ["session.jsonl"]);
     assert.equal(
@@ -515,7 +515,7 @@ describe("what one night of judging leaves behind", () => {
       0,
       "a game's own transcripts are not housekeeping",
     );
-    // A week is the window, so last night's verdicts are still there to read in the morning.
+    // A week is the window, so last run's verdicts are still there to read in the morning.
     assert.ok(JUDGE_TRANSCRIPT_TTL_MS >= 7 * 24 * 60 * 60_000);
     const second = await sweepJudgeTranscripts(home);
     assert.deepEqual(second, [], "nothing left to sweep, and no second pass at what stayed");
@@ -559,7 +559,7 @@ describe("what one night of judging leaves behind", () => {
     }
     assert.equal(seen.length, 2);
     assert.equal(seen[0]!.cwd, seen[1]!.cwd, "a fresh folder per verdict was a guaranteed cache miss");
-    // The folder this run owns, not the machine-global one a live night's judge is sitting in.
+    // The folder this run owns, not the machine-global one a live run's judge is sitting in.
     assert.equal(seen[0]!.cwd, judgeCwd);
     assert.match(JUDGE_CWD, /studio-judge-sessions$/);
     // Still a blind one-shot: the folder is shared, the session never is.
@@ -595,7 +595,7 @@ describe("what one night of judging leaves behind", () => {
   });
 });
 
-describe("which model judges the night", () => {
+describe("which model judges the run", () => {
   it("drops a roles record an older build wrote, and keeps its own", () => {
     // What this install actually had: three slots filled with the orchestrator's model by a
     // build whose preset table said one pick meant one model everywhere.
@@ -660,10 +660,10 @@ describe("which model judges the night", () => {
     }
     // …by the judges' own engine's name for it, and with that engine named when the judges are
     // on the other subscription (cross-provider roles).
-    // Both nights say who judged: the lead's own run_started carries it too, and on which engine.
-    // director-cross-engine.test.ts proves it on a real night (a rig, L3); this keeps an L1 gate
+    // Both runs say who judged: the lead's own run_started carries it too, and on which engine.
+    // director-cross-engine.test.ts proves it on a real run (a rig, L3); this keeps an L1 gate
     // until the payload has a pure builder, which is a seed change of its own.
-    // The night's run_started is written where the night is prepared (director/setup.ts).
+    // The run's run_started is written where the run is prepared (director/setup.ts).
     const director = await read("src/harness-seed/loop/director/setup.ts");
     assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,400}judgeModel/);
     assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,600}judgeEngine: run\.judgeEngine/);
@@ -697,11 +697,16 @@ describe("which model judges the night", () => {
     assert.match(
       started({ engine: "claude-code", roles: { judge: "opus" } }),
       new RegExp(`${roleName("claude-code", "opus")}, reviewing`),
-      "an older night's roles still name its judge",
+      "an older run's roles still name its judge",
     );
     assert.match(
       started({ engine: "claude-code", judgeEngine: "codex", judgeModel: "gpt-6-astra" }),
       /GPT-6-astra on Codex, reviewing/i,
+    );
+    assert.match(
+      started({ engine: "claude-code", judgeEngine: "ollama", judgeModel: "qwen2.5vl" }),
+      /qwen2\.5vl on Ollama, reviewing/,
+      "a local reviewer's engine is named as a person says it",
     );
     assert.match(started({ engine: "claude-code" }), /a reviewer that cannot see which is which picks the winner/);
   });

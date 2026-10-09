@@ -7,6 +7,7 @@ import {
   type PluginScanFinding,
 } from "../../shared/plugins.ts";
 import { isIconPicture, pluginSkillDigests } from "./manifest.ts";
+import { isPackageEntry } from "./pack.ts";
 
 /**
  * Install-time static scan: disclosure, not isolation. Backends stay trusted native code in a
@@ -159,7 +160,9 @@ export async function scanPackage(root: string, manifest: PluginManifest): Promi
   let files = 0,
     bytes = 0;
   const walk = async (dir: string, rel: string): Promise<void> => {
-    for (const entry of (await readdir(dir)).sort()) {
+    // What is never installed is never run: the scan reads the package as it will be installed.
+    const entries = (await readdir(dir)).filter((entry) => isPackageEntry(entry, rel)).sort();
+    for (const entry of entries) {
       const full = path.join(dir, entry),
         file = rel ? `${rel}/${entry}` : entry,
         s = await lstat(full);

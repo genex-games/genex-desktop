@@ -5,7 +5,7 @@ import type { EventData } from "../../substrate/types.ts";
 
 const MESSAGE = {
   hostOnly:
-    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job and app access rows are written by the studio only",
+    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access and automatic resume rows are written by the studio only",
 } as const;
 const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolPermission,
@@ -29,6 +29,8 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.JobEnded,
   // What macOS access `app_look` still needs is the app's own finding.
   CustomEvent.AppLookAccess,
+  // The count of a run's automatic resumes bounds them (`core/auto-resume.ts`): only the host writes one.
+  CustomEvent.RunAutoResumed,
 ]);
 
 /** Refuse the entire batch before writing any row or updating the recovery index. */

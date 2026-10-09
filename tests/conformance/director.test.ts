@@ -1,7 +1,7 @@
 import { gitFile } from "../helpers/git.ts";
 /**
- * The director (director, 2026-09-07) — the run as one agent's decisions. The tools it is given, the brief
- * it opens with, the contract a worker is started on, and one night through the real core and
+ * The director — the run as one agent's decisions. The tools it is given, the brief
+ * it opens with, the contract a worker is started on, and one run through the real core and
  * the real harness child: a scripted director session starts a worker, waits for it, looks at
  * its build, integrates it, judges the integrated build, shows it to the user, and finishes —
  * every call crossing the studio → harness dispatch that answers, the integration branch
@@ -69,6 +69,7 @@ import {
 import { contractWiringAsk } from "../../src/harness-seed/loop/autopilot.ts";
 import { unversionedNested } from "../../src/harness-seed/loop/gauntlet.ts";
 import { judgeableFirst } from "../../src/harness-seed/loop/main.ts";
+import { OPEN_RUNG_WHAT } from "../../src/harness-seed/loop/facet/growth.ts";
 import {
   FACET_POLICY,
   FACET_POLICY_RANGE,
@@ -98,11 +99,11 @@ const text = (result: LiveToolResult): string => (typeof result === "string" ? r
 const json = (result: LiveToolResult): Record<string, any> => JSON.parse(text(result));
 
 /**
- * The night's plan, which every director now writes before its first builder (M3.8) — the card
+ * The run's plan, which every director now writes before its first builder (M3.8) — the card
  * the user reads. The scripted sessions below call it the way a real one would.
  */
 const planFor = (...ids: string[]): Record<string, unknown> => ({
-  summary: "Tonight: make the plaza somewhere you would want to skate.",
+  summary: "This run: make the plaza somewhere you would want to skate.",
   workers: JSON.stringify(
     ids.map((id) => ({
       id,
@@ -116,6 +117,30 @@ const planFor = (...ids: string[]): Record<string, unknown> => ({
   base: "the integration branch as it stands",
   risks: "one window at a time on this machine",
 });
+
+/**
+ * The vision a plan with a module contract gives beside it (loop/vision.ts): a loop worker under a
+ * contract waits for both.
+ */
+const PLAZA_VISION = JSON.stringify({
+  scale: "a plaza 40 metres across, three streets off it",
+  far: "rooftops and a church spire past the nearest buildings, a dusk sky",
+  set_pieces: ["the fountain at the plaza's heart", "a stair down to the river"],
+  headroom: "the river bank and a market street the plaza could grow into",
+});
+
+/**
+ * The same plan with the parts `singles` names built by one session only (`"mode":"single"`): one
+ * looping part is left, so no module contract is needed before its worker starts (contract-gate.ts).
+ */
+const planWithSingle = (singles: string[], ...ids: string[]): Record<string, unknown> => {
+  const plan = planFor(...ids);
+  const parts = JSON.parse(String(plan.workers)) as Array<{ id: string }>;
+  return {
+    ...plan,
+    workers: JSON.stringify(parts.map((part) => (singles.includes(part.id) ? { ...part, mode: "single" } : part))),
+  };
+};
 
 describe("the director's tools and brief", () => {
   it("offers flat, uniquely named run tools that both bridges can carry", () => {
@@ -190,7 +215,7 @@ describe("the director's tools and brief", () => {
       brief,
       /cwd is the run's integration worktree \(\/scratch\/autopilot\/run_d\/integration\).*commit abcdef1234/,
     );
-    // Flipped (golden-goal night, 2026-10-02): "5 of 6 worker windows free" counted the lead's own
+    // Flipped: "5 of 6 worker windows free" counted the lead's own
     // two windows as workers'. The line says how many workers may run at once.
     assert.match(
       brief,
@@ -228,8 +253,12 @@ describe("the director's tools and brief", () => {
     assert.doesNotMatch(codex, /mcp__studio__/, "a Codex director is never shown a name it cannot call");
     assert.match(brief, /THE PLAYBOOK:\n# playbook\nlook first/);
     assert.match(brief, /RULES THAT NEVER MOVE:/);
-    // Flipped (golden-goal night, 2026-10-02): one worker per area a player can name, the UI too.
-    assert.match(brief, /delegate with plan and worker_start: a worker per area a player can name, the UI and HUD too/);
+    // Flipped: one worker per area a player can name, the UI too.
+    // Flipped again: per area the ask names — "an area a player can name" grows a police pursuit
+    // out of a street race — and the pool is a ceiling, never a quota.
+    assert.match(brief, /delegate with plan and worker_start: a worker per area the ask names, the UI and HUD too/);
+    assert.match(brief, /CAPACITY: .*A ceiling, not a quota: start the fewest workers that cover independent files/);
+    assert.doesNotMatch(brief, /time lost/, "an idle window is not a loss: a system nobody asked for is");
     assert.match(brief, /Finish once required outcomes are verified; time is a ceiling/);
     assert.match(brief, /\.studio\/DIRECTOR\.md/);
     assert.ok(!brief.includes("YOU WERE RESUMED"));
@@ -346,7 +375,7 @@ describe("the director's tools and brief", () => {
    * A game that arrived as its own git repository (M2.5). With the user's consent the studio
    * versions that folder inside every fork, so "nothing inside is versioned … no edit inside it
    * is ever committed" — what the brief said in both worlds — was false in exactly the world it
-   * mattered in, and sent one night hand-porting 85k lines the fork already tracked. The lead can
+   * mattered in, and sent the lead hand-porting code the fork already tracked. The lead can
    * always ask its own worktree, so the brief sends it there instead of guessing for it.
    */
   it("sends the lead to its own worktree about a repository inside the game, and never claims nothing there is versioned", async () => {
@@ -404,7 +433,7 @@ describe("the director's tools and brief", () => {
   });
 
   /** And the user hears it before they walk away, in words that name no contract and no run. */
-  it("says in the chat that tonight starts by making the game judgeable — only when it is not", () => {
+  it("says in the chat that this run starts by making the game judgeable — only when it is not", () => {
     const said = judgeableFirst({ contract: "missing", problems: [] } as never);
     assert.match(said, /Your game doesn't have the studio's connection yet/);
     assert.match(said, /whether a change made the game better/);
@@ -427,10 +456,10 @@ describe("the director's tools and brief", () => {
 });
 
 /**
- * What the morning is allowed to say, and where the night stands when it is resumed. Both are
+ * What the morning is allowed to say, and where the run stands when it is resumed. Both are
  * pure: the close reads them, the report carries them, and the screen shows the sentence.
  */
-describe("the honest landing, the plain word and the night's own starting points", () => {
+describe("the honest landing, the plain word and the run's own starting points", () => {
   it("calls a judge's pick a preference only when it was against the build the user had", () => {
     const over = (against: string) =>
       landingWords({ judged: { head: "h", ok: true, against, pick: "challenger" }, healthPassed: false } as never);
@@ -460,7 +489,7 @@ describe("the honest landing, the plain word and the night's own starting points
     });
   });
 
-  it("keeps the base commit as a starting point when the night is resumed", () => {
+  it("keeps the base commit as a starting point when the run is resumed", () => {
     // First session, from scratch: the scaffold it forked from is the starting point.
     assert.deepEqual(startingHeads({ fromScratch: true, forkCommit: "scaffold", priorJournal: null } as never), [
       "scaffold",
@@ -476,7 +505,7 @@ describe("the honest landing, the plain word and the night's own starting points
       } as never),
       ["base"],
     );
-    // A resumed night standing on merged work: that head is a game and is judged like one.
+    // A resumed run standing on merged work: that head is a game and is judged like one.
     assert.deepEqual(
       startingHeads({
         fromScratch: true,
@@ -521,7 +550,7 @@ describe("the honest landing, the plain word and the night's own starting points
 });
 
 /**
- * The contract a worker is started on. The first director night wrote ten worker_start calls
+ * The contract a worker is started on. The first director run wrote ten worker_start calls
  * with checks and no weights: every board read identityTotal 0, "satisfied" was unreachable,
  * and thirteen probes over `state.<facet>.<field>` read `missing:` for six hours because
  * nothing had ever read one against a real state().
@@ -604,7 +633,7 @@ describe("a worker's contract: done, compiled and dry-run", () => {
     assert.equal(checkNamed(compiled.spec, "lit").weight, "normal");
   });
 
-  it("reads a path a probe names as a string too, so `delta('state.…')` cannot dry-run clean and then score false all night", () => {
+  it("reads a path a probe names as a string too, so `delta('state.…')` cannot dry-run clean and then score false for the whole run", () => {
     const compiled = compileWorkerSpec(
       {
         id: "contact",
@@ -661,6 +690,72 @@ describe("a worker's contract: done, compiled and dry-run", () => {
     assert.equal(blind.spec.checks.length, 2);
   });
 
+  it("refuses a floor on how much the build draws, and lets a screen part's board be judged by eye", () => {
+    // `hud-rich: len(hud.items) >= 60` rewards a HUD drawn from thousands of rectangles.
+    const compiled = compileWorkerSpec(
+      {
+        id: "hud",
+        brief: "a dashboard you read at a glance",
+        checks: [
+          { id: "hud-rich", kind: "probe", expr: "len(hud.items) >= 60" },
+          { id: "draw-budget", kind: "probe", expr: "__render.drawCalls <= 1000" },
+        ],
+      } as never,
+      base as never,
+    );
+    assert.equal(compiled.problems.length, 1, compiled.problems.join("\n"));
+    assert.match(compiled.problems[0]!, /hud-rich: a floor on how much the build draws/);
+    assert.equal(
+      checksOf(compiled.spec).some((c) => c.id === "hud-rich"),
+      false,
+    );
+    assert.ok(checkNamed(compiled.spec, "draw-budget"));
+
+    const looks = [
+      { id: "speed-readable", kind: "vision", camera: "default", ask: "Can you read the speed at a glance?" },
+      { id: "corners-clear", kind: "vision", camera: "default", ask: "Is the middle of the road clear of panels?" },
+      { id: "lap-readable", kind: "vision", camera: "default", ask: "Can you read the lap?" },
+      { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.1" },
+    ];
+    const screen = compileWorkerSpec(
+      { id: "hud", brief: "a dashboard", checks: looks, critic: "screen" } as never,
+      base as never,
+    );
+    assert.deepEqual(screen.problems, []);
+    assert.equal(screen.spec.critic, "screen");
+    const place = compileWorkerSpec({ id: "street", brief: "a street", checks: looks } as never, base as never);
+    assert.match(place.problems.join("\n"), /3 of 4 checks are vision/);
+  });
+
+  it("holds the front-end's owner to its menu, not to play, and every other worker to play", () => {
+    // `setup {"begin":false}` keeps the title on screen for that worker's evidence and judges
+    // (evidence.ts reachPlay, PlayVia.Kept): a board that asked it to be in play, to move the
+    // player from the menu, or to keep a full title panel inside the in-play HUD budget could
+    // never pass, and its worker could never finish.
+    const front = compileWorkerSpec(
+      { id: "menu", brief: "a title, a countdown and results", kind: "racing", setup: { begin: false } } as never,
+      null,
+    );
+    const ids = checksOf(front.spec).map((c) => c.id);
+    for (const inPlay of ["reaches-play", "hud-coverage", "keys-move-player"])
+      assert.ok(!ids.includes(inPlay), `${inPlay} is not on the front-end owner's board: ${ids.join(", ")}`);
+    assert.ok(ids.includes("hud-overlap"), "a menu's pieces still must not run into each other");
+    assert.ok(ids.includes("no-dom-ui"));
+
+    const car = compileWorkerSpec({ id: "car", brief: "a car", kind: "racing" } as never, null);
+    for (const inPlay of ["reaches-play", "hud-coverage", "keys-move-player"])
+      assert.ok(checkNamed(car.spec, inPlay), `${inPlay} is on a normal worker's board`);
+
+    // A harness check the ledger saw unmeasured is not the director's to re-point or drop.
+    const rarely = compileWorkerSpec({ id: "car", brief: "a car", kind: "racing" } as never, null, {
+      rarelyMeasurable: [
+        { id: "reaches-play", rounds: 4 },
+        { id: "hud-coverage", rounds: 3 },
+      ],
+    });
+    assert.deepEqual(rarely.rarelyMeasurable, []);
+  });
+
   it("finishes a worker on the checks it was given, not on the ones the judge grew", () => {
     const board = toScoreboard([
       { id: "speed-kept", kind: "probe", weight: "identity", pass: true },
@@ -686,7 +781,7 @@ describe("a worker's contract: done, compiled and dry-run", () => {
 
   it("compiles the director's move and milestones into the ladder the loop climbs", () => {
     // The ladder the director writes is the worker's move, one rung per accepted build. Without
-    // it the harness's own planner names one every iteration — the night that motivated this
+    // it the harness's own planner names one every iteration — the run that motivated this
     // told five workers to build puddles and a tow truck while the brief said mud.
     /** The ladder as the loop reads it (the seed is plain JS: `moveOwner` is not in its shape). */
     const ladderOf = (compiled: { spec: unknown }) =>
@@ -708,9 +803,11 @@ describe("a worker's contract: done, compiled and dry-run", () => {
       ),
     );
     assert.equal(compiled.moveOwner, "director", "the harness never invents a move over a ladder the director wrote");
+    // Flipped: the ladder ends with one open rung after the director's, which the reviewers' best
+    // step inside the ask fills when it is reached.
     assert.deepEqual(
       compiled.milestones.map((m) => m.what),
-      ["mud builds up on the panels", "clods fly off the wheels"],
+      ["mud builds up on the panels", "clods fly off the wheels", OPEN_RUNG_WHAT],
     );
     assert.equal(compiled.milestones[0]!.check!.origin, "milestone");
     assert.equal(compiled.milestones[0]!.check!.milestone, compiled.milestones[0]!.id);
@@ -726,12 +823,156 @@ describe("a worker's contract: done, compiled and dry-run", () => {
         base as never,
       ),
     );
-    assert.equal(unreadable.milestones.length, 1);
+    // Flipped with the open rung: the director's one rung, then the open one.
+    assert.equal(unreadable.milestones.length, 2);
     assert.match(String(unreadable.milestones[0]!.check!.note), /does not report state\.clods\.count yet/);
     // No ladder: the spec says so, and the loop falls back to the planner as it always did.
     const none = ladderOf(compileWorkerSpec({ id: "dirt", brief: "x" } as never, base as never));
     assert.deepEqual(none.milestones, []);
     assert.equal(none.moveOwner, undefined);
+  });
+
+  /**
+   * The finish stage: a worker that finishes what exists, where polish
+   * is the work and wins on the blind pick. The director sets it on worker_start and flips it on
+   * worker_steer; it rides on the spec like `moveOwner`, so the loop fixes it at the top of each
+   * round, and the run log records a steer.
+   */
+  it("compiles a finishing worker's stage onto its spec, and leaves a build worker's spec as it was", () => {
+    const finishing = compileWorkerSpec(
+      { id: "paint", brief: "finish the street", stage: "finish" } as never,
+      base as never,
+    );
+    assert.equal((finishing.spec as { stage?: string }).stage, "finish");
+    const building = compileWorkerSpec({ id: "paint", brief: "build the street" } as never, base as never);
+    assert.equal("stage" in building.spec, false, "a build worker's spec is byte for byte what it was");
+  });
+
+  it("refuses an unknown stage and a finish with a ladder by name, before it asks the machine for anything", async () => {
+    const { startRefusal } = await import("../../src/harness-seed/loop/director/workers.ts");
+    const asked: string[] = [];
+    const loopRun = {
+      ctx: { call: async (method: string) => void asked.push(method) },
+      runningWorkers: () => [],
+      softDeadline: Date.now() + 60 * 60_000,
+      state: { finish: false, workers: new Map() },
+      priorWorkers: [],
+    };
+    const refusal = async (args: Record<string, unknown>) =>
+      String(await startRefusal(loopRun as never, "paint", { id: "paint", brief: "finish", ...args }));
+    assert.match(await refusal({ stage: "polish" }), /stage: "polish" is not a stage \(build, finish\)/);
+    assert.match(await refusal({ stage: "finish", move: "rain slicks the street" }), /contradict/);
+    assert.match(
+      await refusal({ stage: "finish", milestones: JSON.stringify([{ what: "traffic weaves" }]) }),
+      /contradict/,
+    );
+    // A single session has no loop to read a stage: refused by name, never silently ignored.
+    assert.match(await refusal({ stage: "finish", mode: "single" }), /single session/);
+    assert.deepEqual(asked, [], "a typo is not a capacity problem: nothing was asked of the machine");
+  });
+
+  /**
+   * One owner of the screen, so no part draws readouts of its own beside the HUD part's. The part
+   * reviewed as a screen owns it; a second one is refused by name.
+   */
+  it("makes the part reviewed as a screen the screen's one owner, and refuses a second while it runs", async () => {
+    const { startRefusal } = await import("../../src/harness-seed/loop/director/workers.ts");
+    const start = DIRECTOR_TOOLS.find((t) => t.name === "worker_start")!;
+    assert.match(
+      String((start.parameters.properties as Record<string, { description?: string }>).critic?.description),
+      /screen makes it the one part that draws on the screen/,
+      "the director is told where it decides it",
+    );
+    const hud = compileWorkerSpec({ id: "hud", brief: "the HUD", critic: "screen" } as never, null);
+    assert.equal((hud.spec as { ownsScreen?: boolean }).ownsScreen, true);
+    const race = compileWorkerSpec({ id: "race", brief: "the race" } as never, null);
+    assert.equal("ownsScreen" in race.spec, false, "any other part's spec is what it was");
+    const loopRun = {
+      ctx: { call: async () => null },
+      runningWorkers: () => [{ id: "hud", state: "running", spec: hud.spec }],
+      softDeadline: Date.now() + 60 * 60_000,
+      state: { finish: false, workers: new Map([["hud", { id: "hud" }]]) },
+      priorWorkers: [],
+    };
+    const refusal = async (id: string, args: Record<string, unknown>) =>
+      String(await startRefusal(loopRun as never, id, { id, brief: "x", ...args }));
+    assert.match(await refusal("menus", { critic: "screen" }), /"hud" already owns the screen/);
+    assert.doesNotMatch(await refusal("race", {}), /owns the screen/, "a part that draws nothing is not refused");
+    assert.doesNotMatch(
+      await refusal("hud-2", { critic: "screen", replaces: "hud" }),
+      /owns the screen/,
+      "the owner's own restart takes the screen over",
+    );
+  });
+
+  it("turns a running worker to finishing with worker_steer stage=, and back to building with a move", async () => {
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const ladder = [{ id: "rain", what: "rain slicks the street" }];
+    const worker = {
+      id: "paint",
+      title: "Paint",
+      state: "running",
+      mode: "loop",
+      steering: [] as string[],
+      spec: { id: "paint", checks: [], milestones: ladder, moveOwner: "director" } as Record<string, unknown>,
+    };
+    const steered: string[] = [];
+    const loopRun = {
+      ctx: { cancelled: false },
+      toolCalls: 0,
+      toolsInFlight: 0,
+      run: { runId: "apex" },
+      state: { workers: new Map([["paint", worker]]), integrationHead: null, finished: false },
+      journal: null,
+      saveJournal: async () => {},
+      keepMemory: async () => {},
+      syncHead: async () => {},
+      appendRun: async (_type: string, payload: { text?: string }) => void steered.push(String(payload.text)),
+      interruptWorker: async () => false,
+    };
+    const steer = async (args: Record<string, unknown>) =>
+      String(await handler(loopRun as never, "worker_steer", { id: "paint", ...args }));
+    assert.match(await steer({}), /worker_steer needs text, move or stage/);
+    assert.match(await steer({ stage: "finish" }), /next round finishes/);
+    assert.equal(worker.spec.stage, "finish", "the loop holds this spec: its next round reads it");
+    assert.match(steered.at(-1)!, /stage: finish/, "the steer is on the record");
+    assert.match(await steer({ stage: "polish" }), /stage: "polish" is not a stage/);
+    assert.equal(worker.spec.stage, "finish", "a refused steer changes nothing");
+    assert.match(await steer({ stage: "finish", move: "traffic weaves in both lanes" }), /contradict/);
+    // The director's explicit move always wins: the worker is back in the build stage.
+    assert.match(await steer({ move: "traffic weaves in both lanes" }), /THE MOVE/);
+    assert.equal(worker.spec.stage, "build");
+    assert.match(await steer({ stage: "finish" }), /next round finishes/);
+    assert.match(await steer({ stage: "build" }), /next round builds/);
+    assert.equal(worker.spec.stage, "build");
+    const single = { ...worker, id: "solo", mode: "single", spec: null };
+    loopRun.state.workers.set("solo", single as never);
+    assert.match(
+      String(await handler(loopRun as never, "worker_steer", { id: "solo", stage: "finish" })),
+      /single session/,
+    );
+  });
+
+  it("shows a finishing worker's stage to the lead, and nothing for a building one", () => {
+    const worker = (spec: Record<string, unknown> | null) =>
+      ({
+        id: "paint",
+        title: "Paint",
+        mode: "loop",
+        state: "running",
+        startedAt: Date.now(),
+        deadline: Date.now() + 60_000,
+        iterations: [],
+        roundMs: [],
+        spec,
+        result: null,
+        loop: null,
+        monitor: null,
+        worktree: "/w",
+      }) as never;
+    assert.equal((workerDigest(worker({ stage: "finish", checks: [] })) as { stage?: string }).stage, "finish");
+    assert.equal("stage" in (workerDigest(worker({ checks: [] })) as object), false);
+    assert.equal("stage" in (workerDigest(worker(null)) as object), false);
   });
 
   it("inlines the check grammar in the tool the director actually reads", () => {
@@ -785,13 +1026,13 @@ describe("a worker's contract: done, compiled and dry-run", () => {
 });
 
 /**
- * The plan the user can read and approve (M3.8). The first real night had none: five workers
+ * The plan the user can read and approve (M3.8). The first real run had none: five workers
  * started at 16:25 on a 900-character decision card and a gitignored file, and in the morning
- * the Builds page showed ten parts, half of them red, with no page saying what the night set
+ * the Builds page showed ten parts, half of them red, with no page saying what the run set
  * out to do. Now a `plan` call comes first, and when the user asked to review it the first
  * worker waits for their word — bounded, and building anyway if nobody answers.
  */
-describe("the night's plan, before anyone builds", () => {
+describe("the run's plan, before anyone builds", () => {
   const parts = [
     {
       id: "Plaza Lighting",
@@ -816,14 +1057,14 @@ describe("the night's plan, before anyone builds", () => {
 
   it("compiles what the lead typed into the plan the user reads, and refuses what they could not", () => {
     const compiled = compilePlan({
-      summary: "  Tonight: dusk on the plaza, and something to sit on.  ",
+      summary: "  This run: dusk on the plaza, and something to sit on.  ",
       workers: JSON.stringify(parts),
       base: "the starting point at dusk",
       risks: "the pool is small\nBlender is not installed",
     });
     assert.ok(!("error" in compiled), JSON.stringify(compiled));
     const plan = (compiled as { plan: any }).plan;
-    assert.equal(plan.summary, "Tonight: dusk on the plaza, and something to sit on.");
+    assert.equal(plan.summary, "This run: dusk on the plaza, and something to sit on.");
     assert.deepEqual(
       plan.workers.map((w: any) => w.id),
       ["plaza-lighting", "benches"],
@@ -868,6 +1109,190 @@ describe("the night's plan, before anyone builds", () => {
       ).error,
       /at most 12/,
     );
+  });
+
+  /**
+   * The plan says what it leaves out and what it builds beyond the ask, so a part the lead invents
+   * is never frozen as required acceptance without the user being asked about it.
+   */
+  it("names what the plan cuts and what it added beyond the ask: cuts join the scope, each addition is one card for the user, and never scope without their own words", async () => {
+    const { setPlan } = await import("../../src/harness-seed/loop/director/workers.ts");
+    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
+    const workers = JSON.stringify([
+      { id: "race", done: ["four rivals race one lap"] },
+      { id: "pursuit", done: ["a pursuit meter fills"], added: true },
+    ]);
+    const args = {
+      summary: "One race against four rivals.",
+      workers,
+      cut: "police\ntraffic",
+      added: '["a pursuit meter"]',
+    };
+    const compiled = compilePlan(args) as { plan: any };
+    assert.deepEqual(compiled.plan.cut, ["police", "traffic"]);
+    assert.deepEqual(compiled.plan.added, ["a pursuit meter"]);
+    assert.equal(compiled.plan.workers[1].added, true, "a part beyond the ask says so");
+    assert.equal("added" in compiled.plan.workers[0], false);
+    const bare = (compilePlan({ summary: "s", workers }) as { plan: any }).plan;
+    assert.equal("cut" in bare || "added" in bare, false, "a plan that names neither is what it was");
+
+    const said = "yes, keep the pursuit meter";
+    const decisions: Array<[string, string | undefined]> = [];
+    const notes: string[] = [];
+    const loopRun = (budgets: Record<string, unknown> = {}, steers: string[] = []) => {
+      const run = {
+        runId: "apex",
+        project: "apex",
+        goal: "a street race",
+        budgets,
+        scope: createScope({ asked: ["a street race"], inScope: ["one race"], cut: ["open world"] }),
+      };
+      return {
+        run,
+        steers,
+        ctx: { call: async () => null },
+        resume: false,
+        waking: false,
+        softDeadline: Date.now() + 60 * 60_000,
+        state: { plan: null, goals: undefined, planReviewUntil: null, planSaidFrom: 0, planGo: false } as any,
+        journal: { director: {}, plan: {}, run: { ...run } } as any,
+        saveJournal: async () => {},
+        note: (text: string) => void notes.push(text),
+        appendRun: async () => {},
+        decision: async (text: string, plain?: string) => void decisions.push([text, plain]),
+        // The user's steers so far, as the inbox reads them at each call: later ones arrive later.
+        inbox: { steering: async () => [...steers] },
+      };
+    };
+    const lead = loopRun();
+    await setPlan(lead as never, { ...args, cut: "police\ntraffic\none race" });
+    assert.equal(decisions.length, 1, `one card per addition: ${JSON.stringify(decisions)}`);
+    assert.match(String(decisions[0]![1]), /a pursuit meter/);
+    assert.deepEqual(lead.run.scope.cut, ["open world", "police", "traffic"], "cuts only grow");
+    assert.deepEqual(lead.run.scope.inScope, ["one race"], "and never cut what the user asked for");
+    assert.ok(
+      notes.some((text) => text.includes("one race")),
+      `the lead hears which cut was not taken: ${notes.join(" | ")}`,
+    );
+    assert.deepEqual(lead.run.scope.added, ["a pursuit meter"], "waiting for the user's yes");
+    assert.ok(!lead.run.scope.inScope.includes("a pursuit meter"), "and not in scope by itself");
+    assert.deepEqual(lead.journal.run.scope, lead.run.scope, "the journal keeps it for a Resume");
+    await setPlan(lead as never, args);
+    assert.equal(decisions.length, 1, "a replan naming the same addition posts nothing new");
+    await setPlan(lead as never, { ...args, added: '["a helicopter"]', scope_instruction: "the user wants one" });
+    assert.ok(!lead.run.scope.inScope.includes("a helicopter"), "a steer the user never wrote widens nothing");
+    assert.equal(decisions.length, 2);
+    // The user answers the card.
+    lead.steers.push(said);
+    await setPlan(lead as never, { ...args, scope_instruction: said });
+    assert.ok(lead.run.scope.inScope.includes("a pursuit meter"), "their own words, quoted, widen it");
+    assert.ok(!lead.run.scope.added.includes("a pursuit meter"));
+    assert.equal(decisions.length, 2);
+
+    const goal = loopRun({ completionPolicy: "goal" });
+    await setPlan(goal as never, args);
+    assert.deepEqual(
+      goal.state.goals.entries.map((entry: { id: string; required: boolean }) => [entry.id, entry.required]),
+      [
+        ["race", true],
+        ["pursuit", false],
+      ],
+      "an added part is an optional goal: it never holds the finish",
+    );
+
+    // Review of WP-SCOPE-2: a steer the user sent before the card asked them anything (here,
+    // about the cars) is quoted to revise acceptance; it never says yes to the pursuit meter.
+    const earlier = loopRun({ completionPolicy: "goal" }, ["make the cars faster"]);
+    await setPlan(earlier as never, args);
+    const revised = await setPlan(earlier as never, { ...args, scope_instruction: "make the cars faster" });
+    assert.doesNotMatch(String(revised), /Scope revision needs/, "the steer revises acceptance, as it may");
+    assert.ok(
+      !earlier.run.scope.inScope.includes("a pursuit meter"),
+      "an answer to nothing the card asked widens nothing",
+    );
+    assert.deepEqual(earlier.run.scope.added, ["a pursuit meter"], "it still waits for the user");
+
+    // A goal-mode plan whose every part is beyond the ask would leave no goal that can pass.
+    const nothingAsked = loopRun({ completionPolicy: "goal" });
+    const refused = await setPlan(nothingAsked as never, {
+      ...args,
+      workers: JSON.stringify([{ id: "pursuit", done: ["a pursuit meter fills"], added: true }]),
+    });
+    assert.match(String(refused), /at least one part must be what the user asked for/);
+    assert.equal(nothingAsked.state.plan, null, "and is not taken");
+  });
+
+  /**
+   * Review SR-5: a card's place among the user's steers was a count of the steers its run's inbox
+   * held. A reopened build hears the user only from its ask on, so a yes sent after the reopen sat
+   * at an index below that count and never answered a card the finished build had posted.
+   */
+  it("SR-5. a yes the user sends after a reopen answers an addition the finished build asked about", async () => {
+    const { setPlan } = await import("../../src/harness-seed/loop/director/workers.ts");
+    const { createRunInbox } = await import("../../src/harness-seed/loop/run-inbox.ts");
+    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
+    const { HostMethod } = await import("../../src/harness-seed/loop/host-methods.ts");
+    const { EventKind, RunEvent } = await import("../../src/harness-seed/loop/run-events.ts");
+    const args = {
+      summary: "One race against four rivals.",
+      workers: JSON.stringify([
+        { id: "race", done: ["four rivals race one lap"] },
+        { id: "pursuit", done: ["a pursuit meter fills"], added: true },
+      ]),
+      added: '["a pursuit meter"]',
+    };
+    const log: any[] = [];
+    const steer = (id: string, text: string, sentMs: number) =>
+      log.push({
+        id,
+        created_at: new Date(sentMs).toISOString(),
+        data: { type: EventKind.Custom, event_type: RunEvent.RunSteering, payload: { runId: "apex", text } },
+      });
+    const ctx = {
+      threadId: "t",
+      call: async (method: string, params: { after?: string }) => {
+        if (method !== HostMethod.EventsList) return null;
+        const from = params.after ? log.findIndex((event) => event.id === params.after) + 1 : 0;
+        return log.slice(from);
+      },
+    };
+    const decisions: string[] = [];
+    const run = {
+      runId: "apex",
+      project: "apex",
+      goal: "a street race",
+      budgets: {},
+      scope: createScope({ asked: ["a street race"], inScope: ["one race"] }),
+    };
+    const loopRunOn = (after: string | null, plan: any) => ({
+      run,
+      ctx,
+      resume: after !== null,
+      waking: false,
+      softDeadline: Date.now() + 60 * 60_000,
+      state: { plan, goals: undefined, planReviewUntil: null, planSaidFrom: 0, planGo: false } as any,
+      journal: { director: {}, plan: {}, run: { ...run } } as any,
+      saveJournal: async () => {},
+      note: () => {},
+      appendRun: async () => {},
+      decision: async (text: string) => void decisions.push(text),
+      inbox: createRunInbox(ctx as never, { threadId: "t", runId: "apex", after }),
+    });
+    // The finished build: two steers about the cars, then its plan's card about the pursuit meter.
+    steer("s1", "make the cars faster", Date.now() - 120_000);
+    steer("s2", "and louder", Date.now() - 60_000);
+    const finished = loopRunOn(null, null);
+    await setPlan(finished as never, args);
+    assert.equal(decisions.length, 1, "the finished build asked about the pursuit meter");
+
+    // Reopened: its inbox reads from the reopening ask on; the plan, and the card it asked, go on.
+    log.push({ id: "ask", created_at: new Date().toISOString(), data: { type: EventKind.Custom } });
+    const said = "yes, keep the pursuit meter";
+    steer("s3", said, Date.now() + 1_000);
+    const reopened = loopRunOn("ask", finished.state.plan);
+    await setPlan(reopened as never, { ...args, scope_instruction: said });
+    assert.ok(run.scope.inScope.includes("a pursuit meter"), "the user's yes after the reopen widens the scope");
+    assert.equal(decisions.length, 1, "and nothing is asked twice");
   });
 
   it("takes what kind of game this is on the plan, and refuses a kind that is not one", () => {
@@ -929,12 +1354,12 @@ describe("the night's plan, before anyone builds", () => {
     assert.equal(
       planReviewWaitMs({ reviewPlan: true, resume: true, sessionMsLeft: 8 * 3_600_000 }),
       0,
-      "a resumed night was reviewed the first time",
+      "a resumed run was reviewed the first time",
     );
     assert.equal(
       planReviewWaitMs({ reviewPlan: true, sessionMsLeft: 8 * 3_600_000 }),
       PLAN_REVIEW_WAIT_MS,
-      "the whole window on a long night",
+      "the whole window on a long run",
     );
     assert.equal(
       planReviewWaitMs({ reviewPlan: true, sessionMsLeft: 10 * 60_000 }),
@@ -958,10 +1383,10 @@ describe("the night's plan, before anyone builds", () => {
         until: clock + windowMs,
       };
     };
-    const go = rig([[], [], ["go ahead, that is the night"]]);
+    const go = rig([[], [], ["go ahead, that is the run"]]);
     assert.deepEqual(
       await waitForPlanGo({ until: go.until, read: go.read, sleep: go.sleep, now: go.now }),
-      { go: true, said: ["go ahead, that is the night"], reason: "go" },
+      { go: true, said: ["go ahead, that is the run"], reason: "go" },
       "the same one word the programmed pipeline's review has always taken",
     );
 
@@ -979,7 +1404,7 @@ describe("the night's plan, before anyone builds", () => {
     );
 
     // Nobody answers: the call gives up its slice long before the window, and the window itself
-    // is the auto-proceed — an unanswered night still builds.
+    // is the auto-proceed — an unanswered run still builds.
     const quiet = rig([]);
     const sliced = await waitForPlanGo({
       until: quiet.until,
@@ -1012,13 +1437,13 @@ describe("the night's plan, before anyone builds", () => {
   });
 
   it("clamps its own memory to a size a session can afford, on a line boundary, without accumulating banners", () => {
-    const short = "# the night\nlooked at the plaza\ncommitted abc123";
+    const short = "# the run\nlooked at the plaza\ncommitted abc123";
     assert.equal(clampDirectorMemory(short), short, "a memory that fits comes back byte for byte");
 
     const long = Array.from({ length: 4_000 }, (_, i) => `line ${i}: what the director saw and decided`).join("\n");
     const clamped = clampDirectorMemory(long);
     assert.ok(clamped.length <= MAX_DIRECTOR_MEMORY, `${clamped.length} <= ${MAX_DIRECTOR_MEMORY}`);
-    assert.ok(clamped.startsWith("line 0:"), "the head is what the night set out to do");
+    assert.ok(clamped.startsWith("line 0:"), "the head is what the run set out to do");
     assert.ok(
       clamped.trimEnd().endsWith("line 3999: what the director saw and decided"),
       "the tail is where it actually is",
@@ -1032,13 +1457,13 @@ describe("the night's plan, before anyone builds", () => {
     assert.match(banner[0], /\d+ characters of older notes dropped/, "and it says how much went");
 
     // The clamp runs on the way out (the artifact) and again on the way in (the restore); a
-    // night resumed four times must not stack four banners.
+    // run resumed four times must not stack four banners.
     let again = clamped;
     for (let i = 0; i < 4; i += 1) again = clampDirectorMemory(again);
     assert.equal(again, clamped, "clamping a clamped memory changes nothing");
     assert.equal(again.split("\n").filter((l) => l.includes("dropped by the studio")).length, 1);
 
-    // The head is roughly a third of the budget: the tail is where the night is now.
+    // The head is roughly a third of the budget: the tail is where the run is now.
     const head = clamped.slice(0, clamped.indexOf("dropped by the studio"));
     assert.ok(head.length < clamped.length * 0.5, `head ${head.length} of ${clamped.length}`);
 
@@ -1053,7 +1478,7 @@ describe("the night's plan, before anyone builds", () => {
    * The clamp is a size, not an event: it keeps clamping for as long as the file is over the
    * ceiling, and `keepMemory` runs at the top of EVERY director tool call. Said before the
    * "nothing changed" guard, its note went into the log on every call for the rest of the
-   * night — and the log is capped at 400 entries, so within a couple of hundred calls it was
+   * run — and the log is capped at 400 entries, so within a couple of hundred calls it was
    * the only thing in the log the director's own `wait` reads back.
    */
   it("says the memory was clamped once per change, not once per tool call", () => {
@@ -1075,7 +1500,7 @@ describe("the night's plan, before anyone builds", () => {
     assert.ok(next.note, "a new clamp of a changed file is worth one line");
     assert.equal(directorMemoryKeep(grown, next.text).note, null);
     // A memory under the ceiling is kept whole and says nothing at all.
-    const short = "# the night\nlooked at the plaza";
+    const short = "# the run\nlooked at the plaza";
     const small = directorMemoryKeep(short, null);
     assert.equal(small.text, short);
     assert.equal(small.changed, true);
@@ -1134,7 +1559,7 @@ describe("the night's plan, before anyone builds", () => {
 
 /**
  * The worker monitor and cross-worker defect routing (M3.5). Both are the same complaint from
- * the first real night: nothing between "worker started" and "iteration done" ever reached the
+ * the first real run: nothing between "worker started" and "iteration done" ever reached the
  * director, and every defect a judge named landed on whichever worker happened to be judged.
  */
 describe("the studio's own look at a running worker, and whose defect it is", () => {
@@ -1396,9 +1821,9 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
     );
   });
 
-  it("answers a wait with a line per worker, not the night's whole status blob", () => {
+  it("answers a wait with a line per worker, not the run's whole status blob", () => {
     const now = Date.now();
-    // Five workers, the shape of the recorded night: boards, moves, worktrees, a monitor look.
+    // Five workers, the shape of the recorded run: boards, moves, worktrees, a monitor look.
     const workers = ["contact", "crumple", "cars", "dirt", "post"].map((id, i) => ({
       id,
       title: `${id} — ${id} pass`,
@@ -1468,7 +1893,7 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
         state: "stopped",
         monitor: null,
         iterations: [],
-        result: { stoppedBecause: "stopped by the director: the night is wrapping up" },
+        result: { stoppedBecause: "stopped by the director: the run is wrapping up" },
       } as never,
       now,
     );
@@ -1476,13 +1901,13 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
       id: "crumple",
       state: "stopped",
       accepted: 0,
-      stoppedBecause: "stopped by the director: the night is wrapping up",
+      stoppedBecause: "stopped by the director: the run is wrapping up",
     });
   });
 
   /**
    * What a round on this game costs (M3.4). Every worker used to be sized on the assumption
-   * that a round takes eight minutes; the rounds of the first real night took nine to
+   * that a round takes eight minutes; the rounds of the first real run took nine to
    * forty-six, so a worker given forty minutes got one round and the next one's second round
    * was cut in half. The director now reads the measurement instead of the assumption.
    */
@@ -1516,9 +1941,9 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
   });
 
   /**
-   * The windows a night may hand out (M3.7). Two of the pool's are the director's — the one its
+   * The windows a run may hand out (M3.7). Two of the pool's are the director's — the one its
    * own session looks through and the one every judge, health and close pass leases for a moment
-   * — because the first real night gave five of six to workers, took the sixth for itself, and
+   * — because the first real run gave five of six to workers, took the sixth for itself, and
    * then ran every one of its health passes on the user's own live window.
    */
   it("keeps two windows out of the workers' share, and still runs one builder in a pool of two", () => {
@@ -1537,7 +1962,7 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
 
 /**
  * The loop the director can see (M4.10). A director hands out workers and then goes blind to
- * the machinery deciding their night: which round they are in, whether the judge's biggest gap
+ * the machinery deciding their run: which round they are in, whether the judge's biggest gap
  * has become mandatory, how much of the judge-check budget is spent, what a round costs. These
  * are the pure halves of that — the policy it may set, the state the loop reports, the digests
  * it reads and the notes that wake its wait.
@@ -1604,7 +2029,7 @@ describe("the loop the director can see, and the thresholds it may set", () => {
     );
     assert.match((normalizeFacetPolicy("not json") as unknown as { error: string }).error, /policy: not JSON/);
     assert.match((normalizeFacetPolicy("[1,2]") as unknown as { error: string }).error, /a JSON object of thresholds/);
-    // Clamped, with a warning: a night is not refused over a number that is merely too big.
+    // Clamped, with a warning: a run is not refused over a number that is merely too big.
     const clamped = normalizeFacetPolicy({ maxJudgeChecks: 99 }) as unknown as {
       policy: Record<string, number>;
       warnings: string[];
@@ -1782,7 +2207,7 @@ describe("the loop the director can see, and the thresholds it may set", () => {
       "a worker on the harness's own policy claims no policy",
     );
 
-    // `wait` is called dozens of times a night: it gains exactly one line, and only the one a
+    // `wait` is called dozens of times a run: it gains exactly one line, and only the one a
     // waiting director has to act on.
     const line = waitDigest(worker as never, now) as Record<string, any>;
     assert.equal(line.mandatoryFix, "the trees read as boulders on posts");
@@ -1940,8 +2365,8 @@ function runEventTypes(events: Awaited<ReturnType<typeof waitForLog>>, runId: st
   return types;
 }
 
-/** A night as the director's tool handler reads it, with a builder `plaza` and a recording host. */
-function markingNight(state: string) {
+/** A run as the director's tool handler reads it, with a builder `plaza` and a recording host. */
+function markingLoopRun(state: string) {
   const rec = ctxRecorder({
     handlers: {
       "artifact.read": () => null,
@@ -1956,7 +2381,7 @@ function markingNight(state: string) {
   const cards: string[] = [];
   const log: Array<{ seq: number; text: string }> = [];
   const plaza = { id: "plaza", title: "Plaza", state, mode: "loop" };
-  const night = {
+  const loopRun = {
     ctx: rec.ctx,
     toolCalls: 0,
     toolsInFlight: 0,
@@ -1975,7 +2400,7 @@ function markingNight(state: string) {
     syncHead: async () => {},
     integrate: async (args: unknown) => {
       integrated.push(args);
-      night.state.integrationHead = "bbb";
+      loopRun.state.integrationHead = "bbb";
       return "merged plaza";
     },
     decision: async (text: string) => {
@@ -1987,29 +2412,31 @@ function markingNight(state: string) {
     routeUserSteers: async () => {},
     inbox: { steering: async () => [], finishing: async () => false },
   };
-  return { night, rec, integrated, cards, log };
+  return { loopRun, rec, integrated, cards, log };
 }
 
 describe("the director's worker_mark and readers, in Genex's one worker model", () => {
   it("worker_mark used integrates the worker, and rejected stops its news", async () => {
     const { handler, wait } = await import("../../src/harness-seed/loop/director/tools.ts");
-    const used = markingNight("running");
-    assert.equal(await handler(used.night as never, "worker_mark", { id: "plaza", verdict: "used" }), "merged plaza");
+    const used = markingLoopRun("running");
+    assert.equal(await handler(used.loopRun as never, "worker_mark", { id: "plaza", verdict: "used" }), "merged plaza");
     assert.deepEqual(used.integrated, [{ worker: "plaza" }], "used is integrate for that worker");
 
-    const rejected = markingNight("done");
-    rejected.night.note("worker plaza: iteration 2 accepted");
-    rejected.night.note("USER SAYS: keep the plaza red");
-    const answer = String(await handler(rejected.night as never, "worker_mark", { id: "plaza", verdict: "rejected" }));
+    const rejected = markingLoopRun("done");
+    rejected.loopRun.note("worker plaza: iteration 2 accepted");
+    rejected.loopRun.note("USER SAYS: keep the plaza red");
+    const answer = String(
+      await handler(rejected.loopRun as never, "worker_mark", { id: "plaza", verdict: "rejected" }),
+    );
     assert.match(answer, /Rejected plaza/);
     assert.deepEqual(rejected.integrated, [], "rejected integrates nothing");
     assert.match(rejected.cards.join("\n"), /rejected worker plaza/, "the feed says so");
-    const waited = JSON.parse(String(await wait(rejected.night as never, { seconds: "1" })));
+    const waited = JSON.parse(String(await wait(rejected.loopRun as never, { seconds: "1" })));
     assert.deepEqual(waited.happened, ["USER SAYS: keep the plaza red"], "its news stops; the user's words do not");
     assert.deepEqual(waited.status.workers, [], "the digest no longer names it");
     assert.match(
       String(
-        await handler(markingNight("running").night as never, "worker_mark", { id: "plaza", verdict: "rejected" }),
+        await handler(markingLoopRun("running").loopRun as never, "worker_mark", { id: "plaza", verdict: "rejected" }),
       ),
       /still running/,
       "a running worker is stopped first",
@@ -2019,9 +2446,9 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
   it("a reader started with isolation read works in place and never integrates", async () => {
     const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
     const { closeReaders } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
-    const { night, rec, integrated, log } = markingNight("done");
+    const { loopRun, rec, integrated, log } = markingLoopRun("done");
     const started = String(
-      await handler(night as never, "worker_start", {
+      await handler(loopRun as never, "worker_start", {
         id: "look",
         title: "Look",
         task: "Read the HUD.",
@@ -2029,34 +2456,34 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
       }),
     );
     assert.match(started, /^Started w1 \(read\)/);
-    const status = String(await handler(night as never, "worker_wait", { id: "w1", seconds: "5" }));
+    const status = String(await handler(loopRun as never, "worker_wait", { id: "w1", seconds: "5" }));
     assert.match(status, /w1 · Look · read · done/);
     const [delegation] = rec.paramsOf("engine.delegate");
     assert.equal(delegation?.readOnly, true, "it writes nothing");
     assert.equal(delegation?.cwd, undefined, "it works in the game folder itself");
-    assert.deepEqual(delegation?.worker, { id: "w1", title: "Look", runId: night.run.runId, research: false });
+    assert.deepEqual(delegation?.worker, { id: "w1", title: "Look", runId: loopRun.run.runId, research: false });
     assert.deepEqual(rec.paramsOf("snapshot.create"), [], "no copy is made for it");
     assert.match(log.map((entry) => entry.text).join("\n"), /worker w1: Look done/, "its end is the lead's news");
     assert.match(
-      String(await handler(night as never, "worker_mark", { id: "w1", verdict: "used" })),
+      String(await handler(loopRun as never, "worker_mark", { id: "w1", verdict: "used" })),
       /nothing to merge/,
     );
     assert.deepEqual(integrated, [], "a reader never integrates");
     assert.match(
-      String(await handler(night as never, "worker_start", { id: "lock", task: "write here", isolation: "lock" })),
+      String(await handler(loopRun as never, "worker_start", { id: "lock", task: "write here", isolation: "lock" })),
       /never in the game folder itself/,
       "the web method refuses a writer in place",
     );
-    await closeReaders(night as never);
+    await closeReaders(loopRun as never);
   });
 
   it("a builder waiting on the person is the lead's news: worker_wait wakes on it and its line says so", async () => {
     const { handler, wait } = await import("../../src/harness-seed/loop/director/tools.ts");
-    const { night, rec, log } = markingNight("running");
+    const { loopRun, rec, log } = markingLoopRun("running");
     const plaza = { iterations: [], deadline: Date.now() + 60_000, brief: "a red plaza", problems: [], steering: [] };
-    Object.assign(night.state.workers.get("plaza")!, plaza);
-    // The night binds every tool's function to itself; this one hands `worker_wait` to the real one.
-    Object.assign(night, { wait: (args: Record<string, unknown>) => wait(night as never, args) });
+    Object.assign(loopRun.state.workers.get("plaza")!, plaza);
+    // The run binds every tool's function to itself; this one hands `worker_wait` to the real one.
+    Object.assign(loopRun, { wait: (args: Record<string, unknown>) => wait(loopRun as never, args) });
     const question = {
       id: "e1",
       data: {
@@ -2072,12 +2499,12 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
     };
     rec.handle("events.list", (p) => (p.after ? [] : [question]));
     const started = Date.now();
-    const waited = JSON.parse(String(await handler(night as never, "worker_wait", { id: "plaza", seconds: "30" })));
+    const waited = JSON.parse(String(await handler(loopRun as never, "worker_wait", { id: "plaza", seconds: "30" })));
     assert.ok(Date.now() - started < 10_000, "it woke at once");
     assert.match(waited.happened.join("\n"), /worker plaza is waiting for the person: Plaza wants to run npm install/);
     assert.equal(waited.status.workers[0]?.waitingForPerson, "Plaza wants to run npm install");
     assert.equal(log.filter((entry) => /waiting for the person/.test(entry.text)).length, 1, "told once");
-    const status = JSON.parse(String(await handler(night as never, "worker_status", { id: "plaza" })));
+    const status = JSON.parse(String(await handler(loopRun as never, "worker_status", { id: "plaza" })));
     assert.equal(status.waitingForPerson, "Plaza wants to run npm install");
     assert.equal(log.filter((entry) => /waiting for the person/.test(entry.text)).length, 1, "and not again");
   });
@@ -2085,8 +2512,8 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
   it("a reader may be a researcher", async () => {
     const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
     const { closeReaders } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
-    const { night, rec } = markingNight("done");
-    await handler(night as never, "worker_start", {
+    const { loopRun, rec } = markingLoopRun("done");
+    await handler(loopRun as never, "worker_start", {
       title: "Look",
       task: "How do others do it?",
       isolation: "read",
@@ -2094,21 +2521,21 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
     });
     const [delegation] = rec.paramsOf("engine.delegate");
     assert.equal((delegation?.worker as { research?: boolean } | undefined)?.research, true);
-    await closeReaders(night as never);
+    await closeReaders(loopRun as never);
   });
 
   it("still answers the old name wait, which a kept playbook may call", async () => {
     const { handler, wait } = await import("../../src/harness-seed/loop/director/tools.ts");
-    const { night } = markingNight("done");
-    night.state.workers.clear();
-    // The night binds every tool's function to itself; this one hands `wait` to the real one.
-    const bound = Object.assign(night, { wait: (args: Record<string, unknown>) => wait(bound as never, args) });
+    const { loopRun } = markingLoopRun("done");
+    loopRun.state.workers.clear();
+    // The run binds every tool's function to itself; this one hands `wait` to the real one.
+    const bound = Object.assign(loopRun, { wait: (args: Record<string, unknown>) => wait(bound as never, args) });
     const waited = JSON.parse(String(await handler(bound as never, "wait", { seconds: "1" })));
     assert.deepEqual(waited.happened, ["nothing yet"]);
   });
 });
 
-describe("a director's night through the real core and harness", () => {
+describe("a director's run through the real core and harness", () => {
   it("starts a worker, waits, looks, integrates, judges, shows, finishes — and the integration branch lands", async () => {
     const rig = await startRig(
       { replies: [] },
@@ -2179,7 +2606,7 @@ describe("a director's night through the real core and harness", () => {
           await call("finish", { summary: "the plaza is red and lit", land: "yes", victory: "yes" }),
         );
         results.after = text(await call("worker_start", { id: "late", brief: "too late" }));
-        return { ok: true, engine: "codex", turns: 14, usage: {}, sessionId: "director-1", summary: "night done" };
+        return { ok: true, engine: "codex", turns: 14, usage: {}, sessionId: "director-1", summary: "run done" };
       }
       if (request.playtest)
         return {
@@ -2270,7 +2697,7 @@ describe("a director's night through the real core and harness", () => {
       `one worker session — worker_start answered ${JSON.stringify(results.started)}; waited ${JSON.stringify(results.waited?.happened)}`,
     );
     const director = seen.director[0]!;
-    // Its identity reads the game as the night found it ready: its folder and what it holds.
+    // Its identity reads the game as the run found it ready: its folder and what it holds.
     const folderLabel = project.dir.split("/").slice(-2).join("/");
     assert.ok(director.prompt.includes(`the folder \`${folderLabel}\``), "the game's folder");
     assert.match(director.prompt, /it holds a web game at its root, Blender files in `art\/`/, "the game's facts");
@@ -2311,7 +2738,7 @@ describe("a director's night through the real core and harness", () => {
       typeof results.shot !== "string" && results.shot.images?.length === 1,
       "the director's screenshot is a picture",
     );
-    // The plan comes first: the night is refused until the user has something to read (M3.8).
+    // The plan comes first: the run is refused until the user has something to read (M3.8).
     assert.match(results.noPlan, /call plan first/, results.noPlan);
     assert.match(results.planned, /the plan is in the user's chat/, results.planned);
     const planCard = customEvents(events, "autopilot_plan_review").find((e) => e.runId === runId)!;
@@ -2319,7 +2746,7 @@ describe("a director's night through the real core and harness", () => {
       (planCard.facets as Array<{ id: string; title: string }>).map((f) => f.id),
       ["plaza"],
     );
-    assert.match(String(planCard.summary), /Tonight/);
+    assert.match(String(planCard.summary), /This run/);
     assert.equal(planCard.waitMinutes, 0, "nobody asked to review this one, so nothing waits for a word");
     assert.equal(results.started.started, "plaza");
     assert.equal(results.started.mode, "single");
@@ -2390,10 +2817,10 @@ describe("a director's night through the real core and harness", () => {
     assert.match(log.stdout, /integrate plaza/);
     await assert.rejects(stat(results.started.worktree), "the worker's worktree is removed");
     await assert.rejects(stat(worktree), "the integration worktree is removed");
-    // Flipped (2026-09-28): the user's window used to be loaded by the show and by the landing,
+    // Flipped: the user's window used to be loaded by the show and by the landing,
     // under them. Live now keeps what they opened; the show offered the integrated build and the
     // landing the changed game folder, each on Live's Reload.
-    assert.equal(rig.preview.loads.length, liveLoadsBefore, "nothing the night did loaded the user's Live");
+    assert.equal(rig.preview.loads.length, liveLoadsBefore, "nothing the run did loaded the user's Live");
     const behind = rig.events
       .filter((e) => e.type === "live.behind")
       .map((e) => (e.payload as { reason: string | null }).reason);
@@ -2502,7 +2929,7 @@ describe("a director's night through the real core and harness", () => {
    * A game with a repository of its own inside it, which the studio was not allowed to version.
    * The merged build runs — it always did — and carries none of the work done inside that folder,
    * and `git status` cannot see the difference, because git does not walk into a gitlink. That is
-   * the silent loss of 2026-09-07: a night's work reported as integrated and made live, and gone.
+   * a silent loss: a run's work reported as integrated and made live, and gone.
    * The health pass asks the commit instead, and says so in words the user reads.
    */
   it("fails the health pass on a merge that carries nothing from a repository inside the game", async () => {
@@ -2546,7 +2973,7 @@ describe("a director's night through the real core and harness", () => {
         }
         results.integrated = json(await call("integrate", { worker: "plaza" }));
         results.finished = text(await call("finish", { summary: "the plaza is red", land: "yes" }));
-        return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-nested", summary: "night done" };
+        return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-nested", summary: "run done" };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
       await writeFile(path.join(request.cwd, "src", "plaza.js"), "export const plaza = 'red';\n");
@@ -2596,16 +3023,16 @@ describe("a director's night through the real core and harness", () => {
       cards.join(" | "),
     );
     assert.ok(!cards.some((c) => /did not start when it was checked/.test(c)), cards.join(" | "));
-    // What the night still may do: the folder and this build hold that repository the same way,
-    // so landing it is an ordinary merge and the rest of the night's work goes live as usual.
+    // What the run still may do: the folder and this build hold that repository the same way,
+    // so landing it is an ordinary merge and the rest of the run's work goes live as usual.
     assert.match(results.finished, /the run is closed — the integrated build [0-9a-f]{10} is live/, results.finished);
     assert.equal(await readFile(path.join(project.dir, "src", "plaza.js"), "utf8"), "export const plaza = 'red';\n");
   });
 
   /**
-   * The same folder, with the consent the Open Game sheet records (decision 1, 2026-09-08): the
+   * The same folder, with the consent the Open Game sheet records: the
    * fork versions that repository, so an edit inside it is committed, merged and healthy like any
-   * other. What the night still may not do is add it to the *user's* history — that renames their
+   * other. What the run still may not do is add it to the *user's* history — that renames their
    * own `.git` aside, and belongs to their own button (`landBuild`), not to a merge at 4 a.m.
    */
   it("versions a consented repository inside the game, and leaves the landing of it to the user", async () => {
@@ -2658,7 +3085,7 @@ describe("a director's night through the real core and harness", () => {
           turns: 6,
           usage: {},
           sessionId: "director-consented",
-          summary: "night done",
+          summary: "run done",
         };
       }
       await writeFile(path.join(request.cwd, "wreckage", "car.js"), "export const car = 'repaired';\n");
@@ -2692,7 +3119,7 @@ describe("a director's night through the real core and harness", () => {
       project: project.name,
       timeoutMs: 30_000,
     })) as { stdout: string };
-    assert.match(carried.stdout, /repaired/, "the night's work inside that folder is in the build");
+    assert.match(carried.stdout, /repaired/, "the run's work inside that folder is in the build");
 
     // …and the landing of it is the user's to make, in words that name no branch.
     assert.match(
@@ -2719,7 +3146,7 @@ describe("a director's night through the real core and harness", () => {
     );
   });
 
-  it("a session limit ends the director: the head is kept on a ref, looked at again, landed on the judge's word, and the run pauses — then the user can play or land any build", async () => {
+  it("a session limit ends the director: the head is kept on a ref, nothing is landed, and the run pauses — then the user can play or land any build", async () => {
     const rig = await startRig(
       { replies: [] },
       { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
@@ -2779,7 +3206,7 @@ describe("a director's night through the real core and harness", () => {
       "director run_finished after a limit",
     );
 
-    // The night's tools worked; the base was gated before the worker started.
+    // The run's tools worked; the base was gated before the worker started.
     assert.equal(results.started.started, "sign", JSON.stringify(results.started));
     assert.equal(results.integrated.merged, true, JSON.stringify(results.integrated));
     assert.equal(results.judged.ok, true, JSON.stringify(results.judged));
@@ -2787,14 +3214,20 @@ describe("a director's night through the real core and harness", () => {
     assert.equal(results.status1.integration.lastJudge?.ok, true, JSON.stringify(results.status1.integration));
     const head: string = results.status1.integration.head;
 
-    // The close: the limit named honestly, the head landed on a fresh look, the run paused for Resume.
+    // The close: the limit named honestly, the run paused for Resume — and nothing landed (a close
+    // on a lost provider cannot have the build checked, and Resume carries it on from its head).
     const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
-    assert.equal(finished.landed, true, String(finished.stoppedBecause));
+    assert.equal(finished.landed, false, String(finished.stoppedBecause));
+    assert.equal((finished.landingResult as { why?: string }).why, "paused");
     assert.match(String(finished.stoppedBecause), /session limit/);
     assert.match(String(finished.stoppedBecause), /paused/);
-    assert.match(String(finished.stoppedBecause), /the integration branch was landed/);
+    assert.match(String(finished.stoppedBecause), /nothing was landed/);
     assert.doesNotMatch(String(finished.stoppedBecause), /ran out of time/);
     assert.equal((finished.limit as { kind: string }).kind, "rate_limit");
+    // When the limit was hit, so the host's auto-resume counts the reset from then, not from the close.
+    const hitAt = (finished.limit as { at?: unknown }).at;
+    assert.equal(typeof hitAt, "number", `limit.at: ${JSON.stringify(finished.limit)}`);
+    assert.ok((hitAt as number) <= Date.parse(String(finished.finishedAt ?? new Date().toISOString())));
     assert.equal(finished.integrationRef, `refs/studio/runs/${runId}/integration`);
     assert.ok(String(finished.integrationHead).startsWith(head));
     assert.ok(
@@ -2808,8 +3241,14 @@ describe("a director's night through the real core and harness", () => {
       decisions.some((d) => /the engine hit its session limit/.test(d)),
       decisions.join(" | "),
     );
-    assert.equal(await readFile(path.join(project.dir, "src", "sign.js"), "utf8"), "export const sign = 'open';\n");
-    await stat(path.join(rig.core.layout.runs, runId, "director", `close_${head.slice(0, 8)}`, "verdict.json"));
+    await assert.rejects(
+      readFile(path.join(project.dir, "src", "sign.js"), "utf8"),
+      "the game folder is as the user left it until the run resumes",
+    );
+    await assert.rejects(
+      stat(path.join(rig.core.layout.runs, runId, "director", `close_${head.slice(0, 8)}`, "verdict.json")),
+      "the paused close looks at nothing and judges nothing",
+    );
 
     // The ref outlives the worktree: the head is reachable in the game's repo.
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
@@ -2834,18 +3273,19 @@ describe("a director's night through the real core and harness", () => {
     assert.equal(await readFile(path.join(shown.dir, "src", "sign.js"), "utf8"), "export const sign = 'open';\n");
     assert.ok(rig.preview.loads.length > loadsBefore, "the user's window loaded the build");
     const landed = await rig.core.landBuild(project.name, head);
-    assert.equal(landed.how, "already", "the close had landed it");
+    assert.notEqual(landed.how, "already", "the paused close had landed nothing; the user's Make it live does");
+    assert.equal(await readFile(path.join(project.dir, "src", "sign.js"), "utf8"), "export const sign = 'open';\n");
     await assert.rejects(rig.core.showBuild(project.name, "deadbeef"), /not in/);
     await assert.rejects(rig.core.landBuild(project.name, "nonsense"), /not a commit hash/);
   });
   /**
-   * A game from scratch. Until now the night began on the empty scaffold: the fork gate refused
+   * A game from scratch. Until now the run began on the empty scaffold: the fork gate refused
    * every worker ("every camera renders effectively black"), `judge against=start` answered "the
    * other build could not be observed", and the director hand-built the world for twelve minutes
    * before anyone could fork. The studio builds the starting point first now — the same stage the
    * classic pipeline always had — and everything that looks at it knows what it is looking at.
    */
-  it("a night from scratch: the studio builds the starting point, workers fork from it, and judging against the start says first build", async () => {
+  it("a run from scratch: the studio builds the starting point, workers fork from it, and judging against the start says first build", async () => {
     /** The empty scaffold as a window sees it: nothing drawn, and an inspection that proves it. */
     const asEmptyScaffold = (preview: FakePreview): FakePreview => {
       preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
@@ -2874,7 +3314,8 @@ describe("a director's night through the real core and harness", () => {
         seen.director.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         results.judged = json(await call("judge", { target: "integration", against: "start" }));
-        await call("plan", planFor("plaza", "sky"));
+        // Flipped (module contract): plaza is a single session, so the plan has one looping part.
+        await call("plan", planWithSingle(["plaza"], "plaza", "sky"));
         results.started = json(
           await call("worker_start", {
             id: "plaza",
@@ -2972,7 +3413,7 @@ describe("a director's night through the real core and harness", () => {
     assert.match(seen.base[0]!.prompt, /PREPARATION BUDGET: 3 minutes/);
     assert.match(seen.base[0]!.prompt, /^You are working inside Genex/, "the base builder is told first who runs it");
     assert.ok(seen.base[0]!.timeoutMs! <= 200_000, "preparation leaves most working time to the lead");
-    assert.doesNotMatch(seen.base[0]!.prompt, /0 facets/, "a director's night has no facet roll call");
+    assert.doesNotMatch(seen.base[0]!.prompt, /0 facets/, "a director's run has no facet roll call");
     assert.ok(
       customEvents(events, "autopilot_base_started").some((e) => e.runId === runId),
       "the graph sees the base while its builder is running",
@@ -2995,7 +3436,7 @@ describe("a director's night through the real core and harness", () => {
     assert.equal(results.judged.verdict.firstBuild, true, JSON.stringify(results.judged.verdict));
     assert.match(results.judged.verdict.note, /first build — nothing to compare/);
 
-    // The first worker is accepted — the refusal that used to end a night from scratch is gone.
+    // The first worker is accepted — the refusal that used to end a run from scratch is gone.
     assert.equal(results.started.started, "plaza", JSON.stringify(results.started));
     assert.ok(
       String(base.commit).startsWith(results.started.forkedFrom),
@@ -3032,7 +3473,7 @@ describe("a director's night through the real core and harness", () => {
 
     // Every card the lead wrote reaches the chat as a sentence, with the record beside it.
     const cards = customEvents(events, "autopilot_decision").filter((e) => e.runId === runId);
-    assert.ok(cards.length >= 2, "the night wrote decision cards");
+    assert.ok(cards.length >= 2, "the run wrote decision cards");
     for (const card of cards) {
       assert.equal(card.text, card.decision, "the record itself is unchanged");
       assert.equal(typeof card.plain, "string", JSON.stringify(card));
@@ -3151,11 +3592,70 @@ describe("a director's night through the real core and harness", () => {
   });
 
   /**
-   * A game the user brought that never loads the studio contract — the flautout-remix case
-   * (2026-09-07). Nothing in it can be photographed, checked or compared: `window.__studio` is
+   * A game from scratch on a run with room for a team: the studio builds no starting scene, and
+   * the lead lays its contract and crude stubs first.
+   */
+  it("a run from scratch with room for a team builds no starting scene: the lead's first brief hands it the foundation", async () => {
+    const asEmptyScaffold = (preview: FakePreview): FakePreview => {
+      preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
+      preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
+      return preview;
+    };
+    const rig = await startRig(
+      { replies: [] },
+      { previewPoolMax: 6, createHeadlessPreview: async () => asEmptyScaffold(makeFakePreview()) },
+    );
+    rigs.push(rig);
+    asEmptyScaffold(rig.preview);
+    const project = await rig.core.games.scaffold("director-foundation", { title: "Foundation first" });
+    const seen: { director: DelegateRequest[]; others: DelegateRequest[] } = { director: [], others: [] };
+    fakeEngine(rig, async (request) => {
+      if (!request.director) {
+        seen.others.push(request);
+        return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "other", summary: "nothing" };
+      }
+      seen.director.push(request);
+      await request.onLiveTool!("finish", { summary: "the foundation is the lead's", land: "no" });
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "director-foundation", summary: "done" };
+    });
+    const runId = rig.core.newRunId();
+    await rig.core.dispatchRun({
+      runId,
+      goal: "a neon street race",
+      project: project.name,
+      mode: "autopilot",
+      engine: "codex",
+      reference: { name: "street race", shots: [] },
+      budgets: { wallClockMs: 3 * 60 * 60_000 },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      120_000,
+      "director run_finished with the foundation left to the lead",
+    );
+    assert.deepEqual(seen.others, [], "no starting-scene session, nor any other");
+    assert.deepEqual(
+      customEvents(events, "autopilot_base_started").filter((e) => e.runId === runId),
+      [],
+      "no starting point is built",
+    );
+    assert.match(seen.director[0]!.prompt, /THE FOUNDATION IS YOURS/);
+    assert.match(seen.director[0]!.prompt, /plan with contract= and vision=/);
+    const cards = customEvents(events, "autopilot_decision")
+      .filter((e) => e.runId === runId)
+      .map((e) => String(e.plain));
+    assert.ok(
+      cards.some((line) => /the lead lays the foundation first/.test(line)),
+      cards.join(" | "),
+    );
+  });
+
+  /**
+   * A game the user brought that never loads the studio contract. Nothing in it can be photographed, checked or compared: `window.__studio` is
    * missing, so every evidence pass reports a build that does not run, the fork gate refuses
    * every builder, and `judge against=start` can only say the other build could not be observed.
-   * The night's first step now wires the contract in, inside the run's own worktree, and that
+   * The run's first step now wires the contract in, inside the run's own worktree, and that
    * commit becomes the "before" every later build is judged against. The folder the user sees is
    * not touched until finish lands the branch.
    */
@@ -3245,7 +3745,7 @@ describe("a director's night through the real core and harness", () => {
           results.subject = await git(worktree, ["log", "-1", "--format=%s"]);
           results.sinceStart = await git(worktree, ["rev-list", "--count", `${results.status.integration.base}..HEAD`]);
           results.wiredAtHead = await git(worktree, ["show", "HEAD:src/main.ts"]);
-          results.liveDuringTheNight = await readFile(path.join(project.dir, "src", "main.ts"), "utf8");
+          results.liveDuringTheLoopRun = await readFile(path.join(project.dir, "src", "main.ts"), "utf8");
           await call("plan", planFor("crumple"));
           results.started = json(
             await call("worker_start", {
@@ -3377,7 +3877,7 @@ describe("a director's night through the real core and harness", () => {
     assert.match(seen.contract[0]!.prompt, /installStudio\(\{ renderer, player \}\)/);
     assert.match(seen.contract[0]!.prompt, /Change nothing else/);
 
-    // Its commit is the night's first, and it is the wiring.
+    // Its commit is the run's first, and it is the wiring.
     assert.equal(results.subject, "studio: install contract", `the branch's first commit: ${results.subject}`);
     assert.equal(Number(results.sinceStart), 1, "one commit beyond the game the user brought, and it is that one");
     assert.match(results.wiredAtHead, /installStudio\(/, "the commit carries the wiring");
@@ -3431,8 +3931,8 @@ describe("a director's night through the real core and harness", () => {
     );
     assert.ok(compared, `the judge was shown both builds: ${JSON.stringify(judgeCalls)}`);
 
-    // The live folder was untouched all night, and holds the wiring only after finish landed it.
-    assert.doesNotMatch(results.liveDuringTheNight, /installStudio/, "the user's own folder is not edited mid-night");
+    // The live folder was untouched for the whole run, and holds the wiring only after finish landed it.
+    assert.doesNotMatch(results.liveDuringTheLoopRun, /installStudio/, "the user's own folder is not edited mid-run");
     assert.match(
       await readFile(path.join(project.dir, "src", "main.ts"), "utf8"),
       /installStudio\(/,
@@ -3598,7 +4098,8 @@ describe("a director's night through the real core and harness", () => {
     fakeEngine(rig, async (request) => {
       if (request.director) {
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-        await call("plan", planFor("plaza", "sky"));
+        // Flipped (module contract): sky is a single session, so the plan has one looping part.
+        await call("plan", planWithSingle(["sky"], "plaza", "sky"));
         results.started = json(
           await call("worker_start", {
             id: "plaza",
@@ -3769,10 +4270,10 @@ describe("a director's night through the real core and harness", () => {
     );
 
     // …and the morning after, the game's repository looks exactly as the user left it: the
-    // night's bookkeeping is all on refs of the studio's own. A first real night left eleven
+    // run's bookkeeping is all on refs of the studio's own. A first real run left eleven
     // `attempt/*` branches and a `snap/*` tag in somebody's game (M2.7).
-    assert.equal(await inGame("git branch --format='%(refname:short)'"), before.branches, "the night added a branch");
-    assert.equal(await inGame("git tag --list"), before.tags, "the night added a tag `git push --tags` would ship");
+    assert.equal(await inGame("git branch --format='%(refname:short)'"), before.branches, "the run added a branch");
+    assert.equal(await inGame("git tag --list"), before.tags, "the run added a tag `git push --tags` would ship");
     assert.equal(before.branches, "main");
     assert.equal(before.tags, "");
     const studioRefs = (await inGame("git for-each-ref --format='%(refname)' refs/studio/"))
@@ -3783,7 +4284,7 @@ describe("a director's night through the real core and harness", () => {
       studioRefs.some((ref) => ref.startsWith("refs/studio/snap/")),
       `the run's own starting-point snapshot: ${studioRefs.join(" | ")}`,
     );
-    // One committer, not the five a night used to leave in `git log`.
+    // One committer, not the five a run used to leave in `git log`.
     const committers = new Set((await inGame("git log --format='%an|%cn'")).split("\n").filter(Boolean));
     assert.deepEqual([...committers], ["AI Game Studio|AI Game Studio"], [...committers].join(" | "));
 
@@ -3806,7 +4307,7 @@ describe("a director's night through the real core and harness", () => {
   /**
    * Steering that arrives in a minute (M3.4). A build turn is one long delegation, so a steer
    * used to wait for the next round boundary — fifteen to twenty-three minutes on the first real
-   * night, and for one worker it never arrived at all. Worse, a steer the user addressed to a
+   * run, and for one worker it never arrived at all. Worse, a steer the user addressed to a
    * worker was filtered out of the director's own drain and delivered to nobody. Now the turn is
    * interrupted and the same session — everything it has read still in it — carries on with the
    * instruction in front of everything, and an addressed steer takes that path without the
@@ -3862,7 +4363,7 @@ describe("a director's night through the real core and harness", () => {
           if (line?.state !== "running" || (line?.round ?? 1) > 1) break;
         }
         results.wstatus = json(await call("worker_status", { id: "plaza" }));
-        await call("worker_stop", { id: "plaza", why: "one round is enough tonight" });
+        await call("worker_stop", { id: "plaza", why: "one round is enough this run" });
         for (let i = 0; i < 30; i++) {
           const waited = json(await call("wait", { seconds: "5", worker: "plaza" }));
           if (waited.status.workers[0]?.state !== "running") break;
@@ -3992,7 +4493,7 @@ describe("a director's night through the real core and harness", () => {
    * there was no round boundary to queue one against. Interrupt-and-resume needs no boundary, so
    * a single session is steered like anything else, and always now.
    */
-  it("P10-F8. a single session interrupted with no steer left to hand it carries on instead of failing", async () => {
+  it("a single session interrupted with no steer left to hand it carries on instead of failing", async () => {
     // Two steers in quick succession: the first interrupt's resume already took both, so the
     // second interrupt cuts a turn that has nothing new to hear. That turn used to end the worker.
     const rig = await startRig(
@@ -4181,7 +4682,7 @@ describe("a director's night through the real core and harness", () => {
   /**
    * One head. The director edits in its own worktree and commits — and `integrationHead` used
    * to move only on `integrate`, so the judge, the close's health pass and the merge could each
-   * be talking about a different build. The first real night committed a grade fix at 17:54,
+   * be talking about a different build. The first real run committed a grade fix at 17:54,
    * judged it ("grounded daylight? yes"), hit its session limit — and `git fsck` found that
    * commit unreachable in the morning while the report said the judge had passed what landed.
    */
@@ -4308,10 +4809,10 @@ describe("a director's night through the real core and harness", () => {
   });
 
   /**
-   * The user's own evening, in the folder the night was going to land in. Landing merged
+   * The user's own evening, in the folder the run was going to land in. Landing merged
    * `--no-ff` into their branch and, when that conflicted, ran `git reset --hard` onto the run's
    * head — the studio throwing away commits nobody asked it to touch, in somebody's own
-   * repository (flautout-remix, 2026-09-07). Now the conflict is an answer: nothing is forced,
+   * repository. Now the conflict is an answer: nothing is forced,
    * the build waits on its ref, and the close says why in words the user reads.
    */
   it("a landing that conflicts with the user's own commits lands nothing and leaves their branch exactly as it was", async () => {
@@ -4350,7 +4851,7 @@ describe("a director's night through the real core and harness", () => {
         }
         results.integrated = json(await call("integrate", { worker: "sign" }));
         // The user's evening: they wrote the same file, in their own folder, under their own
-        // name, while the night worked in its worktree.
+        // name, while the run worked in its worktree.
         await writeFile(path.join(project.dir, "src", "sign.js"), "export const sign = 'closed for repairs';\n");
         await git(project.dir, ["add", "-A"]);
         await git(project.dir, [
@@ -4415,7 +4916,7 @@ describe("a director's night through the real core and harness", () => {
     );
 
     // The user's branch: their commit, their file, no merge in flight, nothing reset.
-    assert.equal(await git(project.dir, ["rev-parse", "HEAD"]), results.userHead, "the night moved the user's branch");
+    assert.equal(await git(project.dir, ["rev-parse", "HEAD"]), results.userHead, "the run moved the user's branch");
     assert.equal(
       await readFile(path.join(project.dir, "src", "sign.js"), "utf8"),
       "export const sign = 'closed for repairs';\n",
@@ -4431,18 +4932,18 @@ describe("a director's night through the real core and harness", () => {
   });
 
   /**
-   * The night the user quits the app on (or the Mac loses power). The next boot closes the run
+   * The run the user quits the app on (or the Mac loses power). The next boot closes the run
    * as PAUSED, with the head it reached and the ref that keeps it reachable, so the chat can
-   * offer the build; and the resumed night lands what the first one merged. Before this, the
+   * offer the build; and the resumed run lands what the first one merged. Before this, the
    * boot repair gated its pause on `mode` — a director's run is registered "autopilot" and
-   * started "director" — so the night was closed dead, and a resumed director called its fork
+   * started "director" — so the run was closed dead, and a resumed director called its fork
    * point "the starting point", answering `finish land=yes` with "nothing beyond the starting
    * point" while eight merges sat on a ref nobody was shown.
    */
   for (const interruption of ["restart", "stop-queue"] as const)
     it(
       interruption === "restart"
-        ? "a night the app died inside pauses with its head, and the resumed night lands what it merged"
+        ? "a run the app died inside pauses with its head, and the resumed run lands what it merged"
         : "Stop interrupts a live director and sends its queued instruction with the same plan and integration head",
       async () => {
         const rig = await startRig(
@@ -4463,10 +4964,10 @@ describe("a director's night through the real core and harness", () => {
         });
         fakeEngine(rig, async (request) => {
           // After the pause the chat's own session answers, in the game folder, with the paused
-          // night's resume bridged in: it records the resume, and the studio resumes the night when
+          // run's resume bridged in: it records the resume, and the studio resumes the run when
           // its reply ends.
           if (!request.director && request.liveTools?.some((tool) => tool.name === "run_status")) {
-            results.afterNight = request;
+            results.afterLoopRun = request;
             assert.match(request.prompt, /PAUSED/);
             assert.match(request.prompt, /Keep going and land the saved sign/);
             assert.deepEqual(
@@ -4521,14 +5022,14 @@ describe("a director's night through the real core and harness", () => {
               };
             }
             results.status2 = json(await call("run_status", {}));
-            results.finished2 = text(await call("finish", { summary: "landing what last night merged", land: "yes" }));
+            results.finished2 = text(await call("finish", { summary: "landing what last run merged", land: "yes" }));
             return {
               ok: true,
               engine: "codex",
               turns: 3,
               usage: {},
               sessionId: "director-resumed",
-              summary: "landed the night's work",
+              summary: "landed the run's work",
             };
           }
           await mkdir(path.join(request.cwd, "src"), { recursive: true });
@@ -4562,7 +5063,7 @@ describe("a director's night through the real core and harness", () => {
         )!.id;
 
         if (interruption === "restart") {
-          // Cmd+Q at 2am: the harness dies mid-night, the director's session with it.
+          // Cmd+Q at 2am: the harness dies mid-run, the director's session with it.
           await rig.core.host.stop();
           quit();
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -4593,10 +5094,10 @@ describe("a director's night through the real core and harness", () => {
         const closure = customEvents(paused, "run_finished").find((e) => e.runId === runId)!;
         if (interruption === "restart") assert.equal(closure.stoppedBecause, "interrupted by restart");
         else assert.match(String(closure.stoppedBecause), /stopped by the user/);
-        assert.equal(closure.landed, false, "an interrupted night landed nothing, and says so");
+        assert.equal(closure.landed, false, "an interrupted run landed nothing, and says so");
         assert.ok(
           String(closure.integrationHead).startsWith(head),
-          `${String(closure.integrationHead)} is the head the night reached (${head})`,
+          `${String(closure.integrationHead)} is the head the run reached (${head})`,
         );
         assert.equal(closure.integrationRef, `refs/studio/runs/${runId}/integration`);
         assert.notEqual(
@@ -4618,12 +5119,12 @@ describe("a director's night through the real core and harness", () => {
             Boolean(results.finished2) &&
             customEvents(log, "run_finished").some((e) => e.runId === runId && e.landed === true),
           120_000,
-          "the resumed night's closure and finish reply",
+          "the resumed run's closure and finish reply",
         );
 
         assert.equal(sessions, 2, "one resumed session");
-        assert.equal(results.afterNight?.coordinator, undefined, "the chat's own session resumed it, no coordinator");
-        assert.notEqual(results.afterNight?.readOnly, true);
+        assert.equal(results.afterLoopRun?.coordinator, undefined, "the chat's own session resumed it, no coordinator");
+        assert.notEqual(results.afterLoopRun?.readOnly, true);
         if (interruption === "stop-queue")
           assert.equal(
             customEvents(after, "coordinator_message_requeued").length,
@@ -4666,7 +5167,7 @@ describe("a director's night through the real core and harness", () => {
         assert.notEqual(
           landed.integrationHead,
           landed.baseCommit,
-          "the base is the night's own starting point, not last session's fork point",
+          "the base is the run's own starting point, not last session's fork point",
         );
         assert.equal(
           await readFile(path.join(project.dir, "src", "sign.js"), "utf8"),
@@ -4677,11 +5178,11 @@ describe("a director's night through the real core and harness", () => {
         assert.equal(landing.verified, false, "nobody preferred it to anything — the morning says so");
         assert.equal(landing.line, "made live, not judged better");
         // The close looks for itself before it lands (M4.10) — `finish land=yes` used to land
-        // whatever HEAD was — so the fresh pass is what this landing rests on. Last night's judge
+        // whatever HEAD was — so the fresh pass is what this landing rests on. Last run's judge
         // survived the crash all the same: it is on the resumed session's run_status, where it is
         // the other half of the landing rule for a build the close could not photograph.
         assert.equal(landing.how, "fresh-health-pass", "the close took its own look at the head it landed");
-        assert.ok(results.status2.integration.lastJudge, "last night's judge survived the crash in the journal");
+        assert.ok(results.status2.integration.lastJudge, "last run's judge survived the crash in the journal");
         assert.ok(
           String(head).startsWith(String(results.status2.integration.lastJudge.head)),
           `${JSON.stringify(results.status2.integration.lastJudge)} is about the head the first session left (${head})`,
@@ -4693,7 +5194,7 @@ describe("a director's night through the real core and harness", () => {
    * A start nobody could photograph. The run began on a game that draws a black frame (not an
    * empty scaffold, which is allowed to be blank): there is no "before" to compare with. The
    * director used to be told nothing and answered `judge against=start` with "the other build
-   * could not be observed" — thirteen times in one night, once per judge call it wasted.
+   * could not be observed", once per judge call it wasted.
    */
   it("a start nobody could photograph is said once: the brief warns, and judge against=start answers instead of failing", async () => {
     // The game folder itself — the run's "before" — draws nothing at all, in whichever window
@@ -4762,9 +5263,8 @@ describe("a director's night through the real core and harness", () => {
 
   /**
    * The blind build turn. `wait` wakes on notes, and between "worker started" and "iteration 1"
-   * nothing wrote one: one night the director asked nine times over thirty-three minutes, was
-   * told "nothing yet" every time, and found out only afterwards that every worker had been
-   * editing files it did not own. Now the studio looks into each running worker's worktree
+   * nothing wrote one: a director asking for news was told "nothing yet" while every worker was
+   * editing files it did not own, and found out only afterwards. Now the studio looks into each running worker's worktree
    * itself, with the reviewer it already has, and says what changed.
    */
   it("looks into a running worker's worktree: an edit outside its own files wakes the director's wait, once", async () => {
@@ -4902,7 +5402,7 @@ describe("a director's night through the real core and harness", () => {
     assert.equal(typeof line.minutesInRound, "number");
     // The status blob has it too, so the director never has to ask twice for what it just read.
     assert.deepEqual(results.status.workers[0].violations, line.violations);
-    // A wait answers with the news and a line per worker — not the whole night's status.
+    // A wait answers with the news and a line per worker — not the whole run's status.
     assert.ok(
       JSON.stringify(results.waited.status).length * 2 < JSON.stringify(results.status).length,
       `wait ${JSON.stringify(results.waited.status).length} vs run_status ${JSON.stringify(results.status).length}`,
@@ -4917,7 +5417,7 @@ describe("a director's night through the real core and harness", () => {
   });
 
   /**
-   * Nothing the night made is lost with the worktree it was made in. A worker's worktree is
+   * Nothing the run made is lost with the worktree it was made in. A worker's worktree is
    * detached, so every commit nobody integrated was unreferenced the moment the close removed
    * it: in one morning's repo `git for-each-ref --contains` was empty for the very shas the
    * report named as the workers' `lastCommit`, and git would have collected them.
@@ -4974,7 +5474,7 @@ describe("a director's night through the real core and harness", () => {
           if (waited.status.workers.find((w: { id: string }) => w.id === "plaza2")?.state !== "running") break;
         }
         results.finished = text(await call("finish", { summary: "the plaza is red", land: "no" }));
-        return { ok: true, engine: "codex", turns: 7, usage: {}, sessionId: "director-review", summary: "night done" };
+        return { ok: true, engine: "codex", turns: 7, usage: {}, sessionId: "director-review", summary: "run done" };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
       await writeFile(path.join(request.cwd, "src", "plaza.js"), "export const plaza = 'red';\n");
@@ -5000,7 +5500,7 @@ describe("a director's night through the real core and harness", () => {
       "director run_finished",
     );
 
-    assert.match(results.brief, /THE USER ASKED TO READ IT FIRST/, "the lead is told the night is holding for them");
+    assert.match(results.brief, /THE USER ASKED TO READ IT FIRST/, "the lead is told the run is holding for them");
     assert.match(results.planned, /waits for their word — up to \d+ min/, results.planned);
     const planCard = customEvents(events, "autopilot_plan_review").find((e) => e.runId === runId)!;
     assert.ok(
@@ -5038,7 +5538,7 @@ describe("a director's night through the real core and harness", () => {
    * their words outrank it — but the hold used to stay armed, so the next worker_start blocked
    * another four-minute slice and answered "the user asked to read the plan first and has not
    * answered yet", a minute after the studio had told the lead they answered. Fifteen minutes of
-   * a night could go that way, on two contradictory sentences.
+   * a run could go that way, on two contradictory sentences.
    */
   it("a plan the user answers with their own words releases the hold too, and says so once", async () => {
     const rig = await startRig(
@@ -5086,7 +5586,7 @@ describe("a director's night through the real core and harness", () => {
           turns: 5,
           usage: {},
           sessionId: "director-answered",
-          summary: "night done",
+          summary: "run done",
         };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
@@ -5153,7 +5653,7 @@ describe("a director's night through the real core and harness", () => {
         }
         results.wstatus = json(await call("worker_status", { id: "bench" }));
         // The bench is never integrated — the director does not think it is ready — and the
-        // night ends. Its commit is exactly the kind that used to disappear.
+        // run ends. Its commit is exactly the kind that used to disappear.
         results.finished = text(await call("finish", { summary: "the bench is not right yet", land: "no" }));
         return {
           ok: true,
@@ -5224,10 +5724,10 @@ describe("a director's night through the real core and harness", () => {
    * The director's memory. Its brief tells it to keep `.studio/DIRECTOR.md` current, and a
    * resumed session is told to read that file — but `.studio/` is ignored by git in every
    * worktree, so the file is never committed, and the worktree it lives in is removed at the
-   * close. The night that paused on a session limit left no DIRECTOR.md anywhere under its run
+   * close. The run that paused on a session limit left no DIRECTOR.md anywhere under its run
    * folder, and the morning's resume opened by telling the director to read it.
    */
-  it("the memory file the resumed night is told to read is there: kept at the close, restored into the fresh worktree", async () => {
+  it("the memory file the resumed run is told to read is there: kept at the close, restored into the fresh worktree", async () => {
     const rig = await startRig(
       { replies: [] },
       { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
@@ -5281,17 +5781,17 @@ describe("a director's night through the real core and harness", () => {
       engine: "codex",
       reference: { name: "dusk", shots: [] },
       budgets: { wallClockMs: 15 * 60_000 },
-      // Flipped (one session): the memory file is the long turn's: a waking lead keeps none (the journal carries its night).
+      // Flipped (one session): the memory file is the long turn's: a waking lead keeps none (the journal carries its run).
       directorLoop: "turn",
     });
     await waitForLog(
       rig.core,
       (log) => customEvents(log, "autopilot_paused").some((e) => e.runId === runId),
       120_000,
-      "the night to pause on the limit",
+      "the run to pause on the limit",
     );
 
-    // Kept as a run artefact — the record a developer, or the next night, can read.
+    // Kept as a run artefact — the record a developer, or the next run, can read.
     assert.equal(await readFile(path.join(rig.core.layout.runs, runId, "director", "DIRECTOR.md"), "utf8"), memory);
 
     await rig.core.resumeAutopilot(runId);
@@ -5299,7 +5799,7 @@ describe("a director's night through the real core and harness", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").filter((e) => e.runId === runId).length >= 2,
       120_000,
-      "the resumed night's closure",
+      "the resumed run's closure",
     );
 
     assert.equal(sessions, 2, "one resumed session");
@@ -5315,15 +5815,15 @@ describe("a director's night through the real core and harness", () => {
   });
 
   /**
-   * The pool never lends the user's window (M3.7; flipped 2026-09-28). Here it has none to give at
-   * all, so every pass meets the exhausted pool the first real night met after its fifth worker. A
+   * The pool never lends the user's window (M3.7; flipped). Here it has none to give at all, so
+   * every pass meets an exhausted pool. A
    * judge and a playtest are choices the director can make a minute later: they are told there is
    * no window. The close cannot be skipped — nobody else will ever look at this build — so it used
    * to borrow the user's window, say so on the run's thread and put their game back. It looks
    * through the studio's own stand-in now, and the user's window keeps what they opened.
    */
   it("with no window free: judge and playtest are told so, and the close looks without touching the user's window", async () => {
-    // Every hidden window the night opens, and every folder it was pointed at.
+    // Every hidden window the run opens, and every folder it was pointed at.
     const windows: FakePreview[] = [];
     const looked: Array<string | null> = [];
     let blind = false;
@@ -5455,7 +5955,7 @@ describe("a director's night through the real core and harness", () => {
     // Nothing landed (the close's look found a black page).
     const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
     assert.equal(finished.landed, false, String(finished.stoppedBecause));
-    assert.equal(rig.preview.loadRoot, null, "the night did not end with the user's window on a removed worktree");
+    assert.equal(rig.preview.loadRoot, null, "the run did not end with the user's window on a removed worktree");
     await assert.rejects(
       stat(path.join(rig.core.layout.scratch, "autopilot", runId, "integration")),
       "the integration worktree is removed",
@@ -5468,13 +5968,13 @@ describe("a director's night through the real core and harness", () => {
    * `finish land=yes` used to skip the fresh look entirely and land whatever HEAD happened to
    * be — so a director could hand the user a build that does not start, while the tool's own
    * description has always promised "when it is healthy". Here the head the director committed
-   * by hand draws nothing, and the night keeps it unlanded and says why in the user's words.
+   * by hand draws nothing, and the run keeps it unlanded and says why in the user's words.
    * The worker is still running when finish is called: the close stops it, waits for its own
    * end (a deferred resolved by the first statement of its finally, not a poll on a state that
    * is set before the ref is written), and only then looks.
    */
   it("takes a worker's loop policy, and lands nothing at finish when the head it would land does not run", async () => {
-    // Every window this night can look through, so the close's borrowed or leased look sees the
+    // Every window this run can look through, so the close's borrowed or leased look sees the
     // same page the user would: a build that draws nothing.
     const windows: FakePreview[] = [];
     let dark = false;
@@ -5519,7 +6019,7 @@ describe("a director's night through the real core and harness", () => {
         results.badPolicy = text(
           await call("worker_start", { id: "bad", brief: "with a typo", policy: '{"maxJudgeCheks":6}' }),
         );
-        // Out of range is clamped, not refused — a night is not lost over a number too big.
+        // Out of range is clamped, not refused — a run is not lost over a number too big.
         results.clamped = json(
           await call("worker_start", {
             id: "loud",
@@ -5577,7 +6077,7 @@ describe("a director's night through the real core and harness", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
       180_000,
-      "the policy night to finish",
+      "the policy run to finish",
     );
 
     // The defaults are on run_status, once; a worker carries only what it was started with.
@@ -5650,13 +6150,13 @@ describe("a director's night through the real core and harness", () => {
 
   /**
    * A game that already knows what it is (M4.4/M4.6). The kind lives in the user's own
-   * studio.json — the one declaration source that survives a night — and the director wrote it
-   * there without ever reading it back: a second night on a declared board game drove mouse-look
+   * studio.json — the one declaration source that survives a run — and the director wrote it
+   * there without ever reading it back: a second run on a declared board game drove mouse-look
    * and WASD before every judgement and put no HUD, look or movement check on any board. Three
-   * more things this night proves: the kind the plan declares reaches the card the user reads
+   * more things this run proves: the kind the plan declares reaches the card the user reads
    * before the builders start; the write into their folder is COMMITTED where it was made, so
    * the morning's "Make it my game" is not refused over an edit only the studio made; and a
-   * worker with no seam runs alone whichever end of the night it was started from.
+   * worker with no seam runs alone whichever end of the run it was started from.
    */
   it("reads the kind the game already declares, commits the one it writes, and keeps a seamless worker alone", async () => {
     const rig = await startRig(
@@ -5675,7 +6175,7 @@ describe("a director's night through the real core and harness", () => {
       'import { installStudio } from "./studio.js";\nconst scene = {};\ninstallStudio({ scene, renderer: {}, camera: {}, player: () => ({ x: 0, y: 0, z: 0, yaw: 0 }) });\nexport { scene };\n',
     );
     await writeFile(path.join(dir, "package.json"), JSON.stringify({ name: "boardgame", type: "module" }));
-    // What an earlier night wrote into their file, and what tonight must open knowing.
+    // What an earlier run wrote into their file, and what this run must open knowing.
     await writeFile(
       path.join(dir, "studio.json"),
       JSON.stringify({
@@ -5689,7 +6189,7 @@ describe("a director's night through the real core and harness", () => {
         serve: ".",
         own: true,
         kind: "three-modules",
-        game: { kind: "top-down", hud: true, mouseLook: false, keyboardMove: true, declaredBy: "an earlier night" },
+        game: { kind: "top-down", hud: true, mouseLook: false, keyboardMove: true, declaredBy: "an earlier run" },
       }),
     );
     const project = await rig.core.adoptProject(dir);
@@ -5773,12 +6273,12 @@ describe("a director's night through the real core and harness", () => {
       seen.director[0]!.prompt.slice(0, 4_000),
     );
 
-    // What the night decided is on the plan card the user reads before any builder starts.
+    // What the run decided is on the plan card the user reads before any builder starts.
     const card = customEvents(events, "autopilot_plan_review").find((e) => e.runId === runId)!;
     assert.equal((card.game as { kind?: string })?.kind, "first-person", JSON.stringify(card));
 
     // …and it is in their studio.json, committed by the studio that wrote it: the folder ends
-    // the night exactly as clean as it began.
+    // the run exactly as clean as it began.
     const stored = JSON.parse(await readFile(path.join(project.dir, "studio.json"), "utf8"));
     assert.equal(stored.game.kind, "first-person", JSON.stringify(stored.game));
     assert.equal(stored.game.declaredBy, "plan");
@@ -5894,5 +6394,210 @@ describe("the selected direction-build duration", () => {
     // The lead was woken once, to be asked what next (director/wake.ts): nothing else woke it.
     assert.deepEqual(customEvents(events, "director_continued")[0]!.reasons, ["idle_ask"]);
     assert.equal(customEvents(events, "run_finished").filter((e) => e.runId === runId).length, 1);
+  });
+});
+
+/**
+ * A plan of several looping parts holds its loop workers to a module contract, so parallel workers
+ * never rewrite each other's modules around a shared state object nobody wrote down. Through the
+ * real core and harness, no worker starts here — what is
+ * proved is every refusal, and the contract the plan commits on the integration branch.
+ */
+describe("a module contract before loop workers", () => {
+  it("MC1. refuses a loop worker until the plan carries a contract, its stubs exist and its seam leaves the other part alone", async () => {
+    const rig = await startRig(
+      { replies: [] },
+      { previewPoolMax: 3, createHeadlessPreview: async () => makeFakePreview() },
+    );
+    rigs.push(rig);
+    const project = await rig.core.games.scaffold("director-contract", { title: "Director contract" });
+    const results: Record<string, any> = {};
+    const contract = {
+      conventions: ["the plaza is 40 metres across"],
+      modules: [
+        { path: "src/plaza.js", owner: "plaza", api: ["export function buildPlaza(scene)"] },
+        { path: "src/sky.js", owner: "sky", api: ["export function buildSky(scene)"] },
+      ],
+    };
+    fakeEngine(rig, async (request) => {
+      if (!request.director)
+        return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "worker", summary: "nothing" };
+      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+      await call("plan", planFor("plaza", "sky"));
+      results.noContract = text(await call("worker_start", { id: "plaza", brief: "pave it", owns: "src/plaza.js" }));
+      results.badPath = text(
+        await call("plan", {
+          ...planFor("plaza", "sky"),
+          contract: '{"modules":[{"path":"../x.js","owner":"plaza"}]}',
+        }),
+      );
+      results.planned = text(
+        await call("plan", { ...planFor("plaza", "sky"), contract: JSON.stringify(contract), vision: PLAZA_VISION }),
+      );
+      results.noStubs = text(await call("worker_start", { id: "plaza", brief: "pave it" }));
+      results.wide = text(await call("worker_start", { id: "sky", brief: "a dusk sky", owns: "src/" }));
+      results.finished = text(await call("finish", { summary: "a contract and nothing built", land: "no" }));
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "director-contract", summary: "done" };
+    });
+    const runId = rig.core.newRunId();
+    await rig.core.dispatchRun({
+      runId,
+      goal: "a plaza under a dusk sky",
+      project: project.name,
+      mode: "autopilot",
+      engine: "codex",
+      reference: { name: "plaza", shots: [] },
+      budgets: { wallClockMs: 15 * 60_000 },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      120_000,
+      "director run_finished",
+    );
+    assert.match(results.noContract, /2 parts that loop, and no module contract yet: call plan again with contract=/);
+    assert.match(results.badPath, /^plan: contract path \.\.\/x\.js is not one file relative to the game/);
+    assert.match(
+      results.planned,
+      /The module contract is committed on integration as docs\/MODULE-CONTRACT\.md \([0-9a-f]{10}\).*Stubs still to write before their loop workers start: src\/plaza\.js, src\/sky\.js/,
+    );
+    assert.match(
+      results.noStubs,
+      /the contract gives "plaza" src\/plaza\.js, which does not exist at [0-9a-f]{10}: write the stubs first/,
+    );
+    assert.match(results.wide, /owns= would reach other parts' modules \(src\/ → src\/plaza\.js, plaza's\)/);
+    assert.deepEqual(
+      customEvents(events, "director_worker").filter((e) => e.runId === runId),
+      [],
+      "nobody started",
+    );
+    const architecture = await git(project.dir, [
+      "show",
+      `refs/studio/runs/${runId}/integration:docs/MODULE-CONTRACT.md`,
+    ]);
+    assert.match(architecture, /### src\/plaza\.js — owned by `plaza` \(plaza\)/);
+    assert.match(architecture, /- the plaza is 40 metres across/);
+    const vision = await git(project.dir, ["show", `refs/studio/runs/${runId}/integration:docs/VISION.md`]);
+    assert.match(vision, /## Headroom\n\nthe river bank and a market street/, "the vision is committed beside it");
+  });
+
+  /**
+   * A game from scratch under a contract (review): the base stage accepted an empty world, the
+   * plan's contract was committed on top of it, and every loop worker had to fork from that
+   * commit — which the fork gate looked at as a game, not a start, and refused as "does not run".
+   */
+  it("MC2. a loop worker forks from the contract written on an empty starting point, and the close lands nothing", async () => {
+    /** The empty scaffold as a window sees it: nothing drawn, and an inspection that proves it. */
+    const asEmptyScaffold = (preview: FakePreview): FakePreview => {
+      preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
+      preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
+      return preview;
+    };
+    const rig = await startRig(
+      { replies: [] },
+      { previewPoolMax: 2, createHeadlessPreview: async () => asEmptyScaffold(makeFakePreview()) },
+    );
+    rigs.push(rig);
+    asEmptyScaffold(rig.preview);
+    const project = await rig.core.games.scaffold("director-contract-scratch", { title: "Contract from scratch" });
+    const results: Record<string, any> = {};
+    const contract = {
+      modules: [
+        { path: "src/world.js", owner: "plaza", api: ["export const world"] },
+        { path: "src/sky.js", owner: "sky", api: ["export function buildSky(scene)"] },
+      ],
+    };
+    fakeEngine(rig, async (request) => {
+      if (request.director) {
+        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+        results.planned = text(
+          await call("plan", { ...planFor("plaza", "sky"), contract: JSON.stringify(contract), vision: PLAZA_VISION }),
+        );
+        results.started = json(await call("worker_start", { id: "plaza", brief: "pave the plaza", minutes: "5" }));
+        if (results.started.started) {
+          await call("worker_stop", { id: "plaza", why: "the start is what this proves" });
+          for (let i = 0; i < 30; i++) {
+            const waited = json(await call("wait", { seconds: "5", worker: "plaza" }));
+            if (waited.status.workers[0]?.state !== "running") break;
+          }
+        }
+        results.finished = text(await call("finish", { summary: "a contract on the start", land: "yes" }));
+        return { ok: true, engine: "codex", turns: 4, usage: {}, sessionId: "director-cs", summary: "done" };
+      }
+      if (path.basename(request.cwd) === "integration") {
+        await mkdir(path.join(request.cwd, "src"), { recursive: true });
+        await writeFile(path.join(request.cwd, "src", "world.js"), "export const world = { groups: ['plaza'] };\n");
+        return { ok: true, engine: "codex", turns: 2, usage: {}, sessionId: "base-cs", summary: "empty groups" };
+      }
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "worker-cs", summary: "nothing yet" };
+    });
+    const runId = rig.core.newRunId();
+    await rig.core.dispatchRun({
+      runId,
+      goal: "a plaza under a dusk sky",
+      project: project.name,
+      mode: "autopilot",
+      engine: "codex",
+      reference: { name: "plaza", shots: [] },
+      budgets: { wallClockMs: 15 * 60_000 },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      120_000,
+      "director run_finished on a contract from scratch",
+    );
+    const base = customEvents(events, "autopilot_base").find((e) => e.runId === runId)!;
+    assert.equal(base.empty, true, "the starting point is an empty world");
+    assert.match(results.planned, /The module contract is committed on integration as docs\/MODULE-CONTRACT\.md/);
+    // Red before the fix: "the build you would fork from does not run … renders effectively black".
+    assert.equal(results.started.started, "plaza", JSON.stringify(results.started));
+    const contractCommit = await git(project.dir, ["rev-parse", `refs/studio/runs/${runId}/integration`]);
+    assert.ok(contractCommit.startsWith(results.started.forkedFrom), "from the contract's commit");
+    const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
+    assert.equal(finished.landed, false, "the start and a document are nothing to land");
+  });
+});
+
+describe("a game that keeps its own edited HUD", () => {
+  it("notes the first-generation HUD it leaves alone, and keeps the owner's copy", async () => {
+    const rig = await startRig(
+      { replies: [] },
+      { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
+    );
+    rigs.push(rig);
+    const project = await rig.core.games.scaffold("held-hud", { title: "Held HUD" });
+    // The game's first HUD, with the owner's own gauge helper in it: theirs, so the upgrade keeps it.
+    const hudFile = path.join(project.dir, "src", "hud.js");
+    const first = await readFile(path.join(import.meta.dirname, "..", "fixtures", "hud-generation-1.js.txt"), "utf8");
+    const edited = `${first}// the main owner's own gauge helper\n`;
+    await writeFile(hudFile, edited);
+    fakeEngine(rig, async (request) => {
+      if (!request.director) throw new Error("no worker is started");
+      await request.onLiveTool!("finish", { summary: "nothing to build", land: "no" });
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "director-held", summary: "finished" };
+    });
+
+    const runId = rig.core.newRunId();
+    await rig.core.dispatchRun({
+      runId,
+      goal: "a dashboard",
+      project: project.name,
+      mode: "autopilot",
+      engine: "codex",
+      reference: { name: "dash", shots: [] },
+      budgets: { wallClockMs: 15 * 60_000 },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      120_000,
+      "held-HUD run_finished",
+    );
+    const cards = customEvents(events, "autopilot_decision").filter((e) => e.runId === runId);
+    const held = cards.find((e) => /left src\/hud\.js at HUD generation 1/.test(String(e.decision)));
+    assert.ok(held, cards.map((e) => String(e.decision)).join(" | "));
+    assert.match(String(held.plain), /text, bars and the crosshair/);
+    assert.equal(await readFile(hudFile, "utf8"), edited, "the owner's HUD is untouched");
   });
 });

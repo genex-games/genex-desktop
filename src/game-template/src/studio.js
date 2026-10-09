@@ -19,9 +19,12 @@
  * no import map, another version of three, or no three in its graph at all. The HUD is the one
  * part that needs three, and it lives in `./hud.js`, loaded the first time a game draws with it.
  *
- * The game runs from the moment `installStudio` returns — nobody in the pipeline calls
- * `start()`, so a build that waits for it ships a frozen screen. `pause()` is how a judge
- * freezes the simulation to `step()` it deterministically; `seed()` pauses for the same reason.
+ * `start()` and `pause()` are the studio's clock, not the game's Start button: the loop runs and
+ * draws from the moment `installStudio` returns, so a build that waits for `start()` ships a
+ * frozen screen. `pause()` is how a judge freezes the simulation to `step()` it deterministically;
+ * `seed()` pauses for the same reason, and the harness calls `start()` after every look. A title,
+ * menu or countdown is the game's own first screen: `config.flow` says which screen is up and
+ * `config.begin` takes the game straight into play, which is how every judge skips it.
  *
  * Keep this file intact. Extend it (new probes, new cameras) rather than removing anything —
  * every method here is something the harness calls.
@@ -39,12 +42,36 @@ export function makeRng(seed) {
   };
 }
 
+/**
+ * The screens a game with a front-end may report through `config.flow()`. Only `playing` decides
+ * anything (`state().flow.playing`); the rest are words for the judge. Never rename a value.
+ */
+export const FlowPhase = Object.freeze({
+  Boot: "boot",
+  Menu: "menu",
+  Intro: "intro",
+  Countdown: "countdown",
+  Playing: "playing",
+  Paused: "paused",
+  Results: "results",
+});
+
 const EYE_HEIGHT = 1.6;
 const DEG = Math.PI / 180;
 /** Mouse buttons arrive in `ctx.keys` under these names — the same set a harness click produces. */
 const MOUSE_KEYS = ["Mouse1", "Mouse3", "Mouse2"];
 /** The screen flash fades by this factor per simulation step. */
 const FLASH_DECAY = 0.86;
+/**
+ * The keys the racing-line assist holds to steer (`assist()`), in both spellings a game may read:
+ * the arrow, and the letter as a key event carries it (`KeyA`, `a`, `A`).
+ */
+const STEER_KEYS = Object.freeze({
+  left: Object.freeze(["ArrowLeft", "KeyA", "a", "A"]),
+  right: Object.freeze(["ArrowRight", "KeyD", "d", "D"]),
+});
+/** The assist holds a steer key on a frame once its owed lock reaches half a frame's worth. */
+const STEER_THRESHOLD = 0.5;
 
 /**
  * @param {{
@@ -55,6 +82,9 @@ const FLASH_DECAY = 0.86;
  *   cameras?: Record<string, () => void>,
  *   demos?: Record<string, () => unknown>,
  *   reset?: (seed: number) => void,
+ *   flow?: () => string,
+ *   begin?: () => void,
+ *   steer?: () => number,
  *   canvas?: HTMLCanvasElement,
  *   scene?: unknown,
  *   renderer?: unknown,
@@ -78,6 +108,11 @@ export function installStudio(config) {
   let rafHandle = 0;
   const fpsSamples = [];
   const heldKeys = new Set();
+  /**
+   * The racing-line assist while the harness has it on (`assist()`), else null: the lock it owes,
+   * carried frame to frame so half a lock holds a steer key on half the frames.
+   */
+  let assist = null;
   const look = { x: 0, y: 0 };
   const wheel = { x: 0, y: 0 };
   const pointer = { x: 0.5, y: 0.5 };
@@ -354,12 +389,44 @@ export function installStudio(config) {
     return throughCaptureShim(url, photographRecord(url, before, after));
   }
 
+  /**
+   * The steering the game's racing line asks for now (`config.steer`), clamped to -1 (full left)
+   * … 1 (full right); a game with none, or a line that throws, is answered so — never thrown.
+   */
+  function steerNow() {
+    if (typeof config.steer !== "function") return { ok: false, reason: "this game has no config.steer" };
+    let value;
+    try {
+      value = Number(config.steer());
+    } catch (error) {
+      return { ok: false, reason: `config.steer threw: ${String(error?.message ?? error)}` };
+    }
+    if (!Number.isFinite(value)) return { ok: false, reason: "config.steer returned no number" };
+    return { ok: true, steer: Math.max(-1, Math.min(1, value)) };
+  }
+
+  /** Which way the assist steers this frame, or null: the lock owed, a key held once it adds up to half. */
+  function assistSide() {
+    const line = steerNow();
+    assist.credit += line.ok ? line.steer : 0;
+    if (assist.credit >= STEER_THRESHOLD) {
+      assist.credit -= 1;
+      return "right";
+    }
+    if (assist.credit <= -STEER_THRESHOLD) {
+      assist.credit += 1;
+      return "left";
+    }
+    return null;
+  }
+
   function stepOnce() {
     if (typeof config.update !== "function") return;
     config.update(fixedStepMs / 1000, {
       rng,
       frame,
-      keys: heldKeys,
+      // The assist steers through the keys a player holds, never instead of them.
+      keys: assist ? withAssistKeys(heldKeys, assistSide()) : heldKeys,
       look: consumeLook(),
       wheel: consumeWheel(),
       pointer: { x: pointer.x, y: pointer.y, locked: locked() },
@@ -383,6 +450,22 @@ export function installStudio(config) {
       accumulator -= fixedStepMs;
     }
     renderAll();
+  }
+
+  /** Which screen the game says is up, and whether that is play: `state().flow`. */
+  function flowNow() {
+    let phase = null;
+    try {
+      phase = config.flow();
+    } catch {
+      phase = null;
+    }
+    return { phase: typeof phase === "string" ? phase : null, playing: phase === FlowPhase.Playing };
+  }
+
+  /** `state()`'s `flow` key — only for a game that passed `config.flow`, so every other state is unchanged. */
+  function flowEntry() {
+    return typeof config.flow === "function" ? { flow: flowNow() } : {};
   }
 
   /** Where the player is now (see `playerPosition`); null when `player()` has no answer or throws. */
@@ -520,7 +603,10 @@ export function installStudio(config) {
   const api = {
     version: 2,
 
-    /** Reseed, fully reset — and pause. Judging is stepped, never wall-clocked. */
+    /**
+     * Reseed, fully reset — `reset(seed)` puts the game back on its first screen — and pause.
+     * Judging is stepped, never wall-clocked.
+     */
     seed(value) {
       // Seeding is the judge's deterministic entry point; a wall-clock RAF firing between
       // step() calls would make identical seeds diverge. start() resumes live play.
@@ -532,6 +618,8 @@ export function installStudio(config) {
       accumulator = 0;
       fpsSamples.length = 0;
       heldKeys.clear();
+      // A reset game is never steered by a look that has ended.
+      assist = null;
       look.x = 0;
       look.y = 0;
       hud.flashAlpha = 0;
@@ -590,7 +678,53 @@ export function installStudio(config) {
         error: window.__studio_error ?? null,
         player: playerNow(),
         ...(config.probes ? config.probes() : {}),
+        ...flowEntry(),
       };
+    },
+
+    /**
+     * Into play from wherever `reset` left the game (title, menu, intro, countdown): synchronous,
+     * deterministic and paused, like a demo — the judge steps it from here. A game with no
+     * front-end of its own needs no `config.begin`, and is answered that it has none.
+     */
+    begin() {
+      if (typeof config.begin !== "function") return { ok: false, reason: "this game has no config.begin" };
+      running = false;
+      try {
+        config.begin();
+      } catch (error) {
+        return { ok: false, reason: String(error?.message ?? error) };
+      }
+      renderAll();
+      // As state() does: a game that reports no flow answers none, not a phase it never named.
+      return { ok: true, flow: typeof config.flow === "function" ? flowNow() : null };
+    },
+
+    /**
+     * The racing line (`config.steer`): the steering a driver on it would apply now, -1 full left …
+     * 1 full right — `{ ok: true, steer }`, or `{ ok: false, reason }` for a game with none.
+     */
+    steer() {
+      return steerNow();
+    },
+
+    /**
+     * The racing-line assist: `assist({ steer: true })` lets `config.steer` steer through the same
+     * keys a player holds (arrows and A/D), holding them for the share of frames the line asks,
+     * until `assist({ steer: false })` or `seed()`. The harness's drive and its throttle-only bot
+     * hold the throttle with it on, so a car follows its road instead of the first wall.
+     */
+    assist(options) {
+      const on = options === true || options?.steer === true;
+      if (!on) {
+        assist = null;
+        return { ok: true, steer: false };
+      }
+      if (typeof config.update !== "function")
+        return { ok: false, reason: "this game runs its own loop (no config.update): there is no frame to steer in" };
+      if (typeof config.steer !== "function") return { ok: false, reason: "this game has no config.steer" };
+      assist = { credit: 0 };
+      return { ok: true, steer: true };
     },
 
     /**
@@ -678,9 +812,13 @@ export function installStudio(config) {
 
     /**
      * The HUD: text(id, str, {x,y,size,color,align}), bar(id, fraction, {x,y,w,h,color}),
-     * crosshair({size,gap,thickness,color,visible,spread}), flash(color, alpha), remove(id),
-     * clear(), get(id), items(). Coordinates are fractions of the frame (0–1, y from the top).
-     * Drawn into the canvas as one quad tagged `hud` — the only UI a game may have.
+     * arc(id, {x,y,r,start,end,fraction,width,color,back,cap}), panel(id, {x,y,w,h,radius,fill,
+     * stroke,width}), path(id, d, {x,y,w,h,viewBox,fill,stroke,width}), image(id, src, {x,y,w,h}),
+     * font(family, url), crosshair({size,gap,thickness,color,visible,spread}), flash(color,
+     * alpha), remove(id), clear(), get(id), items(). x/y are fractions of the frame (y from the
+     * top), measured inward from `anchor` (nine points, default "top-left"); the lengths of arc,
+     * panel, path and image are fractions of the frame's height. Drawn into the canvas as one
+     * quad tagged `hud` — the only UI a game may have.
      */
     hud: hud.api,
 
@@ -790,6 +928,14 @@ export function installStudio(config) {
   renderAll();
   if (typeof config.update === "function") rafHandle = requestAnimationFrame(loop);
   return api;
+}
+
+/** The keys a player holds, plus the steer keys the racing-line assist holds this frame (`side`). */
+function withAssistKeys(held, side) {
+  if (!side) return held;
+  const keys = new Set(held);
+  for (const key of STEER_KEYS[side]) keys.add(key);
+  return keys;
 }
 
 /** The draw calls the page has made so far, as the studio's hook counts them; null without one. */
@@ -954,30 +1100,52 @@ function elementName(el) {
 /** An element drawn inside an SVG: the SVG itself is named instead. */
 const insideSvg = (el) => el.closest("svg") !== null && el.tagName !== "SVG";
 
-/** One element as `domUi()` names it, or null when it is not visible UI the canvas capture would miss. */
-function describeUi(el) {
-  if (DOM_SKIPPED.has(el.tagName) || insideSvg(el)) return null;
-  if (el.id === "fatal" && !el.textContent.trim()) return null;
+/** The element's style and box when it is on screen, or null when it is hidden or has no box. */
+function shownBox(el) {
   const style = getComputedStyle(el);
   const hidden = style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0;
   if (hidden) return null;
   const rect = el.getBoundingClientRect();
   const boxless = rect.width <= 0 || rect.height <= 0 || el.getClientRects().length === 0;
-  if (boxless) return null;
+  return boxless ? null : { style, rect };
+}
+
+/** One element as `domUi()` names it, or null when it is not visible UI the canvas capture would miss. */
+function describeUi(el) {
+  if (DOM_SKIPPED.has(el.tagName) || insideSvg(el)) return null;
+  if (el.id === "fatal" && !el.textContent.trim()) return null;
+  const shown = shownBox(el);
+  if (!shown) return null;
   const ownText = ownTextOf(el);
-  if (!ownText && !DOM_VISUAL.has(el.tagName) && !paintsItself(style)) return null;
+  if (!ownText && !DOM_VISUAL.has(el.tagName) && !paintsItself(shown.style)) return null;
   const name = elementName(el);
   return ownText ? `${name} "${ownText.slice(0, 40)}"` : name;
 }
 
 /**
- * Visible DOM elements outside the canvas — the UI the judge's canvas capture never sees.
- * Each entry names the element and its text so the failing check is actionable.
+ * A visible canvas that is not the game's and lies over it: a second HUD painted beside the
+ * contract's, which no camera frame photographs (every capture reads the game's canvas alone).
+ * A canvas that does not touch the game — a minimap panel beside it — is not named.
  */
-function domUi() {
+function describeSecondCanvas(el, game) {
+  if (!game || el === game || typeof game.getBoundingClientRect !== "function") return null;
+  const shown = shownBox(el);
+  if (!shown) return null;
+  const own = game.getBoundingClientRect();
+  const { rect } = shown;
+  const over = rect.left < own.right && rect.right > own.left && rect.top < own.bottom && rect.bottom > own.top;
+  return over ? `${elementName(el)} (second canvas over the game)` : null;
+}
+
+/**
+ * Visible DOM elements outside the canvas — the UI the judge's canvas capture never sees — and
+ * any second canvas laid over `game`, the renderer's own. Each entry names the element and its
+ * text so the failing check is actionable.
+ */
+function domUi(game = null) {
   const out = [];
   for (const el of document.body ? document.body.querySelectorAll("*") : []) {
-    const entry = describeUi(el);
+    const entry = el.tagName === "CANVAS" ? describeSecondCanvas(el, game) : describeUi(el);
     if (!entry) continue;
     out.push(entry);
     if (out.length >= DOM_UI_LIMIT) break;
@@ -1042,11 +1210,58 @@ function localInspect(source) {
     count: (tag) => objects(tag).length,
     bbox,
     bboxOf,
-    domUi,
+    domUi: () => domUi(source.renderer?.domElement ?? null),
     hud: source.hud,
     renderTargets: source.renderTargets,
     audio: source.audio,
   };
+}
+
+/** How many HUD item ids `state().hud` lists before the module has loaded; `count` says how many there are. */
+const HUD_SUMMARY_ITEMS = 64;
+/** The longest a HUD item id is written in `state().hud`: a game's own id never makes it large. */
+const HUD_SUMMARY_ID_CHARS = 32;
+
+/** The first HUD_SUMMARY_ITEMS ids, each clipped to HUD_SUMMARY_ID_CHARS, the cut marked. */
+function summaryIds(ids) {
+  const out = [];
+  for (const id of ids) {
+    if (out.length >= HUD_SUMMARY_ITEMS) break;
+    out.push(id.length > HUD_SUMMARY_ID_CHARS ? `${id.slice(0, HUD_SUMMARY_ID_CHARS - 1)}…` : id);
+  }
+  return out;
+}
+
+/**
+ * What `state().hud` says before `./hud.js` has loaded: the ids drawn so far (the first few, and
+ * how many), and nothing measured — coverage is null, never a made-up 0.
+ */
+function unloadedHudSummary(ids, pending) {
+  return {
+    items: summaryIds(ids),
+    count: ids.size,
+    coverage: null,
+    crosshair: pending.crosshair,
+    flash: Number(pending.flashAlpha.toFixed(3)),
+  };
+}
+
+/**
+ * Make one call on the loaded HUD module. A game whose `src/hud.js` somebody edited keeps it, so
+ * the module can predate a call the facade offers (arc, panel, path, image, font): that call is
+ * skipped with one warning per name (`missing` remembers them), never thrown into the game's loop
+ * or the replay behind it.
+ */
+function callLoadedHud(real, missing, name, args) {
+  const method = real.api[name];
+  if (typeof method === "function") return method(...args);
+  if (!missing.has(name)) {
+    missing.add(name);
+    console.warn(
+      `__studio.hud.${name}() is skipped: this game's src/hud.js predates it (an edited older HUD the studio does not replace)`,
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -1067,6 +1282,9 @@ function createHudFacade(renderer, canvas, enabled) {
   const ids = new Set();
   const pending = { crosshair: false, flashAlpha: 0 };
 
+  const missing = new Set();
+  const forward = (name, args) => callLoadedHud(real, missing, name, args);
+
   const load = () => {
     if (real || loading || !on) return;
     loading = true;
@@ -1074,7 +1292,7 @@ function createHudFacade(renderer, canvas, enabled) {
       .then((module) => {
         real = module.createHud({ renderer, canvas });
         if (pending.flashAlpha > 0) real.flashAlpha = pending.flashAlpha;
-        for (const [name, args] of queued) real.api[name](...args);
+        for (const [name, args] of queued) forward(name, args);
         queued.length = 0;
       })
       .catch((err) => {
@@ -1085,10 +1303,17 @@ function createHudFacade(renderer, canvas, enabled) {
   const call = (name, args) => {
     if (!on) return undefined;
     load();
-    if (real) return real.api[name](...args);
+    if (real) return forward(name, args);
     queued.push([name, args]);
     return undefined;
   };
+  /** A call that draws an item under an id: the id is remembered for the summary, the call made or queued. */
+  const drawsItem =
+    (name) =>
+    (id, ...args) => {
+      ids.add(String(id));
+      return call(name, [id, ...args]);
+    };
 
   const api = {
     text: (id, text, opts = {}) => {
@@ -1099,6 +1324,11 @@ function createHudFacade(renderer, canvas, enabled) {
       ids.add(String(id));
       return call("bar", [id, fraction, opts]);
     },
+    arc: drawsItem("arc"),
+    panel: drawsItem("panel"),
+    path: drawsItem("path"),
+    image: drawsItem("image"),
+    font: (family, url) => call("font", [family, url]),
     crosshair: (opts = {}) => {
       ids.add("crosshair");
       pending.crosshair = opts.visible !== false;
@@ -1149,8 +1379,7 @@ function createHudFacade(renderer, canvas, enabled) {
       return real ? real.compose() : undefined;
     },
     summary() {
-      if (real) return real.summary();
-      return { items: [...ids], crosshair: pending.crosshair, flash: Number(pending.flashAlpha.toFixed(3)) };
+      return real ? real.summary() : unloadedHudSummary(ids, pending);
     },
   };
 }

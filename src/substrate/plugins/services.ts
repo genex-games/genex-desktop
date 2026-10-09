@@ -3,6 +3,8 @@ import path from "node:path";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { PluginService, type PluginBinding } from "../../shared/plugins.ts";
 import type { ExportResult } from "../game-export.ts";
+import type { GenexGameManifest } from "../../shared/genex.ts";
+import { readGenexGameManifest } from "../genex-game-manifest.ts";
 import { SecretStore } from "../secrets.ts";
 import { atomicWriteJson } from "../fsx.ts";
 import { createHash } from "node:crypto";
@@ -325,13 +327,16 @@ export class PluginServices {
     }
     return files;
   }
-  async #exportStage({ id, root, binding }: ServiceCall): Promise<ExportResult> {
+  /** The public copy, plus what the game's package.json tells Genex (the copy itself carries no package.json). */
+  async #exportStage({ id, root, binding }: ServiceCall): Promise<ExportResult & { genex?: GenexGameManifest }> {
     const bound = requireBinding(binding);
     if (!PROJECT_NAME.test(bound.project)) throw new Error(MESSAGE.InvalidProjectName);
     if (!this.exportStage) throw new Error(MESSAGE.ExportUnavailable);
     const target = path.join(root, "publish", bound.project, "dist");
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-    return this.exportStage(bound, target, id);
+    const result = await this.exportStage(bound, target, id);
+    const genex = await readGenexGameManifest(bound.directory);
+    return genex ? { ...result, genex } : result;
   }
   async #observeFiles({ args, binding }: ServiceCall): Promise<unknown> {
     const inWorktree =

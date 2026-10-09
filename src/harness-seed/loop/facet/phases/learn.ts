@@ -11,6 +11,8 @@ import { isNewOwnCamera, judgeChecksToRetire, RetireReason } from "../rules.ts";
 import { judgedGap } from "../round-judgement.ts";
 import { defectClass, defectsToChecks, similarDefect } from "../defects.ts";
 import { roundFields } from "../record.ts";
+import { askUserAboutBeyond, BEYOND_MESSAGE } from "../beyond.ts";
+import { countPrincipleStreaks, withStuckPrinciples } from "../growth.ts";
 
 /** The harness's eyes the liveness critic looks through beside the facet's own cameras. */
 const LIVENESS_EYES = ["eye:spawn", "eye:here"];
@@ -46,7 +48,13 @@ export async function critiqueLiveness(loop: FacetLoop, round: FacetRound): Prom
     round.liveness = null;
   }
   if (!(round.liveness?.max > 0)) return;
+  // A principle kept short of convincing card after card is stuck, and actionable at a 2.
+  loop.principleStreaks = countPrincipleStreaks(loop.principleStreaks, round.liveness);
+  round.liveness = withStuckPrinciples(round.liveness, loop.principleStreaks);
   loop.lastLiveness = round.liveness;
+  // A fix that needs something the user did not ask for is theirs to decide (facet/beyond.ts).
+  for (const principle of round.liveness.beyond ?? [])
+    await askUserAboutBeyond(loop, { what: principle.fix }, BEYOND_MESSAGE.critic);
   await appendRun(RunEvent.FacetLiveness, {
     runId: run.runId,
     facetId: facet.id,

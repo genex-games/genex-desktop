@@ -5,8 +5,9 @@
  * (tests/conformance/engines.test.ts).
  */
 import { normalizeRoles, resolveRoles } from "../shared/model-roles.ts";
+import { modelKey, parseModelKey } from "./model-key.ts";
 import { migrateStoredRoles, packStoredRoles, storedRolesKey } from "./stored-roles.ts";
-import type { RoleRecord } from "./ui/ModelMenu.tsx";
+import type { ModelChoice, RoleRecord } from "./ui/ModelMenu.tsx";
 
 export type RoleStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -27,15 +28,43 @@ export function storeRoles(storage: RoleStorage, engineId: string, roles: RoleRe
   else storage.setItem(storedRolesKey(engineId), packStoredRoles(roles));
 }
 
+/** A local row that runs without sessions and cannot see images: it cannot review screenshots. */
+const blindLocal = (choice: ModelChoice | undefined): boolean =>
+  choice !== undefined && choice.supportsSessions === false && choice.supportsVision === false;
+
 /**
- * The roles the composer opens an engine with. The one migration (open decision 6): a record this
- * build cannot vouch for is replaced by the preset for the picked model here and now, so the night
+ * What a pick fills the three jobs with: the pick in every one, as the policy table says. On a
+ * local engine a reviewer looks at screenshots, so a pick that cannot see images leaves reviewing
+ * to the first installed model there that calls tools and can; with none, the pick reviews.
+ */
+export function presetRoles(
+  engineId: string,
+  pickedModel: string | undefined,
+  choices: readonly ModelChoice[] = [],
+): RoleRecord {
+  const preset = resolveRoles(engineId, pickedModel);
+  const picked = choices.find((choice) => choice.key === modelKey(engineId, pickedModel ?? ""));
+  if (!blindLocal(picked)) return preset;
+  const sees = choices.find(
+    (choice) => parseModelKey(choice.key).engine === engineId && !choice.disabled && choice.supportsVision === true,
+  );
+  return sees ? { ...preset, judge: parseModelKey(sees.key).model } : preset;
+}
+
+/**
+ * The roles the composer opens an engine with. The one migration: a record this
+ * build cannot vouch for is replaced by the preset for the picked model here and now, so the run
  * after it is judged by the model the table names — not by whichever model an older build
  * happened to save into all three slots.
  */
-export function openingRoles(storage: RoleStorage, engineId: string, pickedModel: string | undefined): RoleRecord {
+export function openingRoles(
+  storage: RoleStorage,
+  engineId: string,
+  pickedModel: string | undefined,
+  choices: readonly ModelChoice[] = [],
+): RoleRecord {
   const stored = readStoredRoles(storage, engineId);
-  const next = normalizeRoles(engineId, stored) ?? resolveRoles(engineId, pickedModel);
+  const next = normalizeRoles(engineId, stored) ?? presetRoles(engineId, pickedModel, choices);
   if (!stored) storeRoles(storage, engineId, next);
   return next;
 }

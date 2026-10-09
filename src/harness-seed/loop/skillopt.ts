@@ -13,14 +13,27 @@
  * validation uses **cheap replayable sub-tasks mined from run transcripts**, and the gate is
  * pairwise and blind — candidate output against current output, tie ⇒ reject.
  */
-import { writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { applyEdits, loadSkills } from "./skills.ts";
 import { modelOn, EngineId } from "./model-roles.ts";
 import { LIGHT_EFFORT } from "./config.ts";
 import { BallotLetter, parseVerdict, Side } from "./judge.ts";
 import { CompletionRole, promptSha256 } from "./judge-provenance.ts";
-import { loadContractLessons, saveContractLessons } from "./library.ts";
+import { loadContractLessons } from "./library.ts";
+import {
+  CONTRACT_LESSONS_FILE,
+  LESSONS_HEADER,
+  LESSONS_SKILL,
+  StagedTarget,
+  isLessonsRecord,
+  lessonEdits,
+  lessonLine,
+  lessonsInEdits,
+  pendingLessons,
+  refusedLessons,
+} from "./contract-lessons.ts";
+import { LESSONS_WORDS, MAX_LESSONS_PROPOSED, lessonsPrompt } from "./skillopt-prompts.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent } from "../types/harness.d.ts";
 import type { Skill, SkillEdit } from "./skills.ts";
 import { HostMethod } from "./host-methods.ts";
@@ -30,7 +43,14 @@ import { VerdictSource } from "./verdict.ts";
 import { WorkerState } from "./outcomes.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { engineOfGame, GameEngine } from "./game-engine.ts";
-import type { GameProject } from "../types/host-api.d.ts";
+import type { GameProject, HarnessWorkClass } from "../types/host-api.d.ts";
+
+/**
+ * Every model call a pass makes is improvement work. Without the tag the host books it as user
+ * work, so the budget ledger never refuses a pass while a build is running and never counts it
+ * against the improvement share (`substrate/budget.ts`).
+ */
+const IMPROVEMENT_WORK: HarnessWorkClass = "improvement";
 
 /** A replayable sub-task mined from the log: what was asked, whether it went well, and what showed it. */
 export interface ValidationTask {
@@ -73,6 +93,10 @@ interface ProposalEntry {
 /** How a pass is started: the post-run pass hands in the run's engine; a manual pass may not. */
 export interface SkillOptOptions {
   threadId?: string;
+  /**
+   * Accepted and ignored: applying a suggestion is the host's (Settings → Harness → Apply
+   * suggestions automatically, with learning on). A pass only ever stages.
+   */
   autoApply?: boolean;
   engine?: string;
   model?: string;
@@ -103,9 +127,8 @@ const STEP_BUFFER_LIMIT = 50;
 /** A lesson worth staging is longer than a fragment and shorter than a paragraph; a pass stages a few. */
 const MIN_LESSON_CHARS = 12;
 const MAX_LESSON_CHARS = 240;
-const MAX_LESSONS_ADDED = 4;
-/** How many staged lesson passes are kept, the newest. */
-const STAGED_LESSON_PASSES = 10;
+/** The artifact the host reads its staged suggestions from: skill edits and the lessons. */
+const STAGED = "skillopt_staged";
 /** The problems a gate refusal's task keeps as evidence. */
 const GATE_PROBLEMS_KEPT = 3;
 /** The refused edits the analyst is reminded of, the newest. */
@@ -117,7 +140,6 @@ const SUMMARY_LINES = 3;
 /** One self-improvement pass in flight: its model, its tasks, its refusals and its report. */
 interface Pass {
   threadId: string | undefined;
-  autoApply: boolean;
   engine: string;
   model: string | undefined;
   tasks: ValidationTask[];
@@ -147,25 +169,16 @@ function stoppedNote(index: number, total: number): string {
 export async function runSkillOpt(ctx: HarnessCtx, options: SkillOptOptions = {}): Promise<SkillOptReport> {
   const pass = await openPass(ctx, options);
   const { report, skills, threadId } = pass;
-  if (pass.tasks.length === 0) {
-    report.note = "nothing to learn from yet — build or run something first";
-    return finishPass(ctx, threadId, report);
-  }
   pass.stepBuffer = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: STEP_BUFFER })) ?? []) as Refusal[];
 
   // The second target (WP8): what the builders wrote under `## Fixed by looking` and after
-  // `HARNESS:` across runs becomes candidate lines for the contract every brief carries —
-  // staged when self-improvement is off, applied when it is on, exactly like a skill edit.
-  try {
-    const lessons = await distillLessons(ctx, {
-      engine: pass.engine,
-      model: pass.model,
-      events: pass.events,
-      autoApply: pass.autoApply,
-    });
-    if (lessons) report.lessons = lessons;
-  } catch (err: any) {
-    if (stoppedWork(ctx, err)) return finishPass(ctx, threadId, report);
+  // `HARNESS:` across runs becomes candidate lines for the contract every brief carries. They
+  // are staged for the host like a skill edit — applied when the user's switches allow it,
+  // listed in Activity otherwise — and need no judged round to learn from.
+  if (!(await learnLessons(ctx, pass))) return finishPass(ctx, threadId, report);
+  if (pass.tasks.length === 0) {
+    if (!report.lessons?.staged) report.note = "nothing to learn from yet — build or run something first";
+    return finishPass(ctx, threadId, report);
   }
 
   for (const [index, skill] of skills.entries()) {
@@ -194,6 +207,21 @@ export async function runSkillOpt(ctx: HarnessCtx, options: SkillOptOptions = {}
   return finishPass(ctx, threadId, report);
 }
 
+/**
+ * The builders' lessons, distilled and staged into the pass's report. False when the user stopped
+ * the pass during it; any other failure leaves the skills to learn on without them.
+ */
+async function learnLessons(ctx: HarnessCtx, pass: Pass): Promise<boolean> {
+  try {
+    const lessons = await distillLessons(ctx, pass);
+    if (lessons) pass.report.lessons = lessons;
+    if (lessons?.staged) pass.report.staged++;
+    return true;
+  } catch (err: any) {
+    return !stoppedWork(ctx, err);
+  }
+}
+
 /** The pass's evidence, model, tasks and trainable skills, with an empty report. */
 async function openPass(ctx: HarnessCtx, options: SkillOptOptions): Promise<Pass> {
   const events = await collectEvidence(ctx, options.threadId);
@@ -213,7 +241,6 @@ async function openPass(ctx: HarnessCtx, options: SkillOptOptions): Promise<Pass
   const skills = (await loadSkills(ctx.workspace)).filter((skill) => isTrainable(skill));
   return {
     threadId: options.threadId,
-    autoApply: options.autoApply === true,
     engine,
     model,
     events,
@@ -300,7 +327,10 @@ async function improveSkill(ctx: HarnessCtx, pass: Pass, skill: Skill): Promise<
   return SkillStep.Done;
 }
 
-/** A gated candidate: applied (or staged for review) when it won, refused and remembered when it did not. */
+/**
+ * A gated candidate: staged when it won — the host applies it at once when the user's switches
+ * allow, and lists it for review otherwise — refused and remembered when it did not.
+ */
 async function settleProposal(
   ctx: HarnessCtx,
   pass: Pass,
@@ -309,13 +339,7 @@ async function settleProposal(
   entry: ProposalEntry,
 ): Promise<void> {
   const { report } = pass;
-  if (entry.gate.accept && pass.autoApply) {
-    await applyAccepted(ctx, skill, candidateText, entry);
-    report.accepted++;
-    return;
-  }
   if (entry.gate.accept) {
-    // Solo phase: the user reviews self-changes in the diff UI before they land.
     await stageProposal(ctx, skill, candidateText, entry);
     report.staged++;
     return;
@@ -359,72 +383,108 @@ export function mineLessons(
   return out.slice(-limit);
 }
 
-async function distillLessons(
-  ctx: HarnessCtx,
-  {
-    engine,
-    model,
-    events,
-    autoApply,
-  }: { engine: string; model?: string; events: readonly HarnessEvent[]; autoApply: boolean },
-): Promise<{ added: number; removed: number; staged: boolean; lessons?: string[] } | null> {
-  const mined = mineLessons(events);
+/** What one lessons pass proposed, as the pass report keeps it. */
+interface LessonsOutcome {
+  added: number;
+  removed: number;
+  staged: boolean;
+  lessons?: string[];
+}
+
+/**
+ * The builders' notes → one lessons suggestion for the host. Lessons already in the file, waiting
+ * in an earlier suggestion, or refused by the person are never proposed again: the file used to
+ * stay empty, so every pass proposed the same lines.
+ */
+async function distillLessons(ctx: HarnessCtx, pass: Pass): Promise<LessonsOutcome | null> {
+  const mined = mineLessons(pass.events);
   if (mined.length === 0) return null;
   const current = await loadContractLessons(ctx.workspace);
+  const pending = pendingLessons(await ctx.call(HostMethod.ArtifactRead, { artifactId: STAGED }));
+  const refused = refusedLessons(pass.stepBuffer);
+  const known = [...new Set([...current, ...pending.add])];
+  const { systemPrompt, userContent } = lessonsPrompt(known, mined);
   const response = await ctx.call(HostMethod.EngineComplete, {
-    engine,
-    model,
-    systemPrompt: [
-      "You maintain a short list of lessons that go into every game builder's brief. Each lesson is one concrete, general sentence a builder can act on (a helper's shape, a merge rule, a capture habit, a check to run before re-tuning).",
-      "From the builders' own notes below, propose at most 4 NEW lessons that recur or would clearly recur, and name any CURRENT lesson that the notes show is wrong. Never restate a current lesson.",
-      'Reply with JSON only: {"add":["…"],"remove":["exact current lesson text"],"rationale":"…"}',
-    ].join("\n"),
+    engine: pass.engine,
+    model: pass.model,
+    class: IMPROVEMENT_WORK,
+    systemPrompt,
     stream: false,
     effort: LIGHT_EFFORT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          `CURRENT LESSONS (${current.length}):`,
-          ...current.map((l) => `- ${l}`),
-          "",
-          `BUILDER NOTES (${mined.length}):`,
-          ...mined.map((m) => `- [${m.facetId ?? "?"}] ${m.text}`),
-          "",
-          'Reply with JSON only: {"add":[…],"remove":[…],"rationale":"…"}',
-        ].join("\n"),
-      },
-    ],
+    messages: [{ role: "user", content: userContent }],
   });
   const parsed = parseVerdict(response.message?.content ?? "");
-  const add: string[] = (Array.isArray(parsed.add) ? parsed.add : [])
-    .map((l: unknown) => String(l).trim())
-    .filter((l: string) => l.length > MIN_LESSON_CHARS && l.length <= MAX_LESSON_CHARS)
-    .slice(0, MAX_LESSONS_ADDED);
-  const remove = new Set<string>(
-    (Array.isArray(parsed.remove) ? parsed.remove : []).map((l: unknown) => String(l).trim()),
-  );
-  if (add.length === 0 && remove.size === 0) return { added: 0, removed: 0, staged: false };
-  const next = [...current.filter((l) => !remove.has(l)), ...add];
-  if (autoApply) {
-    await saveContractLessons(ctx.workspace, next);
-    return { added: add.length, removed: remove.size, staged: false, lessons: add };
+  const proposed = (Array.isArray(parsed.add) ? parsed.add : [])
+    .map(lessonLine)
+    .filter((lesson: string) => lesson.length > MIN_LESSON_CHARS && lesson.length <= MAX_LESSON_CHARS)
+    .filter((lesson: string) => !known.includes(lesson) && !refused.has(lesson))
+    .slice(0, MAX_LESSONS_PROPOSED);
+  const named: string[] = (Array.isArray(parsed.remove) ? parsed.remove : []).map(lessonLine);
+  if (proposed.length === 0 && named.length === 0) return { added: 0, removed: 0, staged: false };
+  // The suggestion still waiting is folded into this one, so one waits at a time and none is lost.
+  // A waiting lesson the distiller now takes out leaves the suggestion: the file never had it.
+  const add = [...pending.add, ...proposed].filter((lesson) => !refused.has(lesson) && !named.includes(lesson));
+  const remove = [...new Set([...pending.remove, ...named])];
+  const rationale = clip(parsed.rationale, CLIP_REASON);
+  const counted = await stageLessons(ctx, { add, remove, rationale });
+  if (!counted) return { added: 0, removed: 0, staged: false };
+  return { ...counted, staged: true, lessons: proposed };
+}
+
+/**
+ * Stage the lessons as one suggestion in `skillopt_staged`, in place of any lessons suggestion
+ * still waiting, and tell the host: its sweep applies it when learning and automatic apply are
+ * both on, and Activity lists it otherwise.
+ */
+async function stageLessons(
+  ctx: HarnessCtx,
+  { add, remove, rationale }: { add: string[]; remove: string[]; rationale: string },
+): Promise<{ added: number; removed: number } | null> {
+  // Read again now, not when the pass began: the model call takes a while, and the host may
+  // have applied or discarded a suggestion meanwhile.
+  const currentText = await readFile(path.join(ctx.workspace, CONTRACT_LESSONS_FILE), "utf8").catch(() => "");
+  const current = await loadContractLessons(ctx.workspace);
+  const { edits } = lessonEdits(current, add, remove);
+  // A file nobody wrote yet starts with its header, so whoever opens it knows what it is.
+  const header = currentText.trim() ? [] : [{ op: "append", text: LESSONS_HEADER }];
+  const change = applyEdits(currentText, [...header, ...edits]);
+  const counted = lessonsInEdits(change.applied);
+  if (counted.add.length + counted.remove.length === 0) {
+    // Nothing left to change: a suggestion still waiting is withdrawn, not left to apply.
+    await replaceLessonsRecord(ctx, null);
+    return null;
   }
-  const staged = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "skillopt_lessons_staged" })) ??
-    []) as AnyRecord[];
-  await ctx.call(HostMethod.ArtifactWrite, {
-    artifactId: "skillopt_lessons_staged",
-    value: [
-      ...staged,
-      {
-        at: new Date().toISOString(),
-        add,
-        remove: [...remove],
-        rationale: clip(parsed.rationale, CLIP_REASON),
-      },
-    ].slice(-STAGED_LESSON_PASSES),
+  const summary = [
+    counted.add.length ? LESSONS_WORDS.added(counted.add.length) : "",
+    counted.remove.length ? LESSONS_WORDS.removed(counted.remove.length) : "",
+  ].filter(Boolean);
+  const record = {
+    target: StagedTarget.Lessons,
+    skill: LESSONS_SKILL,
+    file: CONTRACT_LESSONS_FILE,
+    currentText,
+    proposedText: change.text,
+    edits: change.applied,
+    rationale,
+    title: counted.add.length ? LESSONS_WORDS.title : LESSONS_WORDS.removeTitle,
+    summary,
+    at: new Date().toISOString(),
+  };
+  await replaceLessonsRecord(ctx, record);
+  const payload = { target: record.target, skill: record.skill, title: record.title, summary, rationale };
+  await ctx.call(HostMethod.EventsAppend, {
+    batch: [{ type: EventKind.Custom, event_type: RunEvent.SkilloptStaged, payload }],
   });
-  return { added: add.length, removed: remove.size, staged: true, lessons: add };
+  ctx.notify("skillopt.staged", { skill: LESSONS_SKILL });
+  return { added: counted.add.length, removed: counted.remove.length };
+}
+
+/** `skillopt_staged` with this record in place of any lessons suggestion waiting; none takes it out. */
+async function replaceLessonsRecord(ctx: HarnessCtx, record: AnyRecord | null): Promise<void> {
+  const staged = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: STAGED })) ?? []) as AnyRecord[];
+  const others = staged.filter((entry) => !isLessonsRecord(entry));
+  if (!record && others.length === staged.length) return;
+  await ctx.call(HostMethod.ArtifactWrite, { artifactId: STAGED, value: record ? [...others, record] : others });
 }
 
 export function isTrainable(skill: Pick<Skill, "frontmatter"> | null | undefined): boolean {
@@ -590,7 +650,7 @@ function endedWorkerTask(payload: AnyRecord, mined: number): ValidationTask | nu
   };
 }
 
-/** Whether the night ended with something the user can play is the only outcome that counts. */
+/** Whether the run ended with something the user can play is the only outcome that counts. */
 function landingTask(payload: AnyRecord, mined: number): ValidationTask | null {
   const landing = payload.landingResult;
   if (!landing) return null;
@@ -624,10 +684,10 @@ const TASK_MINERS: Partial<Record<string, TaskMiner>> = {
     evidence: { decision: payload.decision ?? "" },
     skills: ["facet-decomposition"],
   }),
-  // A director's night (director.ts) used to be nearly invisible here: the analyst saw its
-  // facet iterations and nothing else, so the one thing that cost the first real night — a
+  // A director's run (director.ts) used to be nearly invisible here: the analyst saw its
+  // facet iterations and nothing else, so the one thing that cost the first real run — a
   // fork point that did not run, which refused five builders before they started — taught
-  // nobody. These three are what the night itself decided, and they answer to the playbook.
+  // nobody. These three are what the run itself decided, and they answer to the playbook.
   [RunEvent.DirectorVerdict]: gateRefusalTask,
   [RunEvent.DirectorWorker]: endedWorkerTask,
   [RunEvent.RunFinished]: landingTask,
@@ -731,6 +791,7 @@ async function analyse(
   const response = await ctx.call(HostMethod.EngineComplete, {
     engine,
     model,
+    class: IMPROVEMENT_WORK,
     systemPrompt,
     stream: false,
     effort: LIGHT_EFFORT,
@@ -784,6 +845,7 @@ async function describeEdits(
   const response = await ctx.call(HostMethod.EngineComplete, {
     engine,
     model,
+    class: IMPROVEMENT_WORK,
     systemPrompt,
     stream: false,
     effort: LIGHT_EFFORT,
@@ -883,6 +945,7 @@ async function gateCandidate(
     const response = await ctx.call(HostMethod.EngineComplete, {
       engine,
       model,
+      class: IMPROVEMENT_WORK,
       systemPrompt,
       stream: false,
       effort: LIGHT_EFFORT,
@@ -901,36 +964,12 @@ async function gateCandidate(
   };
 }
 
-async function applyAccepted(ctx: HarnessCtx, skill: Skill, text: string, entry: ProposalEntry): Promise<void> {
-  const snapshot = await ctx.call(HostMethod.SnapshotCreate, {
-    scope: "harness",
-    reason: `skillopt: accepted edits to ${skill.slug}`,
-  });
-  await writeFile(skill.file, text);
-  await writeFile(path.join(path.dirname(skill.file), `${skill.slug}.best.md`), text);
-  // Post-apply checkpoint: the watchdog rewinds to the newest *healthy* snapshot, and without
-  // one containing the accepted edit a later rewind discards it with nothing in Review to say
-  // so. Taken only once both files are on disk; a failed write above means no post snapshot.
-  const postSnapshot = await ctx.call(HostMethod.SnapshotCreate, {
-    scope: "harness",
-    healthy: true,
-    reason: `after self-change: skills/${skill.slug}.md — skillopt accepted edits to ${skill.slug}`,
-  });
-  await ctx.call(HostMethod.EventsAppend, {
-    batch: [
-      {
-        type: EventKind.Custom,
-        event_type: RunEvent.SkilloptAccepted,
-        payload: { ...entry, snapshot_id: snapshot.snapshot_id, post_snapshot_id: postSnapshot.snapshot_id },
-      },
-    ],
-  });
-  ctx.notify("skillopt.accepted", { skill: skill.slug, gate: entry.gate });
-}
-
-/** Staged proposals land in the self-change UI for review rather than editing the live skill. */
+/**
+ * Staged proposals wait in `skillopt_staged`: the host applies them (snapshot first, logged,
+ * undoable) — at once when the user's switches allow, after a review otherwise.
+ */
 async function stageProposal(ctx: HarnessCtx, skill: Skill, text: string, entry: ProposalEntry): Promise<void> {
-  const staged = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: "skillopt_staged" })) ?? []) as AnyRecord[];
+  const staged = ((await ctx.call(HostMethod.ArtifactRead, { artifactId: STAGED })) ?? []) as AnyRecord[];
   staged.push({
     skill: skill.slug,
     file: `skills/${skill.slug}.md`,
@@ -943,7 +982,7 @@ async function stageProposal(ctx: HarnessCtx, skill: Skill, text: string, entry:
     summary: entry.summary,
     at: new Date().toISOString(),
   });
-  await ctx.call(HostMethod.ArtifactWrite, { artifactId: "skillopt_staged", value: staged });
+  await ctx.call(HostMethod.ArtifactWrite, { artifactId: STAGED, value: staged });
   await ctx.call(HostMethod.EventsAppend, {
     batch: [{ type: EventKind.Custom, event_type: RunEvent.SkilloptStaged, payload: entry }],
   });

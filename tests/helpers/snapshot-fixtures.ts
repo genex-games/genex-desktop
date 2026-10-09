@@ -1,7 +1,7 @@
 /**
  * User repositories in the states snapshot, landing and restore code must never lose: committed
  * history plus uncommitted edits, staged edits and untracked files, and a game folder that holds
- * another repository one level down (the flautout-remix shape).
+ * another repository one level down.
  *
  * Built with the machine's real git. Commits carry a fixture identity and skip signing and hooks,
  * so the builders behave the same whatever the developer's global git config says.

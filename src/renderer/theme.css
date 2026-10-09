@@ -1424,7 +1424,12 @@ button.chat-header-title:hover {
 .sidebar-titlebar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   height: 44px;
+}
+/* Send feedback ends the toggle's line, its glyph centred over the bell's 28px column below. */
+.sidebar-feedback {
+  margin-inline-end: -2px;
 }
 /* 72px keeps the toggle just clear of macOS's traffic lights; 8px down centres it on them and on the
  * headers' line, 24px from the top, where the chat and Plugins headers put it while the sidebar is hidden. */
@@ -2827,12 +2832,16 @@ button.chat-header-title:hover {
 .terminal-dock[hidden] {
   display: none;
 }
-.terminal-dock .xterm {
+/* The dock's terminals and a sign-in's terminal in Settings fill their box in the app's colours. */
+:is(.terminal-dock, [data-sign-in-terminal]) .xterm {
   height: 100%;
 }
-.terminal-dock .xterm-viewport {
+:is(.terminal-dock, [data-sign-in-terminal]) .xterm-viewport {
   background-color: var(--background);
   overscroll-behavior: contain;
+}
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 99px;
 }
 
 /* Only current work animates. History and disclosures mount without entrance choreography. */

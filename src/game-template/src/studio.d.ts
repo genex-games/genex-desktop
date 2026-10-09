@@ -4,7 +4,7 @@
  * A game the user brings is often TypeScript, and its build is `tsc -b && vite build`: the
  * moment its entry does what every brief asks it to do — `import { installStudio } from
  * "./studio.js"` — an untyped contract is TS7016/TS2307, the build exits non-zero, the preview
- * has nothing to serve, and every critic scores a black frame (skate-prod, 2026-09-06).
+ * has nothing to serve, and every critic scores a black frame.
  * TypeScript resolves `./studio.js` to this declaration, so the same import line compiles under
  * `strict` and still runs as plain JavaScript in a folder with no build at all.
  *
@@ -78,19 +78,81 @@ export interface UpdateContext {
   pointer: { x: number; y: number; locked: boolean };
 }
 
-/** Where a HUD item is drawn: fractions of the frame, y from the top. */
+/** One of the nine points of the frame a HUD item hangs from; `x`/`y` then move it inward. */
+export type HudAnchor =
+  | "top-left"
+  | "top"
+  | "top-right"
+  | "left"
+  | "center"
+  | "right"
+  | "bottom-left"
+  | "bottom"
+  | "bottom-right";
+
+/** Where a HUD item is drawn: fractions of the frame, y from the top, measured from `anchor` (default top-left). */
 export interface HudPlacement {
   x?: number;
   y?: number;
   size?: number;
   color?: string;
   align?: "left" | "center" | "right";
+  anchor?: HudAnchor;
+}
+
+/** A shape's box: placed like any item, its `w` and `h` in fractions of the frame's HEIGHT (so it keeps its shape). */
+export interface HudBox {
+  x?: number;
+  y?: number;
+  anchor?: HudAnchor;
+  w?: number;
+  h?: number;
+}
+
+/** A gauge or ring: radius and stroke in frame heights, angles in radians (default a 270° sweep open at the bottom). */
+export interface HudArc {
+  x?: number;
+  y?: number;
+  anchor?: HudAnchor;
+  r?: number;
+  start?: number;
+  end?: number;
+  /** How much of the sweep is filled, 0–1. */
+  fraction?: number;
+  width?: number;
+  color?: string;
+  /** The unfilled track's colour; no track without it. */
+  back?: string;
+  cap?: "round" | "butt" | "square";
+}
+
+/** A rounded rectangle behind a group of readouts. `fill: null` draws only the outline. */
+export interface HudPanel extends HudBox {
+  radius?: number;
+  fill?: string | null;
+  stroke?: string;
+  width?: number;
+}
+
+/** An SVG path (`d`), drawn through its `viewBox` (default `0 0 100 100`) into its box. */
+export interface HudPath extends HudBox {
+  viewBox?: string | [number, number, number, number];
+  fill?: string | null;
+  stroke?: string;
+  width?: number;
 }
 
 /** The only UI a template game may have: one quad tagged `hud`, drawn into the canvas. */
 export interface StudioHud {
   text(id: string, text: string, opts?: HudPlacement): void;
-  bar(id: string, fraction: number, opts?: HudPlacement & { w?: number; h?: number }): void;
+  bar(id: string, fraction: number, opts?: HudPlacement & { w?: number; h?: number; back?: string }): void;
+  arc(id: string, opts?: HudArc): void;
+  panel(id: string, opts?: HudPanel): void;
+  path(id: string, d: string, opts?: HudPath): void;
+  /** An image from `assets/` or a data URL; reported as pending until it has decoded. */
+  image(id: string, src: string, opts?: HudBox): void;
+  /** Register a bundled font file; text that names `family` uses it once it has loaded. */
+  font(family: string, url: string): void;
   crosshair(opts?: {
     size?: number;
     gap?: number;
@@ -107,9 +169,19 @@ export interface StudioHud {
   enable(on?: boolean): void;
 }
 
-/** What the HUD is showing, as `state()` reports it. */
+/** What the HUD is showing, as `state()` reports it: bounded however many items a game draws. */
 export interface HudSummary {
+  /** The first 64 item ids, each clipped to 32 characters; `count` is how many there are. */
   items: string[];
+  count?: number;
+  /** Items per kind (`text`, `bar`, `arc`, `panel`, `path`, `image`, `crosshair`). */
+  kinds?: Record<string, number>;
+  /** The share of the frame the items cover, 0–1; null until the HUD module has loaded. */
+  coverage?: number | null;
+  /** Pairs of item ids that run into each other, at most 8; an item sitting inside a much larger one (a readout in its dial, a label on its bar) is a group, not a pair. */
+  overlaps?: Array<[string, string]>;
+  /** Images still decoding and fonts still loading. */
+  pending?: number;
   crosshair: boolean;
   flash: number;
 }
@@ -174,7 +246,27 @@ export interface StudioState {
   camera: string;
   error: string | null;
   player: PlayerPose | null;
+  /** Present only when the game passed `config.flow`: the screen it is on, and whether that is play. */
+  flow?: GameFlow;
   [probe: string]: unknown;
+}
+
+/** The screens a game with a front-end reports through `config.flow()`; only `playing` decides anything. */
+export declare const FlowPhase: Readonly<{
+  Boot: "boot";
+  Menu: "menu";
+  Intro: "intro";
+  Countdown: "countdown";
+  Playing: "playing";
+  Paused: "paused";
+  Results: "results";
+}>;
+export type FlowPhase = (typeof FlowPhase)[keyof typeof FlowPhase];
+
+/** `state().flow`: the phase `config.flow()` named (null when it named none) and whether it is play. */
+export interface GameFlow {
+  phase: FlowPhase | null;
+  playing: boolean;
 }
 
 /**
@@ -200,7 +292,17 @@ export interface StudioConfig {
   cameras?: Record<string, () => void>;
   /** Scripted demonstrations the generic playthrough cannot reach; each ends paused. */
   demos?: Record<string, () => unknown>;
+  /** Put the game on its first screen (a title or menu is welcome) for `seed`. */
   reset?: (seed: number) => void;
+  /** Which screen is up now, as a {@link FlowPhase} word: `state().flow` reports it. */
+  flow?: () => FlowPhase;
+  /** From where `reset` leaves the game straight into play: synchronous, deterministic, no wall clock. */
+  begin?: () => void;
+  /**
+   * A racing game's racing line: the steering a driver on it would apply now, -1 full left … 1
+   * full right, read every frame while the harness's assist is on. A pure read of the game's state.
+   */
+  steer?: () => number;
   canvas?: HTMLCanvasElement;
   /** The game's scene graph, renderer and camera — whatever library they come from. */
   scene?: unknown;
@@ -217,7 +319,7 @@ export interface StudioApi {
   version: number;
   /** Reseed, reset — and pause, so judging starts from a known frame. */
   seed?(value: number): number;
-  /** Resume live play. The game runs from the moment `installStudio` returns. */
+  /** Resume the studio's clock — not the game's Start button: the loop runs and draws from load. */
   start?(): boolean;
   pause?(): boolean;
   /** Present when the game passed `update`; otherwise the studio's shim owns the clock verbs. */
@@ -235,6 +337,15 @@ export interface StudioApi {
   hud: StudioHud;
   demos(): string[];
   demo(name: string): { ok: true; demo: string; result: unknown } | { ok: false; available: string[] };
+  /** Past the title, menu and countdown into play via `config.begin`, left paused; `ok: false` without one. */
+  begin(): { ok: true; flow: GameFlow | null } | { ok: false; reason: string };
+  /** The steering `config.steer` asks for now, clamped to -1…1; `ok: false` without one. */
+  steer(): { ok: true; steer: number } | { ok: false; reason: string };
+  /**
+   * The racing-line assist on (`{ steer: true }`) or off: `config.steer` steers through the arrow
+   * and A/D keys, held for the share of frames the line asks, until switched off or `seed()`.
+   */
+  assist(options: { steer: boolean } | boolean): { ok: true; steer: boolean } | { ok: false; reason: string };
   /** The critic's hands: key names (`KeyW`, `w`) and mouse deltas in pixels. */
   injectInput(input: {
     down?: string[];

@@ -9,7 +9,7 @@ import { outcomeTitle } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { openBuildGraph } from "../open-build.ts";
-import { elapsedShortWords } from "../run-steps.ts";
+import { workedShortWords } from "../run-steps.ts";
 import { BuildCard } from "../chat/BuildCard.tsx";
 
 /** Did the run leave a build of its own (a head that moved past where it started)? */
@@ -86,7 +86,7 @@ export function RunOutcome({
   const title = chatOutcomeTitle(summary);
   const failed = current.filter((e) => e.status === "failed");
   const still = summary.captures?.current ?? capturePath ?? current.findLast((e) => e.capture)?.capture;
-  const line = outcomeLine(summary, failed.length, elapsedShortWords(summary.startedAt, summary.endedAt));
+  const line = outcomeLine(summary, failed.length, workedShortWords(summary.worked));
   return (
     <section data-testid="run-outcome" data-chat-outcome className="flex min-w-0 flex-col gap-2 text-chat text-ink-3">
       {/* How this build was made: its graph on Builds, the one way back to an earlier build. */}

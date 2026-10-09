@@ -87,7 +87,7 @@ function notApplied(file: string, reason: string): { ok: false; content: string 
 
 /**
  * What `remember` says it kept: the fact, and what fitting memory (`normalise`) cut or let go — a
- * fact cut or dropped without a word was lost silently (P16-F10).
+ * fact cut or dropped without a word was lost silently.
  */
 function rememberedWords(key: string, { clipped, dropped }: { clipped: boolean; dropped: string[] }): string {
   return [

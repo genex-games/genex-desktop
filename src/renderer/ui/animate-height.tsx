@@ -3,8 +3,8 @@
 /**
  * RULES: a container whose HEIGHT glides when its content changes — built for
  * a dialog whose body swaps between lanes (the remix modal's Create-on-the-web
- * / Use-my-own-agent toggle, owner 2026-08-25: "it changes size abruptly,
- * which isn't very user-friendly"), and used by the chat for a reply that grows
+ * / Use-my-own-agent toggle, which otherwise changes size abruptly), and used
+ * by the chat for a reply that grows
  * as it is written and for the cards waiting above the composer.
  *
  * How it works: the inner div is measured by a ResizeObserver and the outer

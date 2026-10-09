@@ -114,7 +114,7 @@ async function enter(run: FullRun): Promise<Entered> {
 
 /**
  * A SECOND CHANCE AT THE ENTRANCE, on the same signals, after directions and ack: a loading screen
- * can outlast the first search, and a finished game once scored 1/8 behind a "PLAY THE HOLE" card the
+ * can outlast the first search, and a finished game must not score 1/8 behind a start card the
  * first look ran too early to see. When it gets the probe in, the post-entrance baseline is taken now
  * and applies from the interact phase on.
  */

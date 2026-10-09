@@ -2,7 +2,7 @@
  * THE SOAK: a seeded autoplay stream for `SPEC_SOAK_MS` (keys 70%, hover moves 20%, clicks 10%, each
  * through its guard), frames denser in the first minute, and the page-side series pulled after every
  * step. ONE CONSTANT PER WINDOW (Rule 1): the soak and both rows it feeds read `SPEC_SOAK_MS`, because
- * a 45 s soak against a 300 s check once left `l1.survives_5min` unknown in 38 of 38 bundles. A soak
+ * a soak shorter than its check leaves `l1.survives_5min` unknown in every bundle. A soak
  * the budget shortened is allowed, and both rows then say `unknown` rather than inherit a verdict.
  *
  * A guard that refuses an input still consumes its RNG draws, so the seeded trace is the same whether

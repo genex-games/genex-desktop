@@ -58,7 +58,7 @@ describe("stop reasons", () => {
 
 describe("a bounded ask's effort", () => {
   // A code review, a replan, the next move and a direct playtester's moves always ran "low",
-  // whatever effort the user set for a role: a night at high judge effort must not pay high
+  // whatever effort the user set for a role: a run at high judge effort must not pay high
   // effort for each of up to twenty playtester moves. Pinned so a refactor cannot change it.
   it("stays light even when the user set role efforts", async () => {
     const run = {
@@ -103,6 +103,25 @@ describe("a bounded ask's effort", () => {
     const efforts = recorder.paramsOf("engine.complete").map((p) => p.effort);
     assert.deepEqual(efforts, ["low", "low", "low", "low"], "review, replan, next move, one playtester move");
     assert.equal(LIGHT_EFFORT, "low");
+  });
+});
+
+describe("a delegated play session meets the game's front-end", () => {
+  const spec = { id: "plaza", title: "Plaza", intent: "a plaza", checks: [{ id: "c1", kind: "play", ask: "Fun?" }] };
+
+  it("asks the studio to keep the title and menu on screen, with the run's setup or without one", async () => {
+    for (const setup of [undefined, { demo: "pick-map", verify: { path: "map", equals: "apex" } }]) {
+      const run = { runId: "r1", project: "p", engine: "codex", model: "m", goal: "g", ...(setup ? { setup } : {}) };
+      const recorder = ctxRecorder({
+        handlers: {
+          "engine.describe": () => [{ id: "codex", kind: "delegated" }],
+          "engine.delegate": () => ({ turns: 1, summary: "{}" }),
+        },
+      });
+      await runPlaytest(recorder.ctx, { run, spec, checks: spec.checks, root: "/r", maxActions: 1 } as never);
+      const asked = recorder.paramsOf("engine.delegate")[0]?.playtest as { setup?: Record<string, unknown> };
+      assert.deepEqual(asked.setup, { ...(setup ?? {}), begin: false }, JSON.stringify(setup));
+    }
   });
 });
 
@@ -253,7 +272,7 @@ describe("the run's record", () => {
     );
   });
 
-  it("never throws a failed write at the night, and says so in the log", async () => {
+  it("never throws a failed write at the run, and says so in the log", async () => {
     resetFailureLog();
     const recorder = ctxRecorder({
       handlers: {

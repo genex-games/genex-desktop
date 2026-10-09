@@ -64,6 +64,7 @@ import {
   moveWords,
   outageWords,
   partRoundLine,
+  autoResumedWords,
   pausedWords,
   permissionOutcomeWords,
   permissionTitleWords,
@@ -181,7 +182,7 @@ export type Entry =
       outcome?: string;
       /**
        * action "steer": the answers this card offers, when "Change it" is not the only one. A
-       * plan the night is holding for can be started with a word as well as changed, and a
+       * plan the run is holding for can be started with a word as well as changed, and a
        * button must type what its label says.
        */
       steers?: Array<{ label: string; prefill: string }>;
@@ -190,29 +191,31 @@ export type Entry =
       engineLink?: { project: string; pluginId: string; linkedAt: string };
     }
   /**
-   * The morning: what the night amounts to, in one card. It replaces the line that read
-   * "RUN ended after 21 iterations — the director finished the run" over a night that had
+   * The morning: what the run amounts to, in one card. It replaces the line that read
+   * "RUN ended after 21 iterations — the director finished the run" over a run that had
    * built, merged and judged a game.
    */
   | {
       kind: typeof EntryKind.Morning;
       id: string;
-      /** the run it closes, so the card can tell a paused night from a finished one */
+      /** the run it closes, so the card can tell a paused run from a finished one */
       runId: string | null;
       rounds: number;
-      /** the night's own report to the user; a night that ran out of time first has none */
+      /** the run's own report to the user; a run that ran out of time first has none */
       summary: string | null;
       /** the close's own plain sentence about landing, when it wrote one */
       landingLine: string | null;
-      /** the studio's own line about what the night taught it, from its ledger */
+      /** the studio's own line about what the run taught it, from its ledger */
       learned: string | null;
       stoppedBecause: string | null;
+      /** the provider failure that paused the run (the close's `limit.kind`), for the card's words */
+      pausedOn: string | null;
       kept: number;
       undone: number;
       landed: boolean | null;
       project: string | null;
       commit: string | null;
-      /** the first and last frames the night recorded, as saved-run stills */
+      /** the first and last frames the run recorded, as saved-run stills */
       before: string | null;
       after: string | null;
       /** what the run generated in its own workspace: shown with its result, once in the game */
@@ -402,7 +405,7 @@ const STUDIO_TOOL_PREFIX = /^mcp__studio__/i;
 interface ChatDraft {
   signInReplies: Set<string>;
   entries: Entry[];
-  /** What the night adds up to, gathered as the log is walked so the morning card can say it. */
+  /** What the run adds up to, gathered as the log is walked so the morning card can say it. */
   rounds: { kept: number; undone: number; firstShot: string | null; lastShot: string | null };
   rowByCall: Map<string, ToolChipRow>;
   directTurns: Map<string, string | null>;
@@ -858,7 +861,7 @@ function readDelegatedTurn(chat: ChatDraft, eventId: string, scope: string, payl
 
 /**
  * A call the host records itself, so its mirror would be a second row: a plugin's (`plugin_tool`),
- * a connector's (`connector_tool`), and a run control of the coordinator's or of the chat's own session after a night — the host
+ * a connector's (`connector_tool`), and a run control of the coordinator's or of the chat's own session after a run — the host
  * records its request and result when it runs it (conversation.ts `coordinatorTool`). A resume the
  * session only recorded runs once its reply ends, and shows then.
  */
@@ -1111,19 +1114,23 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
+/** An engine's name as a person says it: the provider table's, else the role table's. */
+function providerName(engine: string): string {
+  return providerInfo(engine)?.label ?? engineLabel(engine);
+}
+
 /** An unattended run narrates itself in the game's own chat: start, verdicts, ending, lessons. */
 function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const started = customPayload(event.data, CustomEvent.RunStarted);
   if (!started) return;
-  // Which model judges tonight, by name. The night this milestone came from was judged by
-  // the orchestrator's model because a stale saved preference said so, and nothing on screen
-  // ever said which model was answering — so the card says it (open decision 6). And on
+  // Which model judges this run, by name: a stale saved preference can put the judging on the
+  // orchestrator's model, and nothing else on screen says which model is answering. And on
   // which subscription, when the judges are not on the run's own (cross-provider roles).
   const judge = started.judgeModel ?? started.roles?.judge;
   const judgeEngine = started.judgeEngine ?? started.engine ?? "";
   const judgeName = judge ? roleName(judgeEngine, judge) : null;
   const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider ? `${judgeName} on ${engineLabel(judgeEngine)}` : judgeName;
+  const judgeWords = crossProvider ? `${judgeName} on ${providerName(judgeEngine)}` : judgeName;
   say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
 }
 
@@ -1148,7 +1155,7 @@ type RoundPayload = CustomPayload<typeof CustomEvent.FacetIteration>;
 function narrateRound(chat: ChatDraft, event: EventEnvelope): void {
   const round = customPayload(event.data, CustomEvent.FacetIteration);
   if (!round) return;
-  // The morning card counts the night's rounds; a round the lead stopped, or one that
+  // The morning card counts the run's rounds; a round the lead stopped, or one that
   // recorded no winner, is neither kept nor undone.
   const outcome = roundOutcome(round);
   countRound(chat, outcome);
@@ -1192,7 +1199,7 @@ function narrateModel(chat: ChatDraft, event: EventEnvelope): void {
 
 /**
  * A plugin tool call, from the studio's own record of it. Both engine paths write the pair,
- * so a plugin that a night's builder used reads the same as one the user asked for in chat.
+ * so a plugin that a run's builder used reads the same as one the user asked for in chat.
  */
 function narratePluginCall(chat: ChatDraft, event: EventEnvelope): void {
   const { data } = event;
@@ -1372,7 +1379,7 @@ function narrateNotice(chat: ChatDraft, event: EventEnvelope): void {
     pending: true,
     expiresAt: Date.parse(event.created_at) + waitMinutes * MINUTE_MS,
     prefill: PLAN_WORDS.changePrefill,
-    // "go" only starts a night that is actually waiting for it, and the card that asks for it
+    // "go" only starts a run that is actually waiting for it, and the card that asks for it
     // offers both of its answers as their own button. A plan nobody is holding for is still
     // the user's to change, so that card keeps the one button it always had.
     steers: [
@@ -1484,6 +1491,12 @@ function narrateResumed(chat: ChatDraft, event: EventEnvelope): void {
   if (resumed) say(chat, event.id, SystemTag.Resumed, resumedWords(resumed.doneFacets?.length ?? 0));
 }
 
+/** A build the studio resumed on its own: why, in plain words (`core/auto-resume.ts`). */
+function narrateAutoResumed(chat: ChatDraft, event: EventEnvelope): void {
+  const resumed = customPayload(event.data, CustomEvent.RunAutoResumed);
+  if (resumed) say(chat, event.id, SystemTag.Resumed, autoResumedWords(resumed.cause));
+}
+
 function narrateJudgeRound(chat: ChatDraft, event: EventEnvelope): void {
   const judgeRound = customPayload(event.data, CustomEvent.RunIteration);
   if (!judgeRound) return;
@@ -1519,6 +1532,12 @@ function settleRunTools(chat: ChatDraft, finished: FinishedPayload): void {
   }
 }
 
+/** The provider failure that paused the run, by its typed kind (`run_finished.limit.kind`), or null. */
+function pausedOnOf(finished: FinishedPayload): string | null {
+  const kind = finished.limit?.kind;
+  return typeof kind === "string" ? kind : null;
+}
+
 function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): MorningEntry {
   const { rounds } = chat;
   const judged = rounds.kept + rounds.undone;
@@ -1536,6 +1555,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     landingLine: typeof finished.landingResult?.line === "string" ? finished.landingResult.line : null,
     learned: typeof finished.learned === "string" && finished.learned.trim() ? finished.learned : null,
     stoppedBecause: finished.stoppedBecause ?? null,
+    pausedOn: pausedOnOf(finished),
     kept: rounds.kept,
     undone: rounds.undone,
     landed: finished.landed ?? null,
@@ -1549,7 +1569,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
 
 /**
  * The lead judged a build, or found one that would not start. Until now those looks lived
- * only in files nobody opens: the run's own judge said nothing in the chat all night, and a
+ * only in files nobody opens: the run's own judge said nothing in the chat for the whole run, and a
  * fork gate that refused every builder said nothing either.
  */
 function narrateLook(chat: ChatDraft, event: EventEnvelope): void {
@@ -1635,6 +1655,7 @@ const NARRATORS: readonly Narrator[] = [
   narratePermission,
   narratePaused,
   narrateResumed,
+  narrateAutoResumed,
   narrateJudgeRound,
   narrateFinished,
   narrateLook,

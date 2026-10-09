@@ -1,6 +1,6 @@
 import path from "node:path";
 import { watch as watchPath } from "node:fs";
-import { mkdir, readFile, writeFile, readdir, cp, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, cp, rm, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { isPluginId } from "../../shared/plugin-id.ts";
 import type { GameEngine } from "../../shared/game-engine.ts";
@@ -66,9 +66,10 @@ import { pluginFolderPaths, pluginWorkerTypes, workerTypeOffered } from "./worke
 import type { WorkerType } from "../../shared/workers.ts";
 import type { PluginWorkspace } from "../../shared/project-workspace.ts";
 import { canonicalSourceRepo } from "./marketplace.ts";
-import { assertRelativePath, containedReal } from "../paths.ts";
+import { containedReal } from "../paths.ts";
 import { SessionCredentials } from "../session-credentials.ts";
 import { PluginCallCutOff, PluginProcess } from "./process.ts";
+import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 
 interface Installed {
@@ -138,7 +139,6 @@ const SKILL_READ_CHUNK_CHARS = 24_000;
 /** A runtime install action downloads and unpacks a whole application. */
 const RUNTIME_INSTALL_TIMEOUT_MS = 30 * MINUTE_MS;
 const CATALOG_DOWNLOAD_TIMEOUT_MS = 30 * SECOND_MS;
-const MAX_CATALOG_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 /** A project name an MCP server's per-project storage may use. */
 const MCP_PROJECT = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -183,7 +183,6 @@ const MESSAGE = {
   ArtifactTooLarge: "Plugin artifact exceeds 256 MiB",
   DigestMismatch: "Plugin artifact digest mismatch",
   CatalogMismatch: "Catalog manifest mismatch",
-  InvalidArtifactFile: "Invalid artifact file",
   EnableFirst: "Enable the plugin first",
   OnlyLocalWatch: "Only plugins loaded from a local folder can be watched",
   UnlockRequired: "Explicit account unlock required",
@@ -332,7 +331,7 @@ function recordedOrigin(source: PluginSourceKind, directory: string): PluginSour
   if (source === PluginSourceKind.Local) return { kind: PluginSourceKind.Local, directory: path.resolve(directory) };
   return { kind: source };
 }
-/** A catalog artifact's bytes, refused past {@link MAX_CATALOG_ARTIFACT_BYTES}. */
+/** A catalog artifact's bytes, refused past {@link MAX_ARTIFACT_BYTES}. */
 async function downloadArtifact(url: string): Promise<Buffer> {
   const response = await fetch(url, { signal: AbortSignal.timeout(CATALOG_DOWNLOAD_TIMEOUT_MS), redirect: "error" });
   if (!response.ok || !response.body) throw new Error(MESSAGE.DownloadFailed(response.status));
@@ -343,7 +342,7 @@ async function downloadArtifact(url: string): Promise<Buffer> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > MAX_CATALOG_ARTIFACT_BYTES) {
+    if (size > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
       throw new Error(MESSAGE.ArtifactTooLarge);
     }
@@ -1267,7 +1266,12 @@ export class PluginRegistry {
     const destination = path.join(this.#packages(), manifest.id, `${manifest.version}-${randomUUID()}`);
     await mkdir(path.dirname(destination), { recursive: true });
     try {
-      await cp(directory, destination, { recursive: true, errorOnExist: true, force: false });
+      await cp(directory, destination, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        filter: packageCopyFilter(directory),
+      });
       await inspectPackage(destination);
     } catch (e) {
       await rm(destination, { recursive: true, force: true });
@@ -1355,17 +1359,10 @@ export class PluginRegistry {
     origin?: PluginSource,
     verify?: (manifest: PluginManifest, stage: string) => Promise<PluginScan | undefined>,
   ) {
-    const files = JSON.parse(bytes.toString()) as Record<string, string>,
-      stage = path.join(this.root, "staging", randomUUID());
+    const stage = path.join(this.root, "staging", randomUUID());
     await mkdir(stage, { recursive: true, mode: 0o700 });
     try {
-      for (const [file, base64] of Object.entries(files)) {
-        assertRelativePath(file);
-        if (typeof base64 !== "string") throw new Error(MESSAGE.InvalidArtifactFile);
-        const dest = path.join(stage, file);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await writeFile(dest, Buffer.from(base64, "base64"));
-      }
+      await unpackEnvelope(bytes, stage);
       const manifest = await inspectPackage(stage);
       const scan = verify ? await verify(manifest, stage) : undefined;
       return await this.installLocal(stage, source, approvedCapabilities, origin, scan);
@@ -1722,6 +1719,9 @@ export class PluginRegistry {
     if (!p.manifest.actions.some((a) => a.name === name)) throw new Error(MESSAGE.UnknownAction);
     const account = accountActionsOf(p.manifest);
     await this.#beforeAccountAction(id, p, name, account);
+    const opensCredentials = name === account.unlock || name === account.connect;
+    // A refusal left by an earlier attempt, such as the restore at startup, is not this action's.
+    if (opensCredentials) this.#accounts.get(id)?.takeRefusal();
     const installsRuntime = p.manifest.nativeRuntimes?.some((r) => r.install?.action === name);
     try {
       const answer = await this.#process(id).call(
@@ -1736,7 +1736,13 @@ export class PluginRegistry {
       const statusAnswer = name === account.status && answer && typeof answer === "object";
       return statusAnswer ? { ...answer, accountConnecting: this.#connecting.has(id) } : answer;
     } catch (error) {
-      if (name === account.unlock || name === account.connect) this.#lockAccount(id);
+      if (opensCredentials) {
+        // A backend wraps whatever the host answered in its own generic error; a locked secret
+        // store's reason (no keyring to start) is the one worth showing.
+        const refusal = this.#accounts.get(id)?.takeRefusal();
+        this.#lockAccount(id);
+        if (refusal) throw refusal;
+      }
       throw error;
     } finally {
       await this.#settleAccountAction(id, name, account);

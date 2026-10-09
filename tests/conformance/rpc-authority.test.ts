@@ -48,7 +48,7 @@ before(async () => {
   api = lite.api() as unknown as Api;
   const { core } = lite;
   await core.games.scaffold("pong");
-  // Registers the game with the snapshot engine, as a night does before it removes anything.
+  // Registers the game with the snapshot engine, as a run does before it removes anything.
   await api["snapshot.worktree"]!({ project: "pong", name: "first", runId: "run-0" });
   // An optimization candidate opens only from a clean game with no links, so before they are planted.
   const baseline = (await api["snapshot.create"]!({ scope: "game", project: "pong", reason: "baseline" })) as {
@@ -301,7 +301,7 @@ describe("harness RPC authority", () => {
     await mkdir(path.join(worktree.path, ".claude"), { recursive: true });
     await writeFile(path.join(worktree.path, ".claude", "settings.json"), '{"hooks":{}}');
     await git(worktree.path, ["add", "-A"]);
-    await git(worktree.path, ["commit", "-q", "-m", "night: plant settings"]);
+    await git(worktree.path, ["commit", "-q", "-m", "run: plant settings"]);
     const head = (await git(worktree.path, ["rev-parse", "HEAD"])).trim();
     await assert.rejects(core.landBuild("pong", head), /\.claude folder/);
     await assert.rejects(stat(path.join(game, ".claude", "settings.json")), /ENOENT/);

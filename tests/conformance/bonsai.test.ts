@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, truncate } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, symlink, truncate } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createServer, type ServerResponse } from "node:http";
@@ -1091,6 +1091,117 @@ it("install never reports Ready when the native server fails its startup", STAGE
   }
 });
 
+/** Every file under `root`, relative and sorted. */
+async function filesUnder(root: string): Promise<string[]> {
+  const entries = await readdir(root, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)))
+    .sort();
+}
+
+it(
+  "deleting the only downloaded model stops its server and frees the weights, projector and runtime",
+  STAGED_RUNTIME,
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-remove-last-"));
+    const runtime = await stagedRuntime(root);
+    try {
+      await runtime.install(model, () => {});
+      await runtime.start(model, new AbortController().signal);
+      const pid = runtime.processId;
+      assert.ok(pid, "the model is loaded before it is deleted");
+      await runtime.remove(model);
+      assert.equal(runtime.processId, null);
+      assert.equal(running(pid), false, "its server exited before its files went");
+      assert.equal(await runtime.installed(model), false);
+      assert.equal(await runtime.binary(), null, "no model is left to need the runtime");
+      assert.equal(await runtime.installStatus(), null, "the finished download's record goes with its model");
+      assert.deepEqual(await filesUnder(root), ["runtime.log"], "only the last server's log is kept");
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it("deleting one model keeps what another model's bytes still need", STAGED_RUNTIME, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-remove-shared-"));
+  const runtime = await stagedRuntime(root);
+  const other = BONSAI_MODELS[1].file.name;
+  try {
+    await runtime.install(model, () => {});
+    // A stopped download of the other model, kept so Resume can continue from it.
+    await writeFile(path.join(root, "models", `${other}.part`), "saved bytes");
+    await runtime.remove(model);
+    assert.equal(await runtime.installed(model), false);
+    const kept = [
+      `downloads/${BONSAI_BINARY.name}`,
+      "models/LICENSE",
+      "models/NOTICE.txt",
+      `models/${BONSAI_PROJECTOR.name}`,
+      `models/${other}.part`,
+      `${BONSAI_RUNTIME}/llama-server`,
+      `${BONSAI_RUNTIME}/pids`,
+      `${BONSAI_RUNTIME}/requests`,
+      "runtime.log",
+    ];
+    assert.deepEqual(await filesUnder(root), kept.sort());
+  } finally {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it(
+  "a delete is refused, removing nothing, for an unknown model, during a download or while Bonsai answers",
+  STAGED_RUNTIME,
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-remove-refused-"));
+    let downloadsHang = false;
+    const runtime = await stagedRuntime(root, FAKE_LLAMA_SERVER, {
+      download: (file, directory, signal) =>
+        downloadsHang
+          ? new Promise((_, reject) => {
+              const stop = () => reject(signal.reason);
+              if (signal.aborted) stop();
+              else signal.addEventListener("abort", stop, { once: true });
+            })
+          : Promise.resolve(path.join(directory, file.name)),
+    });
+    try {
+      await runtime.install(model, () => {});
+      const before = await filesUnder(root);
+      const kept = async (why: string) => {
+        assert.equal(await runtime.installed(model), true, why);
+        assert.deepEqual(await filesUnder(root), before, why);
+      };
+      for (const id of ["", "bonsai-2:", `${model}/../../models`, `../${model}`, model.toUpperCase(), "gemma4:12b"]) {
+        await assert.rejects(runtime.remove(id), /Unknown Bonsai model/, JSON.stringify(id));
+        await kept(`an unknown id ${JSON.stringify(id)} removes nothing`);
+      }
+
+      downloadsHang = true;
+      const download = runtime.install(BONSAI_MODELS[1].id, () => {});
+      await assert.rejects(runtime.remove(model), /downloading/);
+      runtime.cancelInstall();
+      await assert.rejects(download);
+      downloadsHang = false;
+      await kept("a delete during a download removes nothing");
+
+      const letGo = runtime.hold();
+      await assert.rejects(runtime.remove(model), /answering/);
+      await kept("a delete while a request holds Bonsai removes nothing");
+      letGo();
+      await runtime.remove(model);
+      assert.equal(await runtime.installed(model), false, "once the request lets go the delete goes ahead");
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 it("local output-limit recovery is bounded and never executes an incomplete tool batch", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-output-limit-"));
   const cwd = path.join(root, "game");
@@ -1243,7 +1354,7 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
   }
 });
 
-it("a malformed tool call is a tool error the model can correct, not the end of the session (P04-F1)", async () => {
+it("a malformed tool call is a tool error the model can correct, not the end of the session", async () => {
   const server = createServer(async (req, res) => {
     let input = "";
     for await (const c of req) input += c;
@@ -1317,7 +1428,7 @@ it("a malformed tool call is a tool error the model can correct, not the end of 
   }
 });
 
-it("P04-F5. a cut-off reply's allowance is per stretch, not per session: good rounds between cuts reset it", async () => {
+it("a cut-off reply's allowance is per stretch, not per session: good rounds between cuts reset it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-repairs-"));
   let rounds = 0;
   const cut = () => ({

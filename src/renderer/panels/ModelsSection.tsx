@@ -1,6 +1,7 @@
 /**
- * Settings → Model Providers. One row per subscription: name and CLI version, one status plate, one
- * line of context, and at most one visible action. Account changes, a recheck (which also refreshes
+ * Settings → Model Providers. One row per subscription, then the metered providers
+ * (`MeteredProviders.tsx`): name and CLI version, one status plate, one line of context, and at most
+ * one visible action. Account changes, a recheck (which also refreshes
  * the model list) and updating the CLI live in the row's Account menu; the model list speaks up
  * only while it loads or after a refresh failed (`catalog-note.ts`).
  */
@@ -27,8 +28,8 @@ import { useCliInstall } from "../cli-install.ts";
 import { SHOW_TERMINAL_EVENT } from "./terminal-events.ts";
 import { PickerModels } from "./PickerModels.tsx";
 import { CatalogNoteKind, catalogNote } from "./catalog-note.ts";
-
-type ProviderWords = { name: string; plans: string; guide: string };
+import { type ProviderWords, RowHeading, RowTone, type RowView } from "./provider-row.tsx";
+import { MeteredProviderRows } from "./MeteredProviders.tsx";
 
 const PROVIDERS: Record<string, ProviderWords> = {
   [EngineId.ClaudeCode]: {
@@ -38,34 +39,6 @@ const PROVIDERS: Record<string, ProviderWords> = {
   },
   [EngineId.Codex]: { name: "Codex", plans: "ChatGPT Plus or Pro", guide: "https://developers.openai.com/codex/cli/" },
 };
-
-/** A provider row's status: its dot and the ink of its word. */
-const RowTone = {
-  Connected: "connected",
-  Off: "off",
-  Busy: "busy",
-  Warning: "warning",
-  Danger: "danger",
-} as const;
-type RowTone = (typeof RowTone)[keyof typeof RowTone];
-
-const DOT: Record<RowTone, string> = {
-  [RowTone.Connected]: "bg-green",
-  [RowTone.Off]: "border-[1.5px] border-muted-foreground",
-  [RowTone.Busy]: "bg-accent-ink",
-  [RowTone.Warning]: "bg-orange",
-  [RowTone.Danger]: "bg-red",
-};
-
-/** The row's status: its dot and word on a soft plate of the tone's color (`.status-plate`). */
-function Status({ tone, children }: { tone: RowTone; children: string }): JSX.Element {
-  return (
-    <span className="status-plate" data-tone={tone}>
-      <span aria-hidden className={`size-[6px] shrink-0 rounded-full ${DOT[tone]}`} />
-      {children}
-    </span>
-  );
-}
 
 /** "max" / "claude_max" → "Max plan". */
 function planName(plan?: string): string | null {
@@ -77,14 +50,6 @@ function planName(plan?: string): string | null {
 }
 
 type Account = EngineDescriptor["account"];
-
-/** What a provider row shows: a status dot and word, one line of context, and its actions. */
-interface RowView {
-  tone: RowTone;
-  status: string;
-  line: string | null;
-  actions: JSX.Element | null;
-}
 
 /** The row's own actions: re-check, open the provider's guide, sign in or out, and the sign-in's steps. */
 interface RowActions {
@@ -416,34 +381,6 @@ function signInState(
   };
 }
 
-function RowHeading({
-  words,
-  version,
-  tone,
-  status,
-  view,
-}: {
-  words: ProviderWords;
-  version: string | undefined;
-  tone: RowTone;
-  status: string;
-  view: RowView;
-}): JSX.Element {
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-          <h3 className="text-base font-medium text-foreground">{words.name}</h3>
-          {version && <span className="font-mono text-micro text-muted-foreground">{version}</span>}
-          <Status tone={tone}>{status}</Status>
-        </div>
-        {view.line && <p className="text-body-sm text-muted-foreground">{view.line}</p>}
-      </div>
-      {view.actions && <div className="flex flex-wrap items-center gap-2">{view.actions}</div>}
-    </div>
-  );
-}
-
 /**
  * A connected row's model list, said only when it needs saying: still loading, or a refresh that
  * failed, with Try again beside it. A failed CLI update adds its installation guide.
@@ -540,7 +477,8 @@ function ProviderRow({
   );
 }
 
-export type ModelSettingsProps = { engines: EngineDescriptor[]; onEnginesRefresh: () => void };
+/** `onEnginesRefresh` settles once the engines are read again. */
+export type ModelSettingsProps = { engines: EngineDescriptor[]; onEnginesRefresh: () => Promise<void> | void };
 
 export function ModelProvidersSection({ engines, onEnginesRefresh }: ModelSettingsProps): JSX.Element {
   useEffect(() => {
@@ -551,6 +489,7 @@ export function ModelProvidersSection({ engines, onEnginesRefresh }: ModelSettin
       {SUBSCRIPTION_ENGINES.map((id) => (
         <ProviderRow key={id} engineId={id} engines={engines} onEnginesRefresh={onEnginesRefresh} />
       ))}
+      <MeteredProviderRows engines={engines} onEnginesRefresh={onEnginesRefresh} />
     </div>
   );
 }

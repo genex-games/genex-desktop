@@ -1,7 +1,7 @@
 {
   "name": "ai-game-studio",
   "productName": "Genex",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "private": true,
   "license": "MIT",
   "description": "Self-improving AI game studio for macOS on Apple Silicon",
@@ -57,6 +57,8 @@
     "plugin:new": "node scripts/check-node.mjs && node scripts/plugin-new.ts",
     "plugin:pack": "node scripts/check-node.mjs && node scripts/pack-plugin.ts",
     "plugin:doctor": "node scripts/check-node.mjs && node scripts/plugin-doctor.ts",
+    "plugin:submit": "node scripts/check-node.mjs && node scripts/plugin-submit.ts",
+    "plugin:unpack": "node scripts/check-node.mjs && node scripts/plugin-unpack.ts",
     "genex:skills": "node scripts/check-node.mjs && node scripts/refresh-genex-skills.ts",
     "verify:context": "node scripts/check-node.mjs && node scripts/check-agent-context.ts && node --test --test-reporter=dot tests/conformance/skills-sync.test.ts tests/conformance/agent-settings.test.ts",
     "review:context": "node scripts/check-node.mjs && node scripts/review-agent-context.ts",

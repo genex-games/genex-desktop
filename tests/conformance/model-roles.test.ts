@@ -175,10 +175,10 @@ describe("model roles", () => {
 });
 
 /**
- * Two subscriptions in one night (cross-provider roles, 2026-09-10): the composer may send the
+ * Two subscriptions in one run: the composer may send the
  * workers and/or the judges to the other signed-in engine. The record says so in `engines`,
  * the stamped run in `builderEngine`/`judgeEngine`, and every site that starts a job asks
- * `roleEngine`/`modelOn` so a model id never reaches an engine that does not know it. A night
+ * `roleEngine`/`modelOn` so a model id never reaches an engine that does not know it. A run
  * with nothing crossed must read exactly as it did before this existed.
  */
 import { engineLabel, modelOn, plannerModel, roleEngine } from "../../src/harness-seed/loop/model-roles.ts";
@@ -211,16 +211,32 @@ describe("roles across two subscriptions", () => {
       builder: SOL,
       judge: undefined,
     });
-    // A local engine has no roles to cross, on either side.
+    // Workers never cross to a completion-only local engine: the director hires every worker as a
+    // session, and that engine holds none.
     assert.deepEqual(normalizeRoles("claude-code", { builder: "opus", engines: { builder: "ollama" } }), {
       planner: undefined,
       builder: "opus",
       judge: undefined,
     });
+    // Its reviewers may join a session run: every judge but the playtester asks engine.complete.
+    assert.deepEqual(normalizeRoles("claude-code", { judge: "vl", engines: { judge: "ollama" } }), {
+      planner: undefined,
+      builder: undefined,
+      judge: "vl",
+      engines: { judge: "ollama" },
+    });
+    // And its main agent may hand its workers and reviewers to a session engine (the classic loop).
     assert.deepEqual(normalizeRoles("ollama", { builder: "opus", engines: { builder: "claude-code" } }), {
       planner: undefined,
       builder: "opus",
       judge: undefined,
+      engines: { builder: "claude-code" },
+    });
+    // An engine nobody can hire is still nobody's to cross to.
+    assert.deepEqual(normalizeRoles("ollama", { judge: "x", engines: { judge: "gemini-cli" } }), {
+      planner: undefined,
+      builder: undefined,
+      judge: "x",
     });
     // A crossed slot with no model named is that engine's own default.
     assert.deepEqual(normalizeRoles("claude-code", { engines: { judge: "codex" } }), {
@@ -229,6 +245,30 @@ describe("roles across two subscriptions", () => {
       judge: undefined,
       engines: { judge: "codex" },
     });
+  });
+
+  it("stamps a run whose reviewers or workers sit on the other side of a completion-only local engine", () => {
+    const reviewedLocally = withRoles({
+      runId: "lr1",
+      engine: "claude-code",
+      model: "opus",
+      roles: { planner: "opus", builder: "opus", judge: "vl", engines: { judge: "ollama" } },
+    });
+    assert.equal(reviewedLocally.judgeEngine, "ollama");
+    assert.equal(reviewedLocally.judgeModel, "vl");
+    assert.equal(reviewedLocally.builderEngine, undefined, "the workers stay on the run's own engine");
+    assert.equal(modelOn(reviewedLocally, "claude-code"), "opus");
+    const builtElsewhere = withRoles({
+      runId: "lr2",
+      engine: "ollama",
+      model: "qwen",
+      roles: { planner: "qwen", builder: "opus", judge: "vl", engines: { builder: "claude-code" } },
+    });
+    assert.equal(builtElsewhere.builderEngine, "claude-code");
+    assert.equal(builtElsewhere.model, "opus");
+    assert.equal(builtElsewhere.judgeEngine, "ollama");
+    assert.equal(builtElsewhere.judgeModel, "vl");
+    assert.equal(modelOn(builtElsewhere, "ollama"), "qwen", "the main agent's own engine hears its own model");
   });
 
   it("stamps the run with the workers' and the judges' engines, and each slot's model stays that engine's", () => {
@@ -323,7 +363,7 @@ describe("roles across two subscriptions", () => {
     assert.equal(stamped.judgeModel, "gpt-6-astra");
   });
 
-  it("a night on one subscription carries nothing new", () => {
+  it("a run on one subscription carries nothing new", () => {
     const before = {
       runId: "x5",
       engine: "claude-code",

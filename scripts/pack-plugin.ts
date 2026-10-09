@@ -1,24 +1,22 @@
 /** Prebuilt packages only: no dependency installation, build hooks or network access. */
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
-import { inspectPackage } from "../src/substrate/plugins/manifest.ts";
-import { packageFiles } from "../src/substrate/plugins/pack.ts";
+import { packEnvelope } from "../src/substrate/plugins/pack.ts";
 import { isInside } from "../src/substrate/paths.ts";
+import { errorMessage } from "../src/shared/errors.ts";
+
+const USAGE = "Usage: npm run plugin:pack -- <prebuilt-directory> <artifact.json>";
+
+function fail(message: string): never {
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+}
+
 const [directory, output] = process.argv.slice(2);
-if (!directory || !output) throw new Error("Usage: node scripts/pack-plugin.ts <prebuilt-directory> <artifact.json>");
+if (!directory || !output) fail(USAGE);
 const root = path.resolve(directory),
   destination = path.resolve(output);
-if (isInside(root, destination)) throw new Error("Artifact output must be outside the plugin package");
-const manifest = await inspectPackage(root),
-  files = await packageFiles(root);
-const bytes = Buffer.from(JSON.stringify(files));
-if (bytes.length > 256 * 1024 * 1024) throw new Error("Artifact exceeds 256 MiB");
+if (isInside(root, destination)) fail("Artifact output must be outside the plugin package");
+const { manifest, bytes, sha256 } = await packEnvelope(root).catch((e: unknown) => fail(errorMessage(e)));
 await writeFile(destination, bytes);
-console.log(
-  JSON.stringify(
-    { manifest, sha256: createHash("sha256").update(bytes).digest("hex"), artifact: destination },
-    null,
-    2,
-  ),
-);
+console.log(JSON.stringify({ manifest, sha256, artifact: destination }, null, 2));

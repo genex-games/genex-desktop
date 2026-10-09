@@ -5,7 +5,7 @@
  * Two rules decide the order, and both are about a person looking for something they just made:
  *
  *   1. Sources come in a fixed order — Genex first, then Blender, then any other plugin
- *      alphabetically, with the files you dropped in yourself last. A plugin installed tonight
+ *      alphabetically, with the files you dropped in yourself last. A plugin installed during a run
  *      must not reshuffle yesterday's canvas.
  *   2. Inside a source, jobs are newest first, and the files of one job keep their own order by
  *      path. A generation that takes minutes therefore appears at the top and stays there.

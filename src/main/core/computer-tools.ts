@@ -1,5 +1,5 @@
 /**
- * The computer (computer use, 2026-09-07): hands and eyes on one pooled window for a whole
+ * The computer: hands and eyes on one pooled window for a whole
  * session. Actions are Anthropic's computer vocabulary plus the studio's own verbs; the input
  * actions become input events on the preview, and the host actions (looking, waiting, the studio
  * verbs) are answered here, each by its own handler. Every action leaves a frame on the agent's screen.
@@ -55,6 +55,12 @@ const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
  */
 const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester", "judge"]);
 
+/**
+ * The roles that meet the game's own title and menu as a player does: the studio never begins
+ * play for them, whatever setup an older seed sends (`PreviewService.applySetup` `keepFrontEnd`).
+ */
+const FRONT_END_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester"]);
+
 /** Who holds the computer, and on which build: a playtest grant with any screen role. */
 export type ComputerGrant = Omit<NonNullable<DelegateRequest["playtest"]>, "role"> & { role?: AgentScreen["role"] };
 
@@ -70,7 +76,7 @@ export interface ComputerTools {
   onLiveTool: NonNullable<DelegateRequest["onLiveTool"]>;
   ensureLoaded: (force?: boolean) => Promise<ComputerLoad>;
   screen: () => AgentScreen;
-  /** The build the window shows; the director's `look` moves it (director, 2026-09-07). */
+  /** The build the window shows; the director's `look` moves it. */
   root: () => string;
   retarget: (root: string) => void;
 }
@@ -309,7 +315,7 @@ export function computerTools(
       sessionPort.loaded = null;
       return { port: window, problem: `the build failed to load: ${loaded.problem}`, note: null };
     }
-    const applied = await previews.applySetup(window, grant.setup);
+    const applied = await previews.applySetup(window, grant.setup, { keepFrontEnd: FRONT_END_ROLES.has(role) });
     if (paced) await stillClock(window);
     const note = [loaded.note, applied].filter(Boolean).join("; ") || null;
     sessionPort.loaded = { root, at: Date.now() };

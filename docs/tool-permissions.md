@@ -36,7 +36,7 @@ delegation asks only when all of these hold:
   quits (a message replayed after a restart runs unattended);
 - the thread is this game's open chat: metadata `kind: game`, `project` the brief's, not archived.
 
-While a Loop night runs, the person's messages go to the build's lead (live chat), and a read-only
+While a Loop run is going, the person's messages go to the build's lead (live chat), and a read-only
 coordinator answers where no lead takes the chat. Both ask from their own seat
 (`DelegationService#leadSession`, then `ChatPermissionService.forLead`), handed `leadAsks`, never
 `permissions`, when:
@@ -155,7 +155,7 @@ A lead also has the chat's own session's plugins, connectors and cover, whether 
 the host's own finding of that seat (`seat.leads`) decides, never the brief; a read-only session
 that leads nothing, the playtester and the coordinator get none. Its plugin calls act on the
 worktree it leads (`DelegationSession.leads` as the binding's directory), as a director's in its
-worktree, so a delivery is recorded as the build's and reaches the game when the night lands, and
+worktree, so a delivery is recorded as the build's and reaches the game when the run lands, and
 its brief says so without naming the build's path (`leadToolsNote`); a connector that shares the project root works on
 the game folder, as for every session (`resolveProject`). They are auto-allowed studio tools, as for
 the chat's own session: a plugin tool that declares `confirmation` waits on its consent card
@@ -544,10 +544,10 @@ button and the coordinator's call) and promoting a candidate refuse a commit tha
 The sandbox denies every agent process (the harness, `run.exec`, builds) writing a game's
 `.claude` folder (`claudeFolderDenyWrites`).
 
-## For the next Loop night
+## For the next Loop run
 
 Unattended deny rules now actually apply (they were relative before and guarded nothing). A real
-Loop night must confirm the two known changes: builders can no longer read sibling worktrees under
+Loop run must confirm the two known changes: builders can no longer read sibling worktrees under
 `scratch/autopilot/<run>/`, and optimization candidates now read the live game.
 
 ## Residual risks
@@ -558,11 +558,11 @@ Loop night must confirm the two known changes: builders can no longer read sibli
   "always" offers no standing grant.
 
 - One card can hold a lead's turn for up to five minutes, and the coordinator's own five-minute
-  budget can cut its card short. In Manual a night nobody watches waits that long on each question;
+  budget can cut its card short. In Manual a run nobody watches waits that long on each question;
   Auto or Bypass keep it going.
 - A lead or coordinator has no sandbox: whatever its chat's mode allows runs with the person's
   access, as in the chat's own session, edits and commands in the game folder included, so it can
-  change the live game under the night. Its prompt has it build in the integration worktree and
+  change the live game under the run. Its prompt has it build in the integration worktree and
   leave the game folder alone. A landing that git refuses over uncommitted changes there, or into a
   folder with something staged or a merge under way, lands nothing and names them without blaming
   anyone (`uncommitted-changes`); Make it live refuses while the folder shows uncommitted changes.
@@ -574,8 +574,8 @@ Loop night must confirm the two known changes: builders can no longer read sibli
   edits in an Auto chat), until a later pick switches it or its next session starts. A call screened
   while a switch is on its way asks first too.
 - A lead's plugins act on the build it leads: what they deliver is committed before each worker's
-  merge, and what is left at the close is committed with its final edits and lands with the night.
-  A night with nothing beyond its starting point (no worker's merge, no commit of the lead's) lands
+  merge, and what is left at the close is committed with its final edits and lands with the run.
+  A run with nothing beyond its starting point (no worker's merge, no commit of the lead's) lands
   nothing (`nothing-new`), deliveries included. What else a plugin writes there (a package install)
   is set aside with the lead's other leftovers at the next merge, or lands with the final edits
   after the last one.
@@ -588,7 +588,7 @@ Loop night must confirm the two known changes: builders can no longer read sibli
   aborts their connector calls. Only a lead's outlive the chat's turns.
 - A lead's seat rests on run records the harness writes: an edited harness can start a lead for a
   run started in this chat, acting in the chat's mode with nobody there.
-- A night's close commits what is uncommitted in the integration worktree as its final edits, which
+- A run's close commits what is uncommitted in the integration worktree as its final edits, which
   can include what a lead left there. A lead's commit made after its last run tool and before a
   Stop is not on the run's integration ref (`syncHead` runs before each tool and at the landing).
 

@@ -78,7 +78,15 @@ export function DialogSurface({
             const target = returnFocus?.current ?? opener;
             if (target?.isConnected) target.focus();
           }}
-          onEscapeKeyDown={(event) => event.stopPropagation()}
+          onEscapeKeyDown={(event) => {
+            // An embedded terminal or a search with a query uses Escape itself: the dialog stays
+            // open and lets the key through to it, which stopping it here would swallow.
+            if (event.target instanceof Element && event.target.closest("[data-keeps-escape]")) {
+              event.preventDefault();
+              return;
+            }
+            event.stopPropagation();
+          }}
           className={cn(
             "fixed top-1/2 left-1/2 z-[211] grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:duration-(--duration-fast) data-[state=closed]:duration-(--duration-quick) ease-(--ease-smooth-out) motion-reduce:animate-none",
             sizes[size],

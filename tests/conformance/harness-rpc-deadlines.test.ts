@@ -1,7 +1,7 @@
 /**
  * Harness call deadlines (B4): a host call nobody answers used to keep the harness awaiting it
  * forever, and the watchdog stays quiet while any call is in flight, so one game page whose
- * `state()` never returned froze a whole night unnoticed. Every call now has a class, and a class
+ * `state()` never returned froze a whole run unnoticed. Every call now has a class, and a class
  * with a deadline is answered with `RpcDeadline` once it passes (`substrate/rpc-deadlines.ts`).
  * These cases are about the host's bookkeeping, not containment, so the harness runs unsandboxed.
  */
@@ -106,7 +106,7 @@ describe("harness call deadlines (B4)", () => {
     await r.host.stop();
   });
 
-  it("an answer for a harness that has since restarted never reaches the new one (P05-F6)", async () => {
+  it("an answer for a harness that has since restarted never reaches the new one", async () => {
     const r = await hungPage(null);
     await r.host.start();
     void r.host.dispatch({ type: "user_message", threadId: r.thread, text: "look" }).catch(() => {});

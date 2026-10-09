@@ -124,7 +124,8 @@ export interface PreviewPort {
    */
   pageUi?(): Promise<PageUiAnswer>;
   evaluate(expression: string): Promise<unknown>;
-  studioState(): Promise<unknown>;
+  /** `keep`: state paths a board reads, cut last when the state is over the studio's budget. */
+  studioState(options?: { keep?: readonly string[] }): Promise<unknown>;
   /**
    * Call a `window.__studio` method by name. The classic set is typed; the v2 contract adds
    * `eye`, `inspect` and `audio`, and a game may expose more — the page answers `{__missing}`
@@ -136,6 +137,11 @@ export interface PreviewPort {
   pointer?(): { x: number; y: number };
   /** Optional: the view's size — the pixel space of its screenshots and of every computer-use coordinate. */
   viewSize?(): { width: number; height: number };
+  /**
+   * Optional, pooled windows only: take this size (window and view together), or with null the
+   * size the window opened at. The pool calls it for one lease (`PreviewPool.resize`), never Live.
+   */
+  setViewSize?(size: { width: number; height: number } | null): void;
   /** Optional: whether this page load's input arrived as a real, trusted event (user activation). `null` before the first input, or when the port does not say. */
   trustedInput?(): boolean | null;
   /** Optional: what the studio's instrumentation got hold of on the page it just served (M4.2a). The page's own account of itself — read field by field, never spread onto an answer. */

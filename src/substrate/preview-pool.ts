@@ -19,8 +19,22 @@ export const LIVE_HANDLE = "live";
 /** The hidden window that stands in for the live view when the harness names no window. */
 export const STAND_IN_HANDLE = "stand-in";
 
+/** The smallest size one leased window may take (`resize`): below 320×240 no game lays out. */
+export const VIEWPORT_MIN = { width: 320, height: 240 } as const;
+/** The largest size one leased window may take (`resize`): a 1920×1200 display; 1600×900 fits. */
+export const VIEWPORT_MAX = { width: 1920, height: 1200 } as const;
+
+/** A window's size in pixels. */
+export interface ViewSize {
+  width: number;
+  height: number;
+}
+
 const MESSAGE = {
   NoHeadless: "this build has no headless preview capability — only the live view exists",
+  BadViewport: "a window size is two finite positive numbers of pixels (width, height)",
+  NotALease: (handle: string) => `only a leased pooled window changes size, never ${handle}`,
+  NoViewport: (handle: string) => `preview window ${handle} cannot change size`,
   Exhausted: (leased: number, max: number) =>
     `preview pool exhausted (${leased}/${max} leased) — release a handle first`,
   UnknownHandle: (handle: string) => `unknown preview handle: ${handle}`,
@@ -73,7 +87,7 @@ export class PreviewPool {
    * `owner` names who gives a lease back when its own `finally` can no longer run — a harness
    * boot (see {@link PreviewPool.releaseOwnedBy}). Leases the host holds for itself carry none.
    */
-  readonly #leases = new Map<string, { port: PreviewPort; label: string; owner?: string }>();
+  readonly #leases = new Map<string, { port: PreviewPort; label: string; owner?: string; resized?: boolean }>();
   /**
    * The stand-in, while it is open. It is not a lease: it replaces the live view the harness used
    * to drive, so it neither takes a builder's window nor counts toward `leaseCount`.
@@ -179,6 +193,7 @@ export class PreviewPool {
     if (!lease) return; // releasing twice is a no-op, not an error
     this.#leases.delete(handle);
     const disposal = Promise.resolve()
+      .then(() => restoreSize(lease))
       .then(() => lease.port.dispose?.())
       .then(() => {
         this.#reserved--;
@@ -189,6 +204,31 @@ export class PreviewPool {
     // A failed cleanup keeps its reservation: the underlying session is not safe to reuse.
     this.#retiring.set(handle, disposal);
     await disposal;
+  }
+
+  /**
+   * Put one leased window at another size, for that lease only, and answer the size it took:
+   * `asked` clamped to {@link VIEWPORT_MIN}…{@link VIEWPORT_MAX} and rounded. Live and the stand-in
+   * never change size. A size that is not two finite positive numbers, a handle that is no lease
+   * and a window that cannot change size are refused before anything moves. The window is back
+   * at the size it opened at when the lease is released (`release`, `disposeAll`) or `restoreSize`.
+   */
+  resize(handle: string, asked: { width: unknown; height: unknown }): ViewSize {
+    const size = viewportSize(asked);
+    if (!size) throw new Error(MESSAGE.BadViewport);
+    if (handle === LIVE_HANDLE || handle === STAND_IN_HANDLE) throw new Error(MESSAGE.NotALease(handle));
+    const lease = this.#leases.get(handle);
+    if (!lease) throw new Error(MESSAGE.UnknownHandle(handle));
+    if (!lease.port.setViewSize) throw new Error(MESSAGE.NoViewport(handle));
+    lease.port.setViewSize(size);
+    lease.resized = true;
+    return size;
+  }
+
+  /** A resized lease back at the size its window opened at; a lease never resized is left alone. */
+  restoreSize(handle: string): void {
+    const lease = this.#leases.get(handle);
+    if (lease) restoreSize(lease);
   }
 
   /**
@@ -253,5 +293,35 @@ export class PreviewPool {
     for (const handle of handles) await this.release(handle);
     await Promise.all(this.#retiring.values());
     await this.closeStandIn();
+  }
+}
+
+/** `asked` as a window size, clamped and rounded; null when either side is not a finite positive number. */
+function viewportSize(asked: { width: unknown; height: unknown } | null | undefined): ViewSize | null {
+  const width = asked?.width;
+  const height = asked?.height;
+  if (!isPixels(width) || !isPixels(height)) return null;
+  return {
+    width: clamp(Math.round(width), VIEWPORT_MIN.width, VIEWPORT_MAX.width),
+    height: clamp(Math.round(height), VIEWPORT_MIN.height, VIEWPORT_MAX.height),
+  };
+}
+
+function isPixels(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Put a resized lease's window back at its own size. A window that fails to is closing anyway. */
+function restoreSize(lease: { port: PreviewPort; resized?: boolean }): void {
+  if (!lease.resized) return;
+  lease.resized = false;
+  try {
+    lease.port.setViewSize?.(null);
+  } catch {
+    /* the window is closing or gone: nothing is left at the other size */
   }
 }

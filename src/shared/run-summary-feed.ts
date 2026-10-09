@@ -1,8 +1,8 @@
 /**
  * Live run summaries without re-sending the run. A summary's `graphEvents` is every drawn custom
- * event of the run — thousands on a long night, several MiB — and every run event invalidates it.
+ * event of the run — thousands on a long run, several MiB — and every run event invalidates it.
  * Sending the whole list per event kept the UI renderer copying multi-MiB replies back to back
- * (2026-09-23), so a subscriber names what it already holds and main sends only what follows.
+ *, so a subscriber names what it already holds and main sends only what follows.
  * Main memoizes the summary itself (`main/run-summary-cache.ts`); a preview change only patches
  * the summary's `preview`.
  */

@@ -314,7 +314,7 @@ describe("a canonical Unreal Loop, as Genex sees it", () => {
     assert.equal(final.summary, "3 save points; the last, Two: second.");
     assert.equal(summary.landed, true);
     const line = statusLine(graph, summary, partRows(graph, summary));
-    assert.deepEqual([line.strong, line.rest], ["Live in your game", "3 save points"]);
+    assert.deepEqual([line.strong, line.rest], ["Live in your game · 0 min", "3 save points"]);
   });
 
   it("keeps a journal a resume reads", () => {

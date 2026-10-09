@@ -38,17 +38,31 @@ const neverRuns: InstallerRun = async () => {
 };
 
 test("each CLI's installer is its vendor's own script: shell on macOS and Linux, PowerShell on Windows", () => {
-  const expected: Record<CodingProvider, [string, string]> = {
+  const expected: Record<CodingProvider, [string, string | null]> = {
     "claude-code": ["https://claude.ai/install.sh", "https://claude.ai/install.ps1"],
     codex: ["https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1"],
+    // OpenCode publishes no PowerShell installer: Windows has none to fetch.
+    opencode: ["https://opencode.ai/install", null],
   };
-  for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string]][]) {
+  for (const [provider, [unix, windows]] of Object.entries(expected) as [CodingProvider, [string, string | null]][]) {
     for (const platform of ["darwin", "linux"] as const)
       assert.deepEqual(installerSource(provider, platform), { url: unix, extension: ".sh" }, `${provider} ${platform}`);
-    assert.deepEqual(installerSource(provider, "win32"), { url: windows, extension: ".ps1" }, provider);
+    assert.deepEqual(installerSource(provider, "win32"), windows && { url: windows, extension: ".ps1" }, provider);
   }
   assert.throws(() => installerSource("gemini" as CodingProvider, "darwin"), /unknown coding CLI/);
   assert.throws(() => installerSource("__proto__" as CodingProvider, "darwin"), /unknown coding CLI/);
+});
+
+test("a CLI with no installer for this system fails before anything is fetched or run", async () => {
+  const outcome = await installCodingCli("opencode", {
+    platform: "win32",
+    fetch: (async () => {
+      throw new Error("nothing is fetched");
+    }) as typeof fetch,
+    run: neverRuns,
+  });
+  assert.equal(outcome.ok, false);
+  assert.equal(!outcome.ok && outcome.problem, "download");
 });
 
 test("an installer runs from its saved file under the shell it was written for, never through a command line", () => {

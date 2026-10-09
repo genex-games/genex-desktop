@@ -12,13 +12,8 @@ import {
   PluginSourceKind,
 } from "../../../shared/plugins.ts";
 
-/**
- * The plugin guide Create a plugin and Read the guide open. It has no public home yet (the
- * repository is private); this is the one place to change when it gets one.
- * TODO(plugin-guide): the public guide page is being built in a separate PR; point this at it
- * when that lands.
- */
-export const PLUGIN_GUIDE_URL = "https://github.com/genex-games/genex-desktop/blob/dev/docs/PLUGIN_GUIDE.md";
+/** The plugin guide Create a plugin and Read the guide open; `plugin:new` names the same page. */
+export { PLUGIN_GUIDE_URL } from "../../../shared/plugins.ts";
 
 /** Fallback refresh for external account changes; host changes refresh immediately. */
 export const PLUGINS_POLL_MS = 30 * SECOND_MS;

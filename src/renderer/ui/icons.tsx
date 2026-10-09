@@ -77,6 +77,15 @@ const glyphs = {
       <path className="a-waves" d="M3.6 9.6a8 8 0 0 1 1.7-3.7M20.4 9.6a8 8 0 0 0-1.7-3.7" />
     </>
   ),
+  // Send feedback: a beetle seen from above, head, antennae and three legs a side.
+  bug: (
+    <>
+      <path d="M9.5 9.2a2.5 2.5 0 0 1 5 0" />
+      <path d="M10.4 7.3 9 5.6M13.6 7.3 15 5.6" />
+      <path d="M8 13a4 4 0 0 1 8 0v3a4 4 0 0 1-8 0z" />
+      <path d="M8.6 11 5.6 9.4M15.4 11l3-1.6M8 14.5H4.5M16 14.5h3.5M8.3 17.5l-2.8 1.9M15.7 17.5l2.8 1.9" />
+    </>
+  ),
   sidebar: (
     <>
       <rect x="3.5" y="4.5" width="17" height="15" rx="3.5" />

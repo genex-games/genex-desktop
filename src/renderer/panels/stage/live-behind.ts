@@ -1,8 +1,8 @@
 /**
  * What Live shows and what waits for its Reload. Live never changes itself while the person
- * watches it (`stage.ts` holds the rules): a night's newest healthy build, a change main holds for
+ * watches it (`stage.ts` holds the rules): a run's newest healthy build, a change main holds for
  * Live (`live.behind`) and a build found broken mark Reload, and Reload brings them in — or, for
- * what main holds, the person leaving Live does. The empty scaffold still takes the night's first
+ * what main holds, the person leaving Live does. The empty scaffold still takes the run's first
  * healthy build at once: it has no game to lose.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -130,7 +130,7 @@ export function useLiveBehind(input: LiveBehindInput): {
     [project, intoLive, onView, failed],
   );
 
-  // A build merged tonight that runs, and is not already on the stage.
+  // A build merged this run that runs, and is not already on the stage.
   const offer = useMemo(
     () => (graph?.active && !selectedRun ? newBuildOffer(graph.mergedHead, shownBuild?.head ?? null) : null),
     [graph?.active, graph?.mergedHead, selectedRun, shownBuild?.head],
@@ -192,7 +192,7 @@ function useUnseenChanges(unseen: LiveBehind | null, apply: (what: LiveBehind) =
   }, [key]);
 }
 
-/** The empty scaffold takes the night's first healthy build at once, unless that very build already failed to load. */
+/** The empty scaffold takes the run's first healthy build at once, unless that very build already failed to load. */
 function useFirstBuild(
   head: string | null,
   failedHead: { current: string | null },

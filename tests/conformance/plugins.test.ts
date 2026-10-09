@@ -9,6 +9,8 @@ import net from "node:net";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { PluginConsentDeclined, PluginRegistry, type PluginMcpLaunch } from "../../src/substrate/plugins/registry.ts";
+import { SecretStorageIssue } from "../../src/shared/secret-storage.ts";
+import { SecretStorageUnavailableError } from "../../src/substrate/secrets.ts";
 import { EXAMPLE_PLUGIN, copyOfExample as copyOf, pluginFixture as fixture } from "../helpers/plugins.ts";
 import {
   RESERVED_TOOLBAR_LABELS,
@@ -953,6 +955,13 @@ test("export.stage is capability-gated, needs the host export and stages under p
     });
     assert.deepEqual(seen, [{ binding: f.binding, target }]);
     assert.ok((await stat(path.dirname(target))).isDirectory());
+    // The copy has no package.json, so the game's Genex part of its own rides along for the CLI.
+    await writeFile(
+      path.join(f.binding.directory, "package.json"),
+      JSON.stringify({ dependencies: { "@genex-ai/embed-sdk": "0.30.0", three: "^0.170.0" } }),
+    );
+    const withSdk = await f.registry.tool("example__greet", { name: "Ada" }, f.binding);
+    assert.deepEqual(withSdk.genex, { dependencies: { "@genex-ai/embed-sdk": "0.30.0" } });
     await assert.rejects(
       f.services.call("example", "export.stage", {}, { project: "../escape", directory: f.root }),
       /Invalid project name/,
@@ -1611,6 +1620,51 @@ test("an unlock that fails leaves the plugin locked, and its servers without a c
   }
 });
 
+test("an unlock refused by a locked secret store says why, though the backend reports a generic failure", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-plugin-keyring-"));
+  const seeds = path.join(root, "seeds"),
+    seed = path.join(seeds, "example");
+  await mkdir(seeds);
+  await cp(source, seed, { recursive: true });
+  const manifest = await manifestOf();
+  manifest.capabilities.push("credentials");
+  manifest.actions.push(
+    ...["connect", "unlock", "disconnect"].map((name) => ({
+      name,
+      label: name,
+      confirmation: "Explicit account action",
+    })),
+    { name: "status", label: "Status" },
+  );
+  manifest.account = { connect: "connect", unlock: "unlock", disconnect: "disconnect", status: "status" };
+  await writeFile(path.join(seed, "plugin.json"), JSON.stringify(manifest));
+  // Like the Genex backend: whatever the host answers, the backend raises its own generic error.
+  await writeFile(
+    path.join(seed, "backend.mjs"),
+    `export async function activate(){return {async action(n,a,c){if(n==='unlock'){try{await c.host('credentials.read',{});}catch{throw new Error('Saved account could not be unlocked. Automatic retries are paused.');}}return {};}};}`,
+  );
+  const registry = new PluginRegistry(
+    path.join(root, "installed"),
+    seeds,
+    path.resolve("src/plugin-sdk/backend.mjs"),
+    async () => {
+      throw new SecretStorageUnavailableError(SecretStorageIssue.NoKeyring);
+    },
+  );
+  try {
+    await registry.init();
+    await assert.rejects(registry.action("example", "unlock", {}), /Start GNOME Keyring or KWallet/);
+    await assert.rejects(
+      registry.action("example", "unlock", {}),
+      /Start GNOME Keyring or KWallet/,
+      "and says so again",
+    );
+  } finally {
+    registry.cancel();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("successful browser credential save publishes MCP without unlock and launches reuse one memory lease", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "studio-account-flow-"));
   const seeds = path.join(root, "seeds"),
@@ -2094,4 +2148,30 @@ test("bundled Genex indexes its vendored skills, serves them through genex__skil
     registry.cancel();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("a name that breaks the id rule is refused with the rule, so get_scene is fixable from the error alone", async () => {
+  const manifest = await manifestOf();
+  const [tool] = manifest.tools;
+  const named: Array<[string, Record<string, unknown>]> = [
+    ["tool", { tools: [{ ...tool, name: "get_scene" }] }],
+    ["action", { actions: [{ name: "Run_It", label: "Run" }] }],
+    ["setting", { settings: [{ key: "api_key", label: "Key", type: "string", default: "" }] }],
+    ["panel", { panels: [{ id: "My Panel", title: "Panel", file: "panel.html", placement: "settings" }] }],
+    ["plugin skill", { skills: [{ name: "how_to", text: "Use it." }] }],
+  ];
+  for (const [kind, change] of named)
+    assert.throws(
+      () => validateManifest({ ...manifest, ...change }),
+      new RegExp(`Invalid ${kind} name .*lowercase letters, digits and hyphens`),
+      kind,
+    );
+});
+
+test("a plugin server whose connector id would be too long is refused by the manifest, where doctor sees it", async () => {
+  const manifest = await manifestOf();
+  const withServer = (id: string, server: string) => ({ ...manifest, id, mcpServers: [mcpServer({ id: server })] });
+  // `<plugin>-<server>` becomes the connector id, which is at most 32 characters.
+  assert.throws(() => validateManifest(withServer("a-long-plugin-name-for-tools", "server")), /connector id/);
+  assert.doesNotThrow(() => validateManifest(withServer("short-plugin", "server")));
 });

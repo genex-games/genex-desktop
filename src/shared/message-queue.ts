@@ -33,7 +33,7 @@ export const QUEUE_STATES: readonly QueueState[] = Object.values(QueueState);
  * How a steered message reached the session answering the chat (`coordinator_message_delivered`
  * `how`, and the host's `engine.steer` answer): in the prompt the session was about to read, read
  * mid-turn by an engine that takes input, or by interrupting the session and resuming it with the
- * message in front — or, sent while a night's lead works, handed to that lead (`lead`: `into` is
+ * message in front — or, sent while a run's lead works, handed to that lead (`lead`: `into` is
  * its run, and the lead answers it in the chat). Persisted in the log: never rename a value. The
  * seed's copy is `loop/steer-delivery.ts`.
  */

@@ -17,6 +17,7 @@ import { FacetRole, NO_LOCK } from "./state.ts";
 import { MAX_WOBBLES } from "./policy.ts";
 import { HostMethod } from "../host-methods.ts";
 import { EngineFailure } from "../outage.ts";
+import { isProviderLoss } from "../provider-loss.ts";
 import { MINUTE_MS } from "../time.ts";
 import { CheckKind, CheckWeight, type Check } from "../spec.ts";
 
@@ -242,8 +243,8 @@ async function settleVisionAnswers(scoring: Scoring, asks: AnyRecord[]): Promise
 function playWorthIt(scoring: Scoring, playChecks: Check[]): boolean {
   // "All measured mechanical checks pass" — an unmeasured check neither opens nor closes the gate.
   // "Mechanical" means the scene/pixel/metric/probe/demo checks the planner wrote: a
-  // judge-grown vision check that never settles must not keep the playtester waiting all
-  // night (talk-hud-legible went unmeasured through ten villagers iterations).
+  // judge-grown vision check that never settles must not keep the playtester waiting for the whole
+  // run (talk-hud-legible went unmeasured through ten villagers iterations).
   const measured = scoring.results.filter((r) => isMeasured(r) && MECHANICAL_KINDS.includes(r.kind));
   const mechanicalAllPass = measured.length > 0 && measured.every((r) => r.pass === true);
   const identityPlay = playChecks.some((c) => c.weight === CheckWeight.Identity);
@@ -292,7 +293,8 @@ async function playResults(scoring: Scoring, playChecks: Check[]): Promise<Check
     }
     return played?.results ?? [];
   } catch (err: any) {
-    if (err?.kind === EngineFailure.Aborted || ctx.cancelled) throw err;
+    // A stop, or a lost provider the round waits for (facet/provider.ts): neither is "unmeasured".
+    if (err?.kind === EngineFailure.Aborted || ctx.cancelled || isProviderLoss(err?.kind)) throw err;
     return playChecks.map((check) => unmeasured(check, `playtester unavailable: ${err?.message ?? err}`));
   }
 }

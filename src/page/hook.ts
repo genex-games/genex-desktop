@@ -698,7 +698,7 @@ export function sceneHelpers(source: InspectOptions = {}) {
     count: (tag: Foreign) => objects(tag).length,
     bbox,
     bboxOf,
-    domUi,
+    domUi: () => domUi(canvasOf(source.renderer) ?? current()?.canvas ?? null),
     renderTargets: source.renderTargets ?? (() => [...state.targets]),
   };
 }
@@ -828,24 +828,48 @@ function uiName(el: Foreign): string {
 }
 
 /**
- * Visible DOM elements outside the canvas — the UI a canvas capture never sees. Each entry names
- * the element and its text, so a failing check is actionable.
+ * A visible canvas that is not the game's and lies over it: a second HUD painted beside the
+ * contract's, which no camera frame photographs (every capture reads the renderer's canvas
+ * alone). A canvas that does not touch the game is not named.
  */
-export function domUi() {
+function secondCanvas(el: Foreign, game: Foreign): string | null {
+  if (!game || el === game || typeof game.getBoundingClientRect !== "function") return null;
+  if (isInvisible(el, getComputedStyle(el))) return null;
+  const rect = el.getBoundingClientRect();
+  const own = game.getBoundingClientRect();
+  const over = rect.left < own.right && rect.right > own.left && rect.top < own.bottom && rect.bottom > own.top;
+  return over ? `${uiName(el)} (second canvas over the game)` : null;
+}
+
+/**
+ * Visible DOM elements outside the canvas — the UI a canvas capture never sees — and any second
+ * canvas over `game`, the renderer's own (by default the canvas of the world last rendered).
+ * Each entry names the element and its text, so a failing check is actionable.
+ */
+export function domUi(game: Foreign = current()?.canvas ?? null) {
   const out: string[] = [];
   if (typeof document === "undefined" || !document.body) return out;
   for (const el of document.body.querySelectorAll("*")) {
-    if (isNotUi(el)) continue;
-    const style = getComputedStyle(el);
-    if (isInvisible(el, style)) continue;
-    const ownText = ownTextOf(el);
-    if (!ownText && !VISUAL_TAGS.has(el.tagName) && !isPainted(style)) continue;
-    const name = uiName(el);
-    out.push(ownText ? `${name} "${ownText.slice(0, UI_TEXT_CHARS)}"` : name);
+    const entry = uiEntry(el, game);
+    if (!entry) continue;
+    out.push(entry);
     if (out.length >= MAX_DOM_UI) break;
   }
   return out;
 }
+
+/** What `domUi` names one element: a second canvas over the game, or visible UI; null for neither. */
+function uiEntry(el: Foreign, game: Foreign): string | null {
+  if (el.tagName === "CANVAS") return secondCanvas(el, game);
+  if (isNotUi(el)) return null;
+  const style = getComputedStyle(el);
+  if (isInvisible(el, style)) return null;
+  const ownText = ownTextOf(el);
+  if (!ownText && !VISUAL_TAGS.has(el.tagName) && !isPainted(style)) return null;
+  const name = uiName(el);
+  return ownText ? `${name} "${ownText.slice(0, UI_TEXT_CHARS)}"` : name;
+}
+
 /** The shape `inspect()` answers with when there is nothing to inspect yet. */
 export function unavailable(reason = NO_RENDER_REASON) {
   const fail = () => {

@@ -330,7 +330,7 @@ function pressAnyKey(specs: readonly Spec[]): string | null {
 }
 
 test('PRESS ANY KEY: the title line is found; a HUD legend "Press E to interact" is NOT an entrance; a covered line is not live', () => {
-  const title: Spec = { id: "title", tag: "h1", text: "NIGHTSTEEL", rect: { x: 440, y: 200, w: 400, h: 80 }, z: 5 };
+  const title: Spec = { id: "title", tag: "h1", text: "IRONSTEEL", rect: { x: 440, y: 200, w: 400, h: 80 }, z: 5 };
   const line: Spec = {
     id: "line",
     tag: "p",
@@ -437,7 +437,7 @@ test("dispatchLookDeltasInPage: pointermove + mousemove with explicit movementX 
 });
 
 /**
- * THE MEASURED CASE, 2026-09-05 (muse village, `sunfall-hamlet`). The title
+ * THE MEASURED CASE (a village game, `sunfall-hamlet`). The title
  * screen's "Walk in" button is real and visible. The pause card is marked
  * `hidden`, but the game's own `.screen { display:flex; opacity:0 }` rule
  * defeats the attribute, so the card is laid out over the title, invisible,

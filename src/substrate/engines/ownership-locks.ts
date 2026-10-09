@@ -93,6 +93,13 @@ export function neverLocked(rel: string, neverLock: readonly string[] = []): boo
   });
 }
 
+/**
+ * The host's ownership-lock records, in a folder beside the engine homes and never inside one: any
+ * folder in a Codex home reads as a sign-in (`hasCredentials`), and Codex runs with that home. The
+ * app keeps its engine homes side by side in one folder no agent may read; Codex and OpenCode share it.
+ */
+export const LOCK_RECOVERY_DIR = "ownership-locks";
+
 export interface LockRecord {
   facetId: string;
   at: string;

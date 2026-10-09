@@ -7,6 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { type ScreenAct, ScreenDeed } from "../../shared/agent-screen.ts";
 import type { DelegateRequest, LiveToolResult } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
+import { GameSteer } from "../../shared/preview-contract.ts";
 import { DEFAULT_SHOT_QUALITY } from "./capture.ts";
 
 type LiveTool = NonNullable<DelegateRequest["liveTools"]>[number];
@@ -47,6 +48,11 @@ export const PLAYTEST_TOOLS: readonly LiveTool[] = [
         holdMs: num(
           `how long to hold in ms, default ${PLAYTEST_LIMITS.defaultHoldMs}, max ${PLAYTEST_LIMITS.maxHoldMs}`,
         ),
+        autosteer: {
+          type: "boolean",
+          description:
+            "racing games with a racing line (config.steer): the game's line steers while you hold the keys — hold the throttle with it to drive the course; steer yourself to judge the handling",
+        },
       },
       required: ["keys"],
     },
@@ -118,7 +124,16 @@ const HANDLERS: Record<PlaytestTool, PlaytestHandler> = {
     const keys = keysOf(args.keys);
     if (!keys.length) return 'press_keys needs keys, e.g. "w"';
     const holdMs = Number(args.holdMs) || PLAYTEST_LIMITS.defaultHoldMs;
-    await live.input([{ type: "hold", keys, ms: clamp(holdMs, PLAYTEST_LIMITS.minHoldMs, PLAYTEST_LIMITS.maxHoldMs) }]);
+    // The game's own racing line steers the hold when asked (a game without one answers so).
+    const autosteer = args.autosteer === true;
+    if (autosteer) await live.studioCall(GameSteer.Assist, { steer: true }).catch(() => null);
+    try {
+      await live.input([
+        { type: "hold", keys, ms: clamp(holdMs, PLAYTEST_LIMITS.minHoldMs, PLAYTEST_LIMITS.maxHoldMs) },
+      ]);
+    } finally {
+      if (autosteer) await live.studioCall(GameSteer.Assist, { steer: false }).catch(() => null);
+    }
     await ctx.frame(live, null, `press ${keys.join("+")}`, { deed: ScreenDeed.Press, keys });
     return stateText(live);
   },

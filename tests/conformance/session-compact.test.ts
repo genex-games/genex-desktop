@@ -82,7 +82,7 @@ describe("what a session is briefed with after its chat was compacted", () => {
         },
       },
     });
-    const night = {
+    const loopRun = {
       runId: RUN,
       state: "paused",
       goal: "a dusk plaza",
@@ -100,7 +100,7 @@ describe("what a session is briefed with after its chat was compacted", () => {
       engine: "codex",
       engineLabel: "Codex",
       project: "plaza",
-      afterNight: night as never,
+      afterLoopRun: loopRun as never,
     });
     const [request] = requests;
     assert.ok(request, "the turn ran");

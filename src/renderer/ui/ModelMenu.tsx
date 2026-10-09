@@ -14,7 +14,7 @@ import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
-import { findChoice } from "../model-choices.ts";
+import { findChoice, roleChoices } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
 import type { RunRoles } from "../../shared/protocol.ts";
@@ -39,6 +39,8 @@ export interface ModelChoice extends ModelCapabilities {
   efforts?: string[];
   defaultEffort?: string;
   supportsSessions?: boolean;
+  /** Whether the model takes images; only local rows say, since only a local engine refuses them. */
+  supportsVision?: boolean;
   /** Other ids the provider resolves to this model, such as a family alias. */
   aliases?: string[];
   /** Left out of the list unless picked: an older model, or one turned off in Settings. */
@@ -139,7 +141,7 @@ function useRolePicks({
     selected,
     roleChoice,
     roleName: (role: RoleKey) => shortModelName(roleChoice(role)?.name ?? "Choose model"),
-    modelsFor: (role: RoleKey) => choices.filter((c) => role === "planner" || c.supportsSessions),
+    modelsFor: (role: RoleKey) => roleChoices(choices, role, selected),
     choose,
   };
 }

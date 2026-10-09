@@ -1,5 +1,5 @@
 /**
- * The director's rules: everything the night decides by rule, with no night of its own — the
+ * The director's rules: everything the run decides by rule, with no run of its own — the
  * plan and worker specs it compiles, the monitor's findings, the landing sentences, the defect
  * router.
  *
@@ -10,7 +10,7 @@
  * (tool-specs.ts), the digests a wait and a status answer with (digests.ts) and the briefs the
  * sessions open with (briefs.ts).
  *
- * It imports no part of the night, so the parts can use it without an import cycle.
+ * It imports no part of the run, so the parts can use it without an import cycle.
  */
 import { shortSha } from "../git.ts";
 import { Side } from "../judge.ts";
@@ -20,6 +20,7 @@ import { parsePlanSteering } from "../replan.ts";
 import { allowedFile, mechanicalReview } from "../review.ts";
 import { setupVerifyExpr } from "../scout.ts";
 import {
+  CheckOrigin,
   CheckWeight,
   MoveOwner,
   normalizeFacetSpec,
@@ -31,13 +32,21 @@ import {
 import { CLIP_QUOTE, CLIP_REASON, clip } from "../text.ts";
 import { Against } from "../verdict.ts";
 import { KIND_QUOTED, lines, list, num, parseJson, slug } from "./args.ts";
+import { contractRefusalWords } from "./contract-prompts.ts";
+import { parseModuleContract, singlePart } from "./module-contract.ts";
 import { MAX_LEDGER, MAX_PLAN_WORKERS, PLAN_HOLD_SLICE_MS, SILENT_ROUND_MIN } from "./budgets.ts";
 import { SECOND_MS } from "../time.ts";
+import { FacetStage, isFinishing } from "../facet/stage.ts";
+import { isOpenRung, withOpenRung } from "../facet/growth.ts";
+import { scopeItems } from "../scope.ts";
+import { SCREEN_CRITIC } from "../screen-owner.ts";
+import { parseVision } from "../vision.ts";
+import { visionRefusalWords } from "../vision-prompts.ts";
 import { NoteKind } from "./wake-schedule.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { Check, FacetSpec } from "../spec.ts";
-// Type-only: erased at runtime, so rules.ts still imports no part of the night.
-import type { Worker } from "./night.ts";
+// Type-only: erased at runtime, so rules.ts still imports no part of the run.
+import type { Worker } from "./loop-run.ts";
 
 export { list, namedTitle, num, parseJson, slug, withoutFrames, yes } from "./args.ts";
 export {
@@ -114,12 +123,12 @@ const PART_DONE = 6;
 const PART_QUOTED = 80;
 
 /**
- * The run's own starting points: the empty scaffold a from-scratch night began on, and the
+ * The run's own starting points: the empty scaffold a from-scratch run began on, and the
  * commit its base stage accepted. A blank picture on one of these is the stage's honest output,
  * so every pass that looks at one looks as the harness's base pass (the only pass gauntlet lets
- * off blankness), and the close does not count one as a night's work.
+ * off blankness), and the close does not count one as a run's work.
  *
- * The base commit comes back on a resume too: a night killed before any worker merged resumes
+ * The base commit comes back on a resume too: a run killed before any worker merged resumes
  * standing on its own empty base, and a set that had forgotten it refused every worker with
  * "the build does not run" — the failure the base stage exists to prevent.
  */
@@ -141,7 +150,7 @@ export function startingHeads({
 /**
  * What the landing can honestly claim about the build it made live. A health pass says the
  * build loads; only a blind pick over the build the user had says it is better. The first
- * director night landed on "it loaded" and reported "the judge had passed it"; the second could
+ * director run landed on "it loaded" and reported "the judge had passed it"; the second could
  * have reported a pick over another worker's dead end — or a yes to any question at all — as
  * the same thing, because nothing recorded what the comparison had been against.
  *
@@ -216,12 +225,16 @@ export function plainly(text: unknown): string {
 /** One part of a plan, as the harness holds the director to it. */
 export interface PlanPart {
   multiplayer?: boolean;
+  /** `"mode":"single"`: a part only ever built by one session, not counted as a looping part (module-contract.ts). */
+  single?: boolean;
   id: string;
   title: string;
   seam: string;
   owns: string[];
   done: string[];
   minutes: number | null;
+  /** A part beyond what the user asked for (scope.ts): in goal mode an optional goal, never required. */
+  added?: boolean;
 }
 
 /** A field that may be a JSON array or a string of entries, as trimmed, non-empty strings. */
@@ -267,7 +280,9 @@ function planPart(entry: unknown, id: string): PlanPart {
     owns: entries(raw.owns, list),
     done: entries(raw.done, lines).slice(0, PART_DONE),
     ...(raw.multiplayer === true ? { multiplayer: true } : {}),
+    ...(singlePart(raw) ? { single: true } : {}),
     minutes: Math.round(num(raw.minutes, 0)) || null,
+    ...(raw.added === true ? { added: true } : {}),
   };
 }
 
@@ -298,9 +313,9 @@ function planParts(workers: unknown): { parts: PlanPart[]; error?: undefined } |
 }
 
 /**
- * The night's plan, compiled (M3.8). The first director night had none: five workers started at
+ * The run's plan, compiled (M3.8). The first director run had none: five workers started at
  * 16:25 on a 900-character decision card and a gitignored file, and the morning's Builds page
- * showed ten parts, half of them red, with no page saying what the night set out to do. The
+ * showed ten parts, half of them red, with no page saying what the run set out to do. The
  * plan is now an object the harness holds the director to — the ids here are the ids
  * `worker_start` is called with — and one card in the user's chat.
  *
@@ -314,6 +329,10 @@ export function compilePlan({
   risks = "",
   kind = "",
   play_script = null,
+  contract = null,
+  vision = null,
+  cut = null,
+  added = null,
 }: {
   summary?: string;
   workers?: unknown;
@@ -321,6 +340,14 @@ export function compilePlan({
   risks?: unknown;
   kind?: string;
   play_script?: unknown;
+  /** The module contract (module-contract.ts): who owns which module and what it exposes. */
+  contract?: unknown;
+  /** The vision (vision.ts): what the world grows toward — scale, the far view, set-pieces, headroom. */
+  vision?: unknown;
+  /** What this run will not build (scope.ts): joins the run's cut list. */
+  cut?: unknown;
+  /** What the plan builds beyond the ask: one decision card each, never scope by itself. */
+  added?: unknown;
 } = {}): { plan: AnyRecord; error?: undefined } | { error: string; plan?: undefined } {
   const text = String(summary ?? "").trim();
   if (!text)
@@ -329,6 +356,16 @@ export function compilePlan({
   if (declared.error !== undefined) return { error: declared.error };
   const named = planParts(workers);
   if (named.error !== undefined) return { error: named.error };
+  const modules = parseModuleContract(
+    contract,
+    named.parts.map((part) => part.id),
+  );
+  if (modules.problem !== undefined) return { error: contractRefusalWords(modules.problem) };
+  const direction = parseVision(vision);
+  if (direction.problem !== undefined) return { error: visionRefusalWords(direction.problem) };
+  // Capped like every scope list (scope.ts `scopeItems`); a plan that names neither is what it was.
+  const cutItems = scopeItems(cut);
+  const addedItems = scopeItems(added);
   return {
     plan: {
       summary: text.slice(0, PLAN_SUMMARY),
@@ -338,6 +375,10 @@ export function compilePlan({
         .slice(0, PLAN_BASE),
       risks: lines(risks).slice(0, PLAN_RISKS),
       game: declared.game,
+      ...(modules.contract ? { contract: modules.contract } : {}),
+      ...(direction.vision ? { vision: direction.vision } : {}),
+      ...(cutItems.length ? { cut: cutItems } : {}),
+      ...(addedItems.length ? { added: addedItems } : {}),
     },
   };
 }
@@ -466,8 +507,8 @@ export function monitorNote(
  * A defect the judge named while looking at one worker, handed to the worker whose seam it is.
  * The facet loop routes through this (`defectsToChecks`, and a builder's own HARNESS flag);
  * with no router every defect became a question on the board of whichever worker happened to
- * be judged — one night scored the crumple worker on whether another worker's props floated,
- * and neither board could ever reach "satisfied". Returning false leaves the defect where it
+ * be judged — one worker scored on whether another worker's props float, and neither board
+ * ever reaching "satisfied". Returning false leaves the defect where it
  * was named, so a worker can never hand itself its own defect, and when the owner is finished
  * there is nobody to take it: it goes on the run's ledger for the director's next integration
  * instead of being dropped (the classic pipeline gives it to the integration facet the same way).
@@ -514,8 +555,8 @@ export function makeRouteDefect({
 const takesDefects = (worker: Worker): worker is Worker & { spec: FacetSpec } =>
   isRunning(worker) && worker.mode === WorkerMode.Loop && Boolean(worker.spec);
 
-/** A defect nobody can build now goes on the run's ledger, once, for the director's next integration. */
-function shelveDefect(
+/** A defect nobody can build now goes on the run's ledger, once, for the director's next integration (art-direction.ts shelves its own here). */
+export function shelveDefect(
   ledger: ShelvedDefect[],
   { text, from, owner }: { text: string; from: string; owner: string },
 ): void {
@@ -536,8 +577,8 @@ function newCamera(spec: AnyRecord, check: Check): string | null {
   return camera;
 }
 
-/** Put a routed defect's check on a worker's board (and its camera on its spec); false when it was already there. */
-function putOnBoard(spec: AnyRecord, check: Check): boolean {
+/** Put a routed defect's check on a worker's board (and its camera on its spec); false when it was already there (art-direction.ts puts its own here). */
+export function putOnBoard(spec: AnyRecord, check: Check): boolean {
   if (!Array.isArray(spec.checks)) spec.checks = [];
   if (alreadyOnBoard(spec.checks, check)) return false;
   spec.checks.push(check);
@@ -566,22 +607,41 @@ export interface WorkerSpecInput {
   screen?: boolean;
   index?: number;
   forkedFrom?: string | null;
+  /** "finish" for a worker that finishes what exists (facet/stage.ts); absent or anything else, the build stage. */
+  stage?: string | null;
 }
 
 /**
  * The harness's own checks for the kind and the traits the director named. Only what it named: a
  * trait it did not mention is not declared false — it is simply not declared, and the kind (the
- * run's, unless this part differs) decides.
+ * run's, unless this part differs) decides. The front-end's owner (`keepsFrontEnd`) is judged on
+ * its menu, so the checks that only hold in play stay off its board.
  */
 function withDeclaredGame<S extends FacetSpec>(
   spec: S,
-  { kind, traits, ownsMain, screen }: { kind: string | null; traits: string[]; ownsMain: boolean; screen: boolean },
+  {
+    kind,
+    traits,
+    ownsMain,
+    screen,
+    keepsFrontEnd,
+  }: { kind: string | null; traits: string[]; ownsMain: boolean; screen: boolean; keepsFrontEnd: boolean },
 ): S {
   const kindName = isGameKind(kind) ? kind : null;
   if (!kindName && !traits.length) return spec;
   const declared: AnyRecord = { ...(kindName ? { kind: kindName } : {}) };
   for (const trait of Object.values(GameTrait)) if (traits.includes(trait)) declared[trait] = true;
-  return withHarnessChecks(spec, { ownsMain, game: normalizeGameTraits(declared), screen });
+  return withHarnessChecks(spec, { ownsMain, game: normalizeGameTraits(declared), screen, keepsFrontEnd });
+}
+
+/**
+ * The part's own critic, when the director named one. The part reviewed as a screen owns it
+ * (loop/screen-owner.ts): every other part publishes its values and never draws them.
+ */
+function withCritic(spec: FacetSpec, critic: string | null): void {
+  if (!critic) return;
+  spec.critic = critic;
+  if (critic === SCREEN_CRITIC) spec.ownsScreen = true;
 }
 
 /** What the dry run could not do when nothing in this run has looked at the fork point yet. */
@@ -597,7 +657,7 @@ function notVerifiedWords(base: AnyRecord | null, forkedFrom: string | null): st
  * and the requested-state probe added, everything validated — and then read once against the
  * state the fork point actually reports (`base`, cached by whoever last looked at that commit).
  *
- * The dry run is the difference between a contract and a wish. The first director night wrote
+ * The dry run is the difference between a contract and a wish. The first director run wrote
  * thirteen probes over `state.<facet>.<field>`, started five workers on them and read
  * `missing: …` on every board for six hours. Here a path the build does not report comes back
  * as `unsatisfiable` with the keys it does have, and rides into the builder's brief as a note.
@@ -628,17 +688,23 @@ export function compileWorkerSpec(
     screen = true,
     index = 0,
     forkedFrom = null,
+    stage = null,
   }: WorkerSpecInput,
   base: AnyRecord | null = null,
   { rarelyMeasurable: rarely = [] }: { rarelyMeasurable?: Array<{ id: string; rounds: number }> } = {},
 ) {
+  // The lead's own `{"open":true}` says where it leaves the ladder open; the harness puts the one
+  // open rung at the end below, whatever the lead wrote.
+  const rungs = milestones.filter((rung) => !isOpenRung(rung));
   let spec = normalizeFacetSpec(
-    { id, title: title || id, intent: brief, owns, identity, cameras, checks, done, milestones, budgetShare: 0 },
+    { id, title: title || id, intent: brief, owns, identity, cameras, checks, done, milestones: rungs, budgetShare: 0 },
     index,
   );
-  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen });
+  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen, keepsFrontEnd: setup?.begin === false });
   const expr = setupVerifyExpr(setup?.verify);
   if (expr) spec = withRequestedStateCheck(spec, { expr, note: setup?.note ?? "" });
+  // Before validation: a screen part's board may be mostly vision (spec.ts visionHeavy).
+  if (critic) spec.critic = critic;
   const validated = validateFacetSpec(spec, {
     state: base?.state ?? null,
     demoStates: base?.demoStates ?? null,
@@ -647,12 +713,21 @@ export function compileWorkerSpec(
   });
   spec = validated.spec ?? spec;
   spec.setup = setup;
-  if (critic) spec.critic = critic;
+  withCritic(spec, critic);
   // Who owns the move (M3.3). A director that wrote a ladder owns it: the harness hands the
-  // worker the next unclimbed rung and never invents one of its own — the planner's "the ONE
-  // structural move" and the liveness critic's grow gaps are exactly what once overruled a
-  // brief every iteration. With no ladder the harness names the move as it always did.
-  if (spec.milestones?.length) spec.moveOwner = MoveOwner.Director;
+  // worker the next unclimbed rung and never puts a move of its own ahead of one — the planner's
+  // "the ONE structural move" and the liveness critic's grow gaps once overruled a brief every
+  // iteration. The ladder ends with an open rung (facet/growth.ts): the reviewers' best step inside
+  // the ask fills it when it is reached, so growth the lead did not foresee still has a way in.
+  // With no ladder the harness names the move as it always did.
+  if (spec.milestones?.length) {
+    spec.milestones = withOpenRung(spec.milestones);
+    spec.moveOwner = MoveOwner.Director;
+  }
+  // The finish stage rides on the spec beside moveOwner: the loop fixes it at the top of each
+  // round, a steer flips it from the next one, and the run log records a steer. A build worker's
+  // spec carries no stage at all.
+  if (isFinishing({ stage })) spec.stage = FacetStage.Finish;
   return {
     spec,
     problems: validated.problems ?? [],
@@ -660,8 +735,9 @@ export function compileWorkerSpec(
     stateKeys: validated.stateKeys ?? null,
     identityTotal: spec.checks.filter((c) => c.weight === CheckWeight.Identity).length,
     notVerified: notVerifiedWords(base, forkedFrom),
+    // The harness's own checks are not the director's to re-point or drop.
     rarelyMeasurable: (rarely ?? [])
-      .filter((entry) => spec.checks.some((check) => check.id === entry.id))
+      .filter((entry) => spec.checks.some((check) => check.id === entry.id && check.origin !== CheckOrigin.Harness))
       .map((entry) => ({ id: entry.id, rounds: entry.rounds })),
   };
 }

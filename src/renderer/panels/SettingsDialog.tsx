@@ -4,7 +4,7 @@ import { SettingsSection } from "../settings-navigation.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { AppearanceSection } from "./AppearanceSection.tsx";
-import { ModelProvidersSection } from "./ModelsSection.tsx";
+import { ModelProvidersSection, type ModelSettingsProps } from "./ModelsSection.tsx";
 import { LocalModelsSection } from "./LocalModelsSection.tsx";
 import { HarnessSection } from "./HarnessSection.tsx";
 import { GamesSection } from "./GamesSection.tsx";
@@ -50,7 +50,7 @@ function SectionBody({
 }: {
   section: SettingsSection;
   engines: EngineDescriptor[];
-  onEnginesRefresh: () => void;
+  onEnginesRefresh: ModelSettingsProps["onEnginesRefresh"];
   gamesRootLabel: string;
   onGamesRoot: (label: string) => void;
 }): JSX.Element {
@@ -82,7 +82,7 @@ export function SettingsDialog({
   onDismiss: () => void;
   returnFocus?: React.RefObject<HTMLElement | null>;
   engines: EngineDescriptor[];
-  onEnginesRefresh: () => void;
+  onEnginesRefresh: ModelSettingsProps["onEnginesRefresh"];
   gamesRootLabel: string;
   onGamesRoot: (label: string) => void;
 }) {

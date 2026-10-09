@@ -342,7 +342,7 @@ test("a run's mirrored session never becomes the chat's session, rewound or not"
     lastContractorSession(harnessView([...unbookmarked, legacyInit], []), "claude-code")?.sessionId,
     "legacy-1",
   );
-  // Flipped (P07-V1): a later init no longer outranks the chat's bookmark — it may be a
+  // Flipped: a later init no longer outranks the chat's bookmark — it may be a
   // coordinator's, worker's or reviewer's session in this thread.
   assert.equal(
     lastContractorSession(harnessView([...conversation(), legacyInit], []), "claude-code")?.sessionId,
@@ -650,7 +650,7 @@ test("the rewind fixture chat offers Rewind on every bubble, and its build-follo
     );
     const built = planRewind(events, [], "fixture-rewind-built");
     assert.ok(built.ok);
-    assert.deepEqual(built.builds, [{ runId: "fixture-rewind-night", landed: true }]);
+    assert.deepEqual(built.builds, [{ runId: "fixture-rewind-run", landed: true }]);
     const joined = planRewind(events, [], "fixture-rewind-joined");
     assert.ok(joined.ok && joined.joined);
   } finally {

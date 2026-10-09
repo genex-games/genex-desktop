@@ -1,10 +1,10 @@
 /**
  * A round the lead stopped (M1.4).
  *
- * The harness stops a builder mid-edit — to fix the starting point, to wrap the night up — and
+ * The harness stops a builder mid-edit — to fix the starting point, to wrap the run up — and
  * commits what it had written instead of judging it. On screen that round is neither kept nor
  * undone: it is grey, it says who stopped it, and it never claims the work was thrown away.
- * One night showed the owner four red "stopped by you" rounds they had had no part in.
+ * One run showed the owner four red "stopped by you" rounds they had had no part in.
  */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -35,7 +35,7 @@ function event(eventType: string, payload: Record<string, unknown>): EventEnvelo
 }
 
 /** Round one kept, round two stopped by the lead — exactly what `facet-loop.ts` writes. */
-function night(): EventEnvelope[] {
+function loopRun(): EventEnvelope[] {
   counter = 0;
   return [
     event("run_started", { project: "plaza", goal: "a red plaza" }),
@@ -100,7 +100,7 @@ const roundsOf = (graph: ReturnType<typeof buildRunGraph>): IterationNode[] =>
 
 describe("a stopped round in the run graph", () => {
   it("is its own status — not kept, not undone, and not counted as a loss", () => {
-    const graph = buildRunGraph(night());
+    const graph = buildRunGraph(loopRun());
     assert.ok(graph);
     const rounds = roundsOf(graph);
     assert.deepEqual(
@@ -123,7 +123,7 @@ describe("a stopped round in the run graph", () => {
   });
 
   it("carries the lead's own reason, so the card cannot blame the owner", () => {
-    const stopped = roundsOf(buildRunGraph(night()))[1]!;
+    const stopped = roundsOf(buildRunGraph(loopRun()))[1]!;
     assert.match(stopped.reason, /fixing the starting point/);
     assert.equal(stoppedWords(stopped.reason), "stopped by the lead — fixing the starting point");
     // The old wording, and what the user hears instead of it.
@@ -194,7 +194,7 @@ describe("a stopped round in the chat", () => {
   });
 
   it("keeps the judges' gap on a judged round", () => {
-    const lines = roundLines(night());
+    const lines = roundLines(loopRun());
     assert.match(lines[0]!.text, /^Plaza · round 1: .* · next gap: the stone reads flat$/);
     assert.equal(lines[1]!.text, "Plaza · round 2: stopped by the lead — fixing the starting point");
   });
@@ -231,7 +231,7 @@ describe("the Builds graph paints it grey", () => {
   });
 
   it("names a stopped try the lead stopped, and never calls it undone", () => {
-    const graph = buildRunGraph(night())!;
+    const graph = buildRunGraph(loopRun())!;
     const [row] = partRows(graph);
     const stopped = row!.steps.find((step) => step.tries.some((node) => node.status === "stopped"))!;
     assert.notEqual(stopped.state, "undone");

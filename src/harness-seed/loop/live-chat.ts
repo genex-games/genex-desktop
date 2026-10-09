@@ -1,6 +1,6 @@
 /**
  * The chat while a build of it is open (live chat). A message the person sends goes to the lead of
- * the night that owns the chat, when that lead takes the chat (director/lead-line.ts): recorded
+ * the run that owns the chat, when that lead takes the chat (director/lead-line.ts): recorded
  * delivered to the run, with a `run_steering` the lead's inbox reads, and answered by the lead in
  * the chat. Anything else waits for the build to close — the run itself, not the self-improvement
  * pass that follows it, which never holds the chat. That pass has a Stop of its own (`stopRun`):
@@ -8,7 +8,7 @@
  *
  * A module of its own: the loop's dispatch (main.ts), a chat turn (chat-dispatch.ts) and a run's
  * start (run-dispatch.ts) read it, and a seed upgrade keeps an older copy of any of those the agent
- * edited, which never exported these names. A night that opened no line — the long turn, the
+ * edited, which never exported these names. A run that opened no line — the long turn, the
  * classic pipeline, a kept director.ts from before live chat — keeps its messages waiting.
  */
 import { leadLineOf, leadLinesChanged, type LeadLine } from "./director/lead-line.ts";
@@ -46,7 +46,7 @@ export function openBuildOf(studio: Studio, threadId: string): ActiveRun | undef
 
 /**
  * The records the lead reads a message from: a steer of its run, word for word, from this message,
- * marked as the lead's (`how: "lead"`) — once heard, or back with the chat, a later night of the
+ * marked as the lead's (`how: "lead"`) — once heard, or back with the chat, a later run of the
  * run never tells it again (run-inbox.ts), and the chat's own `resume_run` records its words anew.
  */
 function steerOf(line: LeadLine, item: QueueAction) {
@@ -78,11 +78,11 @@ export function leadDoor(studio: Studio, threadId: string, action: QueueAction):
   };
 }
 
-/** Why the wait for a build ended: it closed, or a night's line opened or shut. */
+/** Why the wait for a build ended: it closed, or a run's line opened or shut. */
 const LINES_CHANGED = Symbol("lines changed");
 
 /**
- * What the chat's next message waits for: the build to close — or, when the night's lead takes
+ * What the chat's next message waits for: the build to close — or, when the run's lead takes
  * it, the lead's door, which the queue hands it through. When a line opens or shuts and the lead
  * still does not take it, null: the queue looks again, and may hand the lead what waits behind it
  * (message-queue.ts). Without the message (a queue from before live chat), only the close. Stop

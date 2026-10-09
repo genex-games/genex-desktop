@@ -28,13 +28,38 @@ import {
   slug,
 } from "./spec.ts";
 import { renderScoreboard } from "./checks.ts";
+import { appliesToBuild } from "./applies-to-build.ts";
 import { nearestReference } from "./style.ts";
 import { facetNotes } from "./repo.ts";
-import { gameLine } from "./kinds.ts";
+import { gameLine, KIND_NAMES } from "./kinds.ts";
 import { roleEngine, RoleKey, toolCall } from "./model-roles.ts";
 import { clip, CLIP_BRIEF, CLIP_DETAIL, CLIP_QUOTE, CLIP_REASON, sharesStem } from "./text.ts";
+import { clipTailWords, clipWords } from "./word-clip.ts";
+import {
+  BRIEF_INTEGRATION_CHARS,
+  BRIEF_LIVENESS_CHARS,
+  BRIEF_MAX_CHARS,
+  BriefCut,
+  fitWithin,
+  RECIPE_INTENT_CHARS,
+  REVIEW_VIOLATIONS_SHOWN,
+} from "./brief-budget.ts";
 import { isRecord } from "./json.ts";
+import { lessonLine, MAX_CONTRACT_LESSONS, renderContractLessons } from "./contract-lessons.ts";
 import { RECIPE_ID_CHARS } from "./config.ts";
+import { FacetStage, FINISH_POLISH_NOTES, moveEscalated, stageOf } from "./facet/stage.ts";
+import {
+  FINISH_CRITIC_KEY,
+  FINISH_FIX_LINE,
+  FINISH_POLISH_HEAD,
+  FINISH_RULES,
+  FINISH_SECTION_HEAD,
+} from "./facet/stage-prompts.ts";
+import { heldHudBriefRule } from "./held-hud-prompts.ts";
+import { screenOwnerFinishRules, screenOwnerLine, type ScreenOwnerSpec } from "./screen-owner-prompts.ts";
+import { benchPage, blockBriefSection } from "./facet/build-block-prompts.ts";
+import { CARRY_OVER_EXCEPTION, carryOverSection } from "./facet/carried-fixes-prompts.ts";
+import type { CarriedFix } from "./facet/carried-fixes.ts";
 import type { Check, FacetSpec } from "./spec.ts";
 import type { ReferenceStats, Scoreboard } from "./checks.ts";
 import type { StyleStats } from "./style.ts";
@@ -58,20 +83,19 @@ const RECIPE_NOTE_CHARS = 160;
 const RECIPE_TEXT_CHARS = 1_200;
 /** The results a recipe remembers, the newest kept. */
 const MAX_RECIPE_EVIDENCE = 24;
-/** The contract lessons the library keeps. */
-const MAX_CONTRACT_LESSONS = 40;
 /**
  * What a builder's brief carries: ledger defects, the judge's polish notes, earlier rounds (the
  * latest), diff-stat lines each, this game's lessons and past runs' lessons. Six defects, not
- * twelve: the golden-goal night's briefs were 27K, more than half of it defect material, and the
- * builders spent their rounds on it instead of the move.
+ * twelve: a brief that is mostly defect material has the builders spend their rounds on it
+ * instead of the move.
  */
 const MAX_BRIEF_DEFECTS = 6;
 const MAX_BRIEF_POLISH = 3;
 const EARLIER_ROUNDS_SHOWN = 3;
 const DIFF_STAT_LINES = 12;
 const MAX_GAME_LESSONS = 5;
-const MAX_BRIEF_LESSONS = 12;
+/** Past runs' lessons: six, not twelve, now that the file is applied — briefs already run 20-39 KB. */
+const MAX_BRIEF_LESSONS = 6;
 /** A recipe is promoted after this many wins (and more wins than losses), and retired after this many losses outnumbering its wins this many times over. */
 const PROMOTE_AFTER_WINS = 2;
 const RETIRE_AFTER_LOSSES = 3;
@@ -100,6 +124,8 @@ export interface Recipe {
   status: string;
   origin: string;
   scope: string;
+  /** The game kinds (loop/kinds.ts) this recipe is for; none means every kind. */
+  kinds?: string[];
   project?: string;
   retiredBecause?: string;
   file?: string;
@@ -120,15 +146,18 @@ const LESSONS_FILE = "contract-lessons.md";
 
 /**
  * Lessons every facet re-learned, promoted into a durable list the brief carries (WP8):
- * `library/contract-lessons.md`, one bullet per line, written by SkillOpt from `## Fixed by
- * looking` / `HARNESS:` notes across runs and gated like a skill edit.
+ * `library/contract-lessons.md`, one bullet per line. SkillOpt distils them from `## Fixed by
+ * looking` / `HARNESS:` notes across runs in one light model call — no blind gate — and stages
+ * them (loop/contract-lessons.ts); the host applies them by the user's switches, and Undo works.
  */
 export async function loadContractLessons(workspace: string): Promise<string[]> {
   const text = await readFile(path.join(workspace, "library", LESSONS_FILE), "utf8").catch(() => "");
-  return text
+  const lines = text
     .split("\n")
     .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
     .filter((l) => l && !l.startsWith("#"));
+  // Once each: a suggestion folded while the host applied the one it replaced appends twice.
+  return [...new Set(lines)];
 }
 
 export async function saveContractLessons(
@@ -137,16 +166,16 @@ export async function saveContractLessons(
 ): Promise<string[]> {
   const dir = path.join(workspace, "library");
   await mkdir(dir, { recursive: true });
-  const unique = [...new Set((lessons ?? []).map((l) => String(l).trim()).filter(Boolean))].slice(
-    0,
-    MAX_CONTRACT_LESSONS,
-  );
-  await writeFile(
-    path.join(dir, LESSONS_FILE),
-    `# Lessons the runs learned (read by every brief)\n\n${unique.map((l) => `- ${l}`).join("\n")}\n`,
-  );
+  const unique = [...new Set((lessons ?? []).map(lessonLine).filter(Boolean))].slice(0, MAX_CONTRACT_LESSONS);
+  await writeFile(path.join(dir, LESSONS_FILE), renderContractLessons(unique));
   return unique;
 }
+
+/** The file for a list of lessons; staged changes to it are bounded edits (loop/contract-lessons.ts). */
+export { renderContractLessons };
+
+/** BRIEF.md's ceiling, moved sections included (loop/brief-budget.ts). */
+export { BRIEF_MAX_CHARS } from "./brief-budget.ts";
 
 /** Where a recipe stands: new, proven by its wins, or retired by its losses. Libraries keep it: never rename a value. */
 export const RecipeStatus = {
@@ -213,7 +242,22 @@ export function normalizeRecipe(raw: AnyRecord | null | undefined): Recipe | nul
     stats: recipeStats(raw.stats),
     status: RECIPE_STATUS.includes(raw.status) ? raw.status : RecipeStatus.Candidate,
     ...recipeProvenance(raw),
+    ...recipeKinds(raw.kinds),
   };
+}
+
+/** The game kinds a recipe names, known ones only; none (or none known) leaves the field out: every kind. */
+function recipeKinds(raw: unknown): Pick<Recipe, "kinds"> {
+  if (!Array.isArray(raw)) return {};
+  const kinds = [
+    ...new Set(raw.map((kind: unknown) => String(kind).trim()).filter((kind) => KIND_NAMES.includes(kind))),
+  ];
+  return kinds.length ? { kinds } : {};
+}
+
+/** A recipe written for other kinds of game than this one (a first-person viewmodel in a racer). */
+function fitsOtherKinds(recipe: Recipe, kind: string | null | undefined): boolean {
+  return Boolean(kind) && Boolean(recipe.kinds?.length) && !recipe.kinds?.includes(String(kind));
 }
 
 /** A recipe's tags: lower-cased, trimmed, deduplicated. */
@@ -288,7 +332,7 @@ export async function saveRecipe(workspace: string, recipe: Recipe): Promise<str
   const dir = path.join(workspace, "library", "recipes");
   await mkdir(dir, { recursive: true });
   const { file: _file, ...body } = recipe;
-  // A seeded recipe keeps its shipped bytes; only what tonight learned about it is written.
+  // A seeded recipe keeps its shipped bytes; only what this run learned about it is written.
   if (body.origin === "seed") {
     const target = path.join(workspace, "library", RECIPE_STATE_FILE);
     const state = await loadRecipeState(workspace);
@@ -323,11 +367,13 @@ export function recipeMatchesCheck(recipe: Recipe, check: CheckWords | null | un
 export function scoreRecipe(
   recipe: Recipe,
   check: CheckWords | null | undefined,
-  { project = null }: { project?: string | null } = {},
+  { project = null, kind = null }: { project?: string | null; kind?: string | null } = {},
 ): number {
   if (recipe.status === RecipeStatus.Retired) return 0;
   const exact = recipeMatchesCheck(recipe, check);
   if (belongsElsewhere(recipe, project) && !exact) return 0;
+  // A recipe for other kinds of game reaches this one only on its own check.
+  if (fitsOtherKinds(recipe, kind) && !exact) return 0;
   const words = new Set(checkTokens(check));
   const bag = new Set(
     [
@@ -355,6 +401,16 @@ export function scoreRecipe(
   return overlap * promotion * Math.max(0.5, record);
 }
 
+/** How retrieval narrows: this game's project and kind, the score a word overlap must reach, and the checks only an exact recipe may answer. */
+export interface RetrievalOptions {
+  project?: string | null;
+  kind?: string | null;
+  /** The least score a hit that is not the recipe's own check needs (CRAFT_ADOPT_SCORE in a brief). */
+  minScore?: number;
+  /** Checks answered by exact matches only: nothing has failed them yet, so two words in common are no reason. */
+  exactOnly?: readonly string[];
+}
+
 /**
  * The few recipes worth a failing check's attention, with which checks each one serves.
  * `primaryCheckId` is the check the recipe was retrieved for most strongly — the only check
@@ -364,12 +420,12 @@ export function recipesForChecks(
   recipes: readonly Recipe[] | null | undefined,
   failingChecks: readonly (CheckWords & { id: string })[] | null | undefined,
   limit = MAX_RECIPES_PER_BRIEF,
-  { project = null }: { project?: string | null } = {},
+  options: RetrievalOptions = {},
 ): RecipeHit[] {
   const scored = new Map<string, RecipeHit>();
   for (const check of failingChecks ?? []) {
     for (const recipe of recipes ?? []) {
-      const score = scoreRecipe(recipe, check, { project });
+      const score = retrievalScore(recipe, check, options);
       if (score <= 0) continue;
       const entry = scored.get(recipe.id) ?? { recipe, score: 0, checkIds: [], primaryCheckId: check.id };
       if (score > entry.score) {
@@ -381,6 +437,18 @@ export function recipesForChecks(
     }
   }
   return [...scored.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/** A recipe's score for one check under the retrieval's narrowing; 0 when it does not make the cut. */
+function retrievalScore(
+  recipe: Recipe,
+  check: CheckWords & { id: string },
+  { project = null, kind = null, minScore = 0, exactOnly = [] }: RetrievalOptions,
+): number {
+  const score = scoreRecipe(recipe, check, { project, kind });
+  if (score <= 0 || recipeMatchesCheck(recipe, check)) return score;
+  const weak = exactOnly.includes(check.id) || score < minScore;
+  return weak ? 0 : score;
 }
 
 /**
@@ -658,17 +726,18 @@ export function checksFromDefects(
 /**
  * The craft recipe worth handing a builder alongside a check somebody just wrote — a judge's
  * new vision check, a milestone's check. Only a real overlap counts: below CRAFT_ADOPT_SCORE
- * two words in common is a coincidence, and a wrong recipe costs an iteration.
+ * two words in common is a coincidence, and a wrong recipe costs an iteration. `kind` is the
+ * game's kind: a recipe for other kinds of game reaches it only on its own check.
  */
 export function craftForNewCheck(
   recipes: readonly Recipe[] | null | undefined,
   newCheck: CheckWords | null | undefined,
-  { min = CRAFT_ADOPT_SCORE, limit = 1 }: { min?: number; limit?: number } = {},
+  { min = CRAFT_ADOPT_SCORE, limit = 1, kind = null }: { min?: number; limit?: number; kind?: string | null } = {},
 ): Array<{ recipe: Recipe; score: number }> {
   const hits: Array<{ recipe: Recipe; score: number }> = [];
   for (const recipe of recipes ?? []) {
     if (!isCraftRecipe(recipe)) continue;
-    const score = scoreRecipe(recipe, newCheck);
+    const score = scoreRecipe(recipe, newCheck, { kind });
     if (score >= min) hits.push({ recipe, score });
   }
   return hits.sort((a, b) => b.score - a.score || (a.recipe.id < b.recipe.id ? -1 : 1)).slice(0, limit);
@@ -682,13 +751,18 @@ export function craftForNewCheck(
  */
 /** What one iteration's `.studio/BRIEF.md` is written from. */
 export interface BriefOptions {
-  run: Pick<Run, "runId" | "goal"> & Partial<Pick<Run, "reference" | "game" | "engine" | "builderEngine">>;
+  run: Pick<Run, "runId" | "goal"> &
+    Partial<Pick<Run, "reference" | "game" | "engine" | "builderEngine" | "heldHudGeneration">>;
   /** The facet loop passes its seam here too; briefWithMovedSections (facet-loop.ts) renders it, not renderBrief. */
   ownsMain?: boolean;
   entryMain?: string;
   ownShape?: boolean;
   build?: string | null;
-  spec: Pick<FacetSpec, "id" | "title" | "intent" | "identity" | "owns" | "checks">;
+  /**
+   * The part; `ownsScreen` / `screenOwner` (loop/screen-owner.ts) name who draws the screen, and
+   * `doNotRegress` what the art director says already works in the whole game.
+   */
+  spec: Pick<FacetSpec, "id" | "title" | "intent" | "identity" | "owns" | "checks" | "doNotRegress"> & ScreenOwnerSpec;
   iteration: number;
   board?: Scoreboard | null;
   comparison?: { flips?: string[]; regressions?: string[] } | null;
@@ -713,6 +787,16 @@ export interface BriefOptions {
   critic?: string;
   template?: boolean;
   game?: AnyRecord | null;
+  /** The worker's stage (facet/stage.ts): "finish" makes polish the work; anything else is the build stage. */
+  stage?: string | null;
+  /** The brief's ceiling (loop/brief-budget.ts); the lowest sections leave first when it is over. */
+  maxChars?: number;
+  /** Where the retrieved recipes are written whole (`.studio/RECIPES.md`): the brief then points there for every sketch but the fix's. */
+  recipesFile?: string | null;
+  /** The worker's build block (facet/build-block.ts): its first, long round, and the bench page it names. */
+  buildBlock?: { bench: string | null } | null;
+  /** What undone rounds had fixed that the accepted build still fails (facet/carried-fixes.ts): carried over. */
+  carried?: CarriedFix[];
 }
 
 /** Per-camera style distance to the stills, now and the round before. */
@@ -723,61 +807,85 @@ export interface StyleForBrief {
   pairs?: Array<{ camera?: string; path?: string }>;
 }
 
-export function renderBrief({
-  run,
-  spec,
-  iteration,
-  board,
-  comparison,
-  attempts = [],
-  recipes = [],
-  spike = null,
-  steering = [],
-  review = null,
-  integration = null,
-  resumed = false,
-  defects = [],
-  polish = [],
-  /** `{ shots, references, previous }` — per-camera style distance to the stills (WP4e). */
-  style = null,
-  /** The builder's own `HARNESS:` flags acknowledged by the loop. */
-  flags = [],
-  lessons = [],
-  /** What earlier nights on THIS game cost (loop/ledger.ts) — already one sentence each. */
-  gameLessons = [],
-  /** This iteration's structural move: `{ what, why?, milestoneId?, check?, mandatory?, ladder?, polishStreak? }`. */
-  move = null,
-  /** The liveness critic's last card, already rendered to lines (judge.ts renderLiveness). */
-  liveness = null,
-  /** THE FIX: a biggest gap the judge repeated — `{ what, checkId?, streak, mandatory, recipe? }`; `recipe` is the craft recipe retrieved for the defect sentence. */
-  fix = null,
-  /** false for a game the user brought with its own UI and input handling — the one-screen rule is the template's, not this game's. */
-  screen = true,
-  /** Which critic asked the liveness question — "place" (a world you stand in) or "screen" (a board, a puzzle, a builder). */
-  critic = "place",
-  /** false for a game the user brought: the determinism, one-input-path and Blender rules are the studio template's craft law, not this game's (M4.6). */
-  template = true,
-  /** The night's declared game — kind, traits and play script (loop/kinds.ts). Its one line heads the brief the way it heads every judge call. */
-  game = null,
-}: BriefOptions): string {
+/**
+ * BRIEF.md, within `maxChars` (BRIEF_MAX_CHARS): the lessons, the style distances, the earlier
+ * rounds' diff stats, the recipes' sketches and the optional polish leave in that order when it is
+ * over (loop/brief-budget.ts). The goal, the steering, the move or the finish, THE FIX, the checks
+ * and the rules are always there.
+ */
+export function renderBrief(options: BriefOptions): string {
+  return fitWithin(options.maxChars ?? BRIEF_MAX_CHARS, (cuts) => renderBriefSections(options, cuts));
+}
+
+/** Every section of the brief, without the ones `cuts` takes out. */
+function renderBriefSections(
+  {
+    run,
+    spec,
+    iteration,
+    board,
+    comparison,
+    attempts = [],
+    recipes = [],
+    spike = null,
+    steering = [],
+    review = null,
+    integration = null,
+    resumed = false,
+    defects = [],
+    polish = [],
+    /** `{ shots, references, previous }` — per-camera style distance to the stills (WP4e). */
+    style = null,
+    /** The builder's own `HARNESS:` flags acknowledged by the loop. */
+    flags = [],
+    lessons = [],
+    /** What earlier runs on THIS game cost (loop/ledger.ts) — already one sentence each. */
+    gameLessons = [],
+    /** This iteration's structural move: `{ what, why?, milestoneId?, check?, mandatory?, ladder?, polishStreak?, escalated? }`. */
+    move = null,
+    /** The liveness critic's last card, already rendered to lines (judge.ts renderLiveness). */
+    liveness = null,
+    /** THE FIX: a biggest gap the judge repeated — `{ what, checkId?, streak, mandatory, recipe? }`; `recipe` is the craft recipe retrieved for the defect sentence. */
+    fix = null,
+    /** false for a game the user brought with its own UI and input handling — the one-screen rule is the template's, not this game's. */
+    screen = true,
+    /** Which critic asked the liveness question — "place" (a world you stand in) or "screen" (a board, a puzzle, a builder). */
+    critic = "place",
+    /** false for a game the user brought: the determinism, one-input-path and Blender rules are the studio template's craft law, not this game's (M4.6). */
+    template = true,
+    /** The run's declared game — kind, traits and play script (loop/kinds.ts). Its one line heads the brief the way it heads every judge call. */
+    game = null,
+    /** "finish" for a worker finishing what exists: THE FINISH replaces THE MOVE, and the polish list is the work. */
+    stage = null,
+    recipesFile = null,
+    buildBlock = null,
+    carried = [],
+  }: BriefOptions,
+  cuts: ReadonlySet<BriefCut>,
+): string {
+  const finishing = stageOf({ stage }) === FacetStage.Finish;
+  const recipeShape = { file: recipesFile, pinned: fix?.recipe?.id ?? null, bodies: !cuts.has(BriefCut.RecipeBodies) };
   const lines = [
     ...briefHeader(run, spec, iteration, game),
     ...steeringSection(steering),
-    ...moveSection(move),
-    ...fixSection(fix, template),
-    ...scoreboardSection(board, comparison),
-    ...(integration ? [`## Integration`, integration, ``] : []),
-    ...livenessSection(liveness, critic),
-    ...styleSection(style),
+    ...(buildBlock ? blockBriefSection(buildBlock.bench) : []),
+    ...(finishing ? finishSection(polish, finishRules(spec, screen && template)) : moveSection(move)),
+    ...fixSection(fix, template, finishing),
+    ...carryOverSection(carried),
+    ...scoreboardSection(board, comparison, spec),
+    ...doNotRegressSection(spec.doNotRegress),
+    ...(integration ? [`## Integration`, clipWords(integration, BRIEF_INTEGRATION_CHARS), ``] : []),
+    ...livenessSection(liveness, critic, finishing),
+    ...(cuts.has(BriefCut.Style) ? [] : styleSection(style)),
     ...flagsSection(flags),
     ...defectsSection(defects, move),
-    ...polishSection(polish),
+    ...(finishing || cuts.has(BriefCut.Polish) ? [] : polishSection(polish)),
     ...reviewSection(review),
     ...(spike ? [`## Spike result`, spike, ``] : []),
-    ...attemptsSection(attempts),
-    ...recipesSection(recipes),
+    ...attemptsSection(attempts, !cuts.has(BriefCut.DiffStats), carried.length > 0),
+    ...recipesSection(recipes, recipeShape),
     ...briefRules(run, spec, { screen, template, resumed }),
-    ...lessonsSections(gameLessons, lessons),
+    ...(cuts.has(BriefCut.Lessons) ? [] : lessonsSections(gameLessons, lessons)),
   ];
   return lines
     .filter((line) => line !== undefined && line !== null)
@@ -812,7 +920,22 @@ function briefHeader(
   ];
 }
 
-/** What the user asked for tonight, above everything else. */
+/**
+ * What the art director says already works in the whole game (director/art-direction.ts): every
+ * builder keeps it, and the round's taste judge calls losing one a regression. Nothing when no
+ * review has named any.
+ */
+function doNotRegressSection(doNotRegress: readonly string[] | undefined): string[] {
+  if (!doNotRegress?.length) return [];
+  return [
+    `## Do not regress — what already works in the whole game, as the art director last named it`,
+    ...doNotRegress.map((item) => `- ${item}`),
+    `A build that loses one of these where your part touches it has regressed: the taste judge rolls it back.`,
+    ``,
+  ];
+}
+
+/** What the user asked for this run, above everything else. */
 function steeringSection(steering: readonly string[]): string[] {
   if (!steering.length) return [];
   return [`## USER STEERING — obeys over everything below`, ...steering.map((s) => `- ${s}`), ``];
@@ -831,7 +954,7 @@ function moveSection(move: AnyRecord | null): string[] {
       ? `Measured by check ${move.check.id} (on the board above); the taste judge also answers whether the move is visible.`
       : "The taste judge answers whether this change is visible in your build; make it unmistakable.",
     `Alongside the move, fix up to three items from the defect ledger below — the move first, the polish second. Never spend the iteration on the ledger alone.`,
-    move.polishStreak >= 2
+    moveEscalated(move)
       ? `ESCALATE: the last ${move.polishStreak} accepted builds were polish only. The judge now rejects a build without the move.`
       : "",
     move.ladder ? `\nThe facet's ladder:\n${move.ladder}` : "",
@@ -839,8 +962,28 @@ function moveSection(move: AnyRecord | null): string[] {
   ];
 }
 
-/** The biggest gap the judge keeps naming, and how to replace the mechanism behind it. */
-function fixSection(fix: AnyRecord | null, template: boolean): string[] {
+/**
+ * The finish rules this part reads: the stage's own, or — in a template game where another part
+ * owns the screen (loop/screen-owner.ts) — the same rules with the HUD's craft handed to that part.
+ */
+function finishRules(spec: BriefOptions["spec"], applies: boolean): readonly string[] {
+  return (applies ? screenOwnerFinishRules(spec) : null) ?? FINISH_RULES;
+}
+
+/** A finishing worker's iteration: no move — the judge's polish list, all of it, is the work. */
+function finishSection(polish: readonly string[], rules: readonly string[] = FINISH_RULES): string[] {
+  return [
+    FINISH_SECTION_HEAD,
+    ...rules,
+    ...(polish.length
+      ? ["", FINISH_POLISH_HEAD, ...polish.slice(0, FINISH_POLISH_NOTES).map((p, i) => `${i + 1}. ${p}`)]
+      : []),
+    ``,
+  ];
+}
+
+/** The biggest gap the judge keeps naming, and how to replace the mechanism behind it (or, finishing, close it). */
+function fixSection(fix: AnyRecord | null, template: boolean, finishing = false): string[] {
   if (!fix?.what) return [];
   const urgency = fix.mandatory
     ? "mandatory — a build that leaves it loses, whatever else it flips"
@@ -854,19 +997,32 @@ function fixSection(fix: AnyRecord | null, template: boolean): string[] {
     fix.recipe
       ? `The library has a recipe for exactly this: ${fix.recipe.title} (${fix.recipe.id}) — it is under "Recipes that apply" below. Port it; do not invent a fourth way.`
       : "",
-    // The named modules are the studio template's own (foliage.js, materials.js). A game the
-    // user brought has neither, and the builder's seam forbids inventing them at those paths,
-    // so it hears the same rule in its own game's terms. The Blender clause stays on the run,
-    // not on the shape: the modeller is granted to an own-shape worker too.
-    template
-      ? `Replace the mechanism behind it, do not tune it. A faceted or smooth solid that should read as something organic (a tree, a bush, hay, an animal) is rebuilt from cards or parts (\`foliage.js\`); a flat wash that should read as a material gets a baked material kind (\`materials.js\`); a thing that floats gets a contact patch and sinks. Land it in the same build as the move — the move comes first, this before the rest of the ledger.`
-      : `Replace the mechanism behind it, do not tune it. A faceted or smooth solid that should read as something organic (a tree, a bush, hay, an animal) is rebuilt out of cards or parts, the way this game already builds its objects; a flat wash that should read as a material gets a material this game's renderer can bake; a thing that floats gets a contact patch and sinks. Land it in the same build as the move — the move comes first, this before the rest of the ledger.`,
+    // A finishing worker may close a polish defect by tuning: "do not tune it" is the build stage's.
+    finishing ? FINISH_FIX_LINE : fixMechanismLine(template),
     ``,
   ];
 }
 
-/** The board after the last judged build: identity first, and what could not be measured. */
-function scoreboardSection(board: Scoreboard | null | undefined, comparison: BriefOptions["comparison"]): string[] {
+/** THE FIX's build-stage instruction: replace the mechanism, in the template's terms or the game's own. */
+function fixMechanismLine(template: boolean): string {
+  // The named modules are the studio template's own (foliage.js, materials.js). A game the
+  // user brought has neither, and the builder's seam forbids inventing them at those paths,
+  // so it hears the same rule in its own game's terms. The Blender clause stays on the run,
+  // not on the shape: the modeller is granted to an own-shape worker too.
+  return template
+    ? `Replace the mechanism behind it, do not tune it. A faceted or smooth solid that should read as something organic (a tree, a bush, hay, an animal) is rebuilt from cards or parts (\`foliage.js\`); a flat wash that should read as a material gets a baked material kind (\`materials.js\`); a thing that floats gets a contact patch and sinks. Land it in the same build as the move — the move comes first, this before the rest of the ledger.`
+    : `Replace the mechanism behind it, do not tune it. A faceted or smooth solid that should read as something organic (a tree, a bush, hay, an animal) is rebuilt out of cards or parts, the way this game already builds its objects; a flat wash that should read as a material gets a material this game's renderer can bake; a thing that floats gets a contact patch and sinks. Land it in the same build as the move — the move comes first, this before the rest of the ledger.`;
+}
+
+/**
+ * The board after the last judged build: identity first, and what could not be measured. Only this
+ * build's questions: a harness check it cannot answer (loop/applies-to-build.ts) is not named.
+ */
+function scoreboardSection(
+  board: Scoreboard | null | undefined,
+  comparison: BriefOptions["comparison"],
+  spec: BriefOptions["spec"],
+): string[] {
   if (!board || !Object.keys(board).length) {
     return [
       `## Scoreboard`,
@@ -874,10 +1030,10 @@ function scoreboardSection(board: Scoreboard | null | undefined, comparison: Bri
       ``,
     ];
   }
-  const entries = Object.values(board);
+  const entries = Object.values(board).filter((e) => appliesToBuild(e, spec));
   const identityFailing = entries.filter((e) => e.pass === false && e.weight === CheckWeight.Identity);
   const unmeasuredEntries = entries.filter((e) => e.pass !== true && e.pass !== false);
-  const lines = [`## Scoreboard after the last judged build`, renderScoreboard(board, comparison), ``];
+  const lines = [`## Scoreboard after the last judged build`, renderScoreboard(board, comparison, spec), ``];
   if (identityFailing.length) {
     lines.push(
       `Work identity checks first: ${identityFailing.map((e) => e.id).join(", ")}. A lower check must not be polished while an identity check still fails.`,
@@ -894,13 +1050,16 @@ function scoreboardSection(board: Scoreboard | null | undefined, comparison: Bri
 }
 
 /** The liveness (or readability) critic's last card. */
-function livenessSection(liveness: string | null, critic: string): string[] {
+function livenessSection(liveness: string | null, critic: string, finishing = false): string[] {
   if (!liveness) return [];
+  // A finishing worker builds nothing new: the critic's grow notes wait for the build stage.
+  // "deepen", never "build": the critic's fixes deepen what the user asked for (loop/scope.ts).
+  const key = finishing ? FINISH_CRITIC_KEY : "grow = what to deepen next, polish = optional";
   return [
     critic === "screen"
-      ? `## Why the screen does not read yet (the readability critic, 0–3 per principle; grow = what to build next, polish = optional)`
-      : `## Why it does not feel like a real place yet (the liveness critic, 0–3 per principle; grow = what to build next, polish = optional)`,
-    liveness,
+      ? `## Why the screen does not read yet (the readability critic, 0–3 per principle; ${key})`
+      : `## Why it does not feel like a real place yet (the liveness critic, 0–3 per principle; ${key})`,
+    clipWords(liveness, BRIEF_LIVENESS_CHARS),
     ``,
   ];
 }
@@ -949,14 +1108,17 @@ function polishSection(polish: readonly string[]): string[] {
   ];
 }
 
-/** What the code review flagged. */
+/** What the code review flagged: the first few, and how many more there are. */
 function reviewSection(review: BriefOptions["review"]): string[] {
-  if (!review?.violations?.length) return [];
+  const violations = review?.violations ?? [];
+  if (!violations.length) return [];
+  const more = violations.length - REVIEW_VIOLATIONS_SHOWN;
   return [
     `## Code review flagged (fix these first)`,
-    ...review.violations.map(
-      (v) => `- ${v.file}${v.line ? `:${v.line}` : ""} — ${v.what}${v.fix ? ` → ${v.fix}` : ""}`,
-    ),
+    ...violations
+      .slice(0, REVIEW_VIOLATIONS_SHOWN)
+      .map((v) => `- ${v.file}${v.line ? `:${v.line}` : ""} — ${v.what}${v.fix ? ` → ${v.fix}` : ""}`),
+    ...(more > 0 ? [`- (+${more} more)`] : []),
     ``,
   ];
 }
@@ -966,23 +1128,24 @@ function reviewSection(review: BriefOptions["review"]): string[] {
  * to be filed under "Attempts that lost — do not repeat them", accepted ones too, which told a
  * builder not to repeat the work it had just been kept for.
  */
-function attemptsSection(attempts: readonly AnyRecord[]): string[] {
+function attemptsSection(attempts: readonly AnyRecord[], diffStats = true, carrying = false): string[] {
   if (!attempts.length) return [];
-  const lines = [`## Earlier rounds (build on what was kept; do not repeat what lost)`];
-  for (const attempt of attempts.slice(-EARLIER_ROUNDS_SHOWN)) lines.push(...attemptLines(attempt));
+  const exception = carrying ? CARRY_OVER_EXCEPTION : "";
+  const lines = [`## Earlier rounds (build on what was kept; do not repeat what lost${exception})`];
+  for (const attempt of attempts.slice(-EARLIER_ROUNDS_SHOWN)) lines.push(...attemptLines(attempt, diffStats));
   lines.push(``);
   return lines;
 }
 
-/** One earlier round: kept or lost, its line, its diff stat and its notes. */
-function attemptLines(attempt: AnyRecord): string[] {
+/** One earlier round: kept or lost, its line, its diff stat (unless the budget took them) and its newest notes. */
+function attemptLines(attempt: AnyRecord, diffStats = true): string[] {
   const flipped = (attempt.flips ?? []).join(", ") || "nothing";
   const regressed = (attempt.regressions ?? []).join(", ") || "nothing";
   const fate = attempt.won ? "kept" : "lost";
   const lines = [
     `- iteration ${attempt.iteration}, ${fate} — its code is on ${attempt.branch ?? "n/a"}: flipped [${flipped}], regressed [${regressed}]${attempt.why ? ` — ${attempt.why}` : ""}`,
   ];
-  if (attempt.diffStat)
+  if (diffStats && attempt.diffStat)
     lines.push(
       "  ```",
       ...String(attempt.diffStat)
@@ -992,22 +1155,46 @@ function attemptLines(attempt: AnyRecord): string[] {
         .map((l) => `  ${l}`),
       "  ```",
     );
-  if (attempt.notes) lines.push(`  notes: ${String(attempt.notes).slice(0, CLIP_BRIEF)}`);
+  // The notes file appends, so its end is the newest: that is what the next builder reads.
+  if (attempt.notes) lines.push(`  notes: ${clipTailWords(attempt.notes, CLIP_BRIEF)}`);
   return lines;
 }
 
+/** How the recipes render: the file their bodies were written to, the fix's own recipe, and whether bodies fit at all. */
+interface RecipeShape {
+  file: string | null;
+  pinned: string | null;
+  bodies: boolean;
+}
+
 /** The recipes retrieved for what is failing. */
-function recipesSection(recipes: readonly RecipeHit[]): string[] {
+function recipesSection(recipes: readonly RecipeHit[], shape: RecipeShape): string[] {
   if (!recipes.length) return [];
   return [
     `## Recipes that apply to what is failing (retrieved by failing check, and by the defects the judge named — a "for defect:…" line is prose the judge wrote, not a check on your board)`,
-    ...recipes.flatMap(({ recipe, checkIds }) => [
-      `### ${recipe.title} (${recipe.id}, ${recipe.status}; ${recipe.stats.wins}W/${recipe.stats.losses}L) — for ${checkIds.join(", ")}`,
-      `How: ${recipe.intent}`,
-      recipe.sketch ? "```js\n" + recipe.sketch.trim() + "\n```" : "",
-      recipe.port ? `Port: ${recipe.port}` : "",
-      ``,
-    ]),
+    ...recipes.flatMap((hit) => recipeLines(hit, shape)),
+  ];
+}
+
+/**
+ * One recipe: its title, its intent, and its sketch and port inline, or a pointer to the file
+ * that has them. With a recipes file only THE FIX's own recipe keeps its sketch here; without
+ * one (a direct engine, an older caller) every sketch stays inline unless the budget took them.
+ */
+function recipeLines({ recipe, checkIds }: RecipeHit, shape: RecipeShape): string[] {
+  const hasBody = Boolean(recipe.sketch?.trim() || recipe.port);
+  const keptHere = shape.file ? shape.bodies && recipe.id === shape.pinned : shape.bodies;
+  const pointer =
+    hasBody && shape.file ? `Sketch and port: ${shape.file}, under "${recipe.title} (${recipe.id})".` : "";
+  const how = shape.file ? clipWords(recipe.intent, RECIPE_INTENT_CHARS) : recipe.intent;
+  return [
+    `### ${recipe.title} (${recipe.id}, ${recipe.status}; ${recipe.stats.wins}W/${recipe.stats.losses}L) — for ${checkIds.join(", ")}`,
+    // Past the budget only the title and the pointer stay: the file has the rest.
+    shape.bodies ? `How: ${how}` : "",
+    keptHere && recipe.sketch ? "```js\n" + recipe.sketch.trim() + "\n```" : "",
+    keptHere && recipe.port ? `Port: ${recipe.port}` : "",
+    keptHere ? "" : pointer,
+    ``,
   ];
 }
 
@@ -1020,9 +1207,13 @@ function briefRules(
   return [
     `## Rules that do not change`,
     `- Tag every object you create: \`obj.userData.tag = "<tag>"\` — untagged objects are invisible to scene checks and do not count.`,
+    // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
     screen
-      ? `- ONE SCREEN: all UI goes through \`__studio.hud\` (text/bar/crosshair/flash, drawn into the canvas). No DOM elements, no second HUD quad, no camera-parented panels — the harness-owned checks no-dom-ui and single-hud fail the build otherwise.`
+      ? (heldHudBriefRule(run) ??
+        `- ONE SCREEN: all UI goes through \`__studio.hud\`, drawn into the canvas: text, bars, arcs and gauges, vector paths, images, rounded panels and bundled fonts, anchored to the frame in frame fractions (a bar's length is a fraction of the frame's width and its thickness of its height; arcs, paths, panels and images are sized in frame heights, so a curve stays round and sharp — never build one out of rectangles). Keep the middle of the view for the game: the harness measures how much of the frame the HUD covers and which items run into each other. No DOM elements, no second HUD quad or canvas, no camera-parented panels — the harness-owned checks no-dom-ui and single-hud fail the build otherwise.`)
       : `- THE GAME'S OWN SCREEN: this game has its own UI and input handling — keep them as they are; do not add __studio.hud overlays or a second input path.`,
+    // Who owns that screen (loop/screen-owner.ts), where the rule holds: nothing when no part does.
+    ...briefScreenOwner(spec, screen && template),
     template
       ? `- ONE INPUT PATH: read keys from ctx.keys (Mouse1/Mouse2 included), mouse look from ctx.look, wheel from ctx.wheel — never add your own pointer-lock or mousemove listeners; studio.js owns them and feeds the same ctx a human's mouse does.`
       : `- THIS GAME'S INPUT PATH: it already reads its own keys and mouse — leave that alone. The studio's input arrives as real DOM events on the page, so the listeners this game has are the ones that get it.`,
@@ -1033,6 +1224,7 @@ function briefRules(
       ? `- Determinism: rng from update(), no Math.random, no wall clock.`
       : `- Determinism: the studio seeds Math.random and owns the clock for this page, so the same seed replays the same run — take time from the delta your own loop already computes, never from a second clock of your own.`,
     `- Capture (${toolCall(roleEngine(run, RoleKey.Builder), "capture")}) after every meaningful change and LOOK before you finish; write what you tried and why in ${facetNotes(spec.id)}.`,
+    ...(template ? [benchRule(spec.id)] : []),
     `- A line beginning \`HARNESS:\` in ${facetNotes(spec.id)} is read by the loop, not by the next builder: use it to say a check cannot pass as written (name the check id) or that a camera cannot see what it asks — the planner re-points the check instead of you burning iterations.`,
     resumed
       ? `- You are resuming your own session: you remember your previous attempt — change the mechanism where a check keeps failing, do not re-tune the same numbers.`
@@ -1040,9 +1232,25 @@ function briefRules(
   ];
 }
 
+/** The screen owner's line (screen-owner-prompts.ts) for a template game's brief, or nothing. */
+function briefScreenOwner(spec: BriefOptions["spec"], applies: boolean): string[] {
+  const line = applies ? screenOwnerLine(spec) : null;
+  return line ? [line] : [];
+}
+
+/**
+ * The fast self-look: a page that mounts one module loads in seconds where the whole game takes
+ * most of a minute. It stays out of index.html, so it never enters the judged build; the round's
+ * evidence pass still judges the game.
+ */
+function benchRule(facetId: string): string {
+  const page = benchPage(facetId);
+  return `- For work inside one module, keep a bench page ${page} that mounts just your module, and capture page=${page} to look at it in seconds; index.html never references a bench page. Capture the game itself before you finish.`;
+}
+
 /**
  * The game's own lessons before the general ones: what this exact game cost last time beats
- * what some other game taught, and both sit below the steering the user gave tonight.
+ * what some other game taught, and both sit below the steering the user gave this run.
  */
 function lessonsSections(gameLessons: readonly string[], lessons: readonly string[]): string[] {
   const lines: string[] = [];
@@ -1056,7 +1264,8 @@ function lessonsSections(gameLessons: readonly string[], lessons: readonly strin
     lines.push(
       ``,
       `## Lessons from past runs (each cost a run — do not re-learn them)`,
-      ...lessons.slice(0, MAX_BRIEF_LESSONS).map((l) => `- ${l}`),
+      // The file appends (loop/contract-lessons.ts), so the newest are last: those are shown.
+      ...lessons.slice(-MAX_BRIEF_LESSONS).map((l) => `- ${l}`),
     );
   return lines;
 }

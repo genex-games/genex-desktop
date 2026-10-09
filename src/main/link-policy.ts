@@ -2,9 +2,9 @@
  * Where a link clicked inside the studio window may go.
  *
  * The window is the studio's only UI, and the links in it are mostly a contractor's markdown —
- * a report that ends in "[Base handoff](/Users/…/skate-prod/NOTES.base-builder.md)". On
- * 2026-09-06 that click navigated the window itself to a file that did not exist and left the
- * whole app black. So the window never navigates: a link opens outside it (the browser, the
+ * a report that ends in "[Base handoff](/Users/…/NOTES.base-builder.md)". Followed in place, such
+ * a click navigates the window itself to a file that may not exist and leaves the whole app black.
+ * So the window never navigates: a link opens outside it (the browser, the
  * file's own app, Finder) or is refused in words, and the studio stays on screen.
  *
  * File links are allowed only inside the user's game folders — a report may point at its own

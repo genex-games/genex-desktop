@@ -80,7 +80,7 @@ const STORE_FILE = "permissions.json";
 const RUN_SETTINGS_FILE = "run-settings.json";
 /**
  * How long a build's lead's or the run's coordinator's card waits for the person. A card nobody
- * sees must not hold a night's lead; the person can say it again.
+ * sees must not hold a run's lead; the person can say it again.
  */
 export const LEAD_ASK_TIMEOUT_MS = 5 * MINUTE_MS;
 /** How many of a chat's messages the host remembers as the person's. */

@@ -47,7 +47,7 @@ import type {
   WorkerSeat,
 } from "../../src/substrate/engines/types.ts";
 import { type NeverTouchHit, NeverTouchKind, neverTouchVerdict } from "../../src/substrate/engines/never-touch.ts";
-import type { WorkerType } from "../../src/shared/workers.ts";
+import { MAX_WORKERS_AT_ONCE, type WorkerType } from "../../src/shared/workers.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { gitFile } from "../helpers/git.ts";
@@ -1185,6 +1185,12 @@ describe("assets only, a Blender pack: Blender workers, renders and the Assets t
       task: `Model prop ${n + 1} and save it under props/.`,
       type: model.id,
     }));
+    // The pool's own cap, under a Settings ceiling (Maximum concurrent workers) that allows as many.
+    const ceiling = lite.core.settings.buildersMax;
+    await lite.core.updateSettings({ buildersMax: MAX_WORKERS_AT_ONCE });
+    t.after(async () => {
+      await lite.core.updateSettings({ buildersMax: ceiling });
+    });
     const { answers, workers } = await chatTurnWithWorkers(t, { name: game.name, dir }, props);
     assert.equal(workers.length, 8, "eight workers ran at once");
     for (const answer of answers.slice(0, 8)) assert.match(answer, /^Started w\d+ \(copy\)/);
@@ -1472,7 +1478,7 @@ describe("an unlimited Loop on any of these: the lead, the facts' hooks and obse
       }
     }
   });
-  // A web Loop's starting snapshot before its first session: director.test.ts ("a night from scratch").
+  // A web Loop's starting snapshot before its first session: director.test.ts ("a run from scratch").
   it("the Unreal Loop's lead snapshots the game before its first turn", {
     todo: "phase 9: the Unreal Loop's lead takes its first snapshot only at its first save point",
   }, async () => {

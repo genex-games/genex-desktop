@@ -27,9 +27,13 @@ my-plugin/
   backend.mjs    the module that exports activate()
   panel.html     an isolated UI panel with the current panel bridge inlined (optional; delete it
                  and its manifest entry if unused)
+  AGENTS.md      notes for your coding agent: the rules that fail validation, and the commands
   jsconfig.json  editor/typecheck settings for the backend
   plugin-sdk/    self-contained index.d.ts
 ```
+
+`AGENTS.md`, `jsconfig.json` and `plugin-sdk/` are for authoring: packing, installing and the scan
+leave them out, as they do every dotfile and dot-folder.
 
 The package needs nothing from Studio's tree. The `plugin:*` commands themselves run from a Studio
 checkout on Node 24, because they use the real validator, scanner and probe; a separately
@@ -355,8 +359,8 @@ and panel CSP problems as warnings:
 ## 8. Load it, then edit with hot reload
 
 In Studio: **Plugins → Add → Load local plugin…**, choose the folder, read the trust dialog (it names the
-publisher, the capabilities and the scan verdict), and install. Then press **Watch folder** on the
-card: every save re-installs the package through the normal lease path, so an edit lands as soon
+publisher, the capabilities and the scan verdict), and install. Then choose **Watch folder** in
+the plugin's page's More (…) menu: every save re-installs the package through the normal lease path, so an edit lands as soon
 as no session is holding the plugin. Hot reload is best-effort — recursive file watching coalesces
 events on macOS — so if a change does not appear, press Reinstall. A reload that changes
 `mcpServers` or `network.hosts` is refused (`MCP servers changed; load the folder again to review`):
@@ -369,34 +373,9 @@ stderr to `engine-homes/plugins/logs/<id>.log`.
 
 ## 9. Publish
 
-Two supported routes; neither is ever applied to a user automatically.
+Two routes; neither is ever applied to a user automatically.
 
-**A pinned commit in the marketplace index.** Push the package to a public repository, take the
-40-character commit sha, and open a pull request adding an entry to `marketplace/index.json`:
-
-```json
-{
-  "id": "my-plugin",
-  "name": "My plugin",
-  "publisher": "Your name",
-  "description": "What it does, in one sentence.",
-  "category": "tools",
-  "tier": "community",
-  "repo": "owner/repo",
-  "sha": "0123456789abcdef0123456789abcdef01234567",
-  "subdir": "packages/my-plugin",
-  "version": "0.1.0",
-  "capabilities": ["settings"],
-  "minStudioVersion": "0.1.0",
-  "docsUrl": "https://example.com/my-plugin"
-}
-```
-
-`category` is one of `assets`, `publishing`, `tools`, `analytics`, `other`; `tier` is `official`
-or `community`. Studio refuses the install if `id`, `version`, `publisher` or `capabilities`
-disagree with the `plugin.json` at that commit, so bump both together.
-
-**A GitHub link.** Anyone can install your plugin without an index entry: Plugins → Add →
+**A GitHub link.** Anyone can install your plugin without a catalog listing: Plugins → Add →
 Install from GitHub, then paste your repository's link. Studio installs your **latest release**
 (the commit its tag points at); a repository with no release gets the newest commit on its
 default branch, and the window says so. So publish a GitHub release for each version you want
@@ -405,17 +384,46 @@ plugin's folder (`…/tree/main/plugins/my-plugin`); a repository with several p
 choose. Private repositories can't be installed, and the pinned `owner/repo[/subdir]@<sha>` still
 works for an exact commit.
 
-Cataloged is **not** audited. Every file is fetched from the pinned commit and checked against its
-git object id; symlinks, submodules, truncated trees, files over 8 MiB, packages over 64 MiB or
-400 files, and a tree with no `plugin.json` are all refused.
+A GitHub install is **not** audited. Every package file is fetched from the pinned commit and
+checked against its git object id; the repository's dotfiles and your authoring files are not
+fetched. Symlinks, submodules, truncated trees, files over 8 MiB, packages over 64 MiB or 400
+files, and a tree with no `plugin.json` are all refused.
 
-**A curated release artifact.** `npm run plugin:pack -- <prebuilt-directory> <artifact.json>`
-writes the base64-JSON envelope and prints the canonical manifest and its sha-256 for catalog
-review. Dotfiles and dot-folders (`.git`, `.env`) and the scaffold's `jsconfig.json`,
-`tsconfig.json` and `plugin-sdk/` are left out, and a link is refused. This route avoids the GitHub
-API entirely, which matters because the API is unauthenticated and rate-limited. Studio accepts an
-artifact only from an origin its catalog policy lists, at an address ending in
-`/<id>/<version>/<sha256>.json`, and shows `official` only for the ids that policy reserves.
+**A Marketplace listing.** The catalog every Genex app reads is
+[genex-games/genex-plugins](https://github.com/genex-games/genex-plugins); a maintainer reviews
+each release before it is listed. Push the package to a public repository, take the 40-character
+commit sha, set `publisher` to your name, and run from a Studio checkout with a clone of your
+fork of genex-plugins:
+
+```
+npm run plugin:submit -- ~/studio-plugins/my-plugin --catalog ~/genex-plugins \
+  --repo you/my-plugin --sha <commit> --category tools [--subdir <folder>] [--docs-url <https URL>]
+```
+
+It packs the package as `plugin:pack` does, writes the immutable release record
+`records/<id>/<version>.json` and points the `index.json` entry at it, then checks the catalog the
+way its CI will, with the catalog's own validator. It refuses an official id (`genex`,
+`blender`), the scaffold's `Unpublished` publisher (the publisher owns every later release of the
+id), a bad source and a version already released, and keeps nothing it wrote when it refuses. The
+record copies `id`, `name`, `publisher`, `description`, `version` and `capabilities` from
+`plugin.json`; `category` is one of `assets`, `publishing`, `tools`, `analytics`, `other`, and
+`tier` is `community`.
+
+The artifact it prints (`<id>-<version>.json`, beside the clone; `--artifact <file>` to choose)
+belongs on your repository's GitHub release for that version, not in the catalog. Commit the
+record and `index.json` on a branch of your fork, open a pull request against genex-plugins
+`main` and fill in its template; its
+[CONTRIBUTING.md](https://github.com/genex-games/genex-plugins/blob/main/CONTRIBUTING.md)
+explains the two CI steps. A maintainer restores the artifact with `npm run plugin:unpack --
+<artifact.json> <new-dir>`, compares it with your source at that commit, and uploads it. A fix
+after release needs a higher `version`.
+
+**A release artifact by itself.** `npm run plugin:pack -- <prebuilt-directory> <artifact.json>`
+writes the base64-JSON envelope and prints the canonical manifest and its sha-256. Dotfiles and
+dot-folders (`.git`, `.env`) and the scaffold's `AGENTS.md`, `jsconfig.json`, `tsconfig.json` and
+`plugin-sdk/` are left out, and a link is refused. Studio accepts an artifact only from an origin
+its catalog policy lists, at an address ending in `/<id>/<version>/<sha256>.json`, and shows
+`official` only for the ids that policy reserves.
 
 ## Checklist before you publish
 
@@ -429,7 +437,7 @@ artifact only from an origin its catalog policy lists, at an address ending in
 - [ ] Every `mcpServers` entry names the narrowest `cwd`, `env` and `toolPolicy` that works, and its
       `description` says what the user must set up.
 - [ ] Activation touches nothing: no file writes, no network, no host calls.
-- [ ] The version in `plugin.json` matches the index entry you are proposing.
+- [ ] `publisher` is your name, and `version` is higher than every release you have published.
 - [ ] `icon` is a square, full-bleed picture in the package, and the release you tag is the one
       people should get.
 

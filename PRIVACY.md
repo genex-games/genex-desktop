@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 2, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 7, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -39,6 +39,23 @@ hosts and GitHub. Asset generation and publishing contact Genex using the connec
 Connector tools contact their configured service. Each connector call asks for consent unless
 the user saved an exact tool grant in Settings. Revocation blocks subsequent calls; it cannot
 undo a remote action or recall data already sent.
+
+| Feature | Needs |
+| --- | --- |
+| Creating, opening, previewing, checking and exporting games | Nothing beyond a model below; exports are static web bundles |
+| Local models | [Ollama](https://ollama.com) running on this Mac, or a Bonsai model downloaded in Settings (Apple Silicon) |
+| Claude models | [Claude Code](https://code.claude.com/docs/en/setup), installed separately and signed in with a Claude subscription |
+| ChatGPT/Codex models | The [Codex CLI](https://developers.openai.com/codex/cli/), installed separately; **Connect ChatGPT** signs in through your browser |
+| Blender assets | Blender on this Mac, or one click downloads a pinned release from download.blender.org |
+| Plugin catalog | Anonymous downloads from `plugins.genex.games` and GitHub |
+| Genex asset generation, credits and hosted publishing | A Genex account (paid credits); publishing also needs `git-lfs` |
+
+Studio finds Claude Code and Codex through a manual override, your login-shell `PATH`, then
+standard locations, and never installs or updates them unless you choose that in Settings.
+Subscription limits apply; there is no fallback to API-key billing, and an ambient
+`ANTHROPIC_API_KEY` is not used. Provider tokens never reach the renderer or the event log. The
+bundled Genex CLI runs with its crash reporting off unless you set `GENEX_TELEMETRY`;
+`DO_NOT_TRACK` and `GENEX_DISABLE_SENTRY` are passed on to it.
 
 Opening a folder does not authorize its Claude settings or hooks. The Open Game trust checkbox
 is an explicit choice because hooks can run commands with the user's access. Interactive
@@ -88,4 +105,22 @@ send. A self-built copy can point sharing at its own server with `STUDIO_RUNS_UR
 by setting that variable empty.
 
 The bundled Genex CLI's crash reporting defaults off. Coding providers have separate controls.
+
+## Send feedback
+
+**Send feedback** (the bug at the top of the sidebar) sends only when you press Send. It carries
+what you wrote, the screen you were on (home, a game's chat, Harness or Plugins), the app version
+and the operating system's version to the Genex API (`https://api.genex.games/api/desktop/feedback`),
+where the Genex team reads it. It carries no account id or game files and is sent without a
+sign-in. The server keeps no IP address or user agent with a report and deletes reports after
+180 days.
+
+Two switches add more, each on its own and off each time the dialog opens. **Attach app logs**
+adds the Copy diagnostics text: versions, data paths, provider status and the newest 100 lines
+of the app log, at most 128 KB (past that, the middle is cut). **Attach this chat**, shown while a chat is open, adds that chat's newest 200
+events: your messages, the replies, tool calls and their results, each text cut to 2,000
+characters, at most 256 KB in all. Keys, tokens, email addresses and your home folder are
+removed by their shape before it leaves the Mac; like Publication's scan, this is not a
+universal detector, so leave a chat that holds something private off.
+
 Report suspected exposure privately using [SECURITY.md](SECURITY.md).

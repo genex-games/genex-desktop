@@ -2,8 +2,8 @@
  * Chat with a contractor engine selected: pick (or scaffold) the game workspace, hand the user's
  * ask over as a brief, and log the whole thing exactly like a `delegate_to_contractor` tool call
  * so the transcript reads the same either way. With Loop on the same contractor may also ask a
- * question or launch a build, and what it records is executed here. After a night it led, the
- * same session also keeps the run's controls (after-night.ts), and a resume it records — or, after a
+ * question or launch a build, and what it records is executed here. After a run it led, the
+ * same session also keeps the run's controls (after-loop-run.ts), and a resume it records — or, after a
  * finished build with Loop on, a reopen (reopen-run.ts) — is handed back for the chat to do once the
  * reply ends.
  */
@@ -21,8 +21,8 @@ import type { LaunchGrant } from "./launch-prompts.ts";
 // Codex) — one definition, two transports.
 import { tools as launchToolset } from "../tools/game-tools.ts";
 import { askUser, recordInterviewQuestion } from "./interview-question.ts";
-import { afterNightGrant, resumeAsked } from "./after-night.ts";
-import { afterNightNote } from "./after-night-prompts.ts";
+import { afterLoopRunGrant, resumeAsked } from "./after-loop-run.ts";
+import { afterLoopRunNote } from "./after-loop-run-prompts.ts";
 import { commissionHours, reopenAsked, reopens } from "./reopen-run.ts";
 import { type ReopenGrant, reopenRunTool } from "./reopen-run-prompts.ts";
 import { steeredCall } from "./chat-steer.ts";
@@ -110,11 +110,11 @@ export type MessageUsageSource = (typeof MessageUsageSource)[keyof typeof Messag
 export const DELEGATE_TOOL = "delegate_to_contractor";
 
 /**
- * This turn serves the chat's own session after a lead's night (after-night.ts): it hands the
+ * This turn serves the chat's own session after a lead's run (after-loop-run.ts): it hands the
  * session the run's controls and gives back the resume it records. chat-dispatch.ts asks before it
- * sends the chat here (`servesAfterNight`); a kept copy from before would do neither.
+ * sends the chat here (`servesAfterLoopRun`); a kept copy from before would do neither.
  */
-export const SERVES_AFTER_NIGHT = true;
+export const SERVES_AFTER_LOOP_RUN = true;
 
 /**
  * This turn offers the chat's own session the reopen of its finished build when Loop came with the
@@ -360,7 +360,7 @@ async function saveUnrealTurn(ctx: HarnessCtx, options: DelegatedOptions, handof
 
 /**
  * A Loop chat's recorded question or launch is executed here, by the harness — the engine only
- * ferried it; a resume or a reopen after a night goes back to the chat. A turn that recorded none
+ * ferried it; a resume or a reopen after a run goes back to the chat. A turn that recorded none
  * was an ordinary contractor turn (an answer, research, a plan, an edit) and is reported like any
  * chat build.
  */
@@ -374,8 +374,8 @@ async function finishTurn(
 ): Promise<TurnOutcome> {
   const { launchTool } = handoff;
   const recorded = result.studioToolCalls ?? [];
-  // After a paused night the session may ask to resume it: the chat does that once the reply ends.
-  const resume = options.afterNight ? resumeAsked(options.afterNight, recorded) : null;
+  // After a paused run the session may ask to resume it: the chat does that once the reply ends.
+  const resume = options.afterLoopRun ? resumeAsked(options.afterLoopRun, recorded) : null;
   if (resume) return handBack(ctx, options, result, MESSAGE.resumedAnyway, { resumeRun: resume });
   // A Loop chat may ask or launch; any chat asked to choose its engine may ask.
   const calls = launchTool || handoff.engineChoice ? recorded : [];
@@ -385,7 +385,7 @@ async function finishTurn(
   // the actual answer. The same persisted session receives that answer on the next turn.
   if (result.ok && question) return askInChat(ctx, options, handoff, result, question.args, change);
   // After a finished build the session may ask to reopen it; that beats a launch recorded beside it.
-  const reopen = reopenAsked(options.afterNight, handoff.commission, recorded);
+  const reopen = reopenAsked(options.afterLoopRun, handoff.commission, recorded);
   if (reopen) return handBack(ctx, options, result, MESSAGE.reopenedAnyway, { reopenRun: reopen });
   if (launchTool && launch) return launchFromChat(ctx, options, handoff, launchTool, intakeId, result, launch.args);
   return reportBuild(ctx, options, handoff, result, change);
@@ -593,7 +593,7 @@ async function readChat(ctx: HarnessCtx, options: DelegatedOptions): Promise<Cha
   const commission = options.autopilot ?? options.loop ?? null;
   // After a finished build the chat may reopen, a commission offers the reopen, with the launch
   // beside it only for an explicit start over.
-  const reopening = reopens(options.afterNight, commission);
+  const reopening = reopens(options.afterLoopRun, commission);
   const launchTool = launchToolFor(options, reopening);
   // This chat's contractor session, if any — follow-ups resume it instead of starting a new
   // mind that only sees the last line ("keep going" with no idea what the game is). Only the
@@ -619,14 +619,14 @@ async function readChat(ctx: HarnessCtx, options: DelegatedOptions): Promise<Cha
 }
 
 /**
- * The tool a Loop chat may launch its build with: Autopilot's, or the Loop's. After a night, only
+ * The tool a Loop chat may launch its build with: Autopilot's, or the Loop's. After a run, only
  * beside the reopen of a finished build, for an explicit start over: a commission after any other
- * night (a paused one, one the chat may not reopen, an interview's restored onto the reply) is none.
+ * run (a paused one, one the chat may not reopen, an interview's restored onto the reply) is none.
  */
 function launchToolFor(options: DelegatedOptions, reopening: boolean): HarnessTool | null {
   const name = launchToolName(options);
   if (!name) return null;
-  if (options.afterNight && !reopening) return null;
+  if (options.afterLoopRun && !reopening) return null;
   return launchToolset.find((t) => t.name === name) ?? null;
 }
 
@@ -778,7 +778,7 @@ async function briefWriter(
 ): Promise<(resumed: boolean) => string> {
   const { ask, messages, folderLabel, descriptor } = handoff;
   const missing = await contractMissing(ctx, handoff);
-  // A reopen's rules live in the after-night note: a change goes to the build, not to a launch.
+  // A reopen's rules live in the after-run note: a change goes to the build, not to a launch.
   const launch = handoff.reopening ? null : launchGrant(handoff);
   // The engine question offers Unreal as this computer has it: ready, only a newer one, or none.
   const unrealEngine = handoff.engineChoice
@@ -811,13 +811,15 @@ async function briefWriter(
       holds: descriptor?.holds ?? null,
       kinds: handoff.kinds,
       pluginsOff: handoff.pluginsOff,
-      afterNight: options.afterNight ? afterNightNote(options.afterNight, options.engine, reopenGrant(handoff)) : null,
+      afterLoopRun: options.afterLoopRun
+        ? afterLoopRunNote(options.afterLoopRun, options.engine, reopenGrant(handoff))
+        : null,
       compacted: handoff.compacted,
       workers: workers.length > 0,
     });
 }
 
-/** The finished build's reopen as the after-night note words it, when this turn offers it; else null. */
+/** The finished build's reopen as the after-run note words it, when this turn offers it; else null. */
 function reopenGrant(handoff: Handoff): ReopenGrant | null {
   if (!handoff.reopening) return null;
   const { commission, launchTool } = handoff;
@@ -846,7 +848,7 @@ function launchGrant(handoff: Handoff): LaunchGrant | null {
 
 /**
  * A game the user brought that never loads the studio contract cannot be judged by anyone
- * (M2.6): the night's first step wires it in, and a chat build is the faster way to the same
+ * (M2.6): the run's first step wires it in, and a chat build is the faster way to the same
  * place, so its brief says so before the ask. Only for a folder that is somebody's own game
  * — the studio's template already has it — and only when a brief is actually written: a
  * resumed session keeps the context it already has.
@@ -946,7 +948,7 @@ async function recordDelegateRequest(ctx: HarnessCtx, options: DelegatedOptions,
 }
 
 /**
- * Hands and eyes for every build (computer use, 2026-09-07): the capture tool and the computer
+ * Hands and eyes for every build: the capture tool and the computer
  * tool over a pooled window of this folder — a run's single builder and a chat build alike,
  * Loop or not.
  */
@@ -982,14 +984,13 @@ function questionCard(handoff: Handoff): StudioToolSpec[] {
 
 /**
  * What the session is handed beside its own tools: a Loop chat's launch and question, or the question
- * alone for a new game's engine; after a night it
- * led, the run's controls, a paused night's resume, and — reopening a finished build — the reopen
- * first, beside the launch for a start over.
+ * alone for a new game's engine; after a run it led, the run's controls, a paused run's resume, and
+ * — reopening a finished build — the reopen first, beside the launch for a start over.
  */
 function sessionTools(options: DelegatedOptions, handoff: Handoff): AnyRecord {
   const launch = handoff.launchTool ? bridgedTools(handoff.launchTool) : questionCard(handoff);
-  if (!options.afterNight) return launch.length ? { interviewTools: launch } : {};
-  const grant = afterNightGrant(options.afterNight);
+  if (!options.afterLoopRun) return launch.length ? { interviewTools: launch } : {};
+  const grant = afterLoopRunGrant(options.afterLoopRun);
   const reopen = handoff.reopening ? [reopenRunTool] : [];
   const interviewTools = [...reopen, ...launch, ...(grant.interviewTools ?? [])];
   return { runControls: grant.runControls, ...(interviewTools.length ? { interviewTools } : {}) };
@@ -1033,7 +1034,7 @@ function delegate(
     ...(extraReads.length ? { extraReads } : {}),
     ...senses(options, handoff),
     ...(pictures.length ? { images: pictures } : {}),
-    // A Loop chat's launch; after a night it led, the run's controls and what it may record.
+    // A Loop chat's launch; after a run it led, the run's controls and what it may record.
     ...sessionTools(options, handoff),
     // A run's contractor gets what is left on the run's clock — never less than a minute,
     // so a build started at the wire still gets to report something. Chat builds carry no
@@ -1068,7 +1069,7 @@ async function delegateResuming(
 
 /**
  * A delegation that threw. A busy workspace and an expired sign-in are answers; a usage cap and
- * a throttle are said plainly (a commissioned night survives a throttle on the fallback engine).
+ * a throttle are said plainly (a commissioned run survives a throttle on the fallback engine).
  * Anything a run's own engine-health policies must count is rethrown.
  */
 async function handleDelegateFailure(
@@ -1098,11 +1099,11 @@ async function handleDelegateFailure(
   const fallbacks: string[] = err?.fallbacks ?? [];
   const kind: string = err?.kind ?? EngineFailure.Other;
   // Auth is a sign-in problem, not a failover: swapping in the local model hides the
-  // button the user needs. Rate limits still fall back so an overnight run survives a throttle.
+  // button the user needs. Rate limits still fall back so an unattended run survives a throttle.
   if (kind === EngineFailure.Auth) return askToSignIn(ctx, turnId, engine, engineLabel, err?.message ?? "");
   // A run's build turn answers to the gauntlet's own engine-health policies (strikes,
   // throttle waits, usage_limit preservation) — rethrow anything it must count, and let
-  // only the fallback case through so a night survives a throttle.
+  // only the fallback case through so a run survives a throttle.
   if (options.runId && !canFallBack(kind, fallbacks)) throw err;
   if (kind === EngineFailure.UsageLimit) {
     await sayInTurn(ctx, turnId, MESSAGE.outOfUsage(engine, err?.message));
@@ -1134,7 +1135,7 @@ async function askToSignIn(
 }
 
 /**
- * A throttle with a fallback engine named. A commissioned night or a run's build turn survives
+ * A throttle with a fallback engine named. A commissioned run or a run's build turn survives
  * on the fallback — but out loud; a chat build says so and leaves the choice to the user.
  */
 async function fallBackOrStop(
@@ -1170,12 +1171,12 @@ async function fallBackOrStop(
 }
 
 /**
- * A throttle falls back for a night's work or a chat that may launch one — never for the chat's own
- * session after its night, whose reply a fallback engine could not give (its tools, its session).
+ * A throttle falls back for a run's work or a chat that may launch one — never for the chat's own
+ * session after its run, whose reply a fallback engine could not give (its tools, its session).
  */
 function fallsBack(options: DelegatedOptions): boolean {
   if (options.runId) return true;
-  return !options.afterNight && Boolean(options.loop || options.autopilot);
+  return !options.afterLoopRun && Boolean(options.loop || options.autopilot);
 }
 
 /** The delegation's answer, as the tool call's result. */
@@ -1198,7 +1199,7 @@ async function recordDelegateResult(
 /**
  * The chat IS the contractor session. Bookmark the id on every result that has one — not
  * only on a stop — so the next message in this chat resumes instead of starting over. The model
- * it was opened on rides along: a night this chat launches leads from this session only on the
+ * it was opened on rides along: a run this chat launches leads from this session only on the
  * same engine and model (director/lead-session.ts).
  */
 async function bookmarkSession(
@@ -1261,10 +1262,10 @@ async function askInChat(
 }
 
 /**
- * After its night the session asked for the build again — a paused night resumed, a finished one
+ * After its run the session asked for the build again — a paused run resumed, a finished one
  * reopened: its reply is said, and what it asked goes back to the chat in `details`, which does it once
- * the turn has ended (after-night.ts `resumeAfterReply`, reopen-run.ts `reopenAfterReply`) — the
- * night's lead is this same session. No preview pass: the reply edits nothing.
+ * the turn has ended (after-loop-run.ts `resumeAfterReply`, reopen-run.ts `reopenAfterReply`) — the
+ * run's lead is this same session. No preview pass: the reply edits nothing.
  */
 async function handBack(
   ctx: HarnessCtx,
@@ -1351,7 +1352,7 @@ async function executeLaunch(
 
 /**
  * The folder is the chat's, not the session's. This turn resolved (or scaffolded) it before the
- * session said a word, so a launch is stamped with it — the night the interviewer's own slug
+ * session said a word, so a launch is stamped with it — the run the interviewer's own slug
  * won, a second empty folder appeared beside the chat and the run built in it while the user
  * typed into the first.
  */

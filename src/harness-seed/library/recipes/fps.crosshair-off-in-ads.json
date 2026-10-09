@@ -4,6 +4,7 @@
   "tags": ["crosshair", "ads", "aim", "hud", "hide", "reticle", "sight", "demo", "fps"],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "The same ads demo reports the crosshair hidden while aiming down sights.",
   "intent": "A crosshair floating beside the iron sight is the tell that the HUD and the weapon do not know about each other. Drive the crosshair from the same aim state the viewmodel uses: one boolean, read by the hud draw call, so the crosshair is simply not drawn while aiming. Fade it over the same 150 ms the viewmodel takes rather than popping. Report it from the ads demo as crosshairVisible, read through __studio.hud.get('crosshair'), so the check measures the HUD rather than the intention.",

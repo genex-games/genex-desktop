@@ -159,3 +159,24 @@ test("the install review names a replacement, refuses a connector id and never c
     await f.close();
   }
 });
+
+test("a local install copies the package, not the author's checkout: no .git, dotfiles or authoring files", async (t) => {
+  const f = await fixture(t);
+  await mkdir(path.join(f.source, ".git"));
+  await writeFile(path.join(f.source, ".git", "config"), "[core]\n");
+  await writeFile(path.join(f.source, ".env"), "TOKEN=1\n");
+  await writeFile(path.join(f.source, "AGENTS.md"), "Notes for a coding agent.\n");
+  await installLocalPlugin(f.registry, f.source, async (_manifest, _origin, scan) => {
+    assert.equal(scan.verdict, "safe", JSON.stringify(scan.findings));
+    return true;
+  });
+  const versions = path.join(f.root, "installed", "packages", "example");
+  const [installed] = await readdir(versions);
+  assert.ok(installed, "the package was installed");
+  const files = await readdir(path.join(versions, installed));
+  assert.deepEqual(
+    files.filter((name) => name.startsWith(".") || name === "AGENTS.md"),
+    [],
+  );
+  assert.ok(files.includes("plugin.json"));
+});

@@ -40,6 +40,41 @@ export function isGenexGamePackage(name: unknown): name is GenexGamePackage {
 }
 
 /**
+ * What a game's own `package.json` tells Genex when it is published: the Genex SDK versions it
+ * depends on (sign-in support is `@genex-ai/embed-sdk`) and its `genex` settings. The CLI reads
+ * these from the folder it runs in, and Studio runs it in a copy of its own, so the host reads
+ * them from the game and the publish copy carries them.
+ */
+export interface GenexGameManifest {
+  dependencies: Partial<Record<GenexGamePackage, string>>;
+  genex?: { matchmaking?: Record<string, unknown>; mobileControls?: boolean };
+}
+
+/** The longest name a game is listed under on Genex. */
+export const GENEX_TITLE_MAX_CHARS = 60;
+
+/** A name to list a game under: one line, trimmed, no leading dashes, at most the cap; null when nothing is left. */
+export function cleanGenexTitle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const line = value
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s-]+/, "")
+    .trim();
+  const title = line.slice(0, GENEX_TITLE_MAX_CHARS).trim();
+  return /[\p{L}\p{N}]/u.test(title) ? title : null;
+}
+
+/** The name a game is offered under before its owner picks one: its folder name, as words. */
+export function defaultGenexTitle(project: string): string {
+  const words = project
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return cleanGenexTitle(words.join(" ")) ?? project;
+}
+
+/**
  * Where a Genex generation job is, as Studio records it (`GenexJob.status`). A remote status
  * Studio does not map is kept as it came, so the field stays a string. Persisted: never rename a value.
  */
@@ -233,6 +268,12 @@ export interface GenexPublishJob {
   finishedAt?: string;
   error?: string;
   export?: { files: number };
+  /** The name a gallery publish lists the game under. */
+  title?: string;
+  /** The sign-in SDK version this upload ships, as the game's package.json names it. */
+  embedSdkVersion?: string;
+  /** How many times this attempt uploaded the build: a draft that fails its test is uploaded once more. */
+  uploads?: number;
 }
 /** What Studio knows about this game's Genex pages. Never a credential, never the user's game folder. */
 export interface GenexPublishState {
@@ -242,6 +283,8 @@ export interface GenexPublishState {
   terms?: { accepted: boolean; acceptUrl: string };
   slug?: string;
   projectId?: string;
+  /** The name Studio last listed the game under; absent when Studio never sent one. */
+  title?: string;
   status?: GenexHostedStatus;
   draftUrl?: string;
   galleryUrl?: string;

@@ -4,6 +4,7 @@ import { CustomEvent } from "./custom-events.ts";
 import { EventKind, type EventEnvelope } from "./event-log.ts";
 import {
   ExecutionStatus,
+  executionActivity,
   executionStep,
   isExecutionEvent,
   preferredChallenger,
@@ -11,6 +12,7 @@ import {
   roundOutcome,
   type RunExecution,
   RunState,
+  type RunWorked,
 } from "./run-state.ts";
 type Row = Record<string, any>;
 export interface RunAttempt {
@@ -45,6 +47,8 @@ export interface RunSummary {
   revision?: number;
   startedAt?: string;
   endedAt?: string;
+  /** How long it has worked since `startedAt`, pauses aside (run-state.ts); absent when its start is unknown. */
+  worked?: RunWorked;
   runId: string;
   project: string;
   completeHistory: boolean;
@@ -245,6 +249,14 @@ function readExecution(run: Summarizing, { event, event_type, payload }: RunReco
   run.result.execution = run.execution.status;
   if (run.execution.endedAt) run.result.endedAt = run.execution.endedAt;
   else delete run.result.endedAt;
+  if (run.execution.openedAt) run.result.worked = run.execution.worked;
+  else delete run.result.worked;
+}
+
+/** One of the run's own records, in order: the run's lifecycle, or a sign that it is working. */
+function readRunRecord(run: Summarizing, own: RunRecord): void {
+  if (isExecutionEvent(own)) readExecution(run, own);
+  else run.execution = executionActivity(run.execution, own.event.created_at);
 }
 
 /** What a close said about the build, cleared when the run goes on: the next close says it anew. */
@@ -553,7 +565,7 @@ export class RunSummaryAccumulator {
   append(event: EventEnvelope): void {
     const own = runRecord(event, this.#run.result.project, this.#run.result.runId);
     if (!own) return;
-    if (isExecutionEvent(own)) readExecution(this.#run, own);
+    readRunRecord(this.#run, own);
     READERS.get(own.event_type)?.(this.#run, own);
   }
 
@@ -569,7 +581,7 @@ export function summarizeRun(events: EventEnvelope[], project: string, runId: st
   for (const event of chronological(events)) {
     const own = runRecord(event, project, runId);
     if (!own) continue;
-    if (isExecutionEvent(own)) readExecution(run, own);
+    readRunRecord(run, own);
     READERS.get(own.event_type)?.(run, own);
   }
   return finish(run);

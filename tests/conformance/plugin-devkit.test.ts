@@ -1,5 +1,5 @@
 /**
- * The developer kit is two scripts an author runs before Studio ever sees their package, so this
+ * The developer kit is the scripts an author runs before Studio ever sees their package, so this
  * suite spawns them exactly as `npm run plugin:new` / `npm run plugin:doctor` do — real processes,
  * real exit codes, a temporary working directory — and checks the package they produce with the
  * same `inspectPackage` the installer uses.
@@ -10,14 +10,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import vm from "node:vm";
 import { inspectPackage } from "../../src/substrate/plugins/manifest.ts";
-import { isFileSkill } from "../../src/shared/plugins.ts";
+import { isFileSkill, PLUGIN_GUIDE_URL } from "../../src/shared/plugins.ts";
 import { packageBin } from "../../scripts/package-bin.ts";
+import { STUDIO_CATALOG_POLICY } from "../../src/substrate/plugins/marketplace.ts";
 
 const scaffold = path.resolve("scripts/plugin-new.ts");
 const doctor = path.resolve("scripts/plugin-doctor.ts");
 const pack = path.resolve("scripts/pack-plugin.ts");
+const submit = path.resolve("scripts/plugin-submit.ts");
+const unpack = path.resolve("scripts/plugin-unpack.ts");
 const example = path.resolve("src/plugins/example");
 
 const run = (script: string, args: string[], cwd: string) =>
@@ -64,6 +68,7 @@ test("plugin:new scaffolds an installable package with the example substituted o
     );
   }
   assert.deepEqual(fs.readdirSync(target).sort(), [
+    "AGENTS.md",
     "backend.mjs",
     "jsconfig.json",
     "panel.html",
@@ -235,4 +240,217 @@ test("plugin:doctor refuses an unreadable package and reports panel CSP problems
   assert.deepEqual(report.errors, []);
   assert.equal(report.ok, true);
   assert.equal(result.status, 0);
+});
+
+test("plugin:new leaves the author's coding agent a guide that names this plugin, the guide and the checks", (t) => {
+  const dir = temp(t);
+  const result = run(scaffold, ["agent-ready", "--out", dir], dir);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(PLUGIN_GUIDE_URL), "the next steps link the public guide, not a repo-relative path");
+  assert.match(result.stdout, /Load local plugin…/, "the next steps use the menu item's real name");
+  const agents = fs.readFileSync(path.join(dir, "agent-ready", "AGENTS.md"), "utf8");
+  assert.ok(agents.includes(PLUGIN_GUIDE_URL));
+  assert.match(agents, /agent-ready__greet/, "it names the plugin's own tool spelling");
+  for (const command of ["plugin:doctor", "plugin:pack", "plugin:submit"]) assert.ok(agents.includes(command), command);
+});
+
+/**
+ * A contributor's clone of the catalog before their first release: the repository genex-plugins is
+ * made from (its validator included), with the policy the published catalog enforces.
+ */
+function emptyCatalog(dir: string): string {
+  const catalog = path.join(dir, "genex-plugins");
+  fs.cpSync(path.resolve("marketplace/template"), catalog, { recursive: true });
+  fs.writeFileSync(path.join(catalog, "policy.json"), JSON.stringify(STUDIO_CATALOG_POLICY));
+  fs.writeFileSync(
+    path.join(catalog, "index.json"),
+    JSON.stringify({ version: 1, updatedAt: "2026-09-18T00:00:00.000Z", plugins: [] }),
+  );
+  return catalog;
+}
+
+/** A copy of the catalog as it is now: the base branch a pull request is checked against. */
+function snapshot(catalog: string, to: string): string {
+  fs.cpSync(catalog, to, { recursive: true });
+  return to;
+}
+
+/** Put an artifact where the maintainer's upload puts it: `<uploads>/<id>/<version>/<sha256>.json`. */
+function upload(uploads: string, artifact: string, record: { id: string; version: string }): string {
+  const sha256 = createHash("sha256").update(fs.readFileSync(artifact)).digest("hex");
+  const file = path.join(uploads, record.id, record.version, `${sha256}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.copyFileSync(artifact, file);
+  return sha256;
+}
+
+/**
+ * The catalog's own `scripts/check-catalog.mjs`, run inside the clone the way its pull-request CI
+ * runs it: the base's validator and policy judge the candidate's records and history, here with the
+ * uploaded artifacts read from disk instead of the public origin.
+ */
+function catalogCheck(catalog: string, base: string, uploads: string) {
+  const args = ["--root", ".", "--previous", base, "--policy-root", base, "--artifacts", uploads];
+  // Its CLI runs only when argv[1] is its own resolved URL, so name it through no link (macOS /var).
+  const validator = fs.realpathSync(path.join(base, "scripts/check-catalog.mjs"));
+  return spawnSync(process.execPath, [validator, ...args], {
+    cwd: catalog,
+    encoding: "utf8",
+  });
+}
+
+const SOURCE = ["--repo", "acme/submitted", "--sha", "a".repeat(40), "--category", "tools"];
+
+test("plugin:submit writes a community record and index entry the catalog's own check accepts", (t) => {
+  const dir = temp(t);
+  const catalog = emptyCatalog(dir);
+  const base = snapshot(catalog, path.join(dir, "base"));
+  const uploads = path.join(dir, "uploads");
+  assert.equal(run(scaffold, ["submitted", "--out", dir], dir).status, 0);
+  const target = path.join(dir, "submitted");
+  const scaffolded = JSON.parse(fs.readFileSync(path.join(target, "plugin.json"), "utf8"));
+  fs.writeFileSync(path.join(target, "plugin.json"), JSON.stringify({ ...scaffolded, publisher: "Acme" }));
+  const docs = ["--docs-url", "https://example.com/submitted"];
+  const result = run(submit, [target, "--catalog", catalog, ...SOURCE, ...docs], dir);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+
+  const record = JSON.parse(fs.readFileSync(path.join(catalog, "records/submitted/0.1.0.json"), "utf8"));
+  const index = JSON.parse(fs.readFileSync(path.join(catalog, "index.json"), "utf8"));
+  assert.deepEqual(index.plugins, [record], "the index lists exactly the new record");
+  assert.notEqual(index.updatedAt, "2026-09-18T00:00:00.000Z");
+  assert.equal(record.tier, "community");
+  assert.equal(record.publisher, "Acme");
+  assert.equal(record.repo, "acme/submitted");
+  assert.equal(record.docsUrl, "https://example.com/submitted");
+  const artifact = path.join(dir, "submitted-0.1.0.json");
+  assert.ok(result.stdout.includes(artifact), "it says which file to attach to the release");
+  const bytes = fs.readFileSync(artifact);
+  assert.ok(!Object.keys(JSON.parse(bytes.toString())).includes("AGENTS.md"), "authoring files stay out");
+  const sha256 = upload(uploads, artifact, record);
+  assert.deepEqual(record.artifact, {
+    url: `https://plugins.genex.games/releases/submitted/0.1.0/${sha256}.json`,
+    sha256,
+  });
+
+  const checked = catalogCheck(catalog, base, uploads);
+  assert.equal(checked.status, 0, checked.stderr);
+  const report = JSON.parse(checked.stdout);
+  assert.equal(report.entries, 1);
+  assert.deepEqual(
+    report.artifactsVerified.map((a: { id: string; version: string; bytes: number }) => [a.id, a.version, a.bytes]),
+    [["submitted", "0.1.0", bytes.length]],
+    "the artifact the author attaches is the one the record pins",
+  );
+
+  const released = snapshot(catalog, path.join(dir, "released"));
+  const again = run(submit, [target, "--catalog", catalog, ...SOURCE], dir);
+  assert.equal(again.status, 1, "a released version is never rewritten");
+  assert.match(again.stderr, /already/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(catalog, "records/submitted/0.1.0.json"), "utf8")), record);
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(target, "plugin.json"), "utf8"));
+  fs.writeFileSync(path.join(target, "plugin.json"), JSON.stringify({ ...manifest, version: "0.2.0" }));
+  const update = run(submit, [target, "--catalog", catalog, ...SOURCE], dir);
+  assert.equal(update.status, 0, update.stderr + update.stdout);
+  const updated = JSON.parse(fs.readFileSync(path.join(catalog, "index.json"), "utf8"));
+  assert.deepEqual(
+    updated.plugins.map((p: { version: string }) => p.version),
+    ["0.2.0"],
+    "the entry moves to the new version",
+  );
+  assert.ok(fs.existsSync(path.join(catalog, "records/submitted/0.1.0.json")), "history is kept");
+  upload(uploads, path.join(dir, "submitted-0.2.0.json"), updated.plugins[0]);
+  const next = catalogCheck(catalog, released, uploads);
+  assert.equal(next.status, 0, next.stderr);
+  assert.equal(JSON.parse(next.stdout).records, 2, "the update is checked against the released history");
+});
+
+test("plugin:submit refuses an official id, a placeholder publisher, a bad source and an artifact inside the catalog, writing nothing", (t) => {
+  const dir = temp(t);
+  const catalog = emptyCatalog(dir);
+  const official = copyExample(dir, "official");
+  const manifest = JSON.parse(fs.readFileSync(path.join(official, "plugin.json"), "utf8"));
+  fs.writeFileSync(path.join(official, "plugin.json"), JSON.stringify({ ...manifest, id: "genex" }));
+  const plain = copyExample(dir, "plain");
+  // A record's publisher is its owner for every later release, so the scaffold's placeholder never becomes one.
+  assert.equal(run(scaffold, ["unnamed", "--out", dir], dir).status, 0);
+  const unnamed = path.join(dir, "unnamed");
+  const cases: Array<[string, string[], RegExp]> = [
+    ["official id", [official, "--catalog", catalog, ...SOURCE], /official/i],
+    ["placeholder publisher", [unnamed, "--catalog", catalog, ...SOURCE], /publisher/],
+    ["short sha", [plain, "--catalog", catalog, ...SOURCE.slice(0, 2), "--sha", "abc", "--category", "tools"], /sha/],
+    ["bad repo", [plain, "--catalog", catalog, "--repo", "acme", ...SOURCE.slice(2)], /repo/],
+    ["bad category", [plain, "--catalog", catalog, ...SOURCE.slice(0, 4), "--category", "games"], /category/],
+    ["http docs", [plain, "--catalog", catalog, ...SOURCE, "--docs-url", "http://example.com"], /HTTPS/],
+    ["no catalog", [plain, ...SOURCE], /Usage/],
+    [
+      "artifact inside",
+      [plain, "--catalog", catalog, ...SOURCE, "--artifact", path.join(catalog, "a.json")],
+      /outside/,
+    ],
+  ];
+  for (const [name, args, error] of cases) {
+    const result = run(submit, args, dir);
+    assert.equal(result.status, 1, name);
+    assert.match(result.stderr, error, name);
+    assert.equal(fs.existsSync(path.join(catalog, "records")), false, `${name} writes no record`);
+  }
+  const index = JSON.parse(fs.readFileSync(path.join(catalog, "index.json"), "utf8"));
+  assert.deepEqual(index.plugins, []);
+});
+
+test("plugin:unpack restores a packed artifact exactly, for review, and refuses unsafe envelopes", (t) => {
+  const dir = temp(t);
+  const artifact = path.join(dir, "example.json");
+  assert.equal(run(pack, [example, artifact], dir).status, 0);
+  const restored = path.join(dir, "restored");
+  const result = run(unpack, [artifact, restored], dir);
+  assert.equal(result.status, 0, result.stderr);
+  for (const file of Object.keys(JSON.parse(fs.readFileSync(artifact, "utf8"))))
+    assert.deepEqual(fs.readFileSync(path.join(restored, file)), fs.readFileSync(path.join(example, file)), file);
+  assert.equal(run(unpack, [artifact, restored], dir).status, 1, "an existing folder is never written into");
+
+  const b64 = (text: string) => Buffer.from(text).toString("base64");
+  const hostile: Array<[string, unknown]> = [
+    ["parent", { "plugin.json": b64("{}"), "../escaped": b64("x") }],
+    ["absolute", { "plugin.json": b64("{}"), [path.join(dir, "absolute")]: b64("x") }],
+    ["backslash", { "plugin.json": b64("{}"), "..\\escaped": b64("x") }],
+    ["dot segment", { "plugin.json": b64("{}"), "a/./b": b64("x") }],
+    ["not text", { "plugin.json": 5 }],
+    ["array", [b64("x")]],
+    ["null", null],
+  ];
+  for (const [name, envelope] of hostile) {
+    const file = path.join(dir, `${name}.json`);
+    fs.writeFileSync(file, JSON.stringify(envelope));
+    const target = path.join(dir, "out", name);
+    const refused = run(unpack, [file, target], dir);
+    assert.equal(refused.status, 1, name);
+    assert.equal(fs.existsSync(target), false, `${name} leaves no folder`);
+  }
+  assert.equal(fs.existsSync(path.join(dir, "escaped")), false);
+  assert.equal(fs.existsSync(path.join(dir, "out", "escaped")), false);
+  assert.equal(fs.existsSync(path.join(dir, "absolute")), false);
+});
+
+test("plugin:pack answers a missing argument with its usage, not a stack trace", (t) => {
+  const dir = temp(t);
+  const result = run(pack, [], dir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^Usage: npm run plugin:pack/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+});
+
+test("plugin:doctor judges what would ship: a git checkout and the scaffold's own files do not make a plugin unsafe", (t) => {
+  const dir = temp(t);
+  assert.equal(run(scaffold, ["versioned", "--out", dir], dir).status, 0);
+  const target = path.join(dir, "versioned");
+  fs.mkdirSync(path.join(target, ".git", "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".git", "config"), "[core]\n");
+  fs.writeFileSync(path.join(target, ".git", "hooks", "pre-commit.sample"), "#!/bin/sh\nexit 0\n");
+  const result = run(doctor, [target, "--json"], dir);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.scan.verdict, "safe", JSON.stringify(report.scan.findings));
+  assert.deepEqual(report.scan.findings, []);
 });

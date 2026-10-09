@@ -390,7 +390,7 @@ test("a run's earlier result card is superseded by its later close, so only the 
   assert.deepEqual(
     results.map((card) => card.superseded),
     [true, undefined],
-    "the reopened night's pause is not the finished night's card",
+    "the reopened run's pause is not the finished run's card",
   );
 });
 
@@ -978,7 +978,7 @@ test("steered input keeps its state across history pages, and settles with the t
   );
 });
 
-test("a message handed to a night's lead reads where it was sent, its answer is a chat bubble, and it settles when that run closes", async () => {
+test("a message handed to a run's lead reads where it was sent, its answer is a chat bubble, and it settles when that run closes", async () => {
   const { deliveryOrder } = await import("../../src/renderer/chat/delivery-order.ts");
   const { conversationEntries } = await import("../../src/renderer/chat/conversation-entries.ts");
   const { messageQueueState } = await import("../../src/shared/message-queue.ts");

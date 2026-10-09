@@ -1,8 +1,8 @@
 /**
  * What the chat's own session reads and records to reopen its finished build (reopen-run.ts): the
- * tool, its rules in the after-night note, the coordinator's rules when its continue_build reopens
+ * tool, its rules in the after-run note, the coordinator's rules when its continue_build reopens
  * the build instead, and what the chat is told. A module of its own: the
- * existing parts that read these (after-night-prompts.ts, delegated-turn.ts) import new names only
+ * existing parts that read these (after-loop-run-prompts.ts, delegated-turn.ts) import new names only
  * from here, and this imports only names every older seed exported
  * (tests/fixtures/seed-exports-pre-reopen.json).
  */
@@ -77,9 +77,9 @@ function startOverRules(engine: string | undefined, reopen: string, grant: Reope
 }
 
 /**
- * The after-night note's rules for a finished build with Loop on, its tools spelled the way `engine`
- * calls them. Loop allows the build to go on; it never orders it (golden-boot-glory: "work of any
- * size — a fix…" once sent a seventy-second fix to a three-hour build). A question is answered, a
+ * The after-run note's rules for a finished build with Loop on, its tools spelled the way `engine`
+ * calls them. Loop allows the build to go on; it never orders it ("work of any size — a fix…"
+ * would send a seventy-second fix to a three-hour build). A question is answered, a
  * contained change is the session's own edit, more work reopens the same build, and only an explicit
  * start over launches a new one.
  */

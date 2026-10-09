@@ -1,11 +1,9 @@
 /**
- * The scout — the look before the plan (computer use, 2026-09-07).
+ * The scout — the look before the plan.
  *
- * The 2026-09-06 skate-prod run planned six parallel facets from the brief alone, and every
- * one of them built and judged the wrong map: the game boots into "Downtown Block", the brief
- * was about the MACBA plaza behind a map picker, and nothing in the harness had ever opened
- * the game. The planner's own assumptions said so ("existing files … have not been
- * independently inspected here").
+ * A plan made from the brief alone can send every facet to build and judge the wrong map: a game
+ * that boots into one map while the brief is about another behind a map picker, and nothing in
+ * the harness has opened the game.
  *
  * So before decomposition a read-only session with the computer tool opens the build, plays
  * to the place the brief is about, reads what it needs, and answers three questions the
@@ -23,7 +21,7 @@
  * works as it did before, and the decision card says the run went in blind.
  */
 import { MIN_DELEGATE_TIMEOUT_MS } from "./config.ts";
-import { EngineId, modelOn, roleEffort, roleEngine, RoleKey, toolCall } from "./model-roles.ts";
+import { EngineId, modelOn, roleEffort, roleEngine, RoleKey, supportsSessions, toolCall } from "./model-roles.ts";
 import { parseVerdict } from "./judge.ts";
 import { describePlayScript, GAME_KINDS, isGameKind, KIND_NAMES, normalizePlayScript } from "./kinds.ts";
 import { EngineFailure, outageDelays, withProviderPatience } from "./outage.ts";
@@ -49,6 +47,8 @@ export interface ScoutSetup {
   gesture?: boolean | { x?: number; y?: number; keys?: string[] };
   verify?: { path: string; equals?: unknown; truthy?: boolean };
   note?: string;
+  /** `false` keeps the game's own title, menu or countdown on screen: the worker that builds them is judged on them. */
+  begin?: boolean;
 }
 
 /** What the scout saw and advises, as the run keeps it. */
@@ -203,7 +203,9 @@ export function normalizeScoutSetup(raw: AnyRecord | null | undefined): ScoutSet
   const verify = setupVerify(raw.verify);
   if (verify) setup.verify = verify;
   if (typeof raw.note === "string" && raw.note.trim()) setup.note = clip(raw.note.trim(), CLIP_REASON);
-  const setsSomethingUp = setup.actions || setup.demo || setup.verify || setup.gesture;
+  if (typeof raw.begin === "boolean") setup.begin = raw.begin;
+  // `begin: false` alone is a setup: the front-end's own worker opens on the title, not past it.
+  const setsSomethingUp = setup.actions || setup.demo || setup.verify || setup.gesture || setup.begin === false;
   return setsSomethingUp ? setup : null;
 }
 
@@ -336,14 +338,23 @@ interface ScoutAnswer {
 }
 
 /**
+ * The scout never asks a session of a main agent that holds none, so main.ts may claim the
+ * local-roles capability (local-roles-served.ts): a kept older copy would delegate to Ollama.
+ */
+export const SERVES_LOCAL_ROLES = true;
+
+/**
  * Run the scout: a delegated read-only session with the computer tool over the live folder.
  * Returns `{ report, transcript }`; `report` null when the engine is direct, the scout failed,
  * or its JSON was unusable — the caller records that as a decision, not a crash.
  */
 export async function runScout(ctx: HarnessCtx, options: ScoutOptions): Promise<ScoutAnswer> {
   const { run, profile, projectDir } = options;
-  if (!profile?.delegated || !projectDir)
-    return { report: null, transcript: "", skipped: profile?.delegated ? "no project folder" : "direct engine" };
+  // The scout's session runs on the main agent's engine, so delegated workers are not enough: a
+  // local main agent with a subscription's workers holds no session to scout in.
+  const delegated = Boolean(profile?.delegated) && (await mainAgentHoldsSessions(ctx, run));
+  if (!delegated || !projectDir)
+    return { report: null, transcript: "", skipped: delegated ? "no project folder" : "direct engine" };
   ctx.setStatus?.(`run ${run.runId} · scouting the game`);
   let result: DelegateResult;
   try {
@@ -367,6 +378,13 @@ export async function runScout(ctx: HarnessCtx, options: ScoutOptions): Promise<
     ? "the scout returned no usable JSON"
     : `the scout did not finish: ${result?.errorText || result?.stopReason || "unknown"}`;
   return { report: null, transcript, skipped };
+}
+
+/** Does the main agent's engine hold sessions? An engine list the host cannot give leaves it to try. */
+async function mainAgentHoldsSessions(ctx: HarnessCtx, run: Run): Promise<boolean> {
+  const described = await ctx.call(HostMethod.EngineDescribe, {}).catch(() => null);
+  if (!described) return true;
+  return supportsSessions(described.find((e) => e.id === (run.engine ?? EngineId.Ollama)));
 }
 
 /**

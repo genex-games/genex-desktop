@@ -1,7 +1,7 @@
 /**
  * Putting the camera back on the horizon after a gesture that may have pitched it. The directions
- * and ack drags go DOWN-and-right; never undone, they once left a drag-to-look game's camera aimed at
- * the dirt for 79% of a run, and the judge scored a village on frames of its own floor.
+ * and ack drags go DOWN-and-right; never undone, they leave a drag-to-look game's camera aimed at
+ * the ground, and the judge scores the game on frames of its own floor.
  *
  * CLOSED-LOOP, not a blind inverse leg: drag sensitivity differs by an order of magnitude between
  * games, so the camera is read between attempts and the restore stops as soon as pitch is inside the

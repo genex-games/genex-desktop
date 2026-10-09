@@ -1,11 +1,11 @@
 /**
- * The night ledger — what this game's nights taught, kept where the next night can read it.
+ * The run ledger — what this game's runs taught, kept where the next run can read it.
  *
  * The studio already learns two things between runs: skills (skillopt.ts, the blind pairwise
  * gate) and techniques (library.ts, recipes promoted and retired by check outcomes). Neither
- * remembers a *game*. So the second night on a game repeats the first one's night: the same
+ * remembers a *game*. So the second run on a game repeats the first one's run: the same
  * fork point that would not run, the same judge naming the same defect, the same three checks
- * that never measured anything. The first real director night lost eight of its twenty-one
+ * that never measured anything. The first real director run lost eight of its twenty-one
  * rounds to one inherited console error, and nothing anywhere wrote that down.
  *
  * This is that memory, and it is deliberately dumb: one append-only record per outcome, in the
@@ -15,11 +15,11 @@
  * self-improvement switch says, because a record of what happened is not a self-change.
  *
  * There are two ways a record is made and one shape it comes out in:
- *  - **live** — the director calls `roundRecord` / `refusalRecord` / `closeRecord` as the night
+ *  - **live** — the director calls `roundRecord` / `refusalRecord` / `closeRecord` as the run
  *    happens, which is the only way to capture what the worker was actually told (`briefDigest`)
  *    and how long it ran;
- *  - **replayed** — `ledgerFromEvents` reads a finished night's log back into the same records,
- *    which is how a night from before this file existed still teaches the next one.
+ *  - **replayed** — `ledgerFromEvents` reads a finished run's log back into the same records,
+ *    which is how a run from before this file existed still teaches the next one.
  */
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -38,7 +38,7 @@ export interface CheckCounts {
   total?: number;
 }
 
-/** One outcome in a game's ledger: a round kept, undone or stopped, a builder refused, or a night's close. */
+/** One outcome in a game's ledger: a round kept, undone or stopped, a builder refused, or a run's close. */
 export interface LedgerRecord {
   at: string;
   runId: string | null;
@@ -91,7 +91,7 @@ export interface RoundBoard {
 }
 
 /**
- * What became of one round. The close uses kept/undone too: a night that made nothing live is
+ * What became of one round. The close uses kept/undone too: a run that made nothing live is
  * undone. Ledgers on disk keep these: never rename a value.
  */
 export const LedgerDecision = {
@@ -104,13 +104,13 @@ export type LedgerDecision = (typeof LedgerDecision)[keyof typeof LedgerDecision
 
 /** What became of one round, for code that checks one at run time. */
 export const LEDGER_DECISIONS: string[] = Object.values(LedgerDecision);
-/** The most records one game's ledger keeps; the close trims to it. Older nights stop teaching. */
+/** The most records one game's ledger keeps; the close trims to it. Older runs stop teaching. */
 export const MAX_RECORDS = 600;
 /** How much of a brief a record keeps — enough to recognise what was asked, not enough to re-read. */
 const MAX_BRIEF = 300;
 /** A check unmeasured this many rounds on the same kind of game is not a check, it is a wish. */
 export const RARELY_MEASURABLE_ROUNDS = 3;
-/** A defect named this often by the judges is a pattern, not a night. */
+/** A defect named this often by the judges is a pattern, not a run. */
 const REPEAT_MIN = 2;
 /** What a record keeps of its game's name, its title, its sentence and its gap. */
 const MAX_GAME_SLUG = 60;
@@ -125,7 +125,7 @@ const LESSON_CHARS = 260;
 /** How many repeated defects and never-measured checks a lesson names. */
 const DEFECTS_NAMED = 3;
 const CHECKS_NAMED = 6;
-/** A night's date in the lessons file: the `YYYY-MM-DD` of its ISO timestamp. */
+/** A run's date in the lessons file: the `YYYY-MM-DD` of its ISO timestamp. */
 const ISO_DATE_CHARS = 10;
 /** Where `unmeasuredTally` files a record that names no kind of game: its checks count for every kind. */
 const ANY_KIND = "any";
@@ -261,7 +261,7 @@ export function roundRecord({
     gap,
     checks: { passed: board.passing ?? 0, unmeasured: board.unmeasured ?? 0, total: board.total ?? 0 },
     // A round from before the payload carried the ids still has its results, and an unmeasured
-    // check is one that came back neither true nor false — so a night already on disk teaches
+    // check is one that came back neither true nor false — so a run already on disk teaches
     // `rarelyMeasurable` too, instead of counting three unmeasured checks and naming none.
     unmeasuredChecks:
       board.unmeasuredChecks ??
@@ -287,7 +287,7 @@ export function refusalRecord({
 }
 
 /**
- * The night itself, as one outcome: kept when a build was made live, undone when nothing was.
+ * The run itself, as one outcome: kept when a build was made live, undone when nothing was.
  */
 export function closeRecord({
   landed = false,
@@ -341,7 +341,7 @@ export async function readLedger(workspace: string, game: string): Promise<Ledge
   return out;
 }
 
-/** Rewrite the ledger with its newest records only — one compaction per night, at the close. */
+/** Rewrite the ledger with its newest records only — one compaction per run, at the close. */
 export async function trimLedger(workspace: string, game: string, records: LedgerRecord[]): Promise<LedgerRecord[]> {
   if (records.length <= MAX_RECORDS) return records;
   const kept = records.slice(-MAX_RECORDS);
@@ -359,13 +359,13 @@ const payloadsOf = (events: readonly AnyRecord[] | null | undefined, type: strin
     .filter((data: AnyRecord | null) => data?.type === EventKind.Custom && data.event_type === type)
     .map((data: AnyRecord) => data.payload ?? {});
 
-/** What the night's worker cards say about each worker: its title and its minutes. */
+/** What the run's worker cards say about each worker: its title and its minutes. */
 interface WorkerFacts {
   titles: Map<string, string>;
   minutesById: Map<string, number>;
 }
 
-/** The titles and budgets the night's `director_worker` cards gave its workers. */
+/** The titles and budgets the run's `director_worker` cards gave its workers. */
 function workerFacts(events: readonly AnyRecord[] | null | undefined): WorkerFacts {
   const titles = new Map<string, string>();
   const minutesById = new Map<string, number>();
@@ -377,7 +377,7 @@ function workerFacts(events: readonly AnyRecord[] | null | undefined): WorkerFac
   return { titles, minutesById };
 }
 
-/** What every record replayed from one night carries. */
+/** What every record replayed from one run carries. */
 type ReplayCommon = { runId: string | null; mode: string; game: string | null; gameKind: string | null };
 
 /** A judged or stopped round, from its `facet_iteration` (or `run_iteration`) card. */
@@ -415,7 +415,7 @@ function replayedRefusal(
 }
 
 /**
- * The night's close. A close from before `landingResult` existed has only the run's own prose;
+ * The run's close. A close from before `landingResult` existed has only the run's own prose;
  * its landing clause is the one part the record already carries as `decision`.
  */
 function replayedClose(payload: AnyRecord, event: AnyRecord, common: ReplayCommon): LedgerRecord {
@@ -450,9 +450,9 @@ function replayedRecord(
 }
 
 /**
- * A finished night's log, read back as ledger records — the same records the live path writes,
+ * A finished run's log, read back as ledger records — the same records the live path writes,
  * minus what only the run knew (a worker's brief, the minutes it ran). This is how the first
- * director night, recorded before any of this existed, still teaches the next one. `events` are
+ * director run, recorded before any of this existed, still teaches the next one. `events` are
  * logged events, or their `data`.
  */
 export function ledgerFromEvents(
@@ -487,7 +487,7 @@ const UNDONE_LESSON: Partial<Record<string, (n: number, of: number) => string>> 
   [VerdictRule.ChecksRegressed]: (n, of) =>
     `${n} of ${of} rounds were undone because a check that used to pass stopped passing. Name what must not move in the brief, not only what must change.`,
   [VerdictRule.Vetoed]: (n, of) =>
-    `${n} of ${of} rounds were undone by the judge preferring the round before. On this game a build that only tunes what already exists loses.`,
+    `${n} of ${of} rounds were undone by the judge preferring the round before, on the blind pick or over a regression it named. Make the change one a player would notice, and name in the brief what must not get worse.`,
   [VerdictRule.NoMove]: (n, of) =>
     `${n} of ${of} rounds were undone because the structural step that was asked for did not arrive. Ask for one visible change per round and say how it will be seen.`,
   [VerdictRule.Unfixed]: (n, of) =>
@@ -526,7 +526,7 @@ export function unmeasuredTally(records: readonly LedgerRecord[]): Map<string, M
 /**
  * The checks this kind of game has never been able to measure. A check the harness cannot read
  * is worse than no check: it holds "satisfied" out of reach forever while reading as neither a
- * pass nor a failure, which is how one night finished with `identityTotal 0` on every board.
+ * pass nor a failure, and a run could finish with `identityTotal 0` on every board.
  */
 export function rarelyMeasurable(
   records: readonly LedgerRecord[],
@@ -552,7 +552,7 @@ function flagEntry(entry: AnyRecord, kind: string, n: number): void {
 }
 
 /**
- * The catalogue, weighted by what the nights could actually read. Only entries the catalogue
+ * The catalogue, weighted by what the runs could actually read. Only entries the catalogue
  * already knows are flagged: an id nobody has recorded a definition for would reach the planner
  * as `{"id":"…"}` with no way to run it.
  */
@@ -577,7 +577,7 @@ function undoneByRule(undone: readonly LedgerRecord[]): Array<[string | null, nu
   return [...byRule.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-/** Why rounds are lost here, commonest first — the one thing a night can act on before it starts. */
+/** Why rounds are lost here, commonest first — the one thing a run can act on before it starts. */
 function undoneLessons(undone: readonly LedgerRecord[], rounds: number): string[] {
   const lessons: string[] = [];
   for (const [rule, n] of undoneByRule(undone)) {
@@ -625,7 +625,7 @@ function neverMeasuredLesson(records: readonly LedgerRecord[]): string | null {
   return `These checks have never measured anything here: ${named}. Re-point them at something the build reports, or do not write them.`;
 }
 
-/** What worked: the seam whose rounds were kept, so the next night starts where the last one paid. */
+/** What worked: the seam whose rounds were kept, so the next run starts where the last one paid. */
 function whatWorkedLesson(rounds: readonly LedgerRecord[]): string | null {
   const byPart = new Map<string | null, { title: string | null; kept: number; total: number }>();
   for (const record of rounds) {
@@ -684,7 +684,7 @@ export function lastTimeBlock(
   ].join("\n");
 }
 
-/** Why most of tonight's undone work went, in the morning card's words, by rule. */
+/** Why most of this run's undone work went, in the morning card's words, by rule. */
 const UNDONE_WHY: Partial<Record<string, string>> = {
   [VerdictRule.Broken]: "the game did not start after the build",
   [VerdictRule.ChecksRegressed]: "something that used to work stopped working",
@@ -695,7 +695,7 @@ const UNDONE_WHY: Partial<Record<string, string>> = {
   [VerdictRule.NoChange]: "nothing on screen had changed",
 };
 
-/** The part whose rounds were kept most often tonight. */
+/** The part whose rounds were kept most often this run. */
 function mostKeptPart(rounds: readonly LedgerRecord[]): { title: string; kept: number } | undefined {
   const byPart = new Map<string | null, { title: string; kept: number }>();
   for (const record of rounds) {
@@ -707,7 +707,7 @@ function mostKeptPart(rounds: readonly LedgerRecord[]): { title: string; kept: n
 }
 
 /**
- * Where tonight's kept rounds were. The sentence agrees with its own count: one kept round was
+ * Where this run's kept rounds were. The sentence agrees with its own count: one kept round was
  * kept, and "most of them" is only true of a part that holds more than half of them.
  */
 function keptWhere(best: { title: string; kept: number } | undefined, kept: number): string {
@@ -717,10 +717,10 @@ function keptWhere(best: { title: string; kept: number } | undefined, kept: numb
 }
 
 /**
- * One plain sentence for the morning card: what tonight, specifically, taught. It carries no
+ * One plain sentence for the morning card: what this run, specifically, taught. It carries no
  * check id and no part id — the user reads it over their coffee, not in a log.
  */
-export function learnedTonight(records: readonly LedgerRecord[]): string {
+export function learnedThisRun(records: readonly LedgerRecord[]): string {
   const rounds = records.filter(isRound);
   if (rounds.length === 0) return "";
   const kept = rounds.filter((r) => r.decision === LedgerDecision.Kept);
@@ -736,15 +736,15 @@ export function learnedTonight(records: readonly LedgerRecord[]): string {
   return `${kept.length} of ${count(rounds.length, "round")} ${one ? "was" : "were"} kept${where}. The studio has written down what worked for next time.`;
 }
 
-/** One night as the lessons file lists it. */
-type NightTally = AnyRecord & { at: string; rounds: number; refused: number; close: string | null };
+/** One run as the lessons file lists it. */
+type LoopRunTally = AnyRecord & { at: string; rounds: number; refused: number; close: string | null };
 
-/** Every night in the ledger, tallied: its rounds by decision, the builders refused, and how it closed. */
-function nightsOf(records: readonly LedgerRecord[]): Map<string, NightTally> {
-  const nights = new Map<string, NightTally>();
+/** Every run in the ledger, tallied: its rounds by decision, the builders refused, and how it closed. */
+function loopRunsOf(records: readonly LedgerRecord[]): Map<string, LoopRunTally> {
+  const loopRuns = new Map<string, LoopRunTally>();
   for (const record of records) {
     if (!record.runId) continue;
-    const night = nights.get(record.runId) ?? {
+    const loopRun = loopRuns.get(record.runId) ?? {
       at: record.at,
       rounds: 0,
       kept: 0,
@@ -754,25 +754,26 @@ function nightsOf(records: readonly LedgerRecord[]): Map<string, NightTally> {
       close: null,
     };
     if (isRound(record)) {
-      night.rounds += 1;
-      night[record.decision] = (night[record.decision] ?? 0) + 1;
-    } else if (record.decision === LedgerDecision.Refused) night.refused += 1;
+      loopRun.rounds += 1;
+      loopRun[record.decision] = (loopRun[record.decision] ?? 0) + 1;
+    } else if (record.decision === LedgerDecision.Refused) loopRun.refused += 1;
     else
-      night.close = record.because || (record.decision === LedgerDecision.Kept ? "made live" : "nothing was made live");
-    nights.set(record.runId, night);
+      loopRun.close =
+        record.because || (record.decision === LedgerDecision.Kept ? "made live" : "nothing was made live");
+    loopRuns.set(record.runId, loopRun);
   }
-  return nights;
+  return loopRuns;
 }
 
-/** One night as a line of the lessons file. */
-function nightLine(night: NightTally): string {
-  const stopped = night.stopped ? `, ${night.stopped} stopped` : "";
-  const refused = night.refused ? `, ${count(night.refused, "builder")} refused before starting` : "";
-  const close = night.close ? ` — ${night.close}` : "";
-  return `- ${String(night.at).slice(0, ISO_DATE_CHARS)} — ${count(night.rounds, "round")}, ${night.kept ?? 0} kept, ${night.undone ?? 0} undone${stopped}${refused}${close}`;
+/** One run as a line of the lessons file. */
+function loopRunLine(loopRun: LoopRunTally): string {
+  const stopped = loopRun.stopped ? `, ${loopRun.stopped} stopped` : "";
+  const refused = loopRun.refused ? `, ${count(loopRun.refused, "builder")} refused before starting` : "";
+  const close = loopRun.close ? ` — ${loopRun.close}` : "";
+  return `- ${String(loopRun.at).slice(0, ISO_DATE_CHARS)} — ${count(loopRun.rounds, "round")}, ${loopRun.kept ?? 0} kept, ${loopRun.undone ?? 0} undone${stopped}${refused}${close}`;
 }
 
-/** The derived file a person (or a resumed night) can read: the lessons, then the nights behind them. */
+/** The derived file a person (or a resumed run) can read: the lessons, then the runs behind them. */
 export function renderGameLessons(game: string, records: readonly LedgerRecord[]): string {
   const lessons = deriveLessons(records);
   return [
@@ -787,7 +788,7 @@ export function renderGameLessons(game: string, records: readonly LedgerRecord[]
     ``,
     `## The runs behind them`,
     ``,
-    ...[...nightsOf(records).values()].map(nightLine),
+    ...[...loopRunsOf(records).values()].map(loopRunLine),
     ``,
   ].join("\n");
 }
@@ -804,7 +805,7 @@ export async function saveGameLessons(
   return { file, lessons: deriveLessons(records) };
 }
 
-/** The lessons the next night's briefs carry. Derived from the ledger, never parsed back out of the markdown. */
+/** The lessons the next run's briefs carry. Derived from the ledger, never parsed back out of the markdown. */
 export async function loadGameLessons(workspace: string, game: string, limit = 5): Promise<string[]> {
   const records = await readLedger(workspace, game).catch(() => []);
   return deriveLessons(records).slice(0, limit);

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stoppedDownload } from "../../src/renderer/model-download.ts";
+import { needsOllama, ollamaDownloadPage, stoppedDownload } from "../../src/renderer/model-download.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { InstallPhase, type ModelInstallJob } from "../../src/shared/model-install.ts";
 
 const model = "bonsai-2:27b-pq2_0";
@@ -43,4 +45,21 @@ test("a download that saved nothing, still runs, or finished has nothing to resu
   assert.equal(stoppedDownload({ ...failed, phase: InstallPhase.Ready, error: undefined }, model), null);
   const almost = { ...failed, completed: failed.total - 1 };
   assert.equal(stoppedDownload(almost, model)?.percent, 99, "never rounds an unfinished download up to 100%");
+});
+
+test("a failed download offers to install Ollama only while no Ollama runs", () => {
+  const ollama = (code: EngineStatusCode) => ({ status: { code, detail: "" } });
+  assert.equal(needsOllama(ollama(EngineStatusCode.NotRunning)), true);
+  assert.equal(needsOllama(ollama(EngineStatusCode.NotInstalled)), false, "a running Ollama with no models is enough");
+  assert.equal(needsOllama(ollama(EngineStatusCode.Ready)), false);
+  assert.equal(needsOllama(ollama(EngineStatusCode.Error)), false, "an Ollama that answered wrongly is installed");
+  assert.equal(needsOllama(undefined), false, "engines not read yet");
+});
+
+test("installing Ollama opens its download page for this computer", () => {
+  assert.equal(ollamaDownloadPage(StudioPlatform.Linux), "https://ollama.com/download/linux");
+  assert.equal(ollamaDownloadPage(StudioPlatform.Mac), "https://ollama.com/download/mac");
+  assert.equal(ollamaDownloadPage(StudioPlatform.Windows), "https://ollama.com/download/windows");
+  for (const platform of [undefined, "", "freebsd", "toString", "__proto__"])
+    assert.equal(ollamaDownloadPage(platform), "https://ollama.com/download", String(platform));
 });

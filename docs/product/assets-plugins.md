@@ -11,9 +11,9 @@ Opening a file shows it with only Reveal in Finder and Close: images (click: ful
 size), audio/video, 3D models with their clips, textures or bounded text. Unsupported
 formats and decoder failures explain themselves; media reads are bounded and load lazily.
 
-Chat shows game-folder files. Builds shows Loop workspace assets as thumbnails with their
-location until landing; checks and Blender passes are notes. Visuals preview in two columns; sounds play in compact rows.
-Chat offers Open in Assets and bounded batches. Job completion or “seen in game”
+Chat shows game-folder files, Open in Assets and bounded batches. Builds shows Loop workspace
+assets as thumbnails with their location until landing; checks and Blender passes are notes;
+visuals preview in two columns, sounds in compact rows. Job completion or “seen in game”
 never proves integration or passing checks.
 
 ## Tools and setup
@@ -32,17 +32,17 @@ opens browser sign-in; setup survives restart and reinstall. Game spend is in th
 Enabled Genex suggests assets in planning; workers use it once the account is ready. Your
 preferences win; failures and fallbacks are disclosed.
 Genex bundles its MCP with the same account: game/animation search, owned games and
-generation status. Studio’s host tools handle generation, delivery, credits and publishing,
+generation status. Host tools handle generation, delivery, credits and publishing
 and run the pinned Genex CLI outside the game: `genex__cli` free; `genex__cli-paid` and
 `genex__package` (pinned multiplayer or player-identity package, build games) after consent.
-Publish (a host dialog on the stage) updates draft and public version together.
+Publish (a host-drawn stage dialog) tests the draft before making it public.
 Agents read Genex’s guide and cards via `genex__skill`, never from game files.
 Plugin MCPs connect on first use; the composer shows actionable failures only.
 
 The curated catalog is served anonymously from `plugins.genex.games`; reviewed releases
 live in `genex-games/genex-plugins`. Genex and Local Blender are the initial official entries.
-Catalog installs require native-code trust; updates preserve data and require a newer
-compatible release. See the [release procedure](../STUDIO-MARKETPLACE-RELEASE.md).
+Catalog installs require native-code trust; updates keep data, settings and jobs and require
+a newer compatible release. See the [release procedure](../STUDIO-MARKETPLACE-RELEASE.md).
 
 ## Permissions and lifecycle
 
@@ -60,8 +60,7 @@ for a second approval. Revocation prevents future calls; remote side effects rem
 
 Removal keeps data, credentials and jobs; another source reusing a plugin's id needs
 **Replace and erase data**, and bundled ids cannot be taken. Reinstall is explicit, bundled plugins too;
-local reinstall reviews a fresh snapshot. Updates preserve settings and jobs. Host-managed
-secrets never enter composer text.
+local reinstall reviews a fresh snapshot. Host-managed secrets never enter composer text.
 
 Skills lists Studio’s own (local chat, planner, director), this game’s, each provider’s global
 and plugin skills. Codex says whether workers load its catalog; Claude’s global entries stay
@@ -74,6 +73,6 @@ is read-only.
 [AssetPreview](../../src/renderer/panels/AssetPreview.tsx),
 [AssetResults](../../src/renderer/chat/AssetResults.tsx) and
 [PluginsPanel](../../src/renderer/panels/PluginsPanel.tsx) own the UI.
-Details: the [plugin host contract](../plugins.md) (lifecycle, security, skills), the
-[Plugin guide](../PLUGIN_GUIDE.md) (authoring) and
+Details: [plugin host contract](../plugins.md),
+[Plugin guide](../PLUGIN_GUIDE.md) (authoring),
 [Connections and context](../connections-and-context.md) (setup).

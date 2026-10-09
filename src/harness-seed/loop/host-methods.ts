@@ -94,6 +94,7 @@ export const HostMethod = {
   PreviewObserve: "preview.observe",
   PreviewAcquire: "preview.acquire",
   PreviewRelease: "preview.release",
+  PreviewViewport: "preview.viewport",
   PreviewStatsOf: "preview.statsOf",
   PreviewPair: "preview.pair",
   PreviewScreens: "preview.screens",

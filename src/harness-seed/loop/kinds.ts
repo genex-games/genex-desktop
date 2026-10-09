@@ -53,6 +53,22 @@ export interface GameKind {
   eyes: boolean;
   critic: string;
   script: PlayAction[];
+  /**
+   * Keys held from the end of the script through the rest of the drive, released before the
+   * cameras: a racer photographed after thirty seconds of coasting is a parked car.
+   */
+  cruise?: string[];
+  /**
+   * The drive watches for a corner and photographs the turn-in (`drive:corner`, evidence.ts): a
+   * course has corners, and what a player sees in one is what a frame taken wherever the drive
+   * ended almost never shows.
+   */
+  corners?: boolean;
+  /**
+   * The share of the frame a HUD of this kind may cover (`hud-coverage`, loop/hud-budget.ts):
+   * only kinds with a HUD carry one.
+   */
+  hudBudget?: number;
 }
 
 /**
@@ -73,6 +89,8 @@ export interface GameTraits {
   mouseLook: boolean;
   keyboardMove: boolean;
   playScript: PlayAction[] | null;
+  /** The keys that take a game with no `__studio.begin()` from its title into play; absent when none were declared. */
+  start?: { keys: string[] };
 }
 
 /** One of the two input checks: the state paths it reads, its expression and its note. */
@@ -88,6 +106,9 @@ const KEYS_EXERCISE: PlayAction[] = [
   { type: "hold", keys: ["a", "ArrowLeft"], ms: 800 },
   { type: "tap", keys: ["space"] },
 ];
+
+/** The throttle a racer or a craft cruises on through the drive (`GameKind.cruise`). */
+const THROTTLE = ["w", "ArrowUp"];
 
 const RACING_EXERCISE: PlayAction[] = [
   { type: "hold", keys: ["w", "ArrowUp"], ms: 1600 },
@@ -133,6 +154,7 @@ export const GAME_KINDS: Record<string, GameKind> = {
     eyes: true,
     critic: "place",
     script: CONTROL_EXERCISE,
+    hudBudget: 0.12,
   },
   "third-person": {
     says: "a third-person game — a camera behind a character the player steers",
@@ -142,6 +164,7 @@ export const GAME_KINDS: Record<string, GameKind> = {
     eyes: true,
     critic: "place",
     script: CONTROL_EXERCISE,
+    hudBudget: 0.14,
   },
   "top-down": {
     says: "a top-down game — the camera looks down on a world the player moves through",
@@ -153,6 +176,7 @@ export const GAME_KINDS: Record<string, GameKind> = {
     eyes: false,
     critic: "place",
     script: KEYS_EXERCISE,
+    hudBudget: 0.22,
   },
   "side-2d": {
     says: "a side-on game — one plane, seen from the side",
@@ -171,6 +195,9 @@ export const GAME_KINDS: Record<string, GameKind> = {
     eyes: false,
     critic: "place",
     script: RACING_EXERCISE,
+    cruise: THROTTLE,
+    corners: true,
+    hudBudget: 0.18,
   },
   flight: {
     says: "a flight game — a craft the player pitches and turns through open space",
@@ -180,6 +207,8 @@ export const GAME_KINDS: Record<string, GameKind> = {
     eyes: false,
     critic: "place",
     script: FLIGHT_EXERCISE,
+    cruise: THROTTLE,
+    hudBudget: 0.18,
   },
   "static-board": {
     says: "a board game on one screen — pieces on a board, not a world a player walks through",
@@ -219,13 +248,55 @@ export function normalizeGameTraits(raw: AnyRecord | null | undefined): GameTrai
   const kind = isGameKind(raw?.kind) ? String(raw!.kind) : null;
   const base = kind ? GAME_KINDS[kind]!.traits : { hud: false, mouseLook: false, keyboardMove: false };
   const flag = (value: unknown, fallback: boolean): boolean => (typeof value === "boolean" ? value : fallback);
+  const start = startOf(raw?.start);
   return {
     kind,
     hud: flag(raw?.hud ?? raw?.ui, base.hud),
     mouseLook: flag(raw?.mouseLook ?? raw?.mouse, base.mouseLook),
     keyboardMove: flag(raw?.keyboardMove ?? raw?.keys, base.keyboardMove),
     playScript: normalizePlayScript(raw?.playScript ?? raw?.play),
+    // Only when declared: a game that says nothing keeps exactly the traits it always had.
+    ...(start ? { start } : {}),
   };
+}
+
+/** Declared start keys (`{ keys: ["Enter"] }`), or null when there are none. */
+function startOf(raw: unknown): { keys: string[] } | null {
+  if (!isPlainRecord(raw)) return null;
+  const keys = asKeys(raw.keys ?? raw.key);
+  return keys.length ? { keys } : null;
+}
+
+/**
+ * The keys the harness taps to take a game from its title into play when the page has no
+ * `__studio.begin()` of its own (an attached or brought game): the declared start keys, or none.
+ */
+export function startKeysFor(game: AnyRecord | null | undefined): string[] {
+  return normalizeGameTraits(game).start?.keys ?? [];
+}
+
+/**
+ * The keys held through the rest of the drive after the play script: the kind's throttle, or
+ * none. A game whose plan wrote its own script keeps full control of its controls.
+ */
+export function cruiseFor(game: AnyRecord | null | undefined): string[] {
+  // Read through the traits, so a plan's `play` alias counts as its own script too.
+  return normalizeGameTraits(game).playScript ? [] : throttleFor(game);
+}
+
+/**
+ * The throttle of a kind that has one, whatever script its plan wrote: what the throttle-only bot
+ * holds through its race (evidence.ts), and what puts `throttle-bot-loses` on a board (spec.ts).
+ */
+export function throttleFor(game: AnyRecord | null | undefined): string[] {
+  const { kind } = normalizeGameTraits(game);
+  return [...((kind ? GAME_KINDS[kind]?.cruise : null) ?? [])];
+}
+
+/** Does the drive of this kind watch for a corner to photograph (`GameKind.corners`)? */
+export function cornersFor(game: AnyRecord | null | undefined): boolean {
+  const { kind } = normalizeGameTraits(game);
+  return Boolean(kind && GAME_KINDS[kind]?.corners);
 }
 
 /** A pointer at a spot: a click (which may name its button) or a move (which needs both coordinates). */
@@ -389,13 +460,19 @@ function seconds(ms: unknown): string {
  * The retraction matters as much as the description. A board game and a builder have no player
  * the studio can measure, so an empty input-evidence list would invite exactly the
  * `[dead-input]` report this line exists to prevent: it says the class does not apply.
+ *
+ * `kept` is a pass that judged the build on its front-end (`setup.begin === false`): the drive
+ * pressed nothing, so the line says that instead and the class does not apply either.
  */
-export function gameLine(game: AnyRecord | null | undefined): string {
+export function gameLine(game: AnyRecord | null | undefined, { kept = false }: { kept?: boolean } = {}): string {
   const traits = normalizeGameTraits(game);
   const kind = traits.kind ? GAME_KINDS[traits.kind] : null;
+  if (kept) return keptGameLine(kind, traits);
   const script = playScriptFor(traits);
   const drove = describePlayScript(script);
-  const drives = drove ? ` Before every judgement the harness drives the same controls: ${drove}.` : "";
+  const cruise = cruiseFor(traits);
+  const held = cruise.length ? `, then holds ${keyList(cruise)} through the rest of the drive` : "";
+  const drives = drove ? ` Before every judgement the harness drives the same controls: ${drove}${held}.` : "";
   if (!kind) {
     if (!traits.playScript) return "";
     return `GAME: nothing declared what kind of game this is.${drives}`;
@@ -407,6 +484,14 @@ export function gameLine(game: AnyRecord | null | undefined): string {
     return `GAME: ${kind.says}.${drives} This game has no player the studio can measure, so the artefact class [dead-input] does not apply — do not report it.`;
   }
   return `GAME: ${kind.says}.${drives} The input evidence is ${paths.join(", ")} in __studio.state() — report [dead-input] only if those are unchanged.`;
+}
+
+/** The game line for a build judged on its front-end: no drive to describe, no input to be dead. */
+function keptGameLine(kind: GameKind | null | undefined, traits: GameTraits): string {
+  const kept =
+    " The harness pressed nothing: this build is judged on its front-end, so the artefact class [dead-input] does not apply — do not report it.";
+  if (kind) return `GAME: ${kind.says}.${kept}`;
+  return traits.playScript ? `GAME: nothing declared what kind of game this is.${kept}` : "";
 }
 
 /** `place` for a world a player walks through, `screen` for a game that is a screen to read. */
@@ -485,11 +570,16 @@ export async function readDeclaredGame(ctx: HarnessCtx, project: string): Promis
   const block = meta?.json?.game;
   if (!block || typeof block !== "object") return null;
   const game = normalizeGameTraits(block);
-  return game.kind || game.playScript ? game : null;
+  return declaresSomething(game) ? game : null;
+}
+
+/** Whether a game block says anything studio.json keeps: a kind, a play script or start keys. */
+function declaresSomething(traits: GameTraits): boolean {
+  return Boolean(traits.kind || traits.playScript || traits.start);
 }
 
 /**
- * Write the declared kind back into studio.json, once a night, read-modify-write. The file is
+ * Write the declared kind back into studio.json, once a run, read-modify-write. The file is
  * the user's; every key it already has survives, and a studio.json that cannot be read or
  * parsed is left exactly as it is rather than replaced by ours.
  */
@@ -500,7 +590,7 @@ export async function writeDeclaredGame(
   { from = "the plan" }: { from?: string } = {},
 ): Promise<{ written: boolean; reason?: string; game?: AnyRecord }> {
   const traits = normalizeGameTraits(game);
-  if (!traits.kind && !traits.playScript) return { written: false, reason: "nothing was declared" };
+  if (!declaresSomething(traits)) return { written: false, reason: "nothing was declared" };
   const meta = await readStudioJson(ctx, project);
   if (!isPlainRecord(meta?.json)) {
     return { written: false, reason: "studio.json could not be read" };
@@ -511,6 +601,7 @@ export async function writeDeclaredGame(
     mouseLook: traits.mouseLook,
     keyboardMove: traits.keyboardMove,
     ...(traits.playScript ? { playScript: traits.playScript } : {}),
+    ...(traits.start ? { start: traits.start } : {}),
     declaredBy: String(from).slice(0, DECLARED_BY_CHARS),
   };
   const current = meta.json.game;

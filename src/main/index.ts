@@ -56,6 +56,8 @@ import {
   installProcessHandlers,
   PageRecovery,
   pageRecovery,
+  QuitQuestion,
+  quitQuestion,
   runShutdown,
   shutdownSteps,
   type ShutdownStep,
@@ -88,6 +90,7 @@ import { UpdateAction } from "../shared/app-update.ts";
 import { gatedHostTool } from "./core/genex-cli.ts";
 import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
+import { type FeedbackSources, sendFeedback } from "./feedback.ts";
 import { renderGameCover } from "./game-cover-renderer.ts";
 import { createIpcHandle, pushToRenderer } from "./ipc-handle.ts";
 import { registerBootIpc } from "./ipc/boot.ts";
@@ -148,6 +151,7 @@ import { TerminalKind } from "../shared/terminal.ts";
 import {
   flagValue,
   hasFlag,
+  linuxSecretStorageSwitches,
   quitsWhenLastWindowCloses,
   StudioFlag,
   testLaunchChromiumSwitches,
@@ -197,6 +201,10 @@ const MESSAGE = {
   restartDuringRun: "An unattended run is active. Relaunch to update and end it?",
   restart: "Relaunch",
   keepRunning: "Keep running",
+  quitWithResume: (time: string) => `A paused build will resume on its own at ${time}. Quit and cancel the resume?`,
+  restartWithResume: (time: string) =>
+    `A paused build will resume on its own at ${time}. Relaunch to update and cancel the resume?`,
+  cancel: "Cancel",
   checkForUpdates: "Check for Updates…",
   download: "Download",
   later: "Later",
@@ -271,6 +279,12 @@ const isSmoke = hasFlag(StudioFlag.Smoke);
 for (const [name, value] of testLaunchChromiumSwitches({
   platform: process.platform,
   testLaunch: isSmoke || isSelfTest,
+}))
+  app.commandLine.appendSwitch(name, value);
+for (const [name, value] of linuxSecretStorageSwitches({
+  platform: process.platform,
+  env: process.env,
+  hasPasswordStoreSwitch: app.commandLine.hasSwitch("password-store"),
 }))
   app.commandLine.appendSwitch(name, value);
 // Controlled read gates for the isolated UI acceptance only; never populated in normal use.
@@ -370,6 +384,13 @@ const bootGate = createBootGate(
 let windowControls: WindowControlColors | undefined;
 // `keepAwake.held` doubles as the run-active signal for close/quit below.
 const keepAwake = new KeepAwake(powerSaveBlocker);
+/**
+ * Holds the Mac awake while a paused build waits to resume on its own (`core/auto-resume.ts`): the
+ * run's own hold ended when it settled, and an idle-sleeping Mac would resume only at the next wake.
+ * Kept apart from `keepAwake`: a waiting resume has no preview to protect and must not hold back
+ * an account change, so it is never the run-active signal.
+ */
+const resumeAwake = new KeepAwake(powerSaveBlocker);
 /** The user already answered "Quit" to the active-run prompt — the re-entrant quit must not ask twice. */
 let quitConfirmed = false;
 /** The async quit prompt is on screen — a second Cmd+Q must not stack another one over it. */
@@ -438,11 +459,15 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin } = createLoginControllers({
+const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
   terminals,
   openExternal: (url) => shell.openExternal(url),
   subscription,
   pushUiEvent,
+  onOpenCodeSignedIn: async () => {
+    if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
+  },
   showCodexState: (state) => {
     preview?.setOccluded(state.visible);
     const page = livePage();
@@ -617,6 +642,7 @@ async function createCore(userData: string): Promise<StudioCore> {
     appVersion: app.getVersion(),
     markBoot: (step) => performanceRecorder.mark(step),
     onUiEvent: pushUiEvent,
+    onAutoResumePending: (pending) => (pending ? resumeAwake.hold() : resumeAwake.release()),
     onLog: (line, stream) => {
       // stderr carries the harness's own errors and the core's `[core]`/`[host]` lines.
       if (stream === "stderr") studioLog.write("harness", line);
@@ -776,7 +802,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   // (__studio.capture() renders straight from the canvas), so the window needs no compositor
   // surface and stays genuinely hidden. The previous shown-but-parked windows (x=-4400)
   // resurfaced whenever macOS reshuffled displays or Mission Control ran — four ghost windows
-  // on the user's desktop mid-run. Rendering is offscreen (computer use, 2026-09-07): a hidden window with a
+  // on the user's desktop mid-run. Rendering is offscreen: a hidden window with a
   // normal compositor never fires requestAnimationFrame, whatever backgroundThrottling says,
   // so a game in it stood still — the computer-smoke fixture reported frame 0 after a
   // 600 ms W hold. Offscreen rendering paints the frames itself at 60 fps, so a worker's
@@ -848,6 +874,15 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     if (!facetWin.isDestroyed()) facetWin.destroy();
     released();
   };
+  // One lease at another size for a look (`preview.viewport`); null puts it back at the facet size.
+  port.setViewSize = (size) => {
+    if (facetWin.isDestroyed()) return;
+    const { width, height } = size ?? FACET_WINDOW;
+    // The window opened at FACET_WINDOW as its outer size, so a restore sets that, not the content.
+    if (size) facetWin.setContentSize(width, height);
+    else facetWin.setSize(width, height);
+    port.setBounds({ x: 0, y: 0, width, height });
+  };
   return port;
 }
 
@@ -871,8 +906,8 @@ function collectRendererConsole(win: BrowserWindow): void {
  * A link in chat is a contractor's markdown, and this window is the studio's only UI: nothing
  * a report links to may replace it. A click opens outside the window — the browser, the
  * file's own app for a document in a game folder, or Finder for anything that could run — or
- * is refused in words, and the studio stays on screen. (2026-09-06: "[Base handoff](/…/NOTES.base-builder.md)"
- * navigated the window to a file that did not exist and left the whole app black.)
+ * is refused in words, and the studio stays on screen, never navigated to a file that does not
+ * exist and left black.
  */
 function keepLinksOutside(studio: StudioCore, win: BrowserWindow): void {
   win.webContents.on("will-navigate", (event, url) => {
@@ -953,8 +988,8 @@ function watchWindowLifecycle(win: BrowserWindow): void {
     void claudeLogin.cancel();
     void terminals.dispose();
   });
-  // A crashed renderer leaves an empty window while runs carry on (2026-09-23: the UI ran out of
-  // memory an hour into an Autopilot run and the window stayed blank while the run continued).
+  // A crashed renderer (out of memory an hour into a run, say) leaves an empty window while runs
+  // carry on.
   // Reload it and leave a note in the Studio chat, but only a couple of times a minute, so a page
   // that crashes on load does not spin; past that the person decides.
   const reloads = createReloadPolicy();
@@ -1043,6 +1078,18 @@ async function diagnosticsReport(studio: StudioCore): Promise<string> {
   );
 }
 
+/** Send feedback's report: this build and OS, the diagnostics report and the open chat's newest events. */
+function feedbackSources(studio: StudioCore): FeedbackSources {
+  return {
+    app: { version: app.getVersion(), packaged: app.isPackaged },
+    os: { platform: process.platform, release: os.release(), arch: process.arch },
+    home: app.getPath("home"),
+    diagnostics: () => diagnosticsReport(studio),
+    chatEvents: (threadId, count) => studio.store.listEvents(threadId, { limit: count, tail: true }),
+    fetch,
+  };
+}
+
 /** Every IPC channel, registered once per launch by its domain's registrar in `./ipc/`. */
 function registerIpc(studio: StudioCore): void {
   const handle = createIpcHandle(ipcMain, {
@@ -1051,7 +1098,7 @@ function registerIpc(studio: StudioCore): void {
     performance: performanceRecorder,
   });
   registerPerformanceIpc(handle, performanceRecorder);
-  // The renderer's bootstrap carries only a 600-event tail across all threads; one real night is
+  // The renderer's bootstrap carries only a 600-event tail across all threads; one real run is
   // over a thousand events, so the morning review must be computed from the project's full log.
   const runSummaryReader = new RunSummaryReader(studio.store);
   registerTerminalIpc(handle, {
@@ -1059,6 +1106,7 @@ function registerIpc(studio: StudioCore): void {
     terminals,
     accessibilityEnabled: () => app.isAccessibilitySupportEnabled(),
     shellPath: async () => (await toolchain()).path,
+    openExternal: (url) => shell.openExternal(url),
   });
   registerThreadsIpc(handle, {
     core: studio,
@@ -1088,6 +1136,7 @@ function registerIpc(studio: StudioCore): void {
   registerSettingsIpc(handle, {
     core: studio,
     diagnostics: () => diagnosticsReport(studio),
+    feedback: (payload) => sendFeedback(payload, feedbackSources(studio)),
     licenses: () => readLicenseTexts(resources),
   });
   registerRunSharingIpc(handle, { sharing: runSharing });
@@ -1104,6 +1153,7 @@ function registerIpc(studio: StudioCore): void {
   registerLoginIpc(handle, {
     claudeLogin,
     codexLogin,
+    openCodeLogin,
     subscription,
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
@@ -1245,19 +1295,34 @@ function showUpdateNote(note: { title: string; body: string }, onClick: () => vo
 }
 
 /**
+ * What a quit (or, with `relaunch`, a restart into an update) asks first, or null when it loses
+ * nothing: an active run ends, or a paused build's planned automatic resume is dropped.
+ */
+function quitPrompt(relaunch: boolean): { message: string; keep: string } | null {
+  const resumeAt = core?.autoResumeAt ?? null;
+  const question = quitQuestion({ runActive: keepAwake.held, resumeAt, confirmed: quitConfirmed });
+  if (question === QuitQuestion.RunActive)
+    return { message: relaunch ? MESSAGE.restartDuringRun : MESSAGE.quitDuringRun, keep: MESSAGE.keepRunning };
+  if (question !== QuitQuestion.ResumePending || resumeAt === null) return null;
+  const time = new Date(resumeAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return { message: relaunch ? MESSAGE.restartWithResume(time) : MESSAGE.quitWithResume(time), keep: MESSAGE.cancel };
+}
+
+/**
  * Before a restart into an update: an active run ends only on the person's word, as on a quit.
  * Their yes also lets the window close rather than hide (`watchWindowLifecycle`), which the
  * install waits on. No parent window, like the quit prompt; a Cmd+Q meanwhile is not stacked.
  */
 async function confirmUpdateRestart(): Promise<boolean> {
-  if (!keepAwake.held || quitConfirmed) return true;
+  const prompt = quitPrompt(true);
+  if (!prompt) return true;
   if (quitDialogOpen) return false;
   quitDialogOpen = true;
   try {
     const { response } = await dialog.showMessageBox({
       type: "warning",
-      message: MESSAGE.restartDuringRun,
-      buttons: [MESSAGE.restart, MESSAGE.keepRunning],
+      message: prompt.message,
+      buttons: [MESSAGE.restart, prompt.keep],
       defaultId: 1,
       cancelId: 1,
     });
@@ -1281,7 +1346,7 @@ async function runSelfTestAndExit(): Promise<void> {
 /**
  * One studio per Mac. Two instances share one userData: the second corrupts the first's
  * event store and doubles the harness — a stale twin caused both the "No handler registered"
- * night and the two-contractors-in-one-folder collision. (Smoke runs use their own userData
+ * run and the two-contractors-in-one-folder collision. (Smoke runs use their own userData
  * and may run alongside a real instance.) False when another instance already has it.
  */
 function claimTheMac(): boolean {
@@ -1615,20 +1680,22 @@ app.on("before-quit", async (event) => {
     await devRuntime.stop();
     return;
   }
-  // A quit mid-run ends the night silently — it must be an explicit choice. preventDefault
+  // A quit mid-run ends the run silently — it must be an explicit choice. preventDefault
   // lands before the first await, or the quit proceeds regardless. The dialog is async: a sync
   // dialog blocks the main-process event loop, and the harness's calls into main stall for as
   // long as the prompt sits unanswered — pausing the very run the prompt is protecting.
   // No parent window: the window may be hidden, and a sheet on a hidden window is invisible.
-  if (keepAwake.held && !quitConfirmed) {
+  // A paused build waiting to resume on its own is asked about too: the quit drops the resume.
+  const prompt = quitPrompt(false);
+  if (prompt) {
     event.preventDefault();
     if (quitDialogOpen) return;
     quitDialogOpen = true;
     try {
       const { response } = await dialog.showMessageBox({
         type: "warning",
-        message: MESSAGE.quitDuringRun,
-        buttons: [MESSAGE.quit, MESSAGE.keepRunning],
+        message: prompt.message,
+        buttons: [MESSAGE.quit, prompt.keep],
         defaultId: 1,
         cancelId: 1,
       });

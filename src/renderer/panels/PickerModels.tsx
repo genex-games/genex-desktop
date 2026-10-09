@@ -4,8 +4,9 @@
  * The provider's default model is always listed.
  */
 import { type JSX, useId, useState } from "react";
-import { latestModels, modelName, shownModels } from "../model-lineup.ts";
-import { useModelPicker } from "../state/hooks.ts";
+import { latestModels, modelName, runnableModels, shownModels } from "../model-lineup.ts";
+import { matchingModels, offersSearch } from "./picker-search.ts";
+import { useEngines, useModelPicker } from "../state/hooks.ts";
 import { pickerModelSet, pickerModelsReset } from "../state/model-picker.ts";
 import { studio } from "../state/studio.ts";
 import type { EngineDescriptor } from "../types.ts";
@@ -29,10 +30,14 @@ interface PickerRow {
   locked: boolean;
 }
 
-function pickerRows(engine: EngineDescriptor, choices: Readonly<Record<string, boolean>>): PickerRow[] {
+function pickerRows(
+  engine: EngineDescriptor,
+  choices: Readonly<Record<string, boolean>>,
+  runnable: ReadonlySet<string>,
+): PickerRow[] {
   const models = engine.models.filter((model) => model.id !== DEFAULT_MODEL);
-  const latest = latestModels(engine.id, models);
-  const shown = shownModels(engine.id, models, choices);
+  const latest = latestModels(engine.id, models, runnable);
+  const shown = shownModels(engine.id, models, choices, runnable);
   return models.map((model) => ({
     id: model.id,
     name: modelName(engine.id, model),
@@ -65,11 +70,45 @@ function ModelSwitch({ row, onChange }: { row: PickerRow; onChange: (shown: bool
   );
 }
 
+/** The search over a long Older models list; Escape clears a query before it can close Settings. */
+function OlderSearch({
+  name,
+  query,
+  onQuery,
+}: {
+  name: string;
+  query: string;
+  onQuery: (query: string) => void;
+}): JSX.Element {
+  return (
+    <div className="px-2.5 pt-1 pb-1.5" data-keeps-escape={query ? "" : undefined}>
+      <input
+        type="search"
+        aria-label={PICKER_MODELS_WORDS.searchLabel(name)}
+        placeholder={PICKER_MODELS_WORDS.search}
+        data-picker-search
+        autoComplete="off"
+        spellCheck={false}
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !query) return;
+          event.stopPropagation();
+          onQuery("");
+        }}
+        className="h-8 w-full rounded-control border border-input bg-field px-2.5 text-chat-sub text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink"
+      />
+    </div>
+  );
+}
+
 export function PickerModels({ engine, name }: { engine: EngineDescriptor; name: string }): JSX.Element | null {
   const choices = useModelPicker((state) => state.choices[engine.id] ?? NO_CHOICES);
   const [olderOpen, setOlderOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const olderId = useId();
-  const rows = pickerRows(engine, choices);
+  const engines = useEngines((state) => state.list);
+  const rows = pickerRows(engine, choices, runnableModels(engine.id, engines));
   if (rows.length === 0) return null;
   const store = studio().modelPicker;
   const change = (row: PickerRow) => (shown: boolean) =>
@@ -81,6 +120,8 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
   const older = rows.filter((row) => !row.byDefault);
   const changed = rows.some((row) => !row.locked && row.shown !== row.byDefault);
   const olderShown = older.filter((row) => row.shown).length;
+  const searchable = offersSearch(older.length);
+  const found = searchable ? matchingModels(older, query) : older;
   return (
     <div
       role="group"
@@ -122,9 +163,15 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
             />
           </button>
           <div id={olderId} hidden={!olderOpen}>
-            {older.map((row) => (
+            {searchable && <OlderSearch name={name} query={query} onQuery={setQuery} />}
+            {found.map((row) => (
               <ModelSwitch key={row.id} row={row} onChange={change(row)} />
             ))}
+            {found.length === 0 && (
+              <p role="status" className="px-2.5 py-2 text-chat-sub text-ink-3">
+                {PICKER_MODELS_WORDS.noMatch(query)}
+              </p>
+            )}
           </div>
         </>
       )}

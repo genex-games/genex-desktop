@@ -53,7 +53,7 @@ test("first native worker activity appears before first-round judgment in old lo
   )!;
   assert.equal(buildProgress(graph).nodeId, "iter:river:1");
   // What the checks saw is the starting point's own detail, not an unattributed sentence bolted
-  // onto the line that says how tonight is going.
+  // onto the line that says how this run is going.
   assert.doesNotMatch(buildProgress(graph).health, /identical cameras/);
   assert.match(buildProgress(graph).health, /empty game/);
   assert.doesNotMatch(buildProgress(graph).health, /scaffold/);
@@ -84,7 +84,7 @@ test("native start and recovered old start cannot overwrite a recorded verdict",
   assert.equal(graph.nodes.find((n) => n.kind === "iteration")?.status, "accepted");
   assert.equal(buildProgress(graph).nodeId, "final");
 });
-test("while the night runs, the header says what the outcome card says: the recorded summary", () => {
+test("while the run is going, the header says what the outcome card says: the recorded summary", () => {
   const graph = projectBuildGraph(
     [
       ...start,
@@ -179,9 +179,9 @@ test("an earlier build retains its rounds after an empty replacement run", () =>
   assert.equal(previous.runDir, "/runs/run_x");
 });
 
-// ── a lead's night (M1.9) ───────────────────────────────────────────────────────────────────
+// ── a lead's run (M1.9) ───────────────────────────────────────────────────────────────────
 // It has no shared-base stage, so the phase has to be read off its builders instead. The first
-// real director night reported "Building the shared base · Checks pending" from dusk to dawn.
+// real director run reported "Building the shared base · Checks pending" from dusk to dawn.
 
 const leadStart = [
   event(1, "run_started", { engine: "claude-code", goal: "a demolition derby" }),
@@ -190,16 +190,16 @@ const leadStart = [
 const worker_ = (id: number, workerId: string, state: string, extra: Record<string, unknown> = {}) =>
   event(id, "director_worker", { workerId, title: `${workerId} work`, mode: "loop", state, ...extra });
 
-test("a lead night with no builders yet says it is getting started, not building a base", () => {
+test("a lead run with no builders yet says it is getting started, not building a base", () => {
   const progress = buildProgress(projectBuildGraph(leadStart, "parent", [], "/runs")!);
   assert.equal(progress.nodeId, "base");
   assert.equal(progress.title, "Getting started");
   assert.doesNotMatch(progress.title, /base/i);
-  // Flipped (owner, 2026-10-02): no time-of-day words in the app's copy.
+  // Flipped: no time-of-day words in the app's copy.
   assert.match(progress.health, /deciding what this build needs/);
 });
 
-test("once a builder starts, the lead night counts parts — never a base", () => {
+test("once a builder starts, the lead run counts parts — never a base", () => {
   const graph = projectBuildGraph(
     [...leadStart, worker_(3, "crumple", "running"), worker_(4, "dirt", "running")],
     "parent",
@@ -214,7 +214,7 @@ test("once a builder starts, the lead night counts parts — never a base", () =
   assert.match(progress.health, /Nothing kept yet/);
 });
 
-test("a lead night counts the rounds its builders kept", () => {
+test("a lead run counts the rounds its builders kept", () => {
   const graph = projectBuildGraph(
     [
       ...leadStart,
@@ -256,7 +256,7 @@ test("a builder that ran to the end reads as done, not stopped", () => {
   assert.equal(cottages.satisfied, null, "the lead ended that one early — nobody said it was done");
 });
 
-test("a lead night between builders says the lead is deciding, not that a base is missing", () => {
+test("a lead run between builders says the lead is deciding, not that a base is missing", () => {
   const graph = projectBuildGraph(
     [...leadStart, worker_(3, "crumple", "stopped", { stoppedBecause: "done" })],
     "parent",
@@ -267,7 +267,7 @@ test("a lead night between builders says the lead is deciding, not that a base i
   assert.match(buildProgress(graph).health, /deciding what comes next/);
 });
 
-test("a lead night that built a starting point still shows one", () => {
+test("a lead run that built a starting point still shows one", () => {
   const graph = projectBuildGraph(
     [...leadStart, event(3, "autopilot_base", { ok: true, commit: "abc", empty: true })],
     "parent",
@@ -279,7 +279,7 @@ test("a lead night that built a starting point still shows one", () => {
   assert.equal(buildProgress(graph).title, "The starting point is ready");
 });
 
-test("a finished night reads off what happened to the build, not off a victory flag", () => {
+test("a finished run reads off what happened to the build, not off a victory flag", () => {
   const of = (payload: Record<string, unknown>) =>
     buildProgress(
       projectBuildGraph(
@@ -295,7 +295,7 @@ test("a finished night reads off what happened to the build, not off a victory f
       )!,
     );
   assert.equal(of({ victory: false, landed: true }).title, "Finished after 1 round · live in your game");
-  // "not made live yet" is only true of a night that merged something: the head has to have moved.
+  // "not made live yet" is only true of a run that merged something: the head has to have moved.
   assert.equal(
     of({
       victory: false,
@@ -306,7 +306,7 @@ test("a finished night reads off what happened to the build, not off a victory f
     }).title,
     "Finished after 1 round · not made live yet",
   );
-  // Flipped (owner, 2026-10-02): no time-of-day words in the app's copy.
+  // Flipped: no time-of-day words in the app's copy.
   assert.equal(
     of({ victory: false, landed: false, stoppedBecause: "land=no" }).title,
     "Finished after 1 round · nothing new",
@@ -315,9 +315,9 @@ test("a finished night reads off what happened to the build, not off a victory f
   assert.equal(of({ victory: false }).title, "Finished after 1 round");
 });
 
-test("a night the engine\u2019s limit paused is never called finished", () => {
-  // The limit ends the night with run_finished immediately followed by autopilot_paused; the
-  // Builds header used to read "Finished after 1 round \u00b7 not made live yet" over a night the
+test("a run the engine\u2019s limit paused is never called finished", () => {
+  // The limit ends the run with run_finished immediately followed by autopilot_paused; the
+  // Builds header used to read "Finished after 1 round \u00b7 not made live yet" over a run the
   // user could have resumed.
   const paused = projectBuildGraph(
     [
@@ -358,7 +358,7 @@ test("a merged build is offered once, and only when something says it runs", () 
 });
 
 /**
- * Reload stayed lit after the person played the night's build from Builds, the morning card or a
+ * Reload stayed lit after the person played the run's build from Builds, the morning card or a
  * review: those call main directly, and the stage only knew what its own Play had shown. Main now
  * says which build Live shows (`live.behind` `shows`), by full hash where a record may abbreviate.
  */
@@ -382,9 +382,9 @@ test("the stage's mount read of Live never undoes an event main sent while it wa
 });
 
 /**
- * Live never changes while the person watches it (the user, 2026-09-28: "if I'm sitting in Live
- * the game must not update on its own; only Reload is highlighted, with a changed tooltip").
- * Reload names what it would bring: what main holds first, then a healthy build of the night,
+ * Live never changes while the person watches it: the game does not update on its own, and only
+ * Reload is highlighted, with a changed tooltip.
+ * Reload names what it would bring: what main holds first, then a healthy build of the run,
  * then the way back from a build found broken.
  */
 test("Reload offers what waits for Live, main's change first", () => {
@@ -425,13 +425,13 @@ test("nothing goes into Live on its own while someone is watching a game in it",
   ]) {
     assert.equal(appliesUnseen(held, stage), true, JSON.stringify(stage));
     assert.equal(appliesUnseen(broken, stage), true, JSON.stringify(stage));
-    // A night's newest build is never swapped in unasked: it waits for Reload, Play or Play latest.
+    // A run's newest build is never swapped in unasked: it waits for Reload, Play or Play latest.
     assert.equal(appliesUnseen(build, stage), false, JSON.stringify(stage));
   }
   assert.equal(appliesUnseen(null, { ...watching, view: "builds" }), false);
 });
 
-test("only the empty scaffold takes the night's first healthy build by itself", () => {
+test("only the empty scaffold takes the run's first healthy build by itself", () => {
   const offer = { head: "aaa", at: "x", healthy: true };
   const empty: StageWatch = { view: "live", visible: true, showEmpty: true };
   assert.equal(firstBuildShows(offer, empty), true);

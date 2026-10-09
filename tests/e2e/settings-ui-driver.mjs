@@ -290,7 +290,48 @@ async function acceptance() {
         `Array.from(document.querySelectorAll('#settings-panel-local button')).some(b=>b.textContent==='Installed'&&b.disabled&&getComputedStyle(b).cursor!=='pointer')`,
       ),
     );
+    // The cancelled download above is still the host's last job for this model.
+    check(
+      "a fully downloaded model shows no saved-share bar from an earlier stopped download",
+      !(await js(`!!document.querySelector('[aria-label="Downloaded part of Bonsai 2 27B PQ2_0"]')`)),
+    );
     await capture("local-installed");
+    const removed = [];
+    replace("studio:models.remove", (_event, value) => {
+      removed.push(value.model);
+      replace("studio:engines", () => providers.filter((engine) => engine.id !== "bonsai"));
+      emit("engines.changed", {});
+      return true;
+    });
+    const trash = `[aria-label="Delete Bonsai 2 27B PQ2_0"]`;
+    await click(trash);
+    check(
+      "Delete asks first, with focus on Cancel and nothing deleted",
+      removed.length === 0 &&
+        (await until(
+          `document.activeElement?.dataset.modelDelete==='cancel' && document.querySelector('#settings-panel-local').textContent.includes('Delete it from this Mac?')`,
+        )),
+    );
+    await capture("local-delete-ask");
+    await key("Enter");
+    check(
+      "Cancel keeps the model and returns focus to its Delete button",
+      removed.length === 0 && (await until(`document.activeElement?.matches(${JSON.stringify(trash)})`)),
+    );
+    await click(trash);
+    await click('[data-model-delete="confirm"]');
+    check(
+      "Delete removes the model through the host and the row offers Download again",
+      (await until(`!!document.querySelector('[aria-label="Download Bonsai 2 27B PQ2_0"]')`)) &&
+        removed.join("|") === model,
+      removed,
+    );
+    check(
+      "focus stays inside Settings once the deleted row changes",
+      await js(`!!document.activeElement?.closest('[data-testid="settings-dialog"]')`),
+    );
+    replace("studio:engines", () => providers);
+    emit("engines.changed", {});
     await click("#settings-tab-providers");
     await until(
       `document.querySelector('[aria-label="Claude Code"] [data-variant="default"]')?.textContent==='Sign in'`,

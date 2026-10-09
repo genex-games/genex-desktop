@@ -49,7 +49,7 @@ describe("relativeGamePath on macOS keeps its reading", () => {
   }
 });
 
-describe("relativeGamePath on POSIX reads what a climb resolves to (P02-F2)", () => {
+describe("relativeGamePath on POSIX reads what a climb resolves to", () => {
   const rows: Array<[string, string, string | null]> = [
     ["a climb out of an owned folder, relative", "src/sky/../../index.html", "index.html"],
     ["a climb out of an owned folder, absolute", "/w/marsh/src/sky/../../index.html", "index.html"],

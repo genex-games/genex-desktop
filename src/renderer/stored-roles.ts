@@ -3,13 +3,11 @@
  *
  * A model pick is a *preset*: it fills all three jobs from the policy table in
  * `harness-seed/loop/model-roles.ts`. The picks are then kept per engine in `localStorage`, and
- * a record written by an older build outlives the table that wrote it — which is exactly what
- * went wrong on the first real night. A saved record from a build whose preset made one model do
- * everything won over today's table, so the run launched with `roles.judge` set to the
- * orchestrator's model and the dearest model in the catalogue answered forty-five yes/no crop
- * questions. The owner settled it (open decision 6): a stored record may be migrated once, even
+ * a record written by an older build outlives the table that wrote it: a saved record whose
+ * preset made one model do everything would win over today's table, and the dearest model in the
+ * catalogue would answer every yes/no crop question. So a stored record may be migrated once, even
  * though that overrides a saved preference, and the run card names the judge model so the same
- * mistake cannot be silent again.
+ * mistake cannot be silent.
  *
  * The migration is deliberately blunt. An old record cannot be told apart from a deliberate
  * split — three equal slots is what both look like — so a record from any other version is
@@ -61,7 +59,7 @@ export function packStoredRoles(roles: RoleRecord): string {
  * A record whose crossed jobs (cross-provider roles) all name a subscription that is signed
  * in now. A job remembered on one that is not falls back to this engine's own default for
  * that job — the model in the slot was that other engine's, so it goes too — instead of a
- * night that dies on a login prompt at 3am. A record with nothing crossed is returned as is.
+ * run that dies on a login prompt at 3am. A record with nothing crossed is returned as is.
  */
 export function withAvailableEngines(roles: RoleRecord, available: string[]): RoleRecord {
   if (!roles.engines) return roles;

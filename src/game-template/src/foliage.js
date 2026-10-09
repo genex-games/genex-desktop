@@ -1,9 +1,8 @@
 /**
  * Foliage — harness-owned like `materials.js`, never a facet's file. Trees, bushes, logs.
  *
- * Why this exists: a whole run (medieval-village-3, HARNESS-POSTMORTEM-TREES.md) shipped trees
- * built as flat-shaded icosahedra with a moss texture. From every camera they read as grey
- * boulders on posts, and the judge said so five iterations in a row. A solid mesh can never
+ * Why this exists: trees built as flat-shaded icosahedra with a moss texture read as grey
+ * boulders on posts from every camera, and the judge says so round after round. A solid mesh can never
  * read as a canopy: leaves are thousands of small surfaces with air between them. Without
  * assets the answer is the same one every engine used before megascans — **alpha-tested
  * leaf cards**: a few dozen crossed planes, each carrying a baked cluster of leaf shapes with

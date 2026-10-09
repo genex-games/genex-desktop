@@ -389,7 +389,7 @@ export type LeadEnd = { reason: LeadEndReason; at: number; words: string };
 /**
  * The journal a lead run resumes from, saved under the run's shared journal artifact
  * (run-journal.ts `journalId`, keyed by `run.runId`): the app's Resume, its boot repair and
- * `resumeRun` find a run there by `run` and `phase`. `workedMs` is what `nightClock` reads.
+ * `resumeRun` find a run there by `run` and `phase`. `workedMs` is what `loopRunClock` reads.
  * `ends` lists each time the run stopped working, oldest first: pauses a Resume took up, then the
  * last end. `logOffset` is where Unreal's log ended at the last save point (or the run's start),
  * so a save point names only the errors new since the one before.
