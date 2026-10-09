@@ -23,15 +23,16 @@
  * files are backed up first, so even a wrong call here is recoverable without git archaeology.
  *
  * Installs from before this file exist have no manifest. They also predate the first
- * self-edit (the manifest ships before the first overnight run), so the one-time migration
+ * self-edit (the manifest ships before the first unattended run), so the one-time migration
  * treats the whole workspace as untouched: the new seed is applied file by file and the
  * manifest written. From then on every install has one.
  */
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { atomicWriteJson, pathExists, readJsonIfExists } from "./fsx.ts";
-import { isBelow } from "./paths.ts";
+import { atomicWriteJson, pathExists, readJsonIfExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
+import { containedReal, isBelow } from "./paths.ts";
+import { RENAMED_SEED_FILES, renameInSource } from "./seed-renames.ts";
 
 /** What a boot's seed pass did: first launch, something changed, or nothing to do. Read by the boot notice. */
 export const SeedUpgradeMode = {
@@ -45,6 +46,8 @@ export type SeedUpgradeMode = (typeof SeedUpgradeMode)[keyof typeof SeedUpgradeM
 const SEED_BACKUP_PREFIX = "seed-backup-";
 /** Where the layout migration backs up the agent's edited modules, beside the vintages but not one of them. */
 const HARNESS_EDITS_PREFIX = "harness-edits-";
+/** The largest module the rename rewrites; anything bigger is no seed module and is left alone. */
+const MAX_RENAMED_MODULE_BYTES = 4_000_000;
 /** How much of a failed layout migration's error the manifest keeps. */
 const LAYOUT_ERROR_MAX_CHARS = 500;
 /** The format `writeCatalogue` writes. */
@@ -59,6 +62,11 @@ export interface SeedUpgradeReport {
   kept: string[];
   /** Seed files this build no longer ships, removed from the workspace because nothing had edited them. */
   retired: string[];
+  /**
+   * The agent's files whose old seed names were rewritten to the renamed ones (seed-renames.ts),
+   * at their path after the upgrade: an edited copy of a renamed module is listed at its new path.
+   */
+  renamed?: string[];
   /**
    * Code the seed moved out of a file the agent edited (kept), which the kept copy still defines
    * while other harness files now import it from its new home. See SEED_MOVES.
@@ -178,7 +186,7 @@ export const SEED_MOVES: readonly SeedMove[] = [
     to: "loop/director/commission.ts",
     names: ["durationCommission", "goalCommission"],
   },
-  { from: "loop/main.ts", to: "loop/run-dispatch.ts", names: ["nightRefusal"] },
+  { from: "loop/main.ts", to: "loop/run-dispatch.ts", names: ["loopRunRefusal"] },
   { from: "loop/main.ts", to: "loop/chat-dispatch.ts", names: ["judgeableFirst"] },
   { from: "loop/turn-loop.ts", to: "loop/chat-session.ts", names: ["nameFromAsk"] },
   { from: "loop/turn-loop.ts", to: "loop/tool-loop.ts", names: ["resolveContextWindow"] },
@@ -335,7 +343,7 @@ async function deletedBeforeMigration(
  * in the skill list, in the architect's file menu. These four skills were read by no run code
  * (only `director.md` and `facet-decomposition.md` are) and said things about a loop that no
  * longer exists. The workers' handover modules went when Claude Code and Codex workers were left
- * to their own compaction (2026-10-05): nothing imports them, and a copy left behind would fail
+ * to their own compaction: nothing imports them, and a copy left behind would fail
  * the self-edit gate's type check over `loop/` (it reads facet state that no longer exists).
  *
  * The rule is the ownership rule, backwards: a workspace copy whose bytes still equal what the
@@ -359,6 +367,8 @@ export const RETIRED_SEED_PATHS: readonly string[] = [
   "skills/unattended-runs.md",
   "loop/facet/handover-prompts.ts",
   "loop/facet/phases/handover.ts",
+  // Renamed modules (seed-renames.ts): an untouched copy at the old path goes, an edited one moves.
+  ...Object.keys(RENAMED_SEED_FILES),
 ];
 
 export interface ApplySeedOptions {
@@ -434,6 +444,8 @@ export async function applySeed(options: ApplySeedOptions): Promise<SeedUpgradeR
   const applied = new Map<string, string>(Object.entries(manifest ?? {}).filter(([rel]) => !seedHashes.has(rel)));
   const report = emptyReport(SeedUpgradeMode.Unchanged);
   if (isDowngradedManifest(body)) report.downgraded = true;
+  const renamed = await carryRenamesOver(options, manifest, existing);
+  if (renamed.length > 0) report.renamed = renamed;
   const seedModules = [...seedHashes.keys()].filter(isTsModule);
   const deferred = await deferredByLayout(seedModules, options.workspaceDir, body);
   const pass: SeedPass = { options, manifest, applied, deferred, report };
@@ -631,6 +643,93 @@ async function finishSeedPass(pass: SeedPass, body: SeedManifest | null): Promis
 }
 
 /**
+ * The seed's renames (seed-renames.ts), carried into the files this upgrade keeps: a module the
+ * agent edited, or one it wrote itself, still says the old names, which the shipped files no
+ * longer export, so the harness would not load. Each such file is rewritten in place, its original
+ * backed up first; an edited copy of a renamed module moves to its new path and stays the agent's
+ * there. A file the app laid down is left to the pass, which replaces or retires it. Nothing is
+ * rewritten without a backup directory (the crash-recovery reseed) or a manifest (an install from
+ * before self-edits), and never through a link. Answers the files it rewrote.
+ */
+async function carryRenamesOver(
+  options: ApplySeedOptions,
+  manifest: Record<string, string> | null,
+  files: readonly string[],
+): Promise<string[]> {
+  if (!options.backupDir || manifest === null) return [];
+  const rewritten: string[] = [];
+  for (const [from, to] of Object.entries(RENAMED_SEED_FILES))
+    if (await moveRenamedModule(options, manifest, from, to)) rewritten.push(to);
+  for (const rel of files) {
+    const stillThere = isTsModule(rel) && !(rel in RENAMED_SEED_FILES);
+    if (stillThere && (await rewriteOldNames(options, manifest, rel))) rewritten.push(rel);
+  }
+  return rewritten.sort();
+}
+
+/**
+ * Move the agent's copy of a renamed module to its new path, its names rewritten, where the pass
+ * keeps it as the agent's: over nothing, or over the app's own untouched copy (backed up first),
+ * never over a file the agent wrote there. An untouched copy at the old path is left for retirement.
+ */
+async function moveRenamedModule(
+  options: ApplySeedOptions,
+  manifest: Record<string, string>,
+  from: string,
+  to: string,
+): Promise<boolean> {
+  const text = await ownModuleText(options.workspaceDir, from);
+  const lastApplied = manifest[from] ?? null;
+  if (text === null || lastApplied === hashText(text)) return false;
+  if (!(await replaceableByMove(options.workspaceDir, manifest, to))) return false;
+  await backUp(options, from);
+  await backUp(options, to);
+  await writeFileNoFollow(path.join(options.workspaceDir, to), renameInSource(to, text));
+  await rm(path.join(options.workspaceDir, from), { force: true });
+  manifest[to] = manifest[to] ?? lastApplied ?? AGENT_WROTE;
+  return true;
+}
+
+/** Nothing at `rel`, or the app's own untouched copy: what a moved module may take the place of. */
+async function replaceableByMove(
+  workspaceDir: string,
+  manifest: Record<string, string>,
+  rel: string,
+): Promise<boolean> {
+  if (!(await pathExists(path.join(workspaceDir, rel)))) return true;
+  const text = await ownModuleText(workspaceDir, rel);
+  return text !== null && manifest[rel] === hashText(text);
+}
+
+/** Rewrite the old names in one of the agent's modules; whether anything changed. */
+async function rewriteOldNames(
+  options: ApplySeedOptions,
+  manifest: Record<string, string>,
+  rel: string,
+): Promise<boolean> {
+  const text = await ownModuleText(options.workspaceDir, rel);
+  if (text === null || manifest[rel] === hashText(text)) return false;
+  const renamed = renameInSource(rel, text);
+  if (renamed === text) return false;
+  await backUp(options, rel);
+  await writeFileNoFollow(path.join(options.workspaceDir, rel), renamed);
+  return true;
+}
+
+/** A module's text, when it is a regular file inside the workspace reached through no link; else null. */
+async function ownModuleText(workspaceDir: string, rel: string): Promise<string | null> {
+  try {
+    await containedReal(workspaceDir, rel);
+    return (await readRegularFile(path.join(workspaceDir, rel), MAX_RENAMED_MODULE_BYTES)).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The sha256 of a file's text, as `hashFile` would read it. */
+const hashText = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+/**
  * Remove the workspace copies of `RETIRED_SEED_PATHS` the app itself laid down.
  *
  * The manifest ENTRY survives the removal, marked in `retired`. Dropping it would make an older
@@ -738,7 +837,7 @@ export interface ReconcileOptions {
  *
  * A restore moves files *back in time* without touching the manifest, so every rewound file
  * then hashes differently from its manifest entry — and the ownership rule above reads exactly
- * that difference as "the agent edited this". One overnight run had the watchdog rewind four
+ * that difference as "the agent edited this". One unattended run had the watchdog rewind four
  * times, after which the next boot classified the entire restored workspace as agent-owned and
  * no shipped fix could ever land again.
  *
@@ -1202,7 +1301,7 @@ export interface CraftMigrationReport {
 /**
  * Move the craft opinions out of an installed catalogue, and bring the survivors up to date.
  *
- * The catalogue on a machine that has run nights is a mixture: entries the seed put there,
+ * The catalogue on a machine that has had runs is a mixture: entries the seed put there,
  * entries a planner wrote, entries a judge grew. Only the first kind is the seed's to move,
  * so `origin: "seed"` is the gate, and a planner-written entry that happens to share an id is
  * left exactly as it is. An entry the seed still ships is not retired but REFRESHED — its
@@ -1228,7 +1327,7 @@ export async function retireMigratedCraftChecks(
   // Nor can it be the only authority. Every retrieval path — the planner's craft menu, a plan
   // that names a recipe id, THE FIX's named recipe — reads the INSTALL's `library/recipes`, and
   // a recipe the agent has edited keeps its own copy for ever (the ownership rule), which on a
-  // machine that has run nights means a recipe written before craft existed: `kind` absent, so
+  // machine that has had runs means a recipe written before craft existed: `kind` absent, so
   // `normalizeRecipe` reads it as a technique and no craft path can see it. Retiring against the
   // seed alone struck twelve opinions off such an install with nothing left to answer for them.
   // An untouched recipe is upgraded later in this same pass (library/checks.json sorts before

@@ -29,7 +29,7 @@ import {
   noProgressNote,
   progressCheckNote,
 } from "./local-session-prompts.ts";
-import { bonsaiMode, changesSomething, localMode, permitCall } from "./local-session-permissions.ts";
+import { changesSomething, localMode, permitCall, sessionMode } from "./local-session-permissions.ts";
 import {
   executeLocalTool,
   INSPECTION_TOOLS,
@@ -106,16 +106,21 @@ interface SavedSession {
   parentSession?: string;
 }
 export interface LocalSessionOptions {
+  /** The engine whose sessions these are (Bonsai, OpenRouter): its id names every event and result. */
+  engine?: string;
   root: string;
   scratchRoot?: string;
   protectedPaths: string[];
   complete: (r: CompleteRequest) => Promise<CompleteResponse>;
-  contextWindow: number;
+  /** The working context, the same for every model (a local runtime) or per model (an API's catalog). */
+  contextWindow: number | ((model: string) => number);
   toolPath?: () => Promise<string>;
 }
 
 /** One running session: what it was asked, where it works, and what it has done so far. */
 interface LocalRun {
+  /** The engine whose session this is. */
+  engine: string;
   request: DelegateRequest;
   model: string;
   cwd: string;
@@ -157,9 +162,18 @@ interface FileBounds {
 
 export class LocalSessions {
   readonly options: LocalSessionOptions;
+  /** The engine whose sessions these are; Bonsai when the options name none. */
+  readonly engine: string;
   #active = new Set<string>();
   constructor(options: LocalSessionOptions) {
     this.options = options;
+    this.engine = options.engine ?? EngineId.Bonsai;
+  }
+
+  /** The working context for one model. */
+  contextWindowFor(model: string): number {
+    const window = this.options.contextWindow;
+    return typeof window === "number" ? window : window(model);
   }
 
   async run(request: DelegateRequest, model: string): Promise<DelegateResult> {
@@ -232,7 +246,7 @@ export class LocalSessions {
     // and the model reads of it at its next round.
     request.permissions?.onControl?.({
       setMode: async (mode) => {
-        run.mode = bonsaiMode(mode);
+        run.mode = sessionMode(run.engine, mode);
         run.modeNote = modeChangedNote(run.mode);
       },
     });
@@ -287,6 +301,7 @@ export class LocalSessions {
     const studioToolCalls: NonNullable<DelegateResult["studioToolCalls"]> = [];
     const sandbox = readonly ? null : await this.#sandbox(cwd, id, forbidden, deniedWrites);
     return {
+      engine: this.engine,
       request,
       model,
       cwd,
@@ -307,7 +322,7 @@ export class LocalSessions {
         sandbox,
         forbidden,
         deniedWrites,
-        label: `${EngineId.Bonsai}:${id}`,
+        label: `${this.engine}:${id}`,
         seenReads: new Map(),
         studioToolCalls,
       },
@@ -320,7 +335,7 @@ export class LocalSessions {
       idleRounds: 0,
       outputRepairs: 0,
       workspaceStamp: "",
-      mode: localMode(request.permissions),
+      mode: localMode(this.engine, request.permissions),
       modeNote: "",
     };
   }
@@ -371,7 +386,7 @@ export class LocalSessions {
       }).catch(() => null);
       if (answer) gitMetadata.push(await realpath(path.resolve(cwd, answer.stdout.trim())));
     }
-    const scratchRoot = this.options.scratchRoot ?? path.join(os.tmpdir(), `studio-${EngineId.Bonsai}`);
+    const scratchRoot = this.options.scratchRoot ?? path.join(os.tmpdir(), `studio-${this.engine}`);
     return ProcessSandbox.create({
       writableRoots: [cwd, ...gitMetadata],
       scratchDir: path.join(scratchRoot, id),
@@ -397,7 +412,7 @@ export class LocalSessions {
     run.summary = response.message.content;
     addUsage(run.usage, response.usage);
     if (response.stopReason === StopReason.Length) return this.#repairTruncatedReply(run);
-    // The allowance is for cuts in a row: a whole reply between them starts it again (P04-F5).
+    // The allowance is for cuts in a row: a whole reply between them starts it again.
     run.outputRepairs = 0;
     const { reasoning: _reasoning, ...assistantMessage } = response.message;
     run.messages.push(assistantMessage);
@@ -466,7 +481,7 @@ export class LocalSessions {
     const { request, messages, saved } = run;
     request.onEvent?.({
       type: DelegateEventType.Activity,
-      payload: { phase: ChatActivityPhase.Compacting, sessionId: run.id, engine: EngineId.Bonsai },
+      payload: { phase: ChatActivityPhase.Compacting, sessionId: run.id, engine: run.engine },
     });
     const earlier = messages.slice(0, cut);
     const next = await summarizeLocalCheckpoint({
@@ -479,7 +494,7 @@ export class LocalSessions {
         addUsage(run.usage, answer.usage);
         return answer;
       },
-      contextWindow: this.options.contextWindow,
+      contextWindow: this.contextWindowFor(run.model),
     });
     run.signal.throwIfAborted();
     const archive = path.join(this.options.root, "checkpoints", run.id);
@@ -498,7 +513,7 @@ export class LocalSessions {
     request.onEvent?.({
       type: DelegateEventType.Context,
       payload: {
-        engine: EngineId.Bonsai,
+        engine: run.engine,
         model: run.model,
         sessionId: run.id,
         source: ContextSource.NativeTokenizer,
@@ -517,7 +532,7 @@ export class LocalSessions {
       run.signal.throwIfAborted();
       run.request.onEvent?.({
         type: DelegateEventType.Activity,
-        payload: { phase: ChatActivityPhase.Tool, sessionId: run.id, engine: EngineId.Bonsai, tool: call.name },
+        payload: { phase: ChatActivityPhase.Tool, sessionId: run.id, engine: run.engine, tool: call.name },
       });
       const { answer, failed } = await callTool(run, call);
       const text = typeof answer === "string" ? answer : answer.text;
@@ -614,7 +629,7 @@ function completionRequest(run: LocalRun): CompleteRequest {
     onActivity: (phase) =>
       request.onEvent?.({
         type: DelegateEventType.Activity,
-        payload: { phase, sessionId: id, engine: EngineId.Bonsai },
+        payload: { phase, sessionId: id, engine: run.engine },
       }),
     onDelta: (delta) => request.onEvent?.({ type: DelegateEventType.TextDelta, payload: { streamId, delta } }),
   };
@@ -663,7 +678,14 @@ function reportAssistant(run: LocalRun, response: CompleteResponse): void {
 async function callTool(run: LocalRun, call: ToolCall): Promise<{ answer: LiveToolResult; failed: boolean }> {
   try {
     const { mode, cwd, signal, request } = run;
-    const refused = await permitCall({ mode, call, cwd, permissions: request.permissions, signal });
+    const refused = await permitCall({
+      engine: run.engine,
+      mode,
+      call,
+      cwd,
+      permissions: request.permissions,
+      signal,
+    });
     if (refused !== null) return { answer: refused, failed: true };
     return { answer: await executeLocalTool(call, run.definitions, run.tools), failed: false };
   } catch (err) {
@@ -716,7 +738,7 @@ function localResult(run: LocalRun, ok: boolean, stopReason: string, errorText?:
     summary: run.summary,
     usage: run.usage,
     turns: run.turns,
-    engine: EngineId.Bonsai,
+    engine: run.engine,
     model: run.actualModel,
     requestedModel: run.model,
     sessionId: run.id,

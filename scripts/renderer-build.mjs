@@ -11,9 +11,9 @@ const DEVELOPMENT_REACT = /react.*\/cjs\/.*\.development\.js$/;
  * are short, and the UI clears React's timing measures every minute there (`renderer/main.tsx`).
  *
  * The development build records a User Timing measure, carrying a diff of the props, for every
- * component render inside a `<Profiler>`, and nothing clears them. An hour into an Autopilot run
- * (2026-09-23) that filled the UI renderer's memory and the window went blank. Building them
- * cost 70% of a live session's main thread while a run streamed (2026-10-03), so only
+ * component render inside a `<Profiler>`, and nothing clears them: an hour into a run they fill
+ * the UI renderer's memory and the window goes blank. Building them costs 70% of a live session's
+ * main thread while a run streams, so only
  * `commitCounts` builds (an owned fixture profile, whose checks read the commit counts)
  * wrap the app in Profilers (`renderer/performance.tsx`).
  *

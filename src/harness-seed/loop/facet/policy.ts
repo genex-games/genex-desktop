@@ -6,6 +6,7 @@ import { CheckOrigin } from "../spec.ts";
 import { MINUTE_MS } from "../time.ts";
 import { clip, CLIP_QUOTE, CLIP_REASON } from "../text.ts";
 import { isPlainRecord } from "../json.ts";
+import { polishEscalates } from "./stage.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 
 /** Frames an evidence pass takes along its drive, so a judge sees the game move, not one still. */
@@ -26,7 +27,7 @@ const RETIRED_CHECKS_KEPT = 12;
  * THE POLICY (M4.10): the eight thresholds a director may set for one worker, and nothing else.
  * They are the shape of the work — how many questions a judge may grow, how long a gap stands
  * before the brief makes it mandatory, how many polished builds pass before the move is —
- * and a night on a game the harness has never seen is exactly when they are wrong. What is NOT
+ * and a run on a game the harness has never seen is exactly when they are wrong. What is NOT
  * here is deliberate: MAX_WOBBLES, MAX_STUCK_ANSWERS, FIX_STUCK_LOSSES, RUNG_MISSES
  * (round-judgement.ts), ITERATION_HEADROOM and MAX_PROMPT_IMAGES are the harness's patience with
  * a judge and a clock, not a plan's choice.
@@ -149,7 +150,7 @@ function policyThreshold(key: string, value: unknown): { value: number; warning:
 
 /**
  * What the loop is doing, as the director can read it (M4.10). A director hands out workers and
- * then goes blind to the machinery deciding their night: which round they are in, whether a gap
+ * then goes blind to the machinery deciding their run: which round they are in, whether a gap
  * has become mandatory, how much of the judge-check budget is spent, what a round costs. This is
  * that, as one flat record, emitted at three points of every round.
  */
@@ -173,7 +174,7 @@ export function loopStateOf({
   loseStreak?: number;
   brokenStreak?: { reason?: string | null; count?: number } | null;
   fix?: AnyRecord | null;
-  spec?: { checks?: Array<{ origin?: string } | null> } | null;
+  spec?: { checks?: Array<{ origin?: string } | null>; moveOwner?: unknown; stage?: unknown } | null;
   retiredChecks?: Iterable<string>;
   policy?: FacetPolicy;
   emaBuildMs?: number | null;
@@ -186,6 +187,9 @@ export function loopStateOf({
     phase,
     round,
     polishStreak,
+    // Whether a polish streak can make this worker's move mandatory at all: never for a
+    // director-owned or a finishing worker, so nobody is woken with an escalation that will not come.
+    escalates: polishEscalates(spec),
     loseStreak,
     brokenStreak: { reason: brokenStreak?.reason ?? null, count: brokenStreak?.count ?? 0 },
     fix: fix

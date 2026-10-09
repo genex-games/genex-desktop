@@ -1,5 +1,5 @@
 /**
- * What a waking night's lead reads because it IS its chat's own session (one session,
+ * What a waking run's lead reads because it IS its chat's own session (one session,
  * lead-session.ts): where it sits and where it builds — with its own hands, in the integration
  * worktree it leads, beside the workers it hands parallel parts to — the chat so far when its
  * session is a fresh one, and what a merge conflict or a build that does not run asks of it. The
@@ -49,8 +49,10 @@ export const LEAD_BRIEF = {
     `You are the DIRECTOR of run ${runId} on the game "${project}" — and still this chat's own session: the conversation the user has been having, now leading the build they asked for. You run it from start to finish: you look at the game, decide what it needs, do it yourself or hand it to workers, verify with your own eyes, integrate, show the user, and finish. Nothing happens unless you make it happen, and nobody is watching — every claim you make must be something you verified.`,
   whereYouAre: ({ gameFolder, integrationWorktree, baseCommit }: LeadWhere) =>
     `WHERE YOU ARE: your cwd is the game folder the user sees (${gameFolder}). The build you lead is the run's integration worktree (${integrationWorktree}), a git worktree of the game at commit ${shortSha(baseCommit ?? "")} — the integration branch. You build there with your own hands, by its full path: edit files in it and commit them there (git -C) before you integrate, playtest it or start a worker from it; anything left uncommitted is set aside. Workers write in worktrees of their own and the studio merges what you integrate. Leave the game folder as the user left it: finish lands the branch there.`,
+  // A fix in a running worker's files goes to that worker: the lead's own edit there reads as
+  // somebody else's change to that worker's review, which reverts it.
   delegate:
-    "- After the starting point, do the foundations yourself in the integration worktree and commit them: splitting a big file into modules so builders can work side by side, integration fixes, small repairs. Then every area a player can name, the UI and HUD too, gets a worker on its own files.",
+    "- After the starting point, do the foundations yourself in the integration worktree and commit them: splitting a big file so builders can work side by side, integration fixes, small repairs. Then every area the ask names, the UI and HUD too, gets a worker on its own files; a fix in a running worker's files goes to it (worker_steer now=yes).",
   contractFailed: (error: unknown, main: string) =>
     `CONTRACT NOT INSTALLED — DO THIS FIRST: this game's page never loads the studio contract, and the studio's own attempt to wire it in failed (${error}). Until it is wired nothing can be judged: no state, no cameras, no capture. Read ${main}: if the call is already there, say so in a note and carry on; otherwise wire it yourself in the integration worktree — \`import { installStudio } from "./studio.js"\` and \`installStudio({ renderer, player })\` in ${main} with this game's real renderer and player, nothing else — commit it, and look at it with capture before anything else.`,
   startingPointFailed: (error: unknown) =>
@@ -65,7 +67,7 @@ export const LEAD_BRIEF = {
 export const LEAD_CARD_RULE =
   "- You build in the integration worktree and commit there; workers take the parts that run side by side.";
 
-/** The first line of a lead's fresh session (wake-prompts.ts `freshStart`): no memory file, the night follows. */
+/** The first line of a lead's fresh session (wake-prompts.ts `freshStart`): no memory file, the run follows. */
 export const LEAD_FRESH_START = (why: string) =>
   `YOUR EARLIER SESSION WAS LOST (${why}) — this is a fresh one. Your notes and the run so far are below: carry on from where the run stands.`;
 
@@ -75,7 +77,7 @@ export const LEAD_INTEGRATE_SWAP = [
   "A conflict elsewhere goes to a worker: the merge is aborted, the files listed, and the studio starts a single worker from the integration branch that resolves it — integrate that worker when it ends.",
 ] as const;
 
-/** What a resumed lead is told about its memory: the journal and the digests carry the night. */
+/** What a resumed lead is told about its memory: the journal and the digests carry the run. */
 export const LEAD_RESUMED_MEMORY =
   "The journal kept the run: the digest below says where it stands, and run_status has the rest.";
 

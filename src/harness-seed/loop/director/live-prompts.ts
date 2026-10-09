@@ -1,5 +1,5 @@
 /**
- * What a night's lead reads of the chat in the middle of a turn (live chat, wake.ts): the user's
+ * What a run's lead reads of the chat in the middle of a turn (live chat, wake.ts): the user's
  * words, handed into the turn under way, and what to do with them — or, when the turn had to be
  * cut short for them, that it was. Plain facts in, text out.
  *

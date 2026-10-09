@@ -1,5 +1,5 @@
 /**
- * Two subscriptions in one night (cross-provider roles, 2026-09-10) — through the real core and
+ * Two subscriptions in one run — through the real core and
  * the real harness child. A director on Claude Code hires workers on Codex and asks Codex to
  * judge: every delegation and every judge call must reach the engine the roles named, with a
  * model that engine knows and a brief in that engine's own tool voice. And when the workers'
@@ -30,7 +30,7 @@ const text = (result: LiveToolResult): string => (typeof result === "string" ? r
 const json = (result: LiveToolResult): Record<string, any> => JSON.parse(text(result));
 
 const planFor = (...ids: string[]): Record<string, unknown> => ({
-  summary: "Tonight: make the plaza somewhere you would want to skate.",
+  summary: "This run: make the plaza somewhere you would want to skate.",
   workers: JSON.stringify(
     ids.map((id) => ({
       id,
@@ -78,7 +78,7 @@ const ROLES = {
   engines: { builder: "codex", judge: "codex" },
 };
 
-describe("a night on two subscriptions", () => {
+describe("a run on two subscriptions", () => {
   it("a Claude Code director hires Codex workers and Codex judges, each in its own voice and on its own model", async () => {
     const rig = await startRig(
       { replies: [] },
@@ -113,7 +113,7 @@ describe("a night on two subscriptions", () => {
         results.judged = json(
           await call("judge", { target: "integration", against: "none", question: "is the plaza red?" }),
         );
-        // Counted here, inside the night: the self-improvement pass that follows a finished run
+        // Counted here, inside the run: the self-improvement pass that follows a finished run
         // asks the run's own engine by design, and is not a judge call.
         results.judgeCalls = {
           claude: completes["claude-code"]!.length,
@@ -121,7 +121,7 @@ describe("a night on two subscriptions", () => {
           codexModels: completes.codex!.map((r) => r.model),
         };
         results.finished = text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" }));
-        return { ok: true, engine, turns: 7, usage: {}, sessionId: "director-cross", summary: "night done" };
+        return { ok: true, engine, turns: 7, usage: {}, sessionId: "director-cross", summary: "run done" };
       }
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
       await writeFile(path.join(request.cwd, "src", "plaza.js"), "export const plaza = 'red';\n");
@@ -272,5 +272,106 @@ describe("a night on two subscriptions", () => {
     assert.match(String(worker.stoppedBecause), /usage limit/);
     // …and what to do about it, in the same breath.
     assert.match(limit.note, /worker_start will hit the same limit for about \d+ more minutes/);
+  });
+
+  it("a Claude Code director with Ollama reviewers: every judge call reaches the local engine on the reviewers' model, and no session is asked of it", async () => {
+    const rig = await startRig(
+      { replies: [] },
+      { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
+    );
+    rigs.push(rig);
+    const project = await rig.core.games.scaffold("local-reviewers", { title: "Local reviewers" });
+    const seen: Array<{ engine: string; request: DelegateRequest }> = [];
+    const results: Record<string, any> = {};
+    const completes = twoEngines(rig, async (engine, request) => {
+      seen.push({ engine, request });
+      if (request.director) {
+        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
+        results.planned = text(await call("plan", planFor("plaza")));
+        results.started = json(
+          await call("worker_start", {
+            id: "plaza",
+            title: "Plaza",
+            brief: "paint the plaza red",
+            mode: "single",
+            minutes: "5",
+            owns: "src/plaza.js",
+          }),
+        );
+        for (let i = 0; i < 30; i++) {
+          results.waited = json(await call("wait", { seconds: "5", worker: "plaza" }));
+          if (results.waited.status.workers[0]?.state !== "running") break;
+        }
+        results.integrated = json(await call("integrate", { worker: "plaza" }));
+        results.judged = json(
+          await call("judge", { target: "integration", against: "none", question: "is the plaza red?" }),
+        );
+        results.judgeCalls = { claude: completes["claude-code"]!.length, local: local.map((r) => r.model) };
+        results.finished = text(await call("finish", { summary: "the plaza is red", land: "yes", victory: "yes" }));
+        return { ok: true, engine, turns: 7, usage: {}, sessionId: "director-local", summary: "run done" };
+      }
+      await mkdir(path.join(request.cwd, "src"), { recursive: true });
+      await writeFile(path.join(request.cwd, "src", "plaza.js"), "export const plaza = 'red';\n");
+      return { ok: true, engine, turns: 3, usage: {}, sessionId: "worker-local", summary: "painted the plaza red" };
+    });
+    // Ollama as it is: completions with tools and images, and no sessions at all.
+    const local: CompleteRequest[] = [];
+    rig.core.engines.register({
+      id: "ollama",
+      label: "Ollama",
+      kind: "direct",
+      status: async () => ({ code: "ready", detail: "" }),
+      models: async () => [{ id: "vl", label: "vl", contextWindow: 32_000, supportsTools: true, supportsVision: true }],
+      defaultModel: async () => "vl",
+      complete: async (request: CompleteRequest): Promise<CompleteResponse> => {
+        local.push(request);
+        return {
+          message: { role: "assistant", content: '{"answer":"yes","pass":true}' },
+          usage: {},
+          model: request.model ?? "vl",
+          engine: "ollama",
+          stopReason: "stop",
+        };
+      },
+    } as never);
+
+    const runId = rig.core.newRunId();
+    await rig.core.dispatchRun({
+      runId,
+      goal: "a red plaza",
+      project: project.name,
+      mode: "autopilot",
+      engine: "claude-code",
+      model: "opus",
+      roles: { planner: "opus", builder: "opus", judge: "vl", engines: { judge: "ollama" } },
+      reference: { name: "plaza", shots: [] },
+      budgets: { wallClockMs: 15 * 60_000 },
+    });
+    const events = await waitForLog(
+      rig.core,
+      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
+      120_000,
+      "local-reviewers run_finished",
+    );
+
+    const started = customEvents(events, "run_started").find((e) => e.runId === runId)!;
+    assert.equal(started.engine, "claude-code");
+    assert.equal(started.builderEngine, undefined, "the workers stay on the director's engine");
+    assert.equal(started.judgeEngine, "ollama");
+    assert.equal(started.judgeModel, "vl");
+    assert.ok(
+      seen.every((s) => s.engine === "claude-code"),
+      "every session went to Claude Code; none was asked of Ollama",
+    );
+    assert.equal(seen.filter((s) => !s.request.director)[0]?.request.model, "opus", "the worker builds on opus");
+    assert.equal(results.judged.ok, true, JSON.stringify(results.judged));
+    assert.ok((results.judgeCalls.local as string[]).length >= 1, "the vision judge ran on Ollama");
+    assert.ok(
+      (results.judgeCalls.local as string[]).every((m) => m === "vl"),
+      `judge models: ${results.judgeCalls.local.join(",")}`,
+    );
+    assert.equal(results.judgeCalls.claude, 0, "no judge call reached Claude Code");
+    const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
+    assert.equal(finished.landed, true, String(finished.stoppedBecause));
   });
 });

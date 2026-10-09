@@ -314,16 +314,16 @@ it("a build after the message leaves the chat with it: files come back when it l
   const turns = answeringEngine(rig);
   await rig.core.sendUserMessage("Make a village", { thread, engine: "claude-code" });
   await waitForLog(rig.core, handled(thread, 1), 20000, "the answer");
-  // A night built after it and paused without landing: the game's history did not move.
+  // A run built after it and paused without landing: the game's history did not move.
   await rig.core.append(
     [
-      custom("run_started", { runId: "night", project, engine: "claude-code", goal: "A village" }),
-      { type: "messages", messages: [{ role: "assistant", content: "The night paused." }] },
-      custom("autopilot_paused", { runId: "night" }),
+      custom("run_started", { runId: "paused", project, engine: "claude-code", goal: "A village" }),
+      { type: "messages", messages: [{ role: "assistant", content: "The run paused." }] },
+      custom("autopilot_paused", { runId: "paused" }),
     ],
     thread,
   );
-  assert.equal(latestRun(await harnessEvents(rig, thread))?.runId, "night", "the paused night owns the chat");
+  assert.equal(latestRun(await harnessEvents(rig, thread))?.runId, "paused", "the paused run owns the chat");
   const village = bubble(await rig.core.store.listEvents(thread), "Make a village");
   assert.deepEqual(await rig.core.rewindPreview(thread, village.eventId, village.messageId), {
     files: { state: "restore", files: 1, outside: [], outsideUnknown: false, nested: [], tooLarge: 0 },
@@ -332,15 +332,15 @@ it("a build after the message leaves the chat with it: files come back when it l
   const result = await rig.core.rewindChat(thread, village.eventId, village.messageId, { files: true });
   assert.equal(result.files, 1);
   assert.equal(await exists(path.join(dir, "step-1.js")), false, "the answer's file went");
-  // Routing: the night is not the chat's any more, in the harness's view and in the chat's.
+  // Routing: the run is not the chat's any more, in the harness's view and in the chat's.
   assert.equal(latestRun(await harnessEvents(rig, thread)), null);
   assert.equal(latestRun(await rig.core.store.chatState(thread)), null);
   await rig.core.sendUserMessage("Make a castle", { thread, engine: "claude-code" });
   await waitForLog(rig.core, handled(thread, 2), 20000, "the answer after the rewind");
   assert.equal(turns.length, 2);
-  assert.ok(!turns[1]!.coordinator, "a turn of the chat's own, not the night's coordinator");
+  assert.ok(!turns[1]!.coordinator, "a turn of the chat's own, not the run's coordinator");
   assert.equal(turns[1]!.resume, undefined, "with a fresh session");
-  assert.doesNotMatch(turns[1]!.prompt, /Make a village|The night paused/);
+  assert.doesNotMatch(turns[1]!.prompt, /Make a village|The run paused/);
   // A Plan-mode send is no longer a follow-up to a paused build: it gets its plan review.
   await rig.core.sendUserMessage("Dig a moat", {
     thread,
@@ -405,13 +405,13 @@ it("rewound past a later build, the next message's run tools reach the build fro
   await rig.core.append(
     [
       custom("run_started", {
-        runId: "night-a",
+        runId: "run-a",
         project,
         engine: "claude-code",
         goal: "A forest",
         integrationHead: head,
       }),
-      custom("autopilot_paused", { runId: "night-a" }),
+      custom("autopilot_paused", { runId: "run-a" }),
     ],
     thread,
   );
@@ -420,15 +420,15 @@ it("rewound past a later build, the next message's run tools reach the build fro
   // Build B began after the message and landed.
   await rig.core.append(
     [
-      custom("run_started", { runId: "night-b", project, engine: "claude-code", goal: "A desert" }),
-      custom("run_finished", { runId: "night-b", project, landed: true }),
+      custom("run_started", { runId: "run-b", project, engine: "claude-code", goal: "A desert" }),
+      custom("run_finished", { runId: "run-b", project, landed: true }),
     ],
     thread,
   );
   const autumn = bubble(await rig.core.store.listEvents(thread), "Make it autumn");
   await rig.core.rewindChat(thread, autumn.eventId, autumn.messageId, { files: true });
-  assert.equal(latestRun(await harnessEvents(rig, thread))?.runId, "night-a", "the chat is build A's again");
-  assert.equal(latestRun(await rig.core.store.listEvents(thread))?.runId, "night-b", "the log still holds build B");
+  assert.equal(latestRun(await harnessEvents(rig, thread))?.runId, "run-a", "the chat is build A's again");
+  assert.equal(latestRun(await rig.core.store.listEvents(thread))?.runId, "run-b", "the log still holds build B");
 
   useTools = true;
   await rig.core.sendUserMessage("How is the forest?", { thread, engine: "claude-code" });
@@ -436,7 +436,7 @@ it("rewound past a later build, the next message's run tools reach the build fro
   assert.equal(answers.length, 1, "build A's coordinator answered");
   const [tried] = answers;
   assert.doesNotMatch(JSON.stringify(tried), /refused/, JSON.stringify(tried));
-  assert.equal(JSON.parse(tried!.run_status!).run.runId, "night-a");
+  assert.equal(JSON.parse(tried!.run_status!).run.runId, "run-a");
   assert.match(tried!.show_build!, /Live/);
   assert.match(tried!.resume_run!, /Resume requested for the same run/);
 });
@@ -462,15 +462,15 @@ it("after a landed build, or with no saved copy, only the conversation rewinds a
   });
   await rig.core.sendUserMessage("Make a village", { thread, engine: "claude-code" });
   await waitForLog(rig.core, handled(thread, 1), 20000, "the answer");
-  // A night landed after it: its commit moved the game's history.
-  await writeFile(path.join(dir, "landed.js"), "the night's work\n");
+  // A run landed after it: its commit moved the game's history.
+  await writeFile(path.join(dir, "landed.js"), "the run's work\n");
   await git(dir, ["add", "-A"]);
-  await git(dir, ["commit", "-q", "-m", "land the night"]);
+  await git(dir, ["commit", "-q", "-m", "land the run"]);
   const head = (await git(dir, ["rev-parse", "HEAD"])).trim();
   await rig.core.append(
     [
-      custom("run_started", { runId: "landed-night", project, engine: "claude-code" }),
-      custom("run_finished", { runId: "landed-night", project, landed: true }),
+      custom("run_started", { runId: "landed-run", project, engine: "claude-code" }),
+      custom("run_finished", { runId: "landed-run", project, landed: true }),
     ],
     thread,
   );
@@ -481,7 +481,7 @@ it("after a landed build, or with no saved copy, only the conversation rewinds a
   const result = await rig.core.rewindChat(thread, village.eventId, village.messageId, { files: true });
   assert.equal(result.files, null, "files asked for, but a landed build keeps them");
   assert.equal(await readFile(path.join(dir, "step-1.js"), "utf8"), "step 1\n");
-  assert.equal(await readFile(path.join(dir, "landed.js"), "utf8"), "the night's work\n");
+  assert.equal(await readFile(path.join(dir, "landed.js"), "utf8"), "the run's work\n");
   assert.equal((await git(dir, ["rev-parse", "HEAD"])).trim(), head);
   assert.equal(latestRun(await harnessEvents(rig, thread)), null);
   // The bubble with no queue record rewinds by its own id, and comes back to the composer.
@@ -546,7 +546,7 @@ it("rewinding over a running build stops it first; the build leaves the chat and
   await rig.core.sendUserMessage("Make a village", { thread, engine: "codex" });
   await waitForLog(rig.core, handled(thread, 1), 20000, "the chat's answer");
   const run = {
-    runId: "running-night",
+    runId: "running-run",
     project,
     engine: "codex",
     goal: "Build a village",
@@ -658,7 +658,7 @@ it("a build that does not close in time fails the rewind, and the queue its Stop
     type: "run_start",
     threadId: thread,
     run: {
-      runId: "stuck-night",
+      runId: "stuck-run",
       project,
       engine: "codex",
       goal: "Build a village",

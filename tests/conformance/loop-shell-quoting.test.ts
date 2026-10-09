@@ -13,6 +13,13 @@ import { isCommit, shellQuote } from "../../src/harness-seed/loop/shell.ts";
 import { enforceOwnership, reviewAttempt } from "../../src/harness-seed/loop/review.ts";
 import { unversionedNested } from "../../src/harness-seed/loop/gauntlet.ts";
 import { unionMergeMain } from "../../src/harness-seed/loop/merge.ts";
+import {
+  concludeHandMerge,
+  droppedByMerge,
+  HandMerge,
+  resolveByOwnership,
+  restoreDropped,
+} from "../../src/harness-seed/loop/merge-ownership.ts";
 import { STUDIO_AS } from "../../src/harness-seed/loop/repo.ts";
 import { readProjectShape } from "../../src/substrate/game-workspace.ts";
 import { runSpike } from "../../src/harness-seed/loop/spike.ts";
@@ -168,6 +175,154 @@ describe("hostile names and hashes on the loop's command lines (M3)", () => {
     assert.deepEqual(enforced, [{ file: HOSTILE_FILE, action: "quarantined to .studio/quarantine/it-1" }]);
     assert.deepEqual(await readdir(path.join(worktree, ".studio", "quarantine", "it-1")), [HOSTILE_FILE]);
     assert.deepEqual(await ran(worktree), []);
+  });
+
+  it("enforceOwnership keeps a file named like a command whose content arrived by merge, and runs none of it", async () => {
+    const worktree = await repoWith({ [HOSTILE_FILE]: "v0\n" });
+    const base = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    await fixtureGit(worktree, ["checkout", "-q", "-b", "integration"]);
+    await writeFile(path.join(worktree, HOSTILE_FILE), "v1\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "integration"]);
+    const head = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    await fixtureGit(worktree, ["checkout", "-q", "main"]);
+    await fixtureGit(worktree, ["merge", "-q", "--no-commit", "--no-ff", head]);
+    const git = async (command: string) => {
+      const out = await sh(command, worktree);
+      if (out.code !== 0) throw new Error(out.stderr);
+      return out.stdout.trim();
+    };
+    const violations = [{ source: "mechanical", category: "ownership", what: "x", file: HOSTILE_FILE }];
+    const enforced = await enforceOwnership(git, {
+      base,
+      integrationHeads: ["$(touch PWNED12)", head],
+      violations,
+      iterationId: "it-2",
+    });
+    assert.deepEqual(enforced, [{ file: HOSTILE_FILE, action: "kept (arrived by merge)" }]);
+    assert.equal(await readFile(path.join(worktree, HOSTILE_FILE), "utf8"), "v1\n");
+    assert.deepEqual(await ran(worktree), []);
+  });
+
+  it("droppedByMerge and restoreDropped handle a file named like a command and refuse heads that are no commit", async () => {
+    const worktree = await repoWith({ [HOSTILE_FILE]: "v0\n" });
+    const incumbent = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    await fixtureGit(worktree, ["checkout", "-q", "-b", "integration"]);
+    await writeFile(path.join(worktree, HOSTILE_FILE), "v1\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "integration"]);
+    const head = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    await fixtureGit(worktree, ["checkout", "-q", "main"]);
+    await fixtureGit(worktree, ["merge", "-q", "--no-commit", "--no-ff", head]);
+    await fixtureGit(worktree, ["checkout", incumbent, "--", HOSTILE_FILE]);
+    await fixtureGit(worktree, ["commit", "-q", "-m", "ours"]);
+    const exec = (command: string) => sh(command, worktree);
+    const owned = () => false;
+    for (const hostile of ["HEAD; touch PWNED13", "$(touch PWNED14)", "--output=PWNED15"]) {
+      assert.deepEqual(await droppedByMerge(exec, { incumbent: hostile, mergedHead: head, owned }), []);
+      assert.deepEqual(await droppedByMerge(exec, { incumbent, mergedHead: hostile, owned }), []);
+    }
+    const dropped = await droppedByMerge(exec, { incumbent, mergedHead: head, owned });
+    assert.deepEqual(
+      dropped.map((v) => v.file),
+      [HOSTILE_FILE],
+    );
+    const git = async (command: string) => {
+      const out = await sh(command, worktree);
+      if (out.code !== 0) throw new Error(out.stderr);
+      return out.stdout.trim();
+    };
+    assert.deepEqual(await restoreDropped(git, { violations: dropped, from: "$(touch PWNED16)" }), []);
+    assert.deepEqual(await restoreDropped(git, { violations: dropped, from: head }), [
+      { file: HOSTILE_FILE, action: "restored from integration" },
+    ]);
+    assert.equal(await readFile(path.join(worktree, HOSTILE_FILE), "utf8"), "v1\n");
+    assert.deepEqual(await ran(worktree), []);
+  });
+
+  it("resolveByOwnership settles conflicted files named like commands, with a message like one, and runs none of it", async () => {
+    const theirsOnly = "b$(touch PWNED17).js";
+    const mine = "src/hud`touch PWNED18`.js";
+    const worktree = await repoWith({ [theirsOnly]: "base\n", [mine]: "base\n" });
+    await fixtureGit(worktree, ["checkout", "-q", "-b", "theirs"]);
+    await writeFile(path.join(worktree, theirsOnly), "theirs\n");
+    await writeFile(path.join(worktree, mine), "theirs\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "theirs"]);
+    await fixtureGit(worktree, ["checkout", "-q", "main"]);
+    await writeFile(path.join(worktree, theirsOnly), "ours\n");
+    await writeFile(path.join(worktree, mine), "ours\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "ours"]);
+    const exec = (command: string) => sh(command, worktree);
+    assert.notEqual((await sh(`git ${STUDIO_AS} merge -q theirs`, worktree)).code, 0);
+    const owned = (file: string) => file === mine;
+    const left = await resolveByOwnership(exec, { owned, message: "merge $(touch PWNED19)" });
+    assert.deepEqual(left.left, [mine]);
+    assert.equal(await readFile(path.join(worktree, theirsOnly), "utf8"), "theirs\n");
+    await sh("git merge --abort", worktree);
+    assert.notEqual((await sh(`git ${STUDIO_AS} merge -q theirs`, worktree)).code, 0);
+    const settled = await resolveByOwnership(exec, { owned: () => false, message: "merge $(touch PWNED20) `x`" });
+    assert.equal(settled.ok, true, settled.reason);
+    assert.equal(await fixtureGit(worktree, ["log", "-1", "--format=%s"]), "merge $(touch PWNED20) `x`");
+    assert.deepEqual(await ran(worktree), []);
+  });
+
+  it("concludeHandMerge reads conflicted files named like commands, commits with a message like one, and runs none of it", async () => {
+    const worktree = await repoWith({ [HOSTILE_FILE]: "base\n" });
+    await fixtureGit(worktree, ["checkout", "-q", "-b", "theirs"]);
+    await writeFile(path.join(worktree, HOSTILE_FILE), "theirs\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "theirs"]);
+    await fixtureGit(worktree, ["checkout", "-q", "main"]);
+    await writeFile(path.join(worktree, HOSTILE_FILE), "ours\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "ours"]);
+    const exec = (command: string) => sh(command, worktree);
+    assert.notEqual((await sh(`git ${STUDIO_AS} merge -q theirs`, worktree)).code, 0);
+    const half = await concludeHandMerge(exec, { message: "conclude $(touch PWNED21)" });
+    assert.equal(half.state, HandMerge.Unresolved);
+    assert.deepEqual(half.files, [HOSTILE_FILE]);
+    // Resolved on disk but never added: still unmerged, so never concluded on the studio's guess.
+    await writeFile(path.join(worktree, HOSTILE_FILE), "both\n");
+    const unstaged = await concludeHandMerge(exec, { message: "conclude $(touch PWNED24)" });
+    assert.equal(unstaged.state, HandMerge.Unresolved);
+    assert.deepEqual(unstaged.files, [HOSTILE_FILE]);
+    await fixtureGit(worktree, ["add", "--", HOSTILE_FILE]);
+    const done = await concludeHandMerge(exec, { message: "conclude $(touch PWNED22) `touch PWNED23`" });
+    assert.equal(done.state, HandMerge.Concluded);
+    assert.equal(await fixtureGit(worktree, ["log", "-1", "--format=%s"]), "conclude $(touch PWNED22) `touch PWNED23`");
+    assert.deepEqual(await ran(worktree), []);
+  });
+
+  it("the merge-ownership functions read names git quotes (non-ASCII, quotes, backslashes) as the files they are", async () => {
+    const accented = "src/café.js";
+    const quoted = 'src/say "hi" \\ back.js';
+    const worktree = await repoWith({ [accented]: "base\n", [quoted]: "base\n" });
+    await fixtureGit(worktree, ["checkout", "-q", "-b", "theirs"]);
+    await writeFile(path.join(worktree, accented), "theirs\n");
+    await writeFile(path.join(worktree, quoted), "theirs\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "theirs"]);
+    const head = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    await fixtureGit(worktree, ["checkout", "-q", "main"]);
+    await writeFile(path.join(worktree, accented), "ours\n");
+    await writeFile(path.join(worktree, quoted), "ours\n");
+    await fixtureGit(worktree, ["commit", "-q", "-am", "ours"]);
+    const ours = await fixtureGit(worktree, ["rev-parse", "HEAD"]);
+    const exec = (command: string) => sh(command, worktree);
+    // A merge left with markers staged in a quoted name is not concluded.
+    assert.notEqual((await sh(`git ${STUDIO_AS} merge -q theirs`, worktree)).code, 0);
+    await fixtureGit(worktree, ["add", "--", accented, quoted]);
+    const half = await concludeHandMerge(exec, { message: "conclude" });
+    assert.equal(half.state, HandMerge.Unresolved, JSON.stringify(half));
+    assert.deepEqual([...half.files].sort(), [quoted, accented].sort());
+    await sh("git merge --abort", worktree);
+    // Another part's files with quoted names take their side.
+    assert.notEqual((await sh(`git ${STUDIO_AS} merge -q theirs`, worktree)).code, 0);
+    const settled = await resolveByOwnership(exec, { owned: () => false, message: "merge" });
+    assert.equal(settled.ok, true, settled.reason);
+    assert.deepEqual([...(settled.theirs ?? [])].sort(), [quoted, accented].sort());
+    assert.equal(await readFile(path.join(worktree, accented), "utf8"), "theirs\n");
+    // A merge that kept this part's side of them is found.
+    await fixtureGit(worktree, ["reset", "-q", "--hard", ours]);
+    await fixtureGit(worktree, ["merge", "-q", "--no-commit", "-s", "ours", head]);
+    await fixtureGit(worktree, ["commit", "-q", "-m", "ours on both"]);
+    const dropped = await droppedByMerge(exec, { incumbent: ours, mergedHead: head, owned: () => false });
+    assert.deepEqual(dropped.map((v) => v.file).sort(), [quoted, accented].sort());
   });
 
   it("unversionedNested asks about a nested path named like a command, and runs none of it", async () => {

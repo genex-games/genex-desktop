@@ -101,10 +101,10 @@ export interface WorkspaceSpec {
 }
 
 /**
- * One committer, everywhere the studio writes history — here, in the night's worktrees
+ * One committer, everywhere the studio writes history — here, in the run's worktrees
  * (`harness-seed/loop/repo.ts`) and in `landBuild`. A user's `git log` used to name five
  * (studio-substrate, studio-facet, studio-integrator, studio-director, studio-base) as if a
- * committee had been through their game overnight.
+ * committee had been through their game unattended.
  */
 export const STUDIO_COMMITTER = { name: "AI Game Studio", email: "studio@ai-game-studio.local" };
 
@@ -257,7 +257,7 @@ export class SnapshotEngine {
       await git(dir, [...NO_HOOKS, "commit", "-q", "--allow-empty", "-m", `snapshot ${snapshotId}: ${options.reason}`]);
       const commit = (await git(dir, ["rev-parse", "HEAD"])).trim();
       // `refs/studio/snap/…`, not `refs/tags/snap/…`: a tag in the user's repository is theirs,
-      // it shows in `git tag`, and `git push --tags` would ship every night's bookkeeping to
+      // it shows in `git tag`, and `git push --tags` would ship every run's bookkeeping to
       // their remote. The ref is just as reachable and nothing but the studio ever lists it.
       await git(dir, ["update-ref", snapshotRef(snapshotId), commit]);
       if (name === HARNESS_WORKSPACE) refs.harness = commit;
@@ -374,7 +374,7 @@ export class SnapshotEngine {
    * A playable fork of a game workspace at a snapshot — pairs with an event-log fork.
    *
    * `versionNested` is the user's answer to "may the studio version the repositories inside my
-   * game folder" (decision 1, 2026-09-08): with it, the fork's copy of a nested repository is
+   * game folder": with it, the fork's copy of a nested repository is
    * committed here, so a worker's edits inside it are real work the studio can keep, roll back
    * and merge. Without it the copy is what it always was — files to read and run, versioned by
    * nothing.
@@ -393,8 +393,7 @@ export class SnapshotEngine {
     await this.#linkModules(dir, targetDir, "");
     // A nested git repository inside the game (the user's own project dropped into the folder)
     // is a bare pointer in the studio's history and an empty directory in a worktree. Copy its
-    // working tree in (without its .git) so agents see and run the game — a director once spent
-    // its first quarter hour discovering this.
+    // working tree in (without its .git) so agents see and run the game.
     const nested = await this.nestedRepositories(workspace, resolved);
     for (const rel of nested) {
       const source = path.join(dir, rel);
@@ -432,8 +431,7 @@ export class SnapshotEngine {
   /**
    * Replace the pointers to the game's own repositories with the files themselves — in this fork
    * only. A gitlink is committed by nothing: a worker's edits under `wreckage/` never reached an
-   * "accepted" commit, survived a lost iteration's `reset --hard`, or landed (flautout-remix,
-   * 2026-09-07). The live folder keeps its pointer until the user agrees to the same conversion
+   * "accepted" commit, survived a lost iteration's `reset --hard`, or landed. The live folder keeps its pointer until the user agrees to the same conversion
    * at landing (`studio-core.landBuild`).
    *
    * The commit is deterministic — same parent, same files, same identity, same date as the commit

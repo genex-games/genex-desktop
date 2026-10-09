@@ -118,7 +118,7 @@ export function useChatStop({
   }, [threadId, onNotice, stopping, events, mark]);
 
   // Escape belongs to the composer and to nothing else. It used to be a window listener that
-  // stopped the run, so the Escape that closed the model menu at 11 pm ended the night; now it
+  // stopped the run, so the Escape that closed the model menu at 11 pm ended the run; now it
   // reaches only a chat turn, and while a build runs `escapeCancels` leaves it with nothing to do.
   useEffect(() => {
     if (!turnInFlight) return;

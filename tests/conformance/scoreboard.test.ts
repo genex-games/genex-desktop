@@ -27,6 +27,7 @@ import {
 import {
   acceptRound,
   defectsToChecks,
+  facetPrompt,
   grownCheckIds,
   judgeChecksToRetire,
   similarDefect,
@@ -40,6 +41,7 @@ import {
   demosNamedByChecks,
   loadCatalogue,
   MAX_CRAFT,
+  normalizeCheck,
   normalizeFacetSpec,
   normalizeGameTraits,
   recordCatalogueOutcomes,
@@ -64,6 +66,9 @@ import {
   withCraftChecks,
 } from "../../src/harness-seed/loop/library.ts";
 import { mechanicalReview, parseDiff } from "../../src/harness-seed/loop/review.ts";
+import { CheckLintCode, lintCheck } from "../../src/harness-seed/loop/check-lint.ts";
+import { appliesToBuild } from "../../src/harness-seed/loop/applies-to-build.ts";
+import { mineValidationTasks } from "../../src/harness-seed/loop/skillopt.ts";
 import type { Check } from "../../src/harness-seed/loop/spec.ts";
 import { askVisionBoard, cameraSubset, normalizeLiveness, selectShots } from "../../src/harness-seed/loop/judge.ts";
 import { parseRecipeMarkdown, spikeCandidates } from "../../src/harness-seed/loop/spike.ts";
@@ -135,7 +140,7 @@ describe("check expressions", () => {
     assert.equal(evaluateBoolean("state.player.x == player.x", scope).pass, true);
     assert.equal(evaluateBoolean("delta('foo.bar') == 1", scope).pass, true);
     // The same alias inside has() and delta(), whose argument is a string the parser never
-    // turns into a reference: `state.`-prefixed, these read a silent `false` for a whole night.
+    // turns into a reference: `state.`-prefixed, these read a silent `false` for a whole run.
     assert.equal(evaluateBoolean("delta('state.foo.bar') == 1", scope).pass, true);
     assert.equal(evaluateBoolean("has('state.player.x')", scope).pass, true);
     assert.equal(
@@ -161,7 +166,7 @@ describe("check expressions", () => {
     const { unsatisfiable, stateKeys } = dryRunChecks(checks as never, { state } as never);
     // `state.props.moved` resolves through the alias and `player.x` is really there; the two
     // paths the build does not report come back — the string one included, which used to pass
-    // the dry run clean and then score false on every iteration for the rest of the night.
+    // the dry run clean and then score false on every iteration for the rest of the run.
     assert.deepEqual(
       unsatisfiable.map((entry: { id: string; missing: string[] }) => [entry.id, entry.missing]),
       [
@@ -494,6 +499,125 @@ describe("facet specs", () => {
     const result = validateFacetSpec(spec, { cameras: ["default"] as never });
     assert.match(result.problems.join("\n"), /3 of 4 checks are vision/);
     assert.match(String(result.spec.checks[3].note), /camX.*not registered/);
+    // A screen part (critic "screen": the UI or HUD) is judged by eye: its looks are the work,
+    // and a mechanical majority there only buys counts of what it draws.
+    const screen = validateFacetSpec({ ...spec, critic: "screen" }, { cameras: ["default"] as never });
+    assert.doesNotMatch(screen.problems.join("\n"), /checks are vision/);
+    assert.equal(screen.spec.checks.length, 4);
+    const place = validateFacetSpec({ ...spec, critic: "place" }, { cameras: ["default"] as never });
+    assert.match(place.problems.join("\n"), /3 of 4 checks are vision/);
+  });
+
+  it("a floor on how much the build draws is refused at validation, a budget or an existence check is not", () => {
+    const refused = [
+      { id: "hud-rich", kind: "probe", expr: "len(hud.items) >= 60" },
+      { id: "hud-rich-aliased", kind: "probe", expr: "len(state.hud.items) > 59" },
+      { id: "hud-rich-mirrored", kind: "probe", expr: "60 <= len(hud.items)" },
+      { id: "busy-frame", kind: "probe", expr: "__render.drawCalls >= 500" },
+      { id: "hud-band", kind: "probe", expr: "len(hud.items) in [60, 999]" },
+      { id: "hud-count", kind: "probe", expr: "hud.count > 12 && player.speed > 1" },
+      { id: "tri-floor", kind: "probe", expr: "triangles >= 100000" },
+      { id: "grew-hud", kind: "probe", expr: "delta('hud.count') >= 5" },
+    ];
+    const kept = [
+      { id: "hud-there", kind: "probe", expr: "len(hud.items) >= 1" },
+      { id: "draw-budget", kind: "probe", expr: "__render.drawCalls <= 1000 && __render.triangles <= 400000" },
+      { id: "draws", kind: "probe", expr: "__render.drawCalls > 0" },
+      { id: "fired", kind: "probe", expr: "delta('actions.primary') >= 1" },
+      { id: "enemies", kind: "probe", expr: "len(enemies) >= 5" },
+      { id: "budget-mirrored", kind: "probe", expr: "1000 >= drawCalls" },
+    ];
+    const spec = normalizeFacetSpec({ id: "hud", intent: "a HUD", checks: [...refused, ...kept] });
+    const result = validateFacetSpec(spec);
+    assert.deepEqual(
+      result.spec.checks.map((c: { id: string }) => c.id),
+      kept.map((c) => c.id),
+    );
+    assert.equal(result.problems.length, refused.length, result.problems.join("\n"));
+    for (const problem of result.problems)
+      assert.match(problem, /a floor on how much the build draws measures the implementation/);
+  });
+
+  it("reads the floor from the expression's shape, whichever way it is written, and only on draw quantities", () => {
+    const table: Array<[Record<string, unknown>, string | null]> = [
+      [{ kind: "probe", expr: "!(len(hud.items) < 60)" }, "hud.items"],
+      [{ kind: "probe", expr: "!(len(hud.items) > 60)" }, null],
+      [{ kind: "probe", expr: "len(hud.items) == 60" }, "hud.items"],
+      [{ kind: "probe", expr: "len(hud.items) == 1" }, null],
+      [{ kind: "probe", expr: "len(hud.items) != 0" }, null],
+      [{ kind: "probe", expr: "abs(delta('state.__render.triangles')) > 10" }, "__render.triangles"],
+      [{ kind: "probe", expr: "early.hud.count >= 4" }, "hud.count"],
+      [{ kind: "probe", expr: "player.speed > 1 || vertices > 2" }, "vertices"],
+      [{ kind: "probe", expr: "hud.count > -5" }, null],
+      [{ kind: "probe", expr: "hud.count > other.count" }, null],
+      [{ kind: "metric", expr: "__render.drawCalls", goal: "max" }, "__render.drawCalls"],
+      [{ kind: "metric", expr: "__render.drawCalls", goal: "min" }, null],
+      [{ kind: "demo", name: "lap", expr: "hud.count >= 8" }, "hud.count"],
+      [{ kind: "demo", name: "lap", expr: "ok" }, null],
+      [{ kind: "scene", js: "hud().items.length >= 60" }, null],
+      [{ kind: "vision", ask: "Are there at least 60 HUD items?" }, null],
+      [{ kind: "probe", expr: "len(hud.items) >=" }, null],
+      [{ kind: "probe", expr: 60 }, null],
+      // The JS spelling of the same floor: the probe scope resolves `.length` on the list.
+      [{ kind: "probe", expr: "hud.items.length >= 60" }, "hud.items"],
+      [{ kind: "probe", expr: "state.hud.items.length > 59" }, "hud.items"],
+      [{ kind: "probe", expr: "hud.items.length <= 64" }, null],
+      [{ kind: "probe", expr: "hud.items.length > 0" }, null],
+      // An index that must exist is a floor of one more than it.
+      [{ kind: "probe", expr: "has('hud.items.59')" }, "hud.items"],
+      [{ kind: "probe", expr: "has('state.hud.items.1') && player.speed > 1" }, "hud.items"],
+      [{ kind: "probe", expr: "has('hud.items.0')" }, null],
+      [{ kind: "probe", expr: "!has('hud.items.64')" }, null],
+      [{ kind: "probe", expr: "has('player.items.59')" }, null],
+      // A range ruled out from 0 up is a floor above it; one that still allows nothing is not.
+      [{ kind: "probe", expr: "!(len(hud.items) in [0, 59])" }, "hud.items"],
+      [{ kind: "probe", expr: "!(len(hud.items) in [0, 0])" }, null],
+      [{ kind: "probe", expr: "!(len(hud.items) in [5, 59])" }, null],
+      // min/max against a number still reads the quantity.
+      [{ kind: "probe", expr: "max(len(hud.items), 0) >= 60" }, "hud.items"],
+      [{ kind: "probe", expr: "min(__render.drawCalls, 5000) > 400" }, "__render.drawCalls"],
+      [{ kind: "probe", expr: "min(len(hud.items), 64) <= 64" }, null],
+      [{ kind: "probe", expr: "max(len(hud.items), player.speed) >= 60" }, null],
+      // The HUD summary's per-kind counts are draw quantities too: a segmented gauge asked for as
+      // forty bars is the three-thousand-rectangle HUD again.
+      [{ kind: "probe", expr: "hud.kinds.bar >= 40" }, "hud.kinds.bar"],
+      [{ kind: "probe", expr: "state.hud.kinds.arc > 6" }, "hud.kinds.arc"],
+      // How many kinds the HUD uses is variety bounded by the kind vocabulary, not an amount drawn.
+      [{ kind: "probe", expr: "len(hud.kinds) >= 5" }, null],
+      [{ kind: "probe", expr: "early.hud.kinds.text == 12" }, "hud.kinds.text"],
+      [{ kind: "probe", expr: "hud.kinds.bar > 0" }, null],
+      [{ kind: "probe", expr: "hud.kinds.text <= 8" }, null],
+      [{ kind: "probe", expr: "hud.kindsOfMine >= 40" }, null],
+    ];
+    for (const [check, quantity] of table) {
+      const finding = lintCheck(check);
+      assert.equal(finding?.quantity ?? null, quantity, JSON.stringify(check));
+      if (finding) assert.equal(finding.code, CheckLintCode.DrawCountFloor);
+    }
+    assert.equal(lintCheck(null), null);
+    assert.equal(lintCheck(undefined), null);
+  });
+
+  it("a catalogue that learned a floor on what the build draws stops offering it and stops counting it", () => {
+    const catalogue = {
+      version: 2,
+      checks: {
+        "hud-rich": { kind: "probe", expr: "len(hud.items) >= 60", origin: "director", uses: 5, passes: 5 },
+        "draw-budget": { kind: "probe", expr: "__render.drawCalls <= 1000", origin: "director", uses: 2, passes: 2 },
+      } as Record<string, Record<string, unknown>>,
+    };
+    const planner = renderCatalogueForPlanner(catalogue);
+    assert.doesNotMatch(planner, /hud-rich/);
+    assert.match(planner, /draw-budget/);
+    const spec = {
+      checks: [
+        { id: "hud-rich", kind: "probe", expr: "len(hud.items) >= 60", weight: "normal" },
+        { id: "draw-budget", kind: "probe", expr: "__render.drawCalls <= 1000", weight: "normal" },
+      ],
+    };
+    recordCatalogueOutcomes(catalogue, spec as never, { "hud-rich": { pass: true }, "draw-budget": { pass: true } });
+    assert.equal(catalogue.checks["hud-rich"]!.uses, 5);
+    assert.equal(catalogue.checks["draw-budget"]!.uses, 3);
   });
 
   it("the catalogue records uses and passes, renders for the planner, and never duplicates an id", () => {
@@ -570,9 +694,12 @@ describe("the board a game actually carries", () => {
       { ownsMain: true, game: { kind: "first-person" } as never },
     ).checks;
     assert.deepEqual(firstPerson.map((c: { id: string }) => c.id).sort(), [
+      "hud-coverage",
+      "hud-overlap",
       "keys-move-player",
       "look-turns-camera",
       "no-dom-ui",
+      "reaches-play",
       "single-hud",
     ]);
 
@@ -582,10 +709,210 @@ describe("the board a game actually carries", () => {
       { id: "f", checks: [] as Check[] },
       { ownsMain: true, game: { kind: "top-down" } as never },
     ).checks as { id: string; expr?: string }[];
-    assert.deepEqual(topDown.map((c) => c.id).sort(), ["keys-move-player", "no-dom-ui", "single-hud"]);
+    assert.deepEqual(topDown.map((c) => c.id).sort(), [
+      "hud-coverage",
+      "hud-overlap",
+      "keys-move-player",
+      "no-dom-ui",
+      "reaches-play",
+      "single-hud",
+    ]);
     const move = topDown.find((c) => c.id === "keys-move-player");
     assert.match(String(move!.expr), /player\.y/);
     assert.doesNotMatch(String(move!.expr), /player\.yaw/);
+    assert.equal(topDown.find((c) => c.id === "hud-coverage")!.expr, "hud.coverage <= 0.22");
+
+    // The HUD's share of the frame is the kind's: a racer's dashboard may take more of it than
+    // a first-person crosshair and ammo count.
+    const racing = withHarnessChecks(
+      { id: "f", checks: [] as Check[] },
+      { ownsMain: true, game: { kind: "racing" } as never },
+    ).checks as { id: string; expr?: string; needs?: string[]; weight: string }[];
+    // Flipped: the entry owner of a racer also carries the race a throttle-only bot must not win.
+    assert.deepEqual(racing.map((c) => c.id).sort(), [
+      "hud-coverage",
+      "hud-overlap",
+      "keys-move-player",
+      "no-dom-ui",
+      "reaches-play",
+      "single-hud",
+      "throttle-bot-loses",
+    ]);
+    const coverage = racing.find((c) => c.id === "hud-coverage")!;
+    assert.equal(coverage.expr, "hud.coverage <= 0.18");
+    assert.deepEqual(coverage.needs, ["hud.coverage"]);
+    assert.equal(coverage.weight, "normal");
+    const firstPersonCoverage = (firstPerson as { id: string; expr?: string }[]).find((c) => c.id === "hud-coverage");
+    assert.equal(firstPersonCoverage?.expr, "hud.coverage <= 0.12");
+    // A part that does not own main still carries the screen checks, never the play check.
+    const part = withHarnessChecks({ id: "f", checks: [] }, { game: { kind: "racing" } as never }).checks;
+    assert.deepEqual(part.map((c: { id: string }) => c.id).sort(), [
+      "hud-coverage",
+      "hud-overlap",
+      "no-dom-ui",
+      "single-hud",
+    ]);
+  });
+
+  it("puts the throttle-only bot's race on the entry owner of a racer or a craft, never a part or the front-end's owner", () => {
+    const owned = (game: Record<string, unknown>, options: Record<string, unknown> = {}) =>
+      withHarnessChecks({ id: "f", checks: [] as Check[] }, { ownsMain: true, game, ...options } as never).checks;
+    const bot = owned({ kind: "racing" }).find((c: Check) => c.id === "throttle-bot-loses");
+    assert.ok(bot, "the entry owner of a racer carries the challenge");
+    assert.equal(bot.kind, "probe");
+    assert.equal(bot.after, "throttle-bot", "it reads the state the throttle-only bot's race left");
+    assert.equal(bot.expr, "race.position > 1");
+    assert.deepEqual(bot.needs, ["race.position"], "a game that reports no race is not asked");
+    assert.equal(bot.weight, "normal", "the challenge never decides whether a part is done");
+    assert.ok(owned({ kind: "flight" }).some((c: Check) => c.id === "throttle-bot-loses"));
+    const ownScript = { kind: "racing", playScript: [{ type: "tap", keys: ["x"] }] };
+    assert.ok(
+      owned(ownScript).some((c: Check) => c.id === "throttle-bot-loses"),
+      "the bot holds the kind's throttle",
+    );
+    for (const game of [{ kind: "first-person" }, { kind: "top-down" }, {}]) {
+      assert.ok(!owned(game).some((c: Check) => c.id === "throttle-bot-loses"), JSON.stringify(game));
+    }
+    const part = withHarnessChecks({ id: "f", checks: [] }, { game: { kind: "racing" } as never }).checks;
+    assert.ok(!part.some((c: Check) => c.id === "throttle-bot-loses"), "a part that does not own main is not asked");
+    const frontEnd = owned({ kind: "racing" }, { keepsFrontEnd: true });
+    assert.ok(!frontEnd.some((c: Check) => c.id === "throttle-bot-loses"), "the title's owner is judged on its menu");
+    // The normalised check keeps what it reads.
+    assert.equal(normalizeCheck({ ...bot } as never)?.after, "throttle-bot");
+  });
+
+  it("a harness check whose needs the build does not report is not its question: no nudge, no count, no lost lesson", () => {
+    // A racer with no front-end and an older HUD: reaches-play and the two HUD measurements have
+    // nothing to read. The template declares no flow, and a kept hud.js measures nothing.
+    const state = { player: { x: 0, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const driven = { player: { x: 3, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const director = { id: "lap-time", kind: "probe", expr: "race.lap > 0", needs: ["race.lap"] };
+    const board = withHarnessChecks(
+      normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director] }),
+      { ownsMain: true, game: { kind: "racing" } as never },
+    );
+    const validated = validateFacetSpec(board, { state });
+    const notes = (id: string) => String(validated.spec.checks.find((c: { id: string }) => c.id === id)?.note);
+    assert.doesNotMatch(notes("reaches-play"), /expose it/);
+    assert.doesNotMatch(notes("hud-coverage"), /expose it/);
+    assert.ok(!validated.unsatisfiable.some((u: { id: string }) => u.id === "reaches-play"));
+    // The director's own contract still asks the build to report what it names.
+    assert.match(notes("lap-time"), /does not report race\.lap yet — expose it/);
+
+    const probes = validated.spec.checks.filter((c: { kind: string }) => c.kind === "probe");
+    const results = probes.map((c: Check) => evaluateProbeCheck(c, { state: driven, stateEarly: state }));
+    const summary = summarizeScoreboard(toScoreboard(results), validated.spec);
+    assert.deepEqual(
+      summary.unmeasuredChecks.map((u: { id: string }) => u.id),
+      ["lap-time"],
+    );
+    assert.equal(summary.unmeasured, 1);
+    assert.equal(summary.total, summary.passing + summary.failing.length + summary.unmeasured);
+    // The lesson miner drops a round with anything unmeasured; with the director's check
+    // answered, the harness's inapplicable ones no longer cost it the round.
+    const answered = probes.map((c: Check) =>
+      evaluateProbeCheck(c, {
+        state: { ...driven, race: { lap: 1 } },
+        stateEarly: { ...state, race: { lap: 0 } },
+      }),
+    );
+    const scoreboard = summarizeScoreboard(toScoreboard(answered), validated.spec);
+    assert.equal(scoreboard.unmeasured, 0);
+    assert.equal(scoreboard.identityAllPass, true);
+    const event = {
+      data: {
+        type: "custom",
+        event_type: "facet_iteration",
+        payload: { facetId: "car", iteration: 1, facetTitle: "Car", biggest_gap: "no drift", scoreboard },
+      },
+    };
+    assert.equal(mineValidationTasks([event] as never, 10).length, 1);
+  });
+
+  it("one predicate says which board entries are this build's questions, and the summary counts exactly those", () => {
+    const state = { player: { x: 0, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const driven = { player: { x: 3, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const director = { id: "lap-time", kind: "probe", expr: "race.lap > 0", needs: ["race.lap"] };
+    const validated = validateFacetSpec(
+      withHarnessChecks(normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director] }), {
+        ownsMain: true,
+        game: { kind: "racing" } as never,
+      }),
+      { state },
+    );
+    const probes = validated.spec.checks.filter((c: { kind: string }) => c.kind === "probe");
+    const board = toScoreboard(probes.map((c: Check) => evaluateProbeCheck(c, { state: driven, stateEarly: state })));
+    const applying = Object.values(board)
+      .filter((e) => appliesToBuild(e, validated.spec))
+      .map((e) => e.id);
+    for (const harness of ["reaches-play", "hud-coverage", "hud-overlap"]) {
+      assert.ok(board[harness], `${harness} is on the board`);
+      assert.ok(!applying.includes(harness), `${harness} is not this build's question`);
+    }
+    // The director's own contract applies even unmeasured, and so does everything measured.
+    assert.ok(applying.includes("lap-time"));
+    assert.ok(applying.includes("keys-move-player"));
+    const summary = summarizeScoreboard(board, validated.spec);
+    assert.equal(summary.total, applying.length);
+    // reaches-play is an identity check: it is in no identity count either, and blocks nothing.
+    const identity = applying.filter((id) => board[id]?.weight === "identity");
+    assert.equal(summary.identityTotal, identity.length);
+    assert.equal(summary.identityPassing, summary.identityTotal);
+    // Without a spec nothing is a harness check, so nothing is dropped; a missing entry applies to nothing.
+    assert.equal(Object.values(board).filter((e) => appliesToBuild(e, null)).length, Object.keys(board).length);
+    assert.equal(appliesToBuild(null, validated.spec), false);
+  });
+
+  it("names no check the build cannot answer as unmeasured to its builder, its brief or its lead", () => {
+    // The nudge harness-needs.ts names: "reaches-play — the build does not report flow.playing"
+    // in every builder prompt pushed builders to add a menu nobody asked for.
+    const state = { player: { x: 0, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const driven = { player: { x: 3, y: 0, z: 0 }, hud: { items: ["speed"] } };
+    const director = { id: "lap-time", kind: "probe", expr: "race.lap > 0", needs: ["race.lap"] };
+    const validated = validateFacetSpec(
+      withHarnessChecks(normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director] }), {
+        ownsMain: true,
+        game: { kind: "racing" } as never,
+      }),
+      { state },
+    );
+    const probes = validated.spec.checks.filter((c: { kind: string }) => c.kind === "probe");
+    const board = toScoreboard(probes.map((c: Check) => evaluateProbeCheck(c, { state: driven, stateEarly: state })));
+    assert.equal(board["reaches-play"]?.pass, null, "the fixture has the harness check unmeasured on the board");
+    const run = { runId: "run_car", goal: "a racer" };
+    const prompt = (resumed: boolean) =>
+      String(
+        facetPrompt({
+          run,
+          spec: validated.spec,
+          iteration: 3,
+          resumed,
+          briefFile: null,
+          briefText: "brief",
+          board,
+          worktree: "/w",
+          ownsMain: true,
+        }),
+      );
+    const brief = String(renderBrief({ run, spec: validated.spec, iteration: 3, board } as never));
+    const lead = renderScoreboard(board, null, validated.spec);
+    for (const [reader, text] of [
+      ["the opening prompt", prompt(false)],
+      ["the resumed prompt", prompt(true)],
+      ["the brief", brief],
+      ["the lead's board", lead],
+    ] as const) {
+      const unmeasured = text.split("\n").filter((line) => line.includes("UNMEASURED"));
+      assert.ok(unmeasured.length > 0, `${reader} still names the director's own unmeasured contract`);
+      assert.ok(
+        unmeasured.some((line) => line.includes("lap-time")),
+        `${reader} names lap-time: ${unmeasured}`,
+      );
+      for (const harness of ["reaches-play", "hud-coverage", "hud-overlap"])
+        assert.ok(!unmeasured.some((line) => line.includes(harness)), `${reader} names ${harness}: ${unmeasured}`);
+    }
+    // Without a spec the board renders whole, as it always has.
+    assert.match(renderScoreboard(board), /\[UNMEASURED\] reaches-play/);
   });
 
   it("offers the planner what a sibling family learned, and tells it the truth about its own board", () => {
@@ -618,7 +945,7 @@ describe("the board a game actually carries", () => {
     assert.match(racer, /lap-time-drops/);
     assert.match(
       racer,
-      /Already on this game's board \(harness-owned, do not re-declare\): no-dom-ui, single-hud, keys-move-player\./,
+      /Already on this game's board \(harness-owned, do not re-declare\): no-dom-ui, single-hud, hud-coverage, hud-overlap, keys-move-player, reaches-play, throttle-bot-loses\./,
     );
     // Two families have recorded it: it has stopped being one genre's opinion.
     catalogue.checks["lap-time-drops"].kinds = ["racing", "static-board"];
@@ -1063,7 +1390,7 @@ describe("scoreboard", () => {
 });
 
 /**
- * M3.2 — the judges of one night, corrected. Every case here is one the run of 7 Sep produced:
+ * M3.2 — the judges, corrected. Every case here is a real misjudgement:
  * a round kept on a question the judge had written for itself, two questions about one trunk
  * that answered differently, a crop question about a number, and a question nobody could answer
  * that held its slot to the end.
@@ -1146,7 +1473,7 @@ describe("judges that keep the right build", () => {
   });
 
   it("two wordings of one defect on one camera never grow twins", () => {
-    // The night's own pair: `defect-coupe-trunk-deck-reads-as-a-smoot` and its `-2` twin, which
+    // The run's own pair: `defect-coupe-trunk-deck-reads-as-a-smoot` and its `-2` twin, which
     // then answered differently — one "yes", one "no" at 0.80 — and the round was kept on the yes.
     const first = "coupe's trunk deck reads as a smooth red panel with no shutline or lamp detail";
     const second =
@@ -1214,7 +1541,7 @@ describe("judges that keep the right build", () => {
       pass: false,
       reason: "named by the judge",
     };
-    // The night's actual answers: "no, no readout is visible" at 0.20, twice.
+    // The run's actual answers: "no, no readout is visible" at 0.20, twice.
     const first = settleVision(failing, {
       id: "defect-probe-readout",
       kind: "vision",
@@ -1342,7 +1669,7 @@ describe("judges that keep the right build", () => {
     assert.equal(summary.grownPassing, 0);
     // What the round card, the round drawer, the judges' sheet and the chat all print.
     assert.equal(checkCounts(summary), "Passed 3 · Failed 2 · Couldn't measure 4 · 3 reviewer notes");
-    // A night from before the split still reads exactly as it did.
+    // A run from before the split still reads exactly as it did.
     assert.equal(checkCounts({ total: 12, passing: 3, unmeasured: 4 }), "Passed 3 · Failed 5 · Couldn't measure 4");
   });
 
@@ -1526,7 +1853,7 @@ describe("technique library", () => {
     } as never);
     assert.match(text, /USER STEERING[\s\S]*make the water darker/);
     assert.match(text, /\[FAIL\] mirror-rt \(scene, identity\)/);
-    // Flipped (golden-goal night, 2026-10-02): every round used to read "kept on <ref>", accepted
+    // Flipped: every round used to read "kept on <ref>", accepted
     // or not; a round now says whether it was kept or lost, and where its code is.
     assert.match(text, /iteration 2, lost — its code is on refs\/studio\/runs\/run_x\/attempts\/water\/2/);
     assert.match(text, /Planar mirror water/);
@@ -1666,6 +1993,97 @@ describe("code reviewer, mechanical half", () => {
       ownShape.some((v) => v.category === "evidence"),
       ownShape.map((v) => v.what).join(" | "),
     );
+  });
+
+  /**
+   * One owner of the screen: a part that does not own the screen publishes its values; drawing
+   * them is the owner's call.
+   */
+  it("finds a part drawing on a screen another part owns, and says nothing when no part owns it", () => {
+    const meter = [
+      "+++ b/src/race/pursuit.js",
+      "@@ -1,0 +1,4 @@",
+      "+export const heat = { value: 0 };",
+      "+__studio.hud.bar('heat', { value: heat.value, anchor: 'top-right' });",
+      "+hud.text('wanted', 'WANTED');",
+      "+const label = hud.textLabel;",
+    ].join("\n");
+    const race = { id: "race", owns: ["src/race/"], checks: [], screenOwner: "hud" };
+    const found = mechanicalReview(meter, race).filter((v) => v.category === "screen-owner");
+    assert.deepEqual(
+      found.map((v) => v.line),
+      [2, 3],
+      `one finding per drawing line: ${found.map((v) => v.what).join(" | ")}`,
+    );
+    assert.match(found[0]!.what, /"hud" owns/);
+    assert.match(String(found[0]!.fix), /__studio\.state\(\)/);
+    const owner = { id: "hud", owns: ["src/race/"], checks: [], ownsScreen: true, screenOwner: "hud" };
+    assert.deepEqual(
+      mechanicalReview(meter, owner).filter((v) => v.category === "screen-owner"),
+      [],
+      "the owner draws",
+    );
+    const nobody = mechanicalReview(meter, { id: "race", owns: ["src/race/"], checks: [] });
+    assert.deepEqual(
+      nobody.filter((v) => v.category === "screen-owner"),
+      [],
+      "with no part owning the screen the rule is inert, as before",
+    );
+    const own = mechanicalReview(meter, race, { template: false });
+    assert.deepEqual(
+      own.filter((v) => v.category === "screen-owner"),
+      [],
+      "a game of its own draws however it already does",
+    );
+    const quiet = mechanicalReview("+++ b/src/race/pursuit.js\n@@ -1,0 +1,1 @@\n+export const heat = 1;\n", race);
+    assert.deepEqual(quiet, []);
+  });
+
+  /** Review of WP-SCOPE-2: reading the HUD (a probe of what it shows) is not drawing on it. */
+  it("lets a part read the HUD another part owns, and finds it changing it", () => {
+    const lines = [
+      "+const shown = { hudIds: () => __studio.hud.items() };",
+      "+const speed = hud.get('speed');",
+      "+__studio.hud.remove('speed');",
+      "+hud.clear();",
+      "+__studio.hud.enable(false);",
+    ];
+    const diff = ["+++ b/src/race/probe.js", `@@ -1,0 +1,${lines.length} @@`, ...lines].join("\n");
+    const race = { id: "race", owns: ["src/race/"], checks: [], screenOwner: "hud" };
+    const found = mechanicalReview(diff, race).filter((v) => v.category === "screen-owner");
+    assert.deepEqual(
+      found.map((v) => v.line),
+      [3, 4, 5],
+      `reads pass, changes are the owner's: ${found.map((v) => v.line).join(", ")}`,
+    );
+  });
+
+  /**
+   * Review of WP-SCOPE-2: the HUD part restarted (`replaces=hud`) without critic=screen lost the
+   * screen, and every HUD line it drew was a finding naming the part it replaced.
+   */
+  it("hands the screen to the part that replaces its owner", async () => {
+    const { linkScreenOwner } = await import("../../src/harness-seed/loop/screen-owner.ts");
+    const hud: Record<string, unknown> = { id: "hud", ownsScreen: true };
+    const race: Record<string, unknown> = { id: "race" };
+    const specs = [hud, race];
+    linkScreenOwner(specs, hud);
+    linkScreenOwner(specs, race);
+    const again: Record<string, unknown> = { id: "hud-2", owns: ["src/hud/"], checks: [] };
+    specs.push(again);
+    linkScreenOwner(specs, again, "hud");
+    assert.equal(again.ownsScreen, true, "the replacement owns the screen");
+    assert.equal(race.screenOwner, "hud-2", "and the other parts learn it");
+    const drawing = "+++ b/src/hud/speed.js\n@@ -1,0 +1,1 @@\n+hud.text('speed', '120 km/h');\n";
+    assert.deepEqual(
+      mechanicalReview(drawing, again as never).filter((v) => v.category === "screen-owner"),
+      [],
+    );
+    const other: Record<string, unknown> = { id: "lights" };
+    specs.push(other);
+    linkScreenOwner(specs, other, "race");
+    assert.equal(other.ownsScreen, undefined, "replacing a part that never owned the screen gives none");
+    assert.equal(other.screenOwner, "hud-2");
   });
 
   it("says the same thing to the model half of the review", () => {
@@ -1825,7 +2243,7 @@ describe("planner (decompose) over a stub substrate", () => {
  * The judge's bill (M3.10).
  *
  * Every picture question used to be its own Claude Code session — 81 of them on the first real
- * night, 774 seconds of wall clock, the same rubric re-uploaded each time. The questions about
+ * run, 774 seconds of wall clock, the same rubric re-uploaded each time. The questions about
  * one camera share a frame and a rubric, so they ride in one call. Nothing about the judge's
  * blindness changes: it is still a one-shot session that is never told which build it is looking
  * at, and each answer still lands on the board as a yes/no with a confidence.

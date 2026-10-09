@@ -1,18 +1,17 @@
 /**
- * Learning from nights — the studio's memory of one game.
+ * Learning from runs — the studio's memory of one game.
  *
  * The harness already learned two things between runs: skills (skillopt, the blind pairwise
  * gate) and techniques (the recipe library, promoted and retired by check outcomes). Neither
- * remembered a *game*, so the second night on a game paid for the first night's mistakes again.
- * The first real director night lost eight of its twenty-one rounds to one inherited console
- * error and nothing anywhere wrote that down.
+ * remembered a *game*, so the second run on a game paid for the first run's mistakes again:
+ * rounds lost to one inherited console error, and nothing anywhere wrote that down.
  *
- * What is tested here: the ledger records a night leaves (judged rounds, stopped rounds, the
+ * What is tested here: the ledger records a run leaves (judged rounds, stopped rounds, the
  * builders the fork gate refused, the close), the lessons those records add up to, that both
- * briefs carry them the next night, that a check nobody has ever been able to measure is flagged
+ * briefs carry them the next run, that a check nobody has ever been able to measure is flagged
  * in the catalogue and warned about in the dry run, the one line the morning card gets, and that
- * the skillopt analyst now sees what a director's night actually did. No model runs here: the
- * pure halves are pure, and the rig night is the fake engine.
+ * the skillopt analyst now sees what a director's run actually did. No model runs here: the
+ * pure halves are pure, and the rig run is the fake engine.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -24,7 +23,7 @@ import {
   closeRecord,
   flagRarelyMeasurable,
   lastTimeBlock,
-  learnedTonight,
+  learnedThisRun,
   ledgerFile,
   ledgerFromEvents,
   lessonsFile,
@@ -47,17 +46,17 @@ after(async () => {
   await Promise.all(rigs.map((rig) => rig.stop().catch(() => {})));
 });
 
-const FIXTURE = path.resolve(import.meta.dirname, "..", "fixtures", "learning-night.json");
+const FIXTURE = path.resolve(import.meta.dirname, "..", "fixtures", "learning-loop-run.json");
 /** Synthetic replay coverage: 21 rounds, 10 kept, nothing landed. */
-async function regressionNight(): Promise<Array<Record<string, unknown>>> {
+async function regressionLoopRun(): Promise<Array<Record<string, unknown>>> {
   return JSON.parse(await readFile(FIXTURE, "utf8"));
 }
 
 describe("the ledger: one durable record per outcome", () => {
-  it("reads a synthetic night back into records — judged, stopped, refused and the close itself", async () => {
-    const records = ledgerFromEvents(await regressionNight(), { game: "fixture-derby", gameKind: "three-vite" });
+  it("reads a synthetic run back into records — judged, stopped, refused and the close itself", async () => {
+    const records = ledgerFromEvents(await regressionLoopRun(), { game: "fixture-derby", gameKind: "three-vite" });
     const rounds = records.filter((r) => r.round > 0);
-    assert.equal(rounds.length, 21, "one record per round the night judged");
+    assert.equal(rounds.length, 21, "one record per round the run judged");
     assert.equal(rounds.filter((r) => r.decision === "kept").length, 10);
     assert.equal(rounds.filter((r) => r.decision === "undone").length, 11);
 
@@ -71,10 +70,10 @@ describe("the ledger: one durable record per outcome", () => {
     // The sentence is the verdict module's, so it carries no check id, sha or branch.
     assert.match(first.because, /the game did not start after this build/);
     assert.doesNotMatch(first.because, /[0-9a-f]{10}|attempt\//);
-    // The night's own budget, read off the worker card that started that part.
+    // The run's own budget, read off the worker card that started that part.
     assert.equal(first.minutes, 75);
 
-    // The close is one record too: a night that made nothing live is undone, like a round.
+    // The close is one record too: a run that made nothing live is undone, like a round.
     const close = records.at(-1)!;
     assert.equal(close.round, 0);
     assert.equal(close.decision, "undone");
@@ -84,7 +83,7 @@ describe("the ledger: one durable record per outcome", () => {
     assert.doesNotMatch(close.because, /land=no/);
   });
 
-  it("makes the same record live, from what the night has in its hand", () => {
+  it("makes the same record live, from what the run has in its hand", () => {
     const stopped = roundRecord({
       runId: "run_x",
       game: "skate",
@@ -169,10 +168,10 @@ describe("the ledger: one durable record per outcome", () => {
   });
 });
 
-describe("the lessons a game's nights add up to", () => {
-  it("names the synthetic night's undone patterns, what its judges kept saying, and what worked", async () => {
+describe("the lessons a game's runs add up to", () => {
+  it("names the synthetic run's undone patterns, what its judges kept saying, and what worked", async () => {
     const workspace = await tmpDir("lessons-");
-    const records = ledgerFromEvents(await regressionNight(), { game: "fixture-derby", gameKind: "three-vite" });
+    const records = ledgerFromEvents(await regressionLoopRun(), { game: "fixture-derby", gameKind: "three-vite" });
     for (const record of records) await appendLedger(workspace, "fixture-derby", record);
     const { file, lessons } = await saveGameLessons(
       workspace,
@@ -182,7 +181,7 @@ describe("the lessons a game's nights add up to", () => {
     assert.equal(file, lessonsFile(workspace, "fixture-derby"));
     const text = await readFile(file, "utf8");
 
-    // The pattern that cost that night: eight rounds against one build that would not run.
+    // The pattern that cost that run: eight rounds against one build that would not run.
     assert.match(lessons[0]!, /8 of 21 rounds were undone because the game did not start after the build/);
     assert.match(lessons[0]!, /Look at what a builder forks from/);
     // What its judges kept rejecting, from the gaps they wrote.
@@ -190,7 +189,7 @@ describe("the lessons a game's nights add up to", () => {
       lessons.some((l) => /keep naming the same things: "floating" \(6 rounds\)/.test(l)),
       lessons.join(" | "),
     );
-    // What worked, so the next night starts where the last one paid.
+    // What worked, so the next run starts where the last one paid.
     assert.ok(
       lessons.some((l) => /What worked: rounds on "Vehicle silhouettes" were kept 3 of 3/.test(l)),
       lessons.join(" | "),
@@ -208,7 +207,7 @@ describe("the lessons a game's nights add up to", () => {
     assert.deepEqual(await loadGameLessons(workspace, "fixture-derby"), lessons.slice(0, 5));
   });
 
-  it("says nothing when there is nothing to say — one night, one kept round, no pattern", async () => {
+  it("says nothing when there is nothing to say — one run, one kept round, no pattern", async () => {
     const workspace = await tmpDir("quiet-");
     await appendLedger(
       workspace,
@@ -220,12 +219,12 @@ describe("the lessons a game's nights add up to", () => {
       "new-game",
       closeRecord({ runId: "r1", landed: true, because: "made live, a judge preferred it" }),
     );
-    assert.deepEqual(await loadGameLessons(workspace, "new-game"), [], "one good night is not a lesson");
+    assert.deepEqual(await loadGameLessons(workspace, "new-game"), [], "one good run is not a lesson");
     assert.equal(lastTimeBlock([]), "", "and an empty list is no block at all");
   });
 });
 
-describe("the next night's briefs carry them", () => {
+describe("the next run's briefs carry them", () => {
   const lessons = [
     "8 of 21 rounds were undone because the game did not start after the build.",
     'The judges on this game keep naming the same things: "floating" (6 rounds).',
@@ -258,7 +257,7 @@ describe("the next night's briefs carry them", () => {
     assert.doesNotMatch(first, /LAST TIME ON THIS GAME/);
   });
 
-  it("puts the same block in the builder's BRIEF.md, under the steering the user gave tonight", () => {
+  it("puts the same block in the builder's BRIEF.md, under the steering the user gave this run", () => {
     const text = renderBrief({
       run: { runId: "run_d", goal: "make the crashes hurt" },
       spec: { id: "crumple", title: "Crash damage", intent: "dents where the hits land", checks: [] },
@@ -279,6 +278,28 @@ describe("the next night's briefs carry them", () => {
     assert.ok(
       text.indexOf("LAST TIME ON THIS GAME") < text.indexOf("Lessons from past runs"),
       "this game before every game",
+    );
+  });
+  it("carries at most six lessons from past runs, so the brief stays about this round's move", () => {
+    const many = Array.from({ length: 8 }, (_, i) => `past lesson ${i + 1}`);
+    const text = renderBrief({
+      run: { runId: "run_d", goal: "make the crashes hurt" },
+      spec: { id: "crumple", title: "Crash damage", intent: "dents where the hits land", checks: [] },
+      iteration: 1,
+      board: {},
+      comparison: null,
+      steering: [],
+      lessons: many,
+      gameLessons: [],
+    } as never);
+    assert.match(text, /## Lessons from past runs/);
+    const shown = text.split("\n").filter((line) => /^- past lesson \d+$/.test(line));
+    assert.equal(shown.length, 6);
+    // The file appends, so its newest lessons are last: those are the six a builder reads.
+    assert.deepEqual(
+      shown,
+      [3, 4, 5, 6, 7, 8].map((n) => `- past lesson ${n}`),
+      "the newest six, not the six oldest",
     );
   });
 });
@@ -315,17 +336,17 @@ describe("a check nobody can measure stops being written", () => {
   });
 
   /**
-   * The warning is only as real as the payload a night actually emits. Every test above hands
+   * The warning is only as real as the payload a run actually emits. Every test above hands
    * `roundRecord` a board it wrote itself; the loop's own `facet_iteration.scoreboard` is built
    * field by field, and while it carried the counts but not the ids the ledger recorded
    * "3 unmeasured, none of them named" every round and this whole feature was inert.
    */
-  it("reads the ids out of a round payload a night emits, and out of an older one that has only its results", () => {
+  it("reads the ids out of a round payload a run emits, and out of an older one that has only its results", () => {
     const results = [
       { id: "plaza-wet", kind: "probe", weight: "identity", pass: null, reason: "state.plaza.wet is not reported" },
       { id: "lit", kind: "pixel", weight: "normal", pass: true, reason: "" },
     ];
-    const night = (scoreboard: Record<string, unknown>) =>
+    const loopRun = (scoreboard: Record<string, unknown>) =>
       [1, 2, 3].map((iteration) => ({
         data: {
           type: "custom",
@@ -341,7 +362,7 @@ describe("a check nobody can measure stops being written", () => {
         },
       }));
     const asEmitted = ledgerFromEvents(
-      night({
+      loopRun({
         total: 2,
         passing: 1,
         unmeasured: 1,
@@ -354,10 +375,10 @@ describe("a check nobody can measure stops being written", () => {
     );
     assert.deepEqual(asEmitted[0]!.unmeasuredChecks, ["plaza-wet"]);
     assert.deepEqual(rarelyMeasurable(asEmitted, { kind: "studio-template" }), [{ id: "plaza-wet", rounds: 3 }]);
-    // A night recorded before the payload carried the ids: its results still say which check
+    // A run recorded before the payload carried the ids: its results still say which check
     // measured nothing — neither true nor false is what "unmeasured" means.
     const older = ledgerFromEvents(
-      night({ total: 2, passing: 1, unmeasured: 1, flips: [], regressions: [], results }),
+      loopRun({ total: 2, passing: 1, unmeasured: 1, flips: [], regressions: [], results }),
       { game: "skate", gameKind: "studio-template" },
     );
     assert.deepEqual(older[0]!.unmeasuredChecks, ["plaza-wet"]);
@@ -417,10 +438,10 @@ describe("a check nobody can measure stops being written", () => {
 });
 
 describe("what the morning card says the studio learned", () => {
-  it("turns tonight's records into one sentence with no id in it", async () => {
-    const tonight = ledgerFromEvents(await regressionNight(), { game: "fixture-derby", gameKind: "three-vite" });
-    const learned = learnedTonight(tonight);
-    // No part of that night holds more than half of its ten kept rounds, so the sentence claims
+  it("turns this run's records into one sentence with no id in it", async () => {
+    const runLedger = ledgerFromEvents(await regressionLoopRun(), { game: "fixture-derby", gameKind: "three-vite" });
+    const learned = learnedThisRun(runLedger);
+    // No part of that run holds more than half of its ten kept rounds, so the sentence claims
     // no favourite: "most of them on X" is a majority's word, not the leader's.
     assert.match(learned, /^10 of 21 rounds were kept\. /, learned);
     assert.match(learned, /written down what worked/);
@@ -444,9 +465,9 @@ describe("what the morning card says the studio learned", () => {
       }),
     ];
     assert.match(
-      learnedTonight(oneKept),
+      learnedThisRun(oneKept),
       /^1 of 2 rounds was kept, on Dusk light on the water\./,
-      learnedTonight(oneKept),
+      learnedThisRun(oneKept),
     );
     // And a part that does hold the majority is still named as one.
     const mostly = [
@@ -462,20 +483,20 @@ describe("what the morning card says the studio learned", () => {
       roundRecord({ part: "sky", title: "Sky", round: 4, winner: "challenger", verdictSource: "checks" }),
     ];
     assert.match(
-      learnedTonight(mostly),
+      learnedThisRun(mostly),
       /^4 of 4 rounds were kept, most of them on Dusk light on the water\./,
-      learnedTonight(mostly),
+      learnedThisRun(mostly),
     );
 
-    // A night whose rounds mostly went the same way says which way, in the user's words.
+    // A run whose rounds mostly went the same way says which way, in the user's words.
     const broken = [1, 2, 3].map((round) =>
       roundRecord({ part: "plaza", round, winner: "incumbent", verdictSource: "broken" }),
     );
     assert.match(
-      learnedTonight(broken),
+      learnedThisRun(broken),
       /Most of the work that was undone went the same way: the game did not start after the build/,
     );
-    assert.equal(learnedTonight([]), "", "a night with no rounds learned nothing worth a line");
+    assert.equal(learnedThisRun([]), "", "a run with no rounds learned nothing worth a line");
   });
 
   it("reaches the card as its own line, scrubbed like every other harness sentence", () => {
@@ -498,7 +519,7 @@ describe("what the morning card says the studio learned", () => {
   });
 });
 
-describe("skillopt sees what a director's night actually did", () => {
+describe("skillopt sees what a director's run actually did", () => {
   it("mines the fork gate, the rounds it stopped, the builders that ended badly and the landing", () => {
     const events = [
       {
@@ -586,7 +607,7 @@ describe("skillopt sees what a director's night actually did", () => {
     assert.equal(byId["landing-run_x"]!.success, false);
   });
 
-  it("still mines a judged round as the task it always was, and calls a landed night a success", () => {
+  it("still mines a judged round as the task it always was, and calls a landed run a success", () => {
     const tasks = mineValidationTasks(
       [
         {
@@ -643,18 +664,18 @@ function fakeEngine(rig: Rig, delegate: (request: DelegateRequest) => Promise<De
   } as never);
 }
 
-describe("two nights on one game, through the real core and harness", () => {
-  it("the first night's outcomes are in the second night's brief, and in every builder's", async () => {
+describe("two runs on one game, through the real core and harness", () => {
+  it("the first run's outcomes are in the second run's brief, and in every builder's", async () => {
     const rig = await startRig(
       { replies: [] },
       { previewPoolMax: 3, createHeadlessPreview: async () => makeFakePreview() },
     );
     rigs.push(rig);
-    const project = await rig.core.games.scaffold("learning-night", { title: "Learning night" });
+    const project = await rig.core.games.scaffold("learning-run", { title: "Learning run" });
     const workspace = rig.core.layout.harnessWs;
 
-    // This game already had a night: a synthetic replay in its ledger.
-    for (const record of ledgerFromEvents(await regressionNight(), {
+    // This game already had a run: a synthetic replay in its ledger.
+    for (const record of ledgerFromEvents(await regressionLoopRun(), {
       game: project.name,
       gameKind: "studio-template",
     })) {
@@ -688,16 +709,16 @@ describe("two nights on one game, through the real core and harness", () => {
 
     const seen: DelegateRequest[] = [];
     const results: Record<string, any> = {};
-    let night = 0;
+    let loopRun = 0;
     const building: Record<string, boolean> = {};
     fakeEngine(rig, async (request) => {
       if (request.director) {
         seen.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-        night += 1;
-        if (night === 1) {
+        loopRun += 1;
+        if (loopRun === 1) {
           await call("plan", {
-            summary: "Tonight: the plaza.",
+            summary: "This run: the plaza.",
             workers: JSON.stringify([
               {
                 id: "plaza",
@@ -740,10 +761,10 @@ describe("two nights on one game, through the real core and harness", () => {
             if (waited.status.workers[0]?.state !== "running") break;
           }
           await call("finish", { summary: "the plaza needs a starting point first", land: "no" });
-          return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-1", summary: "night one" };
+          return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-1", summary: "run one" };
         }
-        await call("finish", { summary: "nothing to build on tonight", land: "no" });
-        return { ok: true, engine: "codex", turns: 2, usage: {}, sessionId: "director-2", summary: "night two" };
+        await call("finish", { summary: "nothing to build on this run", land: "no" });
+        return { ok: true, engine: "codex", turns: 2, usage: {}, sessionId: "director-2", summary: "run two" };
       }
       const who = path.basename(request.cwd);
       await mkdir(path.join(request.cwd, "src"), { recursive: true });
@@ -779,12 +800,12 @@ describe("two nights on one game, through the real core and harness", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runOne),
       180_000,
-      "night one",
+      "run one",
     );
 
-    // ── the first night reads the ledger it inherited ──
+    // ── the first run reads the ledger it inherited ──
     assert.match(seen[0]!.prompt, /LAST TIME ON THIS GAME/, "the lead is told what this game already cost");
-    // Twenty-one rounds from the night the owner watched, three more seeded above.
+    // Twenty-one rounds from the run the owner watched, three more seeded above.
     assert.match(seen[0]!.prompt, /8 of 24 rounds were undone because the game did not start after the build/);
     // And the builder gets the same five in the one file it is told to read first.
     assert.match(String(results.workerBrief), /## LAST TIME ON THIS GAME/, String(results.workerBrief).slice(0, 400));
@@ -798,7 +819,7 @@ describe("two nights on one game, through the real core and harness", () => {
     );
     assert.match(String(results.started.rarelyMeasurableWarning), /plaza-wet \(3 rounds\)/);
 
-    // ── what the first night wrote down ──
+    // ── what the first run wrote down ──
     const afterOne = await readLedger(workspace, project.name);
     const mine = afterOne.filter((r) => r.runId === runOne);
     assert.equal(mine.length, 2, JSON.stringify(mine));
@@ -814,7 +835,7 @@ describe("two nights on one game, through the real core and harness", () => {
 
     // The lessons file is written at the close, and the run's own report carries the line.
     const lessons = await readFile(lessonsFile(workspace, project.name), "utf8");
-    // The lessons file is written after the night's own round joined the ledger: 24 + this one.
+    // The lessons file is written after the run's own round joined the ledger: 24 + this one.
     assert.match(lessons, /8 of 25 rounds were undone because the game did not start/);
     assert.match(
       lessons,
@@ -824,7 +845,7 @@ describe("two nights on one game, through the real core and harness", () => {
     const finishedOne = customEvents(logOne, "run_finished").find((e) => e.runId === runOne)!;
     assert.equal(typeof finishedOne.learned, "string", JSON.stringify(finishedOne.learned));
 
-    // ── the second night, on the same game ──
+    // ── the second run, on the same game ──
     const runTwo = rig.core.newRunId();
     await rig.core.dispatchRun({
       runId: runTwo,
@@ -839,13 +860,13 @@ describe("two nights on one game, through the real core and harness", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runTwo),
       180_000,
-      "night two",
+      "run two",
     );
 
     assert.equal(seen.length, 2, "two director sessions");
     assert.match(seen[1]!.prompt, /LAST TIME ON THIS GAME/);
-    // The lines the SECOND night reads are ones the FIRST night wrote: its own round and its own
-    // close are in the count (24 rounds and one night in the brief it read, 25 and two in this).
+    // The lines the SECOND run reads are ones the FIRST run wrote: its own round and its own
+    // close are in the count (24 rounds and one run in the brief it read, 25 and two in this).
     assert.match(
       seen[1]!.prompt,
       /8 of 25 rounds were undone because the game did not start/,
@@ -857,9 +878,9 @@ describe("two nights on one game, through the real core and harness", () => {
       seen[1]!.prompt.slice(0, 3000),
     );
 
-    // ── a game whose nights happened before the ledger existed ──
+    // ── a game whose runs happened before the ledger existed ──
     // Emptied here the way history is empty for every game the studio ran before this file: the
-    // thread still holds those nights, so the next one reads them back rather than starting
+    // thread still holds those runs, so the next one reads them back rather than starting
     // blank (`ledgerFromEvents`, which until now nothing in the studio called).
     await writeFile(ledgerFile(workspace, project.name), "");
     const runThree = rig.core.newRunId();
@@ -876,17 +897,17 @@ describe("two nights on one game, through the real core and harness", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runThree),
       180_000,
-      "night three",
+      "run three",
     );
 
     assert.equal(seen.length, 3, "three director sessions");
     assert.match(seen[2]!.prompt, /LAST TIME ON THIS GAME/, seen[2]!.prompt.slice(0, 3000));
     assert.match(seen[2]!.prompt, /2 of 2 runs on this game made nothing live/, seen[2]!.prompt.slice(0, 3000));
-    // The replay is written down, so the night after this one reads a file and not a log again.
+    // The replay is written down, so the run after this one reads a file and not a log again.
     const rebuilt = await readLedger(workspace, project.name);
     assert.ok(
       rebuilt.some((r) => r.runId === runOne),
-      `the first night is back in the ledger: ${JSON.stringify(rebuilt.map((r) => r.runId))}`,
+      `the first run is back in the ledger: ${JSON.stringify(rebuilt.map((r) => r.runId))}`,
     );
     assert.ok(
       rebuilt.some((r) => r.runId === runTwo),

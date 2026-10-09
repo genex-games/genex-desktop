@@ -27,7 +27,7 @@ export const StopCode = {
   Done: "done",
   /** The same unjudgeable cause, build after build: no third build on it. */
   CircuitBreak: "circuit-break",
-  /** The builder's engine is out of usage — a cap that outlives the night. */
+  /** The builder's engine is out of usage — a cap that outlives the run. */
   UsageLimit: "usage-limit",
   /** The engine failed build turn after build turn. */
   EngineExhausted: "engine-exhausted",

@@ -7,12 +7,13 @@
  * Blink features no game page gets. On-device speech recognition asks the browser for
  * `media.mojom.OnDeviceSpeechRecognition`, a binder only Chrome registers: Electron treats the
  * request as a bad Mojo message and kills the whole renderer (reason 123). An agent's diagnostic
- * probe did it six times on 2026-09-23 — `SpeechRecognition.available()` or `install()` with
+ * probe can do it — `SpeechRecognition.available()` or `install()` with
  * `processLocally: true`, or `start()` on a recognizer with `processLocally` and a `lang`, is
  * enough. With these off, those members do not exist in any frame of the view, iframes and blob:
  * documents included, which a page-world stub cannot reach; plain `start()` still ends in a
  * `not-allowed` error because the microphone is never granted, and speech synthesis is untouched.
- * Chromium ignores a name it does not know, so the self test (`npm run test:e2e`) re-checks the
+ * `--disable-speech-api` is not the fix: it removes synthesis too while the unprefixed API still
+ * crashes. Chromium ignores a name it does not know, so the self test (`npm run test:e2e`) re-checks the
  * kill in real Electron, a cross-site frame included.
  */
 export const GAME_DISABLED_BLINK_FEATURES = ["OnDeviceWebSpeechAvailable", "InstallOnDeviceSpeechRecognition"] as const;

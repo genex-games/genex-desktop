@@ -9,7 +9,7 @@
  * Pure math, zero Electron imports, so the conformance suite can prove the arithmetic —
  * including the byte order — under plain node.
  */
-import type { PixelDiff, PixelStats } from "../shared/preview-contract.ts";
+import type { PixelDiff, PixelStats, StillExposure } from "../shared/preview-contract.ts";
 
 /** Below-or-equal is "unlit": luma 8 of 255 is the preview's own #05070d backdrop territory. */
 export const LUMA_THRESHOLD = 8;
@@ -22,6 +22,9 @@ export const HISTOGRAM_BINS = 32;
 
 /** A pixel counts as changed between two frames when its luma moved by more than this (0–255). */
 export const DIFF_THRESHOLD = 12;
+
+/** A sample darker than this luma (0–1) counts as near black in a still's exposure. */
+export const NEAR_BLACK_LUMA = 0.1;
 
 export type { PixelDiff, PixelStats };
 
@@ -352,6 +355,33 @@ export function labPalette(samples: Array<Lab>, k = PALETTE_SIZE): Array<{ lab: 
 
 export function labDistance(a: readonly number[], b: readonly number[]): number {
   return Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0), (a[2] ?? 0) - (b[2] ?? 0));
+}
+
+/**
+ * A still's exposure over every pixel of a small BGRA bitmap (a downscale of the still): luma mean
+ * and standard deviation, the share below {@link NEAR_BLACK_LUMA} and the share above
+ * {@link LUMA_THRESHOLD}, all 0–1. Rec.709 on the sRGB bytes as they are, the same reading a caller
+ * judging exposure takes of a frame. A bitmap with no whole row reads as black.
+ */
+export function exposureStats(bgra: Buffer, width: number, height: number): StillExposure {
+  const { pixelCount } = pixelGeometry(bgra, width, height);
+  if (pixelCount <= 0) return { lumaMean: 0, lumaStdDev: 0, nearBlackFraction: 1, litFraction: 0 };
+  let sum = 0;
+  let squares = 0;
+  let nearBlack = 0;
+  let lit = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const luma = lumaAt(bgra, pixel * 4);
+    const unit = luma / 255;
+    sum += unit;
+    squares += unit * unit;
+    if (unit < NEAR_BLACK_LUMA) nearBlack++;
+    if (luma > LUMA_THRESHOLD) lit++;
+  }
+  const lumaMean = sum / pixelCount;
+  // Floating-point cancellation can leave a flat frame's variance a hair below zero.
+  const lumaStdDev = Math.sqrt(Math.max(0, squares / pixelCount - lumaMean * lumaMean));
+  return { lumaMean, lumaStdDev, nearBlackFraction: nearBlack / pixelCount, litFraction: lit / pixelCount };
 }
 
 /** Under half a percent lit is a blank screen, whatever the probes claim. */

@@ -5,7 +5,7 @@ import { EventKind, RunEvent } from "./run-events.ts";
 import { SteerDelivery } from "./steer-delivery.ts";
 
 /**
- * This queue hands a message to a night's lead while its build runs (live chat, `beforeProcess`
+ * This queue hands a message to a run's lead while its build runs (live chat, `beforeProcess`
  * answering with a `LeadDoor`); an older copy keeps every message behind the build. Read by
  * main.ts through live-chat-served.ts `serveLiveChat`, never imported by name.
  */
@@ -96,7 +96,7 @@ export interface SteerHandle {
 }
 
 /**
- * A night's lead taking the chat while its build runs (live-chat.ts): a message it takes is
+ * A run's lead taking the chat while its build runs (live-chat.ts): a message it takes is
  * recorded delivered to its run, with the records the lead reads it from, and never waits behind
  * one the lead does not take.
  */
@@ -109,7 +109,7 @@ export interface LeadDoor {
   records(item: QueueAction): Array<{ event_type: RunEvent; payload: AnyRecord }>;
   /**
    * Those records are written: the lead hears of it. `giveBack` puts messages the lead never heard
-   * back in the queue when its night ends, so they still get an answer (and Stop hands over to them).
+   * back in the queue when its run ends, so they still get an answer (and Stop hands over to them).
    */
   handed(item: QueueAction, giveBack: (items: QueueAction[]) => Promise<void>): void;
 }
@@ -314,7 +314,7 @@ const recordsFor = (event_type: RunEvent, items: readonly QueueAction[], extra: 
  * puts them in (`engine.steer`): read mid-turn, or by interrupting and resuming it. Whatever the
  * session did not read goes back to the queue in the order it was sent.
  *
- * While a build runs, its night's lead may take the chat (`lead`, live-chat.ts): a message it
+ * While a build runs, its run's lead may take the chat (`lead`, live-chat.ts): a message it
  * takes is delivered to it with its receipt, and one that waited is handed to it once
  * `beforeProcess` answers with the lead's door for it. What the lead does not take (a picture, a
  * fresh build asked for, slash text) keeps its place and waits for the build to close, but holds
@@ -331,7 +331,7 @@ export class MessageQueue {
    */
   beforeProcess: (threadId: string, next?: QueueAction) => Promise<unknown>;
   steerable: (threadId: string, action: QueueAction) => boolean;
-  /** The door to the night's lead that takes this message now, or null. */
+  /** The door to the run's lead that takes this message now, or null. */
   lead: (threadId: string, action: QueueAction) => LeadDoor | null;
   constructor(
     host: Host,
@@ -447,7 +447,7 @@ export class MessageQueue {
    * Save the message and its receipt. Sent while the chat's turn works, and nothing older waits:
    * it joins that turn, recorded with its receipt so it never shows as queued first. A running
    * session is handed it once the receipt is written (the returned receipt settles that); one
-   * still being set up takes it into its first prompt. Sent while a night's lead takes the chat,
+   * still being set up takes it into its first prompt. Sent while a run's lead takes the chat,
    * and nothing the lead takes waits ahead of it: it is delivered to the lead with its receipt instead.
    */
   async #receive(thread: ThreadQueue, action: QueueAction): Promise<Deferred<boolean> | null> {
@@ -477,7 +477,7 @@ export class MessageQueue {
     return receipt;
   }
   /**
-   * The night's lead takes this message now: nothing holds the queue, and nothing it would take
+   * The run's lead takes this message now: nothing holds the queue, and nothing it would take
    * waits ahead of it — what waits there (a picture, a fresh build asked for) waits for the build to
    * close.
    */
@@ -493,12 +493,12 @@ export class MessageQueue {
     this.host.notify("coordinator.delivered", { threadId, messageIds: [item.messageId] });
     door.handed(item, (items) => this.#giveBack(threadId, items));
   }
-  /** Messages a night's lead never heard, back from its ended night: each waits for a turn of its own. */
+  /** Messages a run's lead never heard, back from its ended run: each waits for a turn of its own. */
   async #giveBack(threadId: string, items: QueueAction[]): Promise<void> {
     if (this.#stopped) return;
     await this.#requeue(threadId, this.#thread(threadId), null, items);
   }
-  /** Hand a waiting message to the night's lead, as its receipt would have. */
+  /** Hand a waiting message to the run's lead, as its receipt would have. */
   async #handToLead(threadId: string, thread: ThreadQueue, item: QueueAction, door: LeadDoor): Promise<void> {
     await this.#events(threadId, leadRecords(item, door));
     thread.items = thread.items.filter((waiting) => waiting !== item);
@@ -506,7 +506,7 @@ export class MessageQueue {
     this.#toldLead(threadId, door, item);
   }
   /**
-   * Hand the night's lead every waiting message it takes, in the order sent: what it does not take
+   * Hand the run's lead every waiting message it takes, in the order sent: what it does not take
    * keeps its place and waits for the build to close, holding nothing back behind it.
    */
   async #handPast(threadId: string, thread: ThreadQueue): Promise<void> {
@@ -830,7 +830,7 @@ export class MessageQueue {
     })();
   }
   /**
-   * One step of the pump: hand the night's lead what it takes, wait until the message at the front
+   * One step of the pump: hand the run's lead what it takes, wait until the message at the front
    * may be answered (or its lead takes it), then answer it, hand it over, or look again. False when
    * there is nothing to do.
    */
@@ -847,7 +847,7 @@ export class MessageQueue {
     return true;
   }
   /**
-   * After the wait for `next`: hand it to the night's lead when `beforeProcess` answered with the
+   * After the wait for `next`: hand it to the run's lead when `beforeProcess` answered with the
    * lead's door, or take it to answer. The front changed meanwhile, the lead's lines changed (null),
    * or its door shut: look again.
    */
@@ -907,7 +907,7 @@ export class MessageQueue {
       });
     } finally {
       await this.#endTurn(threadId, thread, turn);
-      // Handled either way — never answered twice — but a failed one says so (P07-F3).
+      // Handled either way — never answered twice — but a failed one says so.
       await this.#event(threadId, RunEvent.CoordinatorMessageHandled, {
         messageId: action.messageId,
         ...(failed ? { failed: true } : {}),
@@ -942,7 +942,7 @@ export class MessageQueue {
 
 /**
  * A message's receipt: its words, its queue record, a resumed queue, and — joining a turn — its
- * hand-over, or — taken by a night's lead — its delivery to that lead.
+ * hand-over, or — taken by a run's lead — its delivery to that lead.
  */
 function receiptBatch(
   thread: ThreadQueue,
@@ -963,7 +963,7 @@ function receiptBatch(
   ];
 }
 
-/** A message delivered to a night's lead: recorded delivered to its run, then what the lead reads it from. */
+/** A message delivered to a run's lead: recorded delivered to its run, then what the lead reads it from. */
 function leadRecords(item: QueueAction, door: LeadDoor): Array<{ event_type: RunEvent; payload: AnyRecord }> {
   return [
     {

@@ -146,9 +146,16 @@ export const CITATION_ROOTS = ["src/", "scripts/", "tests/"] as const;
 /**
  * Shipped payload is compared byte for byte by the seed upgrade, so even a comment edit there
  * refreshes (or backs up) every install's copy. Old citations in it are cleaned up only alongside
- * a deliberate seed change, never by this check.
+ * a deliberate seed change, never by this check. `tests/fixtures/shipped/` holds byte-for-byte
+ * copies of files the studio once shipped, which an upgrade recognises by digest: editing one
+ * would make it a copy nobody shipped.
  */
-export const CITATION_EXEMPT = ["src/harness-seed/", "src/game-template/", "src/harness-boot/"] as const;
+export const CITATION_EXEMPT = [
+  "src/harness-seed/",
+  "src/game-template/",
+  "src/harness-boot/",
+  "tests/fixtures/shipped/",
+] as const;
 const citationAllowed = new Set(["docs/agent/knowledge-map.json", ".gitignore"]);
 /**
  * Tracked files under CITATION_ROOTS that name a local-only Markdown document. A document is a

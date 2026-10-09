@@ -1,11 +1,14 @@
-/** Settings → Harness: how many builders a run may use, whether suggestions apply on their own, and Copy diagnostics. */
+/**
+ * Settings → Harness: how many builders a run may use, whether suggestions apply on their own, whether
+ * paused builds resume on their own, and Copy diagnostics.
+ */
 import { useEffect, useState, type JSX } from "react";
 import type { StudioSettingsView } from "../../shared/studio-api.ts";
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { DiagnosticsRow } from "./DiagnosticsRow.tsx";
-import { problemWords } from "../words.ts";
+import { AUTO_RESUME_SETTING_WORDS, problemWords } from "../words.ts";
 import { Pending } from "../ui/Pending.tsx";
 
 /** What the auto-apply switch means, given whether the harness learns at all. */
@@ -26,7 +29,7 @@ export function HarnessSection(): JSX.Element {
       .then(setSettings)
       .catch((cause) => setError(problemWords(cause)));
   }, []);
-  const change = async (patch: { selfImproving?: boolean; buildersMax?: number }) => {
+  const change = async (patch: { selfImproving?: boolean; buildersMax?: number; autoResume?: boolean }) => {
     if (busy) return;
     setBusy(true);
     setError(null);
@@ -52,6 +55,7 @@ export function HarnessSection(): JSX.Element {
     );
   const builders = settings.buildersMax ?? DEFAULT_BUILDERS;
   const { learning, selfImproving } = settings;
+  const autoResume = settings.autoResume !== false;
   return (
     <div data-harness-settings className="appearance-section">
       <section className="appearance-theme settings-rows">
@@ -93,6 +97,19 @@ export function HarnessSection(): JSX.Element {
               +
             </Button>
           </div>
+        </div>
+        <div className="appearance-row">
+          <label htmlFor="harness-auto-resume" className="flex min-w-0 flex-col">
+            <span className="text-ink">{AUTO_RESUME_SETTING_WORDS.label}</span>
+            <span className="text-ink-3">{AUTO_RESUME_SETTING_WORDS.detail}</span>
+          </label>
+          <Switch
+            id="harness-auto-resume"
+            data-harness-auto-resume
+            checked={autoResume}
+            disabled={busy}
+            onCheckedChange={(next) => void change({ autoResume: next })}
+          />
         </div>
         <div className="appearance-row">
           <span className="flex min-w-0 flex-col">

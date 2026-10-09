@@ -1,5 +1,5 @@
 import { compareIds } from "./compare-ids.ts";
-import { CustomEvent } from "./custom-events.ts";
+import { AutoResumeCause, CustomEvent } from "./custom-events.ts";
 import { EventKind, type EventEnvelope } from "./event-log.ts";
 import { ExecutionStatus } from "./run-state.ts";
 import {
@@ -107,6 +107,7 @@ const RUN_MILESTONES: ReadonlySet<string> = new Set<string>([
   CustomEvent.RunSettled,
   CustomEvent.AutopilotPaused,
   CustomEvent.AutopilotResumed,
+  CustomEvent.RunAutoResumed,
   CustomEvent.BuildLanded,
 ]);
 
@@ -336,6 +337,27 @@ const recoveryItem: ItemReader = ({ event, event_type, payload: p }) => ({
   attention: p.ok === false || event_type === CustomEvent.HarnessReseeded,
 });
 
+/** Why the studio resumed a build on its own, as Activity says it (`run_auto_resumed`). */
+const AUTO_RESUMED = {
+  title: "Resumed a build automatically",
+  [AutoResumeCause.LimitReset]: "The limit reset.",
+  [AutoResumeCause.LoopRestart]: "Studio’s loop restarted.",
+  [AutoResumeCause.ProviderOutage]: "The model provider was down; the wait after it is over.",
+} as const;
+
+const autoResumeItem: ItemReader = ({ event, payload: p }) => {
+  const cause = Object.values(AutoResumeCause).find((value) => value === p.cause);
+  return {
+    id: event.id,
+    at: event.created_at,
+    kind: "recovery",
+    title: AUTO_RESUMED.title,
+    detail: cause ? AUTO_RESUMED[cause] : "",
+    ...(words(p.project) ? { project: words(p.project) } : {}),
+    ...(words(p.runId) ? { runId: words(p.runId) } : {}),
+  };
+};
+
 /** The Activity item each Studio record makes. */
 const ITEM_READERS: ReadonlyMap<string, ItemReader> = new Map([
   [CustomEvent.SkilloptAccepted, improvementItem],
@@ -350,6 +372,7 @@ const ITEM_READERS: ReadonlyMap<string, ItemReader> = new Map([
   [CustomEvent.RebuildAndRestartStudio, recoveryItem],
   [CustomEvent.EngineFallback, recoveryItem],
   [CustomEvent.HarnessReseeded, recoveryItem],
+  [CustomEvent.RunAutoResumed, autoResumeItem],
 ]);
 
 /** Adds a run's record to the run it belongs to, dating the run by its latest milestone. */
@@ -479,8 +502,11 @@ export class ActivityIndex {
       return;
     }
     if (data.type !== EventKind.Custom) return;
+    // A record with an Activity item of its own is kept even when it stays in its conversation's
+    // transcript (it is not a Studio record): an automatic resume, say.
     const retained =
       STUDIO_RECORD_EVENTS.has(data.event_type) ||
+      ITEM_READERS.has(data.event_type) ||
       data.event_type === CustomEvent.RunStarted ||
       data.event_type === CustomEvent.RunRegistered;
     if (retained) this.#records.push(event);

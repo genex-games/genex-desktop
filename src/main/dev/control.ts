@@ -20,6 +20,10 @@ const VIRTUAL_KEY: Record<string, number> = {
   Backspace: 8,
   ArrowDown: 40,
   ArrowUp: 38,
+  ArrowLeft: 37,
+  ArrowRight: 39,
+  PageUp: 33,
+  PageDown: 34,
   Home: 36,
   End: 35,
 };

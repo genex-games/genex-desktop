@@ -4,12 +4,13 @@
  * mode (`DelegateRequest.permissions`); unattended work never asks. The studio runs these tools
  * itself, so it asks before each change as Claude Code does: Manual before every edit and command,
  * Accept edits before every command, Auto never; Plan refuses every change until the plan is
- * approved (the host asks for that once the turn ends: `main/core/plan-approval.ts`). Bonsai's
- * commands always run in the studio's sandbox, so it honours no Bypass (`permissionModesFor`).
+ * approved (the host asks for that once the turn ends: `main/core/plan-approval.ts`). The commands
+ * of a session engine (Bonsai, OpenRouter) always run in the studio's sandbox, so it honours no Bypass
+ * (`permissionModesFor`).
  */
 import path from "node:path";
 import { engineMode, PermissionDecision, PermissionMode } from "../../shared/permissions.ts";
-import { EngineId } from "../../shared/providers.ts";
+import { providerInfo } from "../../shared/providers.ts";
 import type { ToolCall } from "../types.ts";
 import { LocalTool } from "./local-session-tools.ts";
 import { deniedWithWords, LOCAL_NOTE } from "./local-session-prompts.ts";
@@ -38,21 +39,24 @@ const ASKS: Record<PermissionMode, ReadonlySet<ChangeKind>> = {
 /** Claude Code's tool names, which the card (`PermissionRequest`) reads a request by. Vendor names. */
 const CardTool = { Shell: "Bash", Edit: "Edit", Write: "Write" } as const;
 
-/** The card's own sentence, as Claude Code words its questions. */
+/** The card's own sentence, as Claude Code words its questions, in the name of the engine that asks. */
 const ASK_TITLE = {
-  command: "Bonsai wants to run a command",
-  edit: (file: string) => `Bonsai wants to edit ${path.basename(file)}`,
-  write: (file: string) => `Bonsai wants to write ${path.basename(file)}`,
+  command: (who: string) => `${who} wants to run a command`,
+  edit: (who: string, file: string) => `${who} wants to edit ${path.basename(file)}`,
+  write: (who: string, file: string) => `${who} wants to write ${path.basename(file)}`,
 } as const;
 
-/** A chat's mode as Bonsai honours it: Bypass, which it has not, runs as Auto. */
-export function bonsaiMode(mode: PermissionMode): PermissionMode {
-  return engineMode(EngineId.Bonsai, mode);
+/** The engine's name as a person says it ("Bonsai", "OpenRouter"), or its id when the table has none. */
+const engineName = (engine: string): string => providerInfo(engine)?.label ?? engine;
+
+/** A chat's mode as the session's engine honours it: Bypass, which none has, runs as Auto. */
+export function sessionMode(engine: string, mode: PermissionMode): PermissionMode {
+  return engineMode(engine, mode);
 }
 
-/** The mode a chat session the person answers runs in, as Bonsai honours it; null for unattended work. */
-export function localMode(permissions: DelegatePermissions | undefined): PermissionMode | null {
-  return permissions ? bonsaiMode(permissions.mode) : null;
+/** The mode a chat session the person answers runs in, as its engine honours it; null for unattended work. */
+export function localMode(engine: string, permissions: DelegatePermissions | undefined): PermissionMode | null {
+  return permissions ? sessionMode(engine, permissions.mode) : null;
 }
 
 /** Whether a tool changes something, so Plan withholds it from the model. */
@@ -71,16 +75,17 @@ function text(args: Record<string, unknown>, key: string): string | undefined {
  * command as `Bash`, an edit as `Edit`, a whole file as `Write`. Null for arguments that are not an
  * object: the tool refuses those itself without running.
  */
-export function localAsk(call: ToolCall, cwd: string): PermissionAsk | null {
+export function localAsk(call: ToolCall, cwd: string, engine: string): PermissionAsk | null {
   const args = call.arguments;
   if (typeof args !== "object" || args === null || Array.isArray(args)) return null;
   const input = args as Record<string, unknown>;
   const base = { toolUseId: call.id, always: [] };
+  const who = engineName(engine);
   if (call.name === LocalTool.RunCommand)
     return {
       ...base,
       tool: CardTool.Shell,
-      title: ASK_TITLE.command,
+      title: ASK_TITLE.command(who),
       input: { command: text(input, "command") ?? "" },
     };
   const file = path.resolve(cwd, text(input, "path") ?? "");
@@ -88,13 +93,13 @@ export function localAsk(call: ToolCall, cwd: string): PermissionAsk | null {
     return {
       ...base,
       tool: CardTool.Write,
-      title: ASK_TITLE.write(file),
+      title: ASK_TITLE.write(who, file),
       input: { file_path: file, content: text(input, "content") ?? "" },
     };
   return {
     ...base,
     tool: CardTool.Edit,
-    title: ASK_TITLE.edit(file),
+    title: ASK_TITLE.edit(who, file),
     input: { file_path: file, old_string: text(input, "oldText") ?? "", new_string: text(input, "newText") ?? "" },
   };
 }
@@ -113,6 +118,7 @@ function refusal(reply: PermissionReply): string | null {
  * for the person's answer (or the work ending around it).
  */
 export async function permitCall(input: {
+  engine: string;
   mode: PermissionMode | null;
   call: ToolCall;
   cwd: string;
@@ -123,7 +129,7 @@ export async function permitCall(input: {
   if (!changesSomething(call.name) || !permissions || mode === null) return null;
   if (mode === PermissionMode.Plan) return LOCAL_NOTE.planModeRefused;
   if (!ASKS[mode].has(CHANGE_TOOLS[call.name])) return null;
-  const ask = localAsk(call, input.cwd);
+  const ask = localAsk(call, input.cwd, input.engine);
   if (!ask) return null;
   return refusal(await permissions.ask(ask, input.signal));
 }

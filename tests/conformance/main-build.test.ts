@@ -1,5 +1,5 @@
 /**
- * The main bundle loads heavy packages on first use (2026-10-01): a static import of one runs
+ * The main bundle loads heavy packages on first use: a static import of one runs
  * before the first window on every launch, so the build refuses it.
  */
 import assert from "node:assert/strict";

@@ -109,7 +109,7 @@ describe("the field row", () => {
       ...facts(),
       prompt: "make a platformer",
       time: { ...facts().time, projectDir: "/Users/studio/AI Games/demo" },
-      inApp: { ...facts().inApp, summary: "the night went well" },
+      inApp: { ...facts().inApp, summary: "the run went well" },
     } as FieldRunFacts;
     const result = buildFieldRow(extra, stamp());
     assert.ok(result.ok);

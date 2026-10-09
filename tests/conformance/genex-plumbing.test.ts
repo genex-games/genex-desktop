@@ -385,7 +385,7 @@ it("agent publish requests wait for Studio consent on every engine path", async 
             JSON.parse(String(await request.onLiveTool!("genex__publish-status", { operation: "status" }))).connected,
             false,
           );
-          // Flipped (P06-F6): the same request asked again before the user says anything is answered
+          // Flipped: the same request asked again before the user says anything is answered
           // with their no, not a second card. Once they speak, it is asked — and approved, it reaches
           // the backend, which refuses for want of an account.
           const repeated = JSON.parse(String(await request.onLiveTool!("genex__publish", { operation: "draft" })));

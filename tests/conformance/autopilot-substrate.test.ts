@@ -319,10 +319,10 @@ describe("v2 contract upgrade", () => {
       upgraded: false,
       materialsAdded: false,
     });
-    // A v1 contract (no inspect()) is upgraded, the old file kept beside it.
+    // A v1 contract (no inspect()) the studio shipped is upgraded, the old file kept beside it.
     await writeFile(
       path.join(dir, "src", "studio.js"),
-      "export function installStudio(config) { window.__studio = { version: 1, state: () => ({}) }; }\n",
+      await readFile(path.join(import.meta.dirname, "..", "fixtures", "shipped", "studio-generation-1.js.txt"), "utf8"),
     );
     const before = (await api["game.validate"]!({ project: "oldgame" } as never)) as { warnings: string[] };
     assert.ok(

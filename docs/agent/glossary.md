@@ -38,6 +38,11 @@ is product copy, not this glossary.
 - **Host tool**: a bundled Genex tool whose manifest `host` makes Studio run it instead of the
   backend: `genex__cli`, `genex__cli-paid`, `genex__package` (`PluginHostTool`,
   `src/main/core/genex-cli.ts`).
+- **Game cover / Genex cover**: two different pictures. The game cover is Studio's own sidebar
+  look for a game (a cover sphere from a recipe the builder names with `set_game_cover`, or an
+  uploaded image) and never leaves this Mac (`shared/cover-recipe.ts`, `renderer/ui/GameAvatar.tsx`).
+  The Genex cover is the one real 16:9 frame genex.games shows for a hosted game, staged by the game
+  as its `genex-cover` demo and sent by the Genex plugin (`src/plugins/genex/cover.ts`).
 - **Colour tweaker**: the developer panel for tuning colour presets live, hidden in code between
   tuning sessions (`COLOR_TWEAKER_ON` in `src/renderer/appearance/tweaker/ColorTweakerHost.tsx`;
   how to use it in [design](design.md)).
@@ -53,9 +58,9 @@ is product copy, not this glossary.
   completion-only engines: plan facets, build a base, loop facets, merge (`loop/autopilot.ts`).
 - **Director**: one delegated session that conducts a whole run on session-capable engines,
   using the harness machinery as tools (`loop/director.ts`, its parts under `loop/director/`).
-- **Night**: the director's run as one explicit object (`prepareNight` in
-  `loop/director/setup.ts`); every function of the night takes it first (`loop/director/night.ts`),
-  and what needs no night is beside it: `rules.ts` (plan, monitor, landing, defect routing, worker
+- **Run**: the director's run as one explicit object (`prepareLoopRun` in
+  `loop/director/setup.ts`); every function of the run takes it first (`loop/director/loop-run.ts`),
+  and what needs no run is beside it: `rules.ts` (plan, monitor, landing, defect routing, worker
   spec), `args.ts`, `budgets.ts`, `briefs.ts`, `digests.ts`, `memory.ts` and `tool-specs.ts`.
 - **Wake / digest**: how the director's session is driven (`loop/director/wake.ts`). The lead
   ends its turn after each decision and the harness wakes the same session when something happens
@@ -63,18 +68,18 @@ is product copy, not this glossary.
   wake: the user's words verbatim, what happened, where the run stands and a short build card
   (`wake-prompts.ts`). `run.directorLoop: "turn"` (or `STUDIO_DIRECTOR_LOOP=turn` in the studio's
   environment) keeps the older long turn with `wait`.
-- **Lead / one session**: a waking night's director that is its chat's own session, leaving the
+- **Lead / one session**: a waking run's director that is its chat's own session, leaving the
   game's changes to its workers while the build runs (`loop/director/lead-session.ts`). After the close the same
   session answers the chat with its hands back and the run's controls — `run_status`,
-  `show_build`, `land_build` (`runControls`) and a paused night's recorded `resume_run`
-  (`loop/after-night.ts`).
+  `show_build`, `land_build` (`runControls`) and a paused run's recorded `resume_run`
+  (`loop/after-loop-run.ts`).
 - **Reopen**: a finished build whose journal seated a lead, started again as the same run when a
   Loop message asks for more: the chat's own session records `reopen_run` (workers and judges
   then take the message's picks), or the run's coordinator `continue_build` (the build's own
   models); the chat rewrites the journal with the Loop's fresh budget and completion policy, a
   Loop ∞'s required outcomes left to the lead's first plan for the ask (`loop/reopen-run.ts`,
   `loop/director/reopen.ts`).
-- **Run journal**: the durable artifact `autopilot_<runId>` a run resumes from. A director night
+- **Run journal**: the durable artifact `autopilot_<runId>` a run resumes from. A director run
   keeps its whole record there (`loop/director/journal.ts`): the time it has worked, so a Resume
   goes on with what the budget has left, its workers, the defects nobody owns, the plan window,
   the log and the wake loop's state.

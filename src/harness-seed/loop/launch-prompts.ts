@@ -8,6 +8,7 @@
 import { MAX_RUN_HOURS } from "./config.ts";
 import { askUser } from "./interview-question.ts";
 import { toolCall } from "./model-roles.ts";
+import { NARROW_TO_THE_ASK } from "./narrow-prompts.ts";
 
 /** The build a Loop chat may start: its launch tool, the composer's hours, stills and folder. */
 export interface LaunchGrant {
@@ -34,7 +35,7 @@ export const RESUME_LOOP_CHAT =
  * nobody chose. `ask` is the question tool as the reader calls it.
  */
 function askFirst(ask: string): string {
-  return `Before you launch a build, know what the game is (what the player does in it) and how it should look and feel (a style, a game or film to match, or the stills). Take both from the conversation, the stills or the game already in this folder. If either is missing, do not guess: ask with ${ask} — one question that covers what is missing, up to 3 choices with your recommendation first — and end your reply; launch once they answer. Ask even when the user asks for speed: an answer costs them a click, a build in the wrong style costs hours. Never ask what they already said or showed, and ask once: after their answer, fill any gap left with your recommendation.`;
+  return `Before you launch a build, know what the game is (what the player does in it) and how it should look and feel (a style, a game or film to match, or the stills). Take both from the conversation, the stills or the game already in this folder. If either is missing, do not guess: ask with ${ask} — one question that covers what is missing, up to 3 choices with your recommendation first — and end your reply; launch once they answer. Ask even when the user asks for speed: an answer costs them a click, a build in the wrong style costs hours. Never ask what they already said or showed, and ask once: after their answer, a gap in look takes your recommendation; ${NARROW_TO_THE_ASK}: a build is narrowed, never widened.`;
 }
 
 /**
@@ -66,7 +67,7 @@ export function launchRules(engine: string | undefined, grant: LaunchGrant): str
     `- ${SMALL_TALK}`,
     "- A question, research, a plan, a design document or a review: do it yourself and answer here; put plans and documents in this folder (docs/) when they are asked for. A request for research or a plan is not a request to build — deliver it, then offer to build from it.",
     "- A contained change (a fix, a tweak, one feature): make it yourself in this folder.",
-    `- Building the game or changing it substantially (a new game from a pitch, several systems at once, the look of the whole game, hours of work): call ${launch} with the goal in the user's words — ${QUICK_IS_A_BUILD}. Reading and research first are fine; do not build the game yourself.`,
+    `- Building the game or changing it substantially (a new game from a pitch, several systems at once, the look of the whole game, hours of work): call ${launch} with the goal in the user's words, what it delivers in in_scope and what it leaves out in cut — ${QUICK_IS_A_BUILD}. Reading and research first are fine; do not build the game yourself.`,
     `- If it is unclear whether they want a build, or a build would take hours they may not expect, ask with ${ask} (recommended choice first) and end your reply. Never call ${launch} in the same reply as a question, and never recommend what the user ruled out.`,
     askFirst(ask),
     `A build starts when your reply ends, from this folder exactly as you leave it: call ${launch} last, then recap in one short paragraph.`,
@@ -80,7 +81,7 @@ export function launchDecision(tool: string): string[] {
   return [
     `Decide from the latest message. ${SMALL_TALK}`,
     "Questions, research, plans, design documents and contained changes: do them yourself with your tools and answer here (put plans and documents in docs/ when asked). A request for research or a plan is not a request to build — deliver it, then offer to build from it.",
-    `When the ask is to build the game or change it substantially, call ${tool} once, the goal in the user's words — ${QUICK_IS_A_BUILD}; it starts from this folder as you leave it. If it is unclear whether they want a build, ask first.`,
+    `When the ask is to build the game or change it substantially, call ${tool} once, the goal in the user's words, what it delivers in in_scope and what it leaves out in cut — ${QUICK_IS_A_BUILD}; it starts from this folder as you leave it. If it is unclear whether they want a build, ask first.`,
     askFirst(askUser.name),
   ];
 }

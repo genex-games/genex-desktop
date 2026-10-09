@@ -170,7 +170,7 @@ test("agent reference pages stay current references: no dated headings and a wor
   for (const heading of [
     "## Autopilot corrections (17 September)",
     "### Seed upgrade (2026-09-22)",
-    "## Night runs (16 September continuation)",
+    "## Loop runs (16 September continuation)",
   ]) {
     fs.writeFileSync(page, `# Behavior\n${heading}\nText.\n`);
     assert.match(checkReferences(x.root).join("\n"), /docs\/agent\/doc\.md: dated heading/, heading);
@@ -212,8 +212,14 @@ test("tracked code cannot cite a local-only document; generic names, prose docs 
   ]);
   fs.mkdirSync(path.join(x.root, "scripts"));
   fs.writeFileSync(path.join(x.root, "scripts/d.ts"), "x\n# SCRATCH-NOTES.md\n");
-  // Shipped seed and template payload is exempt: editing it would refresh every install.
-  for (const payload of ["src/harness-seed/loop/x.mjs", "src/game-template/src/y.js", "src/harness-boot/z.mjs"]) {
+  // Shipped seed and template payload is exempt: editing it would refresh every install. So is a
+  // byte-for-byte copy of a shipped file an upgrade test recognises by its digest.
+  for (const payload of [
+    "src/harness-seed/loop/x.mjs",
+    "src/game-template/src/y.js",
+    "src/harness-boot/z.mjs",
+    "tests/fixtures/shipped/w.js.txt",
+  ]) {
     fs.mkdirSync(path.join(x.root, path.dirname(payload)), { recursive: true });
     fs.writeFileSync(path.join(x.root, payload), "// see SCRATCH-NOTES.md\n");
   }
@@ -225,6 +231,7 @@ test("tracked code cannot cite a local-only document; generic names, prose docs 
       "src/harness-seed/loop/x.mjs",
       "src/game-template/src/y.js",
       "src/harness-boot/z.mjs",
+      "tests/fixtures/shipped/w.js.txt",
     ]),
     ["scripts/d.ts:2: cites local-only document SCRATCH-NOTES.md; state the rule or link a maintained doc instead"],
   );

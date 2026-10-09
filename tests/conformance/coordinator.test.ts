@@ -203,7 +203,7 @@ describe("addressed run inbox", () => {
         id: "4",
         data: { type: "custom", event_type: "run_steering", payload: { runId: "r", text: "Keep walking peaceful" } },
       },
-      // The director's own steer to a worker is not the user speaking (a director once asked the user to repeat it).
+      // The director's own steer to a worker is not the user speaking.
       {
         id: "4b",
         data: {
@@ -341,7 +341,7 @@ it("coordinator status includes the current Optimization stage without mixing ru
   assert.equal(snapshot.progress[0].phase, "profiling_candidate");
 });
 
-it("a night's wakes do not crowd the workers out of the coordinator's progress", () => {
+it("a run's wakes do not crowd the workers out of the coordinator's progress", () => {
   const event = (event_type: string, payload: object) => ({ data: { type: "custom", event_type, payload } });
   // Up to thirty wakes an hour, each a director_continued: an hour of them is more than the list holds.
   const wakes = Array.from({ length: 30 }, (_, i) =>
@@ -362,7 +362,7 @@ it("a night's wakes do not crowd the workers out of the coordinator's progress",
   );
 });
 
-it("the chat's words to a night's lead do not crowd the workers out of the coordinator's progress", () => {
+it("the chat's words to a run's lead do not crowd the workers out of the coordinator's progress", () => {
   const event = (event_type: string, payload: object) => ({ data: { type: "custom", event_type, payload } });
   // Each message to the lead is a steer, taken off its inbox and heard: only the steer is progress.
   const chat = Array.from({ length: 10 }, (_, i) => [
@@ -385,7 +385,7 @@ it("the chat's words to a night's lead do not crowd the workers out of the coord
   assert.equal(types[0], "director_worker", "the worker's start is still on the list");
 });
 
-it("a follow-up after a night sees what the night's lead said in the chat, and the coordinator's own reply once", async () => {
+it("a follow-up after a run sees what the run's lead said in the chat, and the coordinator's own reply once", async () => {
   const custom = (id: number, event_type: string, payload: object) => ({
     id: String(id).padStart(3, "0"),
     data: { type: "custom", event_type, payload },
@@ -411,7 +411,7 @@ it("a follow-up after a night sees what the night's lead said in the chat, and t
     custom(5, "run_steering", { runId: "r", text: "is the sky dusk yet?", sourceMessageId: "m1", how: "lead" }),
     said(6, "lead", "Not yet: the sky worker is on its first round."),
     custom(7, "run_finished", { runId: "r" }),
-    // After the night, the coordinator answers a question: its reply is in the chat's own words.
+    // After the run, the coordinator answers a question: its reply is in the chat's own words.
     words(8, "user", "what did you finish?"),
     custom(9, "coordinator_message_queued", { messageId: "m2", action: { text: "what did you finish?" } }),
     custom(10, "coordinator_message_processing", { messageId: "m2" }),

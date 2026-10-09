@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { useMemo } from "react";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
+import { feedbackAbout } from "../feedback-about.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { Sidebar } from "../panels/Sidebar.tsx";
 import { useLaunch, useSidebarLibrary, useThreadsView, useUpdate } from "../state/hooks.ts";
@@ -31,7 +32,7 @@ export function AppSidebar({
   notices: Notifications;
   welcoming: boolean;
 }): JSX.Element {
-  const { records: threads, status: threadStatus, activeThreadId, project, room } = useThreadsView();
+  const { records: threads, status: threadStatus, activeThreadId, activeThread, project, room } = useThreadsView();
   const launch = useLaunch((s) => s.launch);
   const atHome = room === Room.Home && !launch;
   const { games, building, stagedCount } = useSidebarLibrary();
@@ -76,6 +77,9 @@ export function AppSidebar({
           onReadNotices={notices.readAll}
           onClearNotices={notices.clear}
           onToggle={chrome.toggleSidebar}
+          onFeedback={() =>
+            dialogs.dispatch({ type: "feedback", about: feedbackAbout({ activeThread, pluginsOpen, games }) })
+          }
           pluginsOpen={pluginsOpen}
           onPlugins={chrome.openPlugins}
           onSettings={() => dialogs.openSettings()}

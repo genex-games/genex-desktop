@@ -1,6 +1,6 @@
-import { operationSchema, type Operation } from "../../src/main/dev/protocol.ts";
+import { DevMethod, operationSchema, type Operation } from "../../src/main/dev/protocol.ts";
 export const USAGE =
-  "Usage: studio:dev -- fixtures | start|status|stop|restart|clean|shell|capture|snapshot|logs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
+  "Usage: studio:dev -- fixtures | start|status|stop|restart|clean|shell|capture|snapshot|logs|runs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
 export const COMMANDS = [
   "fixtures",
   "start",
@@ -12,6 +12,7 @@ export const COMMANDS = [
   "capture",
   "snapshot",
   "logs",
+  "runs",
   "ui",
   "diagnostics",
 ] as const;
@@ -74,6 +75,7 @@ const INLINE_OPERATIONS: Partial<Record<StudioDevCommand, (flags: Flags, now: nu
       method: "snapshot",
       params: { surface: "desktop", ...given("scope", flags.get("scope")), ...given("limit", flags.int("limit")) },
     }),
+  runs: () => operationSchema.parse({ method: DevMethod.Runs, params: {} }),
   logs: (flags) =>
     operationSchema.parse({
       method: "logs",

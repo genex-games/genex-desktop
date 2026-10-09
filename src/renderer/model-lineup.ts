@@ -3,9 +3,12 @@
  * family, from the provider's newest generation. A model's family and version are read from its
  * provider id (Claude's resolved model, Codex's slug), never from its display name, so a new
  * release replaces the one before it without a table to keep. An id that cannot be read stays
- * in the picker: a model named some new way must never vanish. Settings choices
- * (`state/model-picker.ts`) override the rule per model; the provider's default always shows.
+ * in the picker: a model named some new way must never vanish. A catalog of hundreds (OpenRouter,
+ * OpenCode) starts instead with its first few: the newest GPT and Claude it lists, a vendor at a
+ * time, then the rest in the order the provider lists them. Settings choices (`state/model-picker.ts`) override the rule per model; the provider's
+ * default always shows.
  */
+import { EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { EngineId } from "../shared/providers.ts";
 
 /** A catalog row as the lineup reads it. */
@@ -25,11 +28,18 @@ interface Lineage {
 
 /** The id that means "whatever the CLI is set to"; it is no model of its own. */
 const DEFAULT_MODEL = "default";
+/** Catalogs too long to list whole, and how many of their first models the picker lists. */
+const FIRST_FEW: Partial<Record<string, number>> = { [EngineId.OpenRouter]: 3, [EngineId.OpenCode]: 3 };
 
 /** `claude-opus-5-5`, `claude-opus-5`, `claude-haiku-4-5-20251001`. */
 const CLAUDE_ID = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/;
 /** `gpt-6.1-sol`, `gpt-6-astra`, `gpt-5.5`. */
 const CODEX_ID = /^gpt-(\d+)(?:\.(\d+))?(?:-([a-z]+))?$/;
+/** The small families a vendor makes beside its larger models; at one version they come after. */
+const SMALL_FAMILIES: ReadonlySet<string> = new Set(["haiku", "mini", "nano"]);
+const isSmall = (lineage: Lineage): boolean => SMALL_FAMILIES.has(lineage.family);
+/** A Claude id in a metered catalog: `claude-opus-5-5`, or OpenRouter's `claude-sonnet-4.5`. */
+const VENDOR_CLAUDE_ID = /^claude-([a-z]+)-(\d+)(?:[-.](\d{1,2}))?(?:-\d{8})?$/;
 /** A context variant such as `[1m]` names the same model. */
 const VARIANT_SUFFIX = /\[[^\]]*\]$/;
 
@@ -51,6 +61,78 @@ const LINEAGE: Partial<Record<string, (model: LineupModel) => Lineage | undefine
 };
 
 const lineageOf = (engine: string, model: LineupModel): Lineage | undefined => LINEAGE[engine]?.(model);
+
+/** The vendors a metered catalog's `vendor/model` ids are read for, and how. */
+const VENDOR_LINEAGE: Partial<Record<string, (id: string) => Lineage | undefined>> = {
+  anthropic: (id) => {
+    const match = VENDOR_CLAUDE_ID.exec(id);
+    return match ? { family: match[1] ?? "", major: Number(match[2]), minor: Number(match[3] ?? 0) } : undefined;
+  },
+  openai: (id) => codexLineage({ id, label: id }),
+};
+
+/** A metered catalog's model as its vendor and version, when its id can be read. */
+function vendorRead(model: LineupModel): (Read & { vendor: string }) | undefined {
+  const slash = model.id.indexOf("/");
+  const vendor = model.id.slice(0, slash);
+  const lineage = slash > 0 ? VENDOR_LINEAGE[vendor]?.(model.id.slice(slash + 1)) : undefined;
+  return lineage ? { model, lineage, vendor } : undefined;
+}
+
+/**
+ * A long catalog's models, best first: each vendor's newest GPT or Claude in turn (a vendor at a
+ * time, in the order the catalog first names them), then every model it cannot read, as listed.
+ */
+function newestFirst(listed: readonly LineupModel[], runnable: ReadonlySet<string>): LineupModel[] {
+  const vouched = new Set([...runnable].map((id) => id.slice(0, id.indexOf("/"))));
+  const byVendor = new Map<string, Read[]>();
+  for (const read of listed.map(vendorRead)) {
+    // A vendor whose runnable models are known offers only those.
+    const refused = read && vouched.has(read.vendor) && !runnable.has(read.model.id);
+    if (read && !refused) byVendor.set(read.vendor, [...(byVendor.get(read.vendor) ?? []), read]);
+  }
+  const queues = [...byVendor.values()].map((reads) =>
+    reads.toSorted(
+      (a, b) =>
+        Number(isNewer(b.lineage, a.lineage)) - Number(isNewer(a.lineage, b.lineage)) ||
+        Number(isSmall(a.lineage)) - Number(isSmall(b.lineage)),
+    ),
+  );
+  const ranked: LineupModel[] = [];
+  for (let round = 0; queues.some((queue) => round < queue.length); round++) {
+    for (const queue of queues) {
+      const read = queue[round];
+      if (read) ranked.push(read.model);
+    }
+  }
+  // Once some models are known to run, nobody vouches for the rest: they wait under Older models.
+  if (runnable.size > 0 && ranked.length > 0) return ranked;
+  return [...ranked, ...listed.filter((model) => !ranked.includes(model))];
+}
+
+/** No models vouched for: a long catalog's own rule. */
+const NOBODY: ReadonlySet<string> = new Set();
+/** The engine that says which of another engine's vendor models run for this person, and the vendor. */
+const RUNNABLE_SOURCE: Partial<Record<string, { engine: string; vendor: string }>> = {
+  [EngineId.OpenCode]: { engine: EngineId.Codex, vendor: "openai" },
+};
+
+/**
+ * The `vendor/model` ids a long catalog is known to run for this person: for OpenCode, the GPT
+ * models a ChatGPT plan runs, as a signed-in Codex lists them (OpenAI refuses others on a plan,
+ * though OpenCode lists them). Empty when nobody can say.
+ */
+export function runnableModels(
+  engine: string,
+  engines: readonly { id: string; status: { code: string }; models: readonly LineupModel[] }[],
+): ReadonlySet<string> {
+  const source = RUNNABLE_SOURCE[engine];
+  const plan = source && engines.find((candidate) => candidate.id === source.engine);
+  if (!source || plan?.status.code !== EngineStatusCode.Ready) return NOBODY;
+  return new Set(
+    plan.models.filter((model) => model.id !== DEFAULT_MODEL).map((model) => `${source.vendor}/${model.id}`),
+  );
+}
 
 /**
  * A model id without its context variant. The CLI lists one model under different ids as its
@@ -75,8 +157,19 @@ function preferred(kept: Read | undefined, next: Read): Read {
 }
 
 /** The ids the picker shows by default, in the provider's order. */
-export function latestModels(engine: string, models: readonly LineupModel[]): Set<string> {
+export function latestModels(
+  engine: string,
+  models: readonly LineupModel[],
+  runnable: ReadonlySet<string> = NOBODY,
+): Set<string> {
   const listed = models.filter((model) => model.id !== DEFAULT_MODEL);
+  const firstFew = FIRST_FEW[engine];
+  if (firstFew !== undefined)
+    return new Set(
+      newestFirst(listed, runnable)
+        .slice(0, firstFew)
+        .map((model) => model.id),
+    );
   const read = listed.flatMap((model) => {
     const lineage = lineageOf(engine, model);
     return lineage ? [{ model, lineage }] : [];
@@ -97,8 +190,9 @@ export function shownModels(
   engine: string,
   models: readonly LineupModel[],
   choices: Readonly<Record<string, boolean>> = {},
+  runnable: ReadonlySet<string> = NOBODY,
 ): Set<string> {
-  const latest = latestModels(engine, models);
+  const latest = latestModels(engine, models, runnable);
   const shown = (model: LineupModel) => model.providerDefault === true || (choices[model.id] ?? latest.has(model.id));
   return new Set(models.filter((model) => model.id !== DEFAULT_MODEL && shown(model)).map((model) => model.id));
 }

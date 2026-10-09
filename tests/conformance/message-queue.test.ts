@@ -398,7 +398,7 @@ test("restart: a message handed over but unread runs on its own; one read by a c
   receive("b", "and ducks", { attachmentsArtifact: "message_attachments_b", imageCount: 1 });
   append("coordinator_message_steering", { messageId: "b", into: "a" });
   append("coordinator_message_delivered", { messageId: "b", into: "a", how: "native" });
-  receive("c", "make it night");
+  receive("c", "make it run");
   append("coordinator_message_steering", { messageId: "c", into: "a" });
   f.artifacts.set("message_attachments_b", { stills: [{ label: "duck", mimeType: "image/png", data: "synthetic" }] });
   const turns: any[] = [];
@@ -412,7 +412,7 @@ test("restart: a message handed over but unread runs on its own; one read by a c
       text: "build a pond",
       carried: [{ text: "and ducks", stills: [{ label: "duck", mimeType: "image/png", data: "synthetic" }] }],
     },
-    { text: "make it night", carried: [] },
+    { text: "make it run", carried: [] },
   ]);
   await until(() => f.state("c")?.state === "handled");
   assert.equal(f.state("b")!.state, "delivered", "delivered once: never requeued or answered on its own");
@@ -611,7 +611,7 @@ test("an intake message with other commission settings waits for its own turn in
 });
 
 /**
- * Live chat during a build: while a night's lead takes the chat (director/wake.ts), a message is
+ * Live chat during a build: while a run's lead takes the chat (director/wake.ts), a message is
  * handed to it with its receipt — recorded delivered to the run, with the records the lead reads
  * it from — instead of waiting as Queued for the build to end. What the lead does not take (a
  * picture, a New build) keeps its place and waits, and nothing sent after it is handed past it.
@@ -628,7 +628,7 @@ function leadDoor(into: string, handed: string[], open: () => boolean = () => tr
 }
 const kinds = (events: any[]) => events.map((e) => e.data.event_type ?? e.data.type);
 
-test("a message sent while a night's lead takes the chat is delivered to it with its receipt: never Queued, never answered on its own", async () => {
+test("a message sent while a run's lead takes the chat is delivered to it with its receipt: never Queued, never answered on its own", async () => {
   const f = fixture(),
     handed: string[] = [],
     seen: string[] = [];
@@ -698,21 +698,21 @@ test("messages that waited for the lead are handed to it in order once it takes 
     () => false,
     (_threadId: string, action: any) => (live && takes(action) ? door : null),
   );
-  await queue.enqueue(f.send("first, while the night prepares"));
+  await queue.enqueue(f.send("first, while the run prepares"));
   await queue.enqueue(f.send("second"));
   const state = () => [...messageQueueState(f.events).messages.values()].map((m) => m.state);
   assert.deepEqual(state(), ["queued", "queued"], "no lead yet: they wait");
   live = true;
   bump();
   await until(() => handed.length === 2);
-  assert.deepEqual(handed, ["first, while the night prepares", "second"], "handed in the order sent");
+  assert.deepEqual(handed, ["first, while the run prepares", "second"], "handed in the order sent");
   assert.deepEqual(state(), ["delivered", "delivered"]);
   assert.deepEqual(seen, []);
 
   await queue.enqueue({ ...f.send("a picture"), stills: [{ data: "synthetic", mimeType: "image/png" }] });
   await queue.enqueue(f.send("after the picture"));
   // Flipped (review of live chat): a message the lead does not take no longer holds every later one
-  // away from it until the night closes. It keeps its place and waits; plain words after it still
+  // away from it until the run closes. It keeps its place and waits; plain words after it still
   // reach the lead, in the order they were sent among themselves.
   assert.deepEqual(state().slice(2), ["queued", "delivered"], "handed to the lead past the picture that waits");
   assert.equal(waitedWith.at(-1), "a picture", "the wait is for the message at the front");
@@ -721,11 +721,11 @@ test("messages that waited for the lead are handed to it in order once it takes 
   bump();
   await until(() => seen.length === 1);
   assert.deepEqual(seen, ["a picture"], "once the build closes, the picture gets a turn of its own");
-  assert.deepEqual(handed, ["first, while the night prepares", "second", "after the picture"]);
+  assert.deepEqual(handed, ["first, while the run prepares", "second", "after the picture"]);
   queue.stop();
 });
 
-test("messages a night's lead never heard come back when its night ends: Queued again, each answered in order", async () => {
+test("messages a run's lead never heard come back when its run ends: Queued again, each answered in order", async () => {
   const f = fixture(),
     seen: string[] = [];
   let giveBack: (items: any[]) => Promise<void> = async () => {};
@@ -760,7 +760,7 @@ test("messages a night's lead never heard come back when its night ends: Queued 
   await queue.enqueue(f.send("and rain"));
   const state = () => [...messageQueueState(f.events).messages.values()].map((m) => m.state);
   assert.deepEqual(state(), ["delivered", "delivered"]);
-  // Stop: the night ends before its lead heard either; they go back, and wait for the build to close.
+  // Stop: the run ends before its lead heard either; they go back, and wait for the build to close.
   leadTakes = false;
   await giveBack(handedItems);
   assert.deepEqual(state(), ["queued", "queued"], "Queued again, in the order they were sent");

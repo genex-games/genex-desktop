@@ -4,7 +4,7 @@
  * the chat's own session has no timeout. Claude Code waits for the person, so this does too; the
  * delegation's own deadline and Stop still end the wait through the signal and `cancel()`. Only a
  * build's lead or the run's coordinator asks with a `timeoutMs`: nobody may be looking at its
- * card, and a night must not wait on it. Its card also outlives the chat's turns (`outlivesTurn`):
+ * card, and a run must not wait on it. Its card also outlives the chat's turns (`outlivesTurn`):
  * the lead is not the chat's turn, so another message's turn ending is not its end. Settles each
  * request exactly once and never touches disk or the event log: the permission service records
  * the question and its answer around it.

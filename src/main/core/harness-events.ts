@@ -15,6 +15,8 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.SelfEdit,
   CustomEvent.SkillEdited,
   CustomEvent.ToolInstalled,
+  // The count of a run's automatic resumes bounds them (`core/auto-resume.ts`): only the host writes one.
+  CustomEvent.RunAutoResumed,
 ]);
 
 /** Refuse the entire batch before writing any row or updating the recovery index. */

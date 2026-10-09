@@ -1,11 +1,11 @@
 /**
- * The door — where a launch lands, and what the night promises (M1.7).
+ * The door — where a launch lands, and what the run promises (M1.7).
  *
  * Two rules are tested here as pure functions, and then pinned in the files that draw them.
  * The opening rule exists because a first launch used to land in the Studio thread — the one
  * chat that cannot build — so the first sentence a new user typed was answered with "this chat
  * never builds; press the folder+". The promise exists because the switch offered "∞ — until
- * the critics are satisfied", which told nobody when to come back, and the first real night
+ * the critics are satisfied", which told nobody when to come back, and the first real run
  * was paused by the Claude plan's five-hour window at 105 of 180 minutes.
  */
 import assert from "node:assert/strict";
@@ -58,7 +58,7 @@ const game = (id: string, updated: string, project: string | null, archived = fa
   metadata: { kind: "game", project, archived },
 });
 
-describe("the door: what the night promises", () => {
+describe("the door: what the run promises", () => {
   const at = (hhmm: string): number => new Date(`2026-09-08T${hhmm}:00`).getTime();
   /** The clock the Mac writes — the promise must be in the reader's own 12/24-hour setting. */
   const clock = (hhmm: string): string =>
@@ -70,7 +70,7 @@ describe("the door: what the night promises", () => {
     assert.equal(clockAfter(0.5, at("09:05")), clock("09:35"));
   });
 
-  it("the default is a capped night, and its promise says when to come back", () => {
+  it("the default is a capped run, and its promise says when to come back", () => {
     assert.equal(HOURS_DEFAULT, 3);
     const promise = hoursPromise(HOURS_DEFAULT, at("04:10"));
     assert.match(promise, /^Hours —/);
@@ -173,7 +173,7 @@ describe("the door: what the app opens on launch", () => {
   };
 
   it("opens home even when there are games, and the last chat is remembered", async () => {
-    // Intentionally flipped (2026-10-01): a launch used to reopen the remembered chat with its game
+    // Intentionally flipped: a launch used to reopen the remembered chat with its game
     // on the stage. Home is where every launch starts; the remembered chat is one click or ⌘1 away.
     const launched = await launch(
       [studio, game("old", "2026-09-01T10:00:00Z", "pond-life"), game("fresh", "2026-09-04T10:00:00Z", "rift")],
@@ -185,7 +185,7 @@ describe("the door: what the app opens on launch", () => {
   });
 
   it("an empty library opens home too: no Create game, nothing minted", async () => {
-    // Intentionally flipped (2026-10-01): an empty library used to open Create game over Studio.
+    // Intentionally flipped: an empty library used to open Create game over Studio.
     assertHome(await launch([studio], []));
   });
 
@@ -212,7 +212,7 @@ describe("the door: the composer's own instruction", () => {
   });
 
   it("asks home what to make, and only an active build overrides the context", () => {
-    // Intentionally flipped (2026-10-01): the words were "Describe a game…".
+    // Intentionally flipped: the words were "Describe a game…".
     assert.equal(HOME_PLACEHOLDER, "What do you want to make?");
     const firstLaunch = chatPlaceholder({ revisingPlan: false, studio: false, draft: true });
     assert.equal(firstLaunch, HOME_PLACEHOLDER);
@@ -228,7 +228,7 @@ describe("the door: the composer's own instruction", () => {
 });
 
 describe("the door: the composer while a build's lead takes the chat", () => {
-  /** A build's start as its log records it: the night's lead takes the chat when it says so. */
+  /** A build's start as its log records it: the run's lead takes the chat when it says so. */
   const start = (runId: string, payload: Record<string, unknown>, n: number) => ({
     id: `e${n}`,
     thread_id: "t",
@@ -255,7 +255,7 @@ describe("the door: the composer while a build's lead takes the chat", () => {
     assert.equal(leadTakesChat([start("r1", { liveChat: true }, 1)], "r2"), false, "another build's lead");
     assert.equal(leadTakesChat([start("r1", { liveChat: true }, 1)], null), false, "nothing running");
     const resumedOld = [start("r1", { liveChat: true }, 1), start("r1", { resumed: true }, 2)];
-    assert.equal(leadTakesChat(resumedOld, "r1"), false, "a resumed night says again for itself");
+    assert.equal(leadTakesChat(resumedOld, "r1"), false, "a resumed run says again for itself");
   });
 });
 

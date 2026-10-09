@@ -1,6 +1,6 @@
 /**
  * What a freshly started harness does with the host's boot notice: record why it is awake, leave
- * itself a note after a crash or a rewind, close the nights its previous self died in, and pick
+ * itself a note after a crash or a rewind, close the runs its previous self died in, and pick
  * the unanswered messages back up.
  */
 import { loadSkills } from "./skills.ts";
@@ -22,7 +22,7 @@ export const BootReason = {
 } as const satisfies Record<string, BootNotice["reason"]>;
 export type BootReason = (typeof BootReason)[keyof typeof BootReason];
 
-/** What a night that died with its loop is told it ended of — plain, and true of any crash. */
+/** What a run that died with its loop is told it ended of — plain, and true of any crash. */
 const CRASHED = "the studio's loop crashed and restarted";
 
 /** The boots after which the workspace may not be the one the last self was running. */
@@ -56,13 +56,13 @@ export async function handleBootNotice(studio: Studio, messages: MessageQueue, n
       ],
     });
   }
-  // A night the previous self was in the middle of has nobody left to judge or land it: close
+  // A run the previous self was in the middle of has nobody left to judge or land it: close
   // it in its own thread before anything else, so the chat stops claiming it is still working.
   await closeRunsOrphanedByCrash(studio, notice.openRuns).catch(() => {});
   // Replay unanswered inbox entries in order. Completed requests are never re-enqueued. The host
   // hands over only the queue records still open, not every conversation's whole log.
   // Each conversation on its own: one whose queue cannot be put back must not leave every other
-  // one unanswered (P07-F4). Its records stay in the log for the next boot to try again.
+  // one unanswered. Its records stay in the log for the next boot to try again.
   for (const { threadId, events } of await host.call(HostMethod.EventsInbox, {}).catch(() => [])) {
     await messages.restore(threadId, events).catch(async (err: unknown) => {
       const message = QUEUE_NOT_RESTORED(err instanceof Error ? err.message : String(err));
@@ -82,8 +82,8 @@ const QUEUE_NOT_RESTORED = (why: string) =>
  * briefed can be judged, committed or landed any more — the host aborted every contractor the
  * moment the child exited — so each one gets its ending where the user is looking: in its own
  * game's thread, never in the studio's. "Paused", not "failed": the journal still holds the
- * night's integration head, so the morning card can offer the build and Resume can pick the
- * night up from it. A run whose thread already carries an ending is left alone — the app
+ * run's integration head, so the morning card can offer the build and Resume can pick the
+ * run up from it. A run whose thread already carries an ending is left alone — the app
  * repairs interrupted logs at boot as well, and closing twice would overwrite a real close.
  */
 async function closeRunsOrphanedByCrash(studio: Studio, runIds: string[] | null | undefined): Promise<void> {
@@ -105,7 +105,7 @@ async function closeRunsOrphanedByCrash(studio: Studio, runIds: string[] | null 
 
 /**
  * Is this loop running the run again itself (a Resume or a reopen taken as it woke)? The host names a
- * run in flight at every later crash of the app's session, so the name can be stale: the night is
+ * run in flight at every later crash of the app's session, so the name can be stale: the run is
  * this loop's, never one to close under it.
  */
 function runsItAgain(studio: Studio, runId: string): boolean {
@@ -119,7 +119,7 @@ function runsIn(events: readonly HarnessEvent[]): { started: Map<string, AnyReco
   for (const e of events) {
     const d = e?.data;
     if (d?.type !== EventKind.Custom || !d.payload?.runId) continue;
-    // A director's night registers as "autopilot" and then starts as "director"; the last
+    // A director's run registers as "autopilot" and then starts as "director"; the last
     // word wins here exactly as it does in the app's own boot repair, so both agree. A run
     // started again (a Resume, a finished build reopened) is open again: an earlier session's
     // close is not this one's.
@@ -172,7 +172,7 @@ async function closeOrphan(host: Host, threadId: string, runId: string, payload:
 }
 
 /**
- * The build a paused night leaves to play, when it merged one. Only claim a build when the night
+ * The build a paused run leaves to play, when it merged one. Only claim a build when the run
  * actually merged one: a head still standing on the starting point is nothing to play, and
  * promising one leaves the card with no button.
  */

@@ -7,7 +7,7 @@ import type { EventEnvelope } from "../../src/substrate/types.ts";
 import {
   fillIncumbentShots,
   reviewOutcome,
-  lastNightForProject,
+  lastLoopRunForProject,
   playSnapshotId,
   undoneSelfChanges,
   type RunIterationView,
@@ -30,10 +30,10 @@ function event(id: string, eventType: string, payload: Record<string, unknown>):
 
 const shot = (camera: string, path: string) => ({ camera, path, bytes: 12 });
 
-describe("lastNightForProject", () => {
+describe("lastLoopRunForProject", () => {
   it("does not mash two games into one page", () => {
     const events = [
-      event("1", "run_started", { runId: "run-a", project: "alpha", goal: "alpha night" }),
+      event("1", "run_started", { runId: "run-a", project: "alpha", goal: "alpha run" }),
       event("2", "run_iteration", {
         runId: "run-a",
         project: "alpha",
@@ -42,8 +42,8 @@ describe("lastNightForProject", () => {
         snapshot: "snap-a",
         shots: [shot("default", "/runs/a/1.jpg")],
       }),
-      event("3", "run_finished", { runId: "run-a", project: "alpha", goal: "alpha night" }),
-      event("4", "run_started", { runId: "run-b", project: "beta", goal: "beta night" }),
+      event("3", "run_finished", { runId: "run-a", project: "alpha", goal: "alpha run" }),
+      event("4", "run_started", { runId: "run-b", project: "beta", goal: "beta run" }),
       event("5", "run_iteration", {
         runId: "run-b",
         project: "beta",
@@ -52,20 +52,20 @@ describe("lastNightForProject", () => {
         snapshot: "snap-b",
         shots: [shot("default", "/runs/b/1.jpg")],
       }),
-      event("6", "run_finished", { runId: "run-b", project: "beta", goal: "beta night" }),
+      event("6", "run_finished", { runId: "run-b", project: "beta", goal: "beta run" }),
     ];
 
-    const none = lastNightForProject(events, null);
+    const none = lastLoopRunForProject(events, null);
     assert.equal(none.started, null);
     assert.equal(none.iterations.length, 0);
 
-    const alpha = lastNightForProject(events, "alpha");
-    assert.equal(alpha.started?.goal, "alpha night");
+    const alpha = lastLoopRunForProject(events, "alpha");
+    assert.equal(alpha.started?.goal, "alpha run");
     assert.equal(alpha.iterations.length, 1);
     assert.equal(alpha.iterations[0]!.snapshot, "snap-a");
 
-    const beta = lastNightForProject(events, "beta");
-    assert.equal(beta.started?.goal, "beta night");
+    const beta = lastLoopRunForProject(events, "beta");
+    assert.equal(beta.started?.goal, "beta run");
     assert.equal(beta.iterations[0]!.snapshot, "snap-b");
   });
 
@@ -80,18 +80,16 @@ describe("lastNightForProject", () => {
       }),
       event("3", "run_finished", { runId: "run-a", project: "pong" }),
     ];
-    const night = lastNightForProject(events, "pong");
-    assert.equal(night.iterations.length, 1);
-    assert.equal(night.iterations[0]!.runId, "run-a");
-    assert.equal(night.iterations[0]!.winner, "challenger");
+    const loopRun = lastLoopRunForProject(events, "pong");
+    assert.equal(loopRun.iterations.length, 1);
+    assert.equal(loopRun.iterations[0]!.runId, "run-a");
+    assert.equal(loopRun.iterations[0]!.winner, "challenger");
   });
 
-  it("keeps every iteration of a night far larger than the renderer's 600-event bootstrap tail", () => {
-    // The morning-review IPC replays the project's full thread log; a real 3-iteration night is
+  it("keeps every iteration of a run far larger than the renderer's 600-event bootstrap tail", () => {
+    // The morning-review IPC replays the project's full thread log; a real 3-iteration run is
     // over a thousand events, so the run must survive being buried under later noise.
-    const events: EventEnvelope[] = [
-      event("1", "run_started", { runId: "run-x", project: "pong", goal: "long night" }),
-    ];
+    const events: EventEnvelope[] = [event("1", "run_started", { runId: "run-x", project: "pong", goal: "long run" })];
     for (let i = 1; i <= 3; i++) {
       events.push(
         event(`iter-${i}`, "run_iteration", {
@@ -108,11 +106,11 @@ describe("lastNightForProject", () => {
     for (let i = 0; i < 700; i++) {
       events.push(event(`noise-${i}`, "context_usage", { tokens: i }));
     }
-    const night = lastNightForProject(events, "pong");
-    assert.equal(night.started?.goal, "long night");
-    assert.equal(night.iterations.length, 3);
-    assert.equal(night.iterations[1]!.winner, "incumbent");
-    assert.ok(night.finished);
+    const loopRun = lastLoopRunForProject(events, "pong");
+    assert.equal(loopRun.started?.goal, "long run");
+    assert.equal(loopRun.iterations.length, 3);
+    assert.equal(loopRun.iterations[1]!.winner, "incumbent");
+    assert.ok(loopRun.finished);
   });
 
   it("prefers the attempt snapshot when playing a row", () => {
@@ -251,8 +249,8 @@ describe("director review truthfulness", () => {
     resume.created_at = "2026-08-22T00:20:00.000Z";
     const end = event("3", "run_finished", { runId: "r", project: "p", mode: "director" });
     end.created_at = "2026-08-22T00:23:00.000Z";
-    assert.equal(lastNightForProject([start, resume, end], "p").finished?.durationMs, 23 * 60000);
-    assert.equal(lastNightForProject([end], "p").finished?.durationMs, null);
+    assert.equal(lastLoopRunForProject([start, resume, end], "p").finished?.durationMs, 23 * 60000);
+    assert.equal(lastLoopRunForProject([end], "p").finished?.durationMs, null);
   });
   it("does not turn a landed first build into a comparative win", () => {
     assert.deepEqual(

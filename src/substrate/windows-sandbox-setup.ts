@@ -6,7 +6,7 @@
  * prompt is not an error (srt-win exits 10 and nothing changes); any other failure throws.
  * In a packaged app srt-win.exe is unpacked beside the archive, because Windows cannot run a file
  * from inside app.asar. sandbox-runtime is loaded on first use: imported eagerly, it cost every
- * launch on every platform about a third of a second before the first window (2026-10-01).
+ * launch on every platform about a third of a second before the first window.
  */
 import path from "node:path";
 import { MINUTE_MS } from "../shared/duration.ts";

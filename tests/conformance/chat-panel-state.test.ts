@@ -143,6 +143,9 @@ describe("the sign-in gate", () => {
     assert.equal(local?.engine.id, "ollama");
     assert.equal(local?.model.id, "coder");
     assert.equal(localToolModel([engine("ollama", "direct", "ready", [model("chat", false)])]), null);
+    // OpenRouter is direct too, but billed per token: a signed-out subscription never sends a
+    // turn there on its own.
+    assert.equal(localToolModel([engine("openrouter", "direct", "ready", [model("or", true)])]), null);
   });
 
   it("offers the local finish only after the harness asked for a sign-in", () => {

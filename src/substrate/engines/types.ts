@@ -20,15 +20,16 @@ export type { EngineAccount, EngineStatus, EngineStatusCode } from "../../shared
  * Two kinds of builder, one interface, chosen per task and recorded in the log:
  *
  *  - **direct** (`complete`): the studio's own turn loop drives the model and executes tools
- *    itself. v1: Ollama through pi-ai. This is the unlimited overnight workhorse (D8).
+ *    itself. v1: Ollama through pi-ai. This is the unlimited unattended workhorse (D8).
  *  - **delegated** (`delegate`): a vendor harness does the whole build itself; we mirror its
  *    events into our log and improve the *brief* it reads. Two of them: Claude Code through the
  *    Agent SDK, and Codex through `codex exec` on a ChatGPT subscription. Each authenticates
  *    with its own subscription login (D8 — we never see or store a token), and each translates
  *    its own event stream into the one vocabulary the studio's log speaks.
  *
- * Direct API keys are deliberately not surfaced in v1; the code path is the same as Ollama's
- * (pi-ai provider + auth), so enabling them later is configuration, not architecture.
+ * The one API key the studio holds is OpenRouter's, a direct engine on the same pi-ai path as
+ * Ollama's: the key is pasted in Settings, kept in the OS secret store, and never leaves main.
+ * OpenCode is a third delegated harness, which keeps its own sign-ins in its own store.
  */
 import type { Message } from "../types.ts";
 import type {
@@ -112,7 +113,7 @@ export interface CompleteRequest {
   /**
    * Reasoning effort ("low" | "medium" | "high" | "max") for models that think. Local thinking
    * models default deep (Qwen3.8 ships at xhigh — minutes per answer); unattended runs set this
-   * low so an overnight loop iterates instead of meditating.
+   * low so an unattended loop iterates instead of meditating.
    */
   effort?: string;
   preferences?: ModelPreferences;
@@ -251,9 +252,10 @@ export interface DelegateRequest {
    * matching `onCapture` closure itself — a function never travels over RPC.
    */
   selfCapture?: DelegateCaptureGrant;
-  onCapture?: (args: { cameras?: string }) => Promise<string>;
+  /** `page`: a bench page (a .html file in the workspace) to capture in place of the game. */
+  onCapture?: (args: { cameras?: string; page?: string }) => Promise<string>;
   /**
-   * The computer (computer use, 2026-09-07): with a `selfCapture` grant the builder also gets `computer` — hands
+   * The computer: with a `selfCapture` grant the builder also gets `computer` — hands
    * and eyes on one pooled window that keeps running between actions. `false` withholds it
    * (a session that must only capture).
    */
@@ -267,8 +269,8 @@ export interface DelegateRequest {
    */
   playtest?: DelegatePlaytestGrant;
   /**
-   * The director (director, 2026-09-07): the run's orchestrating session. Its cwd is the run's integration
-   * worktree (`root`) — or, for a waking night's lead, the game folder, leading that worktree; it gets the computer tool on a window of its own (`look` points that window at
+   * The director: the run's orchestrating session. Its cwd is the run's integration
+   * worktree (`root`) — or, for a waking run's lead, the game folder, leading that worktree; it gets the computer tool on a window of its own (`look` points that window at
    * any build of the run), capture, and the harness's run tools — workers, judges, playtests,
    * merges, finish — which the studio forwards to the harness process that owns them. The
    * serializable half; the studio injects the closures.
@@ -278,7 +280,7 @@ export interface DelegateRequest {
   onLiveTool?: (name: string, args: Record<string, unknown>) => Promise<LiveToolResult>;
   /**
    * A session that may look and talk but never edit or run commands (the playtester), unless it
-   * asks in the chat's mode (`leadAsks`: a waking night's lead, the run's coordinator).
+   * asks in the chat's mode (`leadAsks`: a waking run's lead, the run's coordinator).
    */
   readOnly?: boolean;
   /** Host-owned stable coordinator workspace; keep session cwd across chat turns. */
@@ -506,6 +508,8 @@ export function classifyHttpFailure(engine: string, status: number, body: string
   if (status === 401 || status === 403) {
     return new EngineError(EngineFailureKind.Auth, engine, `not authorised: ${excerpt}`);
   }
+  // A metered account out of credits: waiting in the run never refills it.
+  if (status === 402) return new EngineError(EngineFailureKind.UsageLimit, engine, `out of credits: ${excerpt}`);
   if (status >= 500)
     return new EngineError(EngineFailureKind.Unavailable, engine, `engine error ${status}: ${excerpt}`);
   return new EngineError(EngineFailureKind.Other, engine, `HTTP ${status}: ${excerpt}`);

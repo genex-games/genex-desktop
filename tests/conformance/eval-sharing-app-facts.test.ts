@@ -400,7 +400,7 @@ describe("a delegated chat turn's one engine call", () => {
 });
 
 describe("a launched run", () => {
-  function night(): EventEnvelope[] {
+  function loopRun(): EventEnvelope[] {
     return log(
       [0, { type: "turn_started" }],
       [
@@ -435,7 +435,7 @@ describe("a launched run", () => {
   }
 
   it("reads its launch, mode, signals and builds from its own records", () => {
-    const facts = runFacts({ events: night(), permissionMode: PermissionMode.Auto }, "run-1", M4);
+    const facts = runFacts({ events: loopRun(), permissionMode: PermissionMode.Auto }, "run-1", M4);
     assert.ok(facts);
     assert.equal(facts.engine, EngineId.Codex);
     assert.equal(facts.model, "gpt-6.1-sol");
@@ -456,9 +456,9 @@ describe("a launched run", () => {
   });
 
   it("makes no row before the run finished, and refuses a stop code that is a sentence", () => {
-    const open = night().slice(0, -1);
+    const open = loopRun().slice(0, -1);
     assert.equal(runFacts({ events: open, permissionMode: null }, "run-1", M4), null);
-    const events = night();
+    const events = loopRun();
     const last = events.at(-1) as EventEnvelope;
     events[events.length - 1] = {
       ...last,

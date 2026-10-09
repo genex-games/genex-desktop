@@ -277,13 +277,16 @@ describe("claude code delegated engine", () => {
       (err: unknown) => {
         assert.ok(err instanceof EngineError);
         assert.equal(err.kind, "rate_limit");
+        // The reset the thrown text names rides with it, so the host can resume after it.
+        const wait = err.retryAfterMs ?? 0;
+        assert.ok(wait > 0 && wait <= 24 * 3_600_000, `the wait until 5pm: ${err.retryAfterMs}`);
         return true;
       },
     );
   });
 
   it("turns a weekly cap into usage_limit — the run must end, not wait", async () => {
-    // The wording the CLI actually used the night a run burned every facet's strikes on it.
+    // The wording the CLI actually used the run a run burned every facet's strikes on it.
     const root = await tmpDir("studio-engine-");
     const { fn } = fakeQuery([], {
       throwOn: new Error("You've hit your weekly limit · resets Sep 1 at 10am (Europe/Belgrade)"),
@@ -605,7 +608,7 @@ describe("claude code delegated engine", () => {
   });
 
   /**
-   * One session: a waking night's lead is its chat's own session, resumed in the game folder where
+   * One session: a waking run's lead is its chat's own session, resumed in the game folder where
    * that session lives, with the integration worktree it leads readable and no hands of its own.
    */
   it("resumes a read-only lead in the game folder, with the build it leads readable and nothing to write with", async () => {
@@ -614,7 +617,7 @@ describe("claude code delegated engine", () => {
     const game = "/tmp/game-workspace";
     const build = "/tmp/studio-scratch/autopilot/run_lead/integration";
     await engine.delegate({
-      prompt: "lead the night",
+      prompt: "lead the run",
       cwd: game,
       readOnly: true,
       resume: "chat-session",
@@ -842,8 +845,7 @@ describe("claude code delegated engine", () => {
     assert.equal(call.effort, "high");
     const settings = call.settings as { permissions: { deny: string[]; allow?: string[] } };
     // Flipped (permissions port): Claude Code reads a rule's "/abs" relative to the working
-    // directory; only "//abs" is the filesystem root. The single-slash rules this once sent
-    // guarded nothing real.
+    // directory; only "//abs" is the filesystem root. Single-slash rules guard nothing real.
     assert.deepEqual(
       settings.permissions.deny,
       [
@@ -885,7 +887,7 @@ describe("claude code delegated engine", () => {
     assert.ok(!deny.some((rule) => rule.includes("stills")));
   });
 
-  it("P02-F6. a judge that answers nothing is a failure, and the model asked for stands in for one the CLI did not name", async () => {
+  it("a judge that answers nothing is a failure, and the model asked for stands in for one the CLI did not name", async () => {
     const silent = [
       { type: "system", subtype: "init", tools: [] },
       { type: "result", subtype: "success", is_error: false, result: "", num_turns: 1, total_cost_usd: 0, usage: {} },
@@ -961,7 +963,7 @@ describe("claude code delegated engine", () => {
     // Options.skills is a context filter, not a sandbox: a bundled skill's frontmatter is
     // prompt weight that can only make two verdicts that should be the same differ.
     assert.deepEqual(call.skills, [], "the judge loads no skills at all");
-    // P02-F3: no user, project or local settings reach a judge (their hooks, permissions or
+    // No user, project or local settings reach a judge (their hooks, permissions or
     // memory would make two verdicts that should be the same differ).
     assert.deepEqual(call.settingSources, [], "the judge reads no settings files");
     const banned = call.disallowedTools as string[];
@@ -1569,7 +1571,7 @@ describe("engine registry & fallback policy", () => {
     assert.deepEqual(await registry.fallbackFor("claude-code", { kind: "auth" }), []);
   });
 
-  it("an outage falls back only to an engine that can do the job: tools need a direct engine (P01-F1)", async () => {
+  it("an outage falls back only to an engine that can do the job: tools need a direct engine", async () => {
     const registry = new EngineRegistry();
     registry.register(engine("ollama", "direct", "ready"));
     registry.register(engine("claude-code", "delegated", "ready"));
@@ -1582,6 +1584,23 @@ describe("engine registry & fallback policy", () => {
       ["claude-code", "bonsai"],
       "a job with no tools may still move to a subscription",
     );
+  });
+
+  it("never moves work onto a metered API the person did not pick: no fallback, no first ready engine", async () => {
+    const registry = new EngineRegistry();
+    registry.register(engine("openrouter", "direct", "ready"));
+    registry.register(engine("opencode", "delegated", "ready"));
+    registry.register(engine("claude-code", "delegated", "ready"));
+    registry.register(engine("ollama", "direct", "ready"));
+    registry.setPreferredOrder(["openrouter", "opencode", "claude-code", "ollama"]);
+    assert.deepEqual(await registry.fallbackFor("claude-code", { kind: "rate_limit" }), ["ollama"]);
+    assert.deepEqual(await registry.fallbackFor("ollama", { kind: "unavailable" }, { tools: true }), []);
+    assert.deepEqual(await registry.fallbackFor("ollama", { kind: "unavailable" }), ["claude-code"]);
+    assert.deepEqual(await registry.fallbackFor("openrouter", { kind: "unavailable" }), ["claude-code", "ollama"]);
+    assert.equal((await registry.firstReady())?.id, "claude-code");
+    assert.equal((await registry.firstReady("direct"))?.id, "ollama");
+    // The person's own pick still reaches it: the registry holds it like any other engine.
+    assert.equal(registry.get("openrouter").id, "openrouter");
   });
 
   it("describes engines for the picker, including unavailable ones", async () => {
@@ -1713,7 +1732,7 @@ describe("a connector's tool on claude code (PR4)", () => {
   });
 });
 
-describe("a failed studio tool on claude code (P06-F7)", () => {
+describe("a failed studio tool on claude code", () => {
   it("answers the model with isError, not as a plain result", async () => {
     const script = scriptedClaude([{ tool: "boom" }, { tool: "refused" }, { tool: "fine" }]);
     const engine = await engineWithLogin(script.queryFn);
@@ -1847,7 +1866,7 @@ describe("Claude CLI model discovery", () => {
   });
 });
 
-describe("choosing a fallback when an engine's status hangs (P01-F8)", () => {
+describe("choosing a fallback when an engine's status hangs", () => {
   it("does not wait on a status that never answers: probes are bounded and side by side", async () => {
     const registry = new EngineRegistry({ statusProbeMs: 50 });
     const engine = (id: string, kind: "direct" | "delegated", status: () => Promise<unknown>) =>
@@ -1980,5 +1999,94 @@ describe("Compact now on claude code", () => {
     assert.equal(result.compacted, undefined);
     assert.equal(result.errorText, "Not enough messages to compact.");
     assert.equal(result.sessionId, SESSION, "the session is untouched and still resumable");
+  });
+});
+
+/**
+ * A provider that answers "Your organization has disabled Claude subscription access…" reports it
+ * as a `success`-subtype result flagged `is_error`, in words that match none of the sign-in words.
+ * Read as an ordinary failed turn, a lost account would close the run and land an unchecked build.
+ * A revoked or disabled access is a sign-in failure the user has to fix.
+ */
+describe("an account whose access was taken away (provider lost)", () => {
+  /** The words the CLI said, exactly. */
+  const DISABLED =
+    "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access";
+
+  /** The stream as the run's log recorded it: the CLI's message as an assistant text, then the result. */
+  const observed = (text: string, assistant: Record<string, unknown> = {}, result: Record<string, unknown> = {}) => [
+    { type: "system", subtype: "init", model: "claude-opus-5-5", session_id: "ses_lead", tools: [] },
+    { type: "assistant", message: { content: [{ type: "text", text }] }, parent_tool_use_id: null, ...assistant },
+    {
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      num_turns: 5,
+      total_cost_usd: 15.904740000000002,
+      result: text,
+      ...result,
+    },
+  ];
+
+  const isAuth = (err: unknown): boolean => {
+    assert.ok(err instanceof EngineError, String(err));
+    assert.equal(err.kind, "auth", err.message);
+    return true;
+  };
+
+  it("D1. a disabled subscription reported inside a success result is a sign-in failure, and the engine stops claiming to be ready", async () => {
+    const engine = await engineWithLogin(fakeQuery(observed(DISABLED)).fn);
+    await assert.rejects(
+      () => engine.delegate({ prompt: "wake", cwd: "/tmp/x", resume: "ses_lead" }),
+      (err: unknown) => isAuth(err) && (err as Error).message.includes("disabled Claude subscription access"),
+    );
+    const after = await engine.status();
+    assert.equal(after.code, "needs_login");
+    assert.match(after.detail, /disabled Claude subscription access/);
+  });
+
+  it("D2. a judge that meets the same answer fails on sign-in, not as some other error to retry", async () => {
+    const engine = await engineWithLogin(fakeQuery(observed(DISABLED)).fn);
+    await assert.rejects(
+      () => engine.complete({ model: "opus", messages: [{ role: "user", content: "BUILD A vs BUILD B" }] }),
+      isAuth,
+    );
+  });
+
+  it("D3. the CLI's own error code on the reply decides, whatever the words, even when the result calls itself a success", async () => {
+    for (const [code, text, flagged] of [
+      ["oauth_org_not_allowed", "Claude Code is not available to this organization", true],
+      ["account_on_hold", "Request refused", false],
+      ["authentication_failed", "Request refused", true],
+    ] as const) {
+      const engine = await engineWithLogin(fakeQuery(observed(text, { error: code }, { is_error: flagged })).fn);
+      await assert.rejects(() => engine.delegate({ prompt: "build", cwd: "/tmp/x" }), isAuth, code);
+    }
+  });
+
+  it("D4. words that only look like it stay an ordinary failure (hostile inputs)", async () => {
+    const lookalikes: Array<[string, Record<string, unknown>]> = [
+      ["API Error: 529 Overloaded", { error: "overloaded" }],
+      ["I disabled the subscription button in the HUD", {}],
+      ["The organization has disabled tyre spray in the rain", {}],
+      ["Your account screen is disabled until the race ends", {}],
+      ["subscription access panel opened", {}],
+      ["Access to the pit lane was revoked by the race director", {}],
+    ];
+    for (const [text, assistant] of lookalikes) {
+      const engine = await engineWithLogin(fakeQuery(observed(text, assistant)).fn);
+      const result = await engine.delegate({ prompt: "build", cwd: "/tmp/x" });
+      assert.equal(result.ok, false, text);
+      assert.equal(result.errorText, text);
+      assert.equal((await engine.status()).code, "ready", `${text} leaves the sign-in alone`);
+    }
+    // A turn that answered after an error on its way is not a lost account.
+    const recovered = [
+      ...observed(DISABLED, { error: "oauth_org_not_allowed" }).slice(0, 2),
+      { type: "assistant", message: { content: [{ type: "text", text: "Built it." }] }, parent_tool_use_id: null },
+      { type: "result", subtype: "success", is_error: false, num_turns: 3, result: "Built it." },
+    ];
+    const engine = await engineWithLogin(fakeQuery(recovered).fn);
+    assert.equal((await engine.delegate({ prompt: "build", cwd: "/tmp/x" })).ok, true);
   });
 });

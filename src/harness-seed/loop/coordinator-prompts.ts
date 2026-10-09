@@ -57,7 +57,7 @@ export function coordinatorPrompt({
   savedPlan: unknown;
   history: string;
   reopen?: { hours: number | null; frameCount?: number } | null;
-  /** How much of the run the prompt may carry: a share of the model's window (P07-F6). */
+  /** How much of the run the prompt may carry: a share of the model's window. */
   budgetChars?: number;
 }): string {
   const progress = { phase: journal?.phase, base: journal?.base, facets: journal?.facets, director: journal?.director };

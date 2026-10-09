@@ -38,14 +38,20 @@ export interface GoalLedger {
   entries: RunGoal[];
 }
 
-/** Freeze initial plan outcomes; future plans assign workers without replacing these goals. */
-export function createGoals(parts: readonly { id: string; done: string[]; multiplayer?: boolean }[]): GoalLedger {
+/**
+ * Freeze initial plan outcomes; future plans assign workers without replacing these goals. A part
+ * the plan built beyond the user's ask (`added`, loop/scope.ts) is an optional goal: it never
+ * holds the finish, and the ask the user made is what gets frozen.
+ */
+export function createGoals(
+  parts: readonly { id: string; done: string[]; multiplayer?: boolean; added?: boolean }[],
+): GoalLedger {
   return {
     version: 1,
-    entries: parts.map(({ id, done, multiplayer }) => ({
+    entries: parts.map(({ id, done, multiplayer, added }) => ({
       ...(multiplayer ? { multiplayer: true } : {}),
       id,
-      required: true,
+      required: added !== true,
       acceptance: [...done],
       status: GoalStatus.Pending,
       head: null,

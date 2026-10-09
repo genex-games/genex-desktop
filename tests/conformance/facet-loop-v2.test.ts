@@ -287,7 +287,7 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
       board(water[0]!).results.some((r) => r.id === "keys-move-player" && r.pass),
       "one input path is on the main owner's board",
     );
-    // Which checks measured nothing, by id and not just by count: the night ledger keeps these,
+    // Which checks measured nothing, by id and not just by count: the run ledger keeps these,
     // and `rarelyMeasurable` can only warn about a check on real data.
     for (const round of water) {
       const scored = round.scoreboard as {
@@ -458,7 +458,7 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
  * The diet (M4.8b). A worker gets its instructions ONCE: `.studio/BRIEF.md` in its worktree,
  * and a prompt that points at the file. Before this, eleven sections were written twice — the
  * contract, the ownership rules, the ledger, the reference bullets — and the second copy was
- * the one that cost the window on every build turn of the night.
+ * the one that cost the window on every build turn of the run.
  */
 export const TWELVE_CHECK_FIXTURE = (() => {
   const checks = Array.from({ length: 12 }, (_, i) => ({
@@ -625,7 +625,7 @@ describe("the diet: every section reaches a worker once", () => {
     assert.match(failed, /\(\+\d+ earlier characters, clipped\)/);
     assert.ok(failed.includes("boom"), "and the tail of it — where the cause is — survives");
     for (const text of [long, failed])
-      assert.ok(text.length < 10_000, `an adversarial night is still bounded: ${text.length} bytes`);
+      assert.ok(text.length < 10_000, `an adversarial run is still bounded: ${text.length} bytes`);
     // Every steering line is clipped, not one of them repeated whole.
     for (const line of long.split("\n")) assert.ok(line.length <= 1_200, `a prompt line of ${line.length} characters`);
   });

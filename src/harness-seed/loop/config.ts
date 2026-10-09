@@ -10,7 +10,7 @@
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "./time.ts";
 
 /**
- * How long a plan the user asked to read waits for their word before the night builds it as it
+ * How long a plan the user asked to read waits for their word before the run builds it as it
  * stands (WP7) — the classic pipeline's review window and the director's first `worker_start`.
  */
 export const PLAN_REVIEW_WAIT_MS = 15 * MINUTE_MS;
@@ -24,7 +24,7 @@ export const MIN_DELEGATE_TIMEOUT_MS = MINUTE_MS;
 /**
  * The effort a small, bounded ask runs at: a code review, a replan, the next move, a direct
  * playtester's move, a list of lessons. Always this, whatever effort the user set for a role or
- * the run: a playtest makes up to twenty of these asks, and a night at high judge effort must
+ * the run: a playtest makes up to twenty of these asks, and a run at high judge effort must
  * not pay high effort for each of them.
  */
 export const LIGHT_EFFORT = "low";
@@ -38,12 +38,12 @@ export const PAGE_SEED = 1234;
 /** A run's wall clock when its spec names none: a day (the classic run keeps its own, shorter one). */
 export const DEFAULT_WALL_CLOCK_MS = 24 * HOUR_MS;
 
-/** The longest night an interview can commission, in hours: also the ceiling of a night with no cap. */
+/** The longest run an interview can commission, in hours: also the ceiling of a run with no cap. */
 export const MAX_RUN_HOURS = 24;
-/** The shortest night an interview can commission, in hours. */
+/** The shortest run an interview can commission, in hours. */
 export const MIN_RUN_HOURS = 0.25;
 
-/** A commissioned night's hours, held between `MIN_RUN_HOURS` and `MAX_RUN_HOURS`. */
+/** A commissioned run's hours, held between `MIN_RUN_HOURS` and `MAX_RUN_HOURS`. */
 export function clampRunHours(hours: number): number {
   return Math.min(MAX_RUN_HOURS, Math.max(MIN_RUN_HOURS, hours));
 }

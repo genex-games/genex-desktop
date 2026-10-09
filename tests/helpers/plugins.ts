@@ -26,14 +26,17 @@ export interface PluginFixture {
 /**
  * A registry with the example plugin, initialized, with a `game` binding at `root`. By default the
  * example is a bundled seed; `installed: 'local'` loads it from its folder instead, for suites that
- * update it from other local folders (a bundled id is Studio's alone and refuses those).
+ * update it from other local folders (a bundled id is Studio's alone and refuses those). `observe`
+ * is the host's answer to the `observe` service (an empty object unless the test brings its own).
  */
-export async function pluginFixture(options: { installed?: "bundled" | "local" } = {}): Promise<PluginFixture> {
+export async function pluginFixture(
+  options: { installed?: "bundled" | "local"; observe?: ConstructorParameters<typeof PluginServices>[2] } = {},
+): Promise<PluginFixture> {
   const root = await mkdtemp(path.join(os.tmpdir(), "studio-plugins-"));
   const seeds = path.join(root, "seeds");
   await mkdir(seeds);
   if (options.installed !== "local") await cp(EXAMPLE_PLUGIN, path.join(seeds, "example"), { recursive: true });
-  const services = new PluginServices(path.join(root, "data"), {}, async () => ({}));
+  const services = new PluginServices(path.join(root, "data"), {}, options.observe ?? (async () => ({})));
   const registry = new PluginRegistry(path.join(root, "installed"), seeds, PLUGIN_SDK_BACKEND, (id, m, a, b) =>
     services.call(id, m, a, b),
   );

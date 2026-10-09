@@ -76,6 +76,58 @@ export function testLaunchChromiumSwitches(launch: {
   return [["disable-features", "CalculateNativeWinOcclusion"]];
 }
 
+/** Desktop names Chromium recognises ahead of KDE, or instead of it, in `XDG_CURRENT_DESKTOP`. */
+const NON_KDE_XDG_DESKTOPS = new Set([
+  "Unity",
+  "Deepin",
+  "GNOME",
+  "X-Cinnamon",
+  "Pantheon",
+  "XFCE",
+  "UKUI",
+  "LXQt",
+  "COSMIC",
+]);
+const NON_KDE_SESSIONS = new Set(["deepin", "gnome", "mate", "xubuntu", "ukui"]);
+const KDE_SESSIONS = new Set(["kde4", "kde-plasma"]);
+
+/**
+ * Would Chromium pick KWallet here? It follows `base::nix::GetDesktopEnvironment`, which reads
+ * `XDG_CURRENT_DESKTOP` first, then `DESKTOP_SESSION`, then the old session variables, and takes
+ * the first it recognises. `KDE_SESSION_VERSION` alone proves nothing: people set it on other
+ * desktops for KDE apps. Without it, a `kde` session or `KDE_FULL_SESSION` is KDE3, which has no wallet.
+ */
+function choosesKWallet(env: Record<string, string | undefined>): boolean {
+  const hasKdeVersion = env.KDE_SESSION_VERSION !== undefined;
+  for (const name of (env.XDG_CURRENT_DESKTOP ?? "").split(":").map((part) => part.trim())) {
+    if (name === "KDE") return true;
+    if (NON_KDE_XDG_DESKTOPS.has(name)) return false;
+  }
+  const session = env.DESKTOP_SESSION ?? "";
+  if (KDE_SESSIONS.has(session)) return true;
+  if (session === "kde") return hasKdeVersion;
+  if (NON_KDE_SESSIONS.has(session) || session.includes("xfce")) return false;
+  if (env.GNOME_DESKTOP_SESSION_ID !== undefined) return false;
+  return env.KDE_FULL_SESSION !== undefined && hasKdeVersion;
+}
+
+/**
+ * The password store Linux Chromium should use for `safeStorage`. Electron 43 selects `basic_text`,
+ * which encrypts under a public key and which the secret store refuses, on any desktop Chromium
+ * does not recognise (Hyprland, Sway, i3). Ask for the Secret Service there. KDE keeps KWallet,
+ * and a `--password-store` the person passed is theirs; the store still stays locked if the chosen
+ * backend cannot start.
+ */
+export function linuxSecretStorageSwitches(launch: {
+  platform: NodeJS.Platform;
+  env: Record<string, string | undefined>;
+  hasPasswordStoreSwitch: boolean;
+}): ChromiumSwitch[] {
+  const keepsChromiumChoice =
+    launch.platform !== StudioPlatform.Linux || launch.hasPasswordStoreSwitch || choosesKWallet(launch.env);
+  return keepsChromiumChoice ? [] : [["password-store", "gnome-libsecret"]];
+}
+
 /**
  * Does closing the last window quit? Off macOS it does, except in a test launch: the self test
  * closes its window before it prints its report, and its runner decides when the app exits.

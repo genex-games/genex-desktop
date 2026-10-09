@@ -306,7 +306,7 @@ describe("harness host: self-modification", () => {
   });
 
   it("a harness awaiting a long host-call is working, not wedged — but true silence still is", async () => {
-    // The overnight failure mode: heartbeats pause while a host-call streams for many minutes,
+    // The unattended failure mode: heartbeats pause while a host-call streams for many minutes,
     // and the watchdog rewound a perfectly healthy harness four times for it. The host itself
     // is servicing the call, so the host itself is the proof the harness is not wedged.
     let release = (): void => {};
@@ -363,7 +363,7 @@ describe("harness host: self-modification", () => {
 
   it("a Mac that slept is not a wedged harness", async () => {
     // Asleep, neither the harness's drumbeat nor the watchdog's own ticks run; on waking the
-    // wall clock has jumped for both of them. The watchdog once read that jump as silence.
+    // wall clock has jumped for both of them, and that jump is not silence.
     let slept = 0;
     const r = await rig("slept", {}, () => Date.now() + slept);
     await r.host.start();

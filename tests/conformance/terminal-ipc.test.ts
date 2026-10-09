@@ -18,6 +18,12 @@ const GAME = { name: "derby", title: "Derby", dir: "/games/derby" };
 function registrar() {
   const listeners = new Map<string, Listener>();
   const launches: TerminalLaunch[] = [];
+  const opened: string[] = [];
+  const links: Record<string, string | null> = {
+    signin: "https://auth.openai.com/oauth/authorize?x=1",
+    genex: "https://genex.games/c/ABCD-EFGH",
+    quiet: null,
+  };
   const handle = createIpcHandle(
     { handle: (channel, listener) => void listeners.set(channel, listener) },
     { fixture: false, isStudioUi: () => true },
@@ -34,7 +40,12 @@ function registrar() {
         launches.push(launch);
         return { id: "s1", title: launch.title, kind: launch.kind, project: launch.project, phase: "starting" };
       },
+      link(id: string): string | null {
+        if (!(id in links)) throw new Error("This terminal session is closed.");
+        return links[id] ?? null;
+      },
     },
+    openExternal: async (url: string) => void opened.push(url),
     accessibilityEnabled: () => false,
     shellPath: async () => "/opt/homebrew/bin:/usr/bin:/bin",
   } as unknown as TerminalIpcDeps;
@@ -44,7 +55,7 @@ function registrar() {
     assert.ok(listener, `${channel} is not registered`);
     return listener(studio, payload);
   };
-  return { invoke, launches };
+  return { invoke, launches, opened };
 }
 
 describe("running a command a chat reply offered", () => {
@@ -84,5 +95,28 @@ describe("running a command a chat reply offered", () => {
       assert.equal(result.ok, false, name);
     }
     assert.equal(launches.length, 0);
+  });
+});
+
+describe("opening the sign-in page a terminal printed", () => {
+  it("opens that session's own page in the browser, and nothing when it printed none", async () => {
+    const { invoke, opened } = registrar();
+    assert.equal((await invoke("studio:terminal.open-link", { id: "signin" })).ok, true);
+    assert.equal((await invoke("studio:terminal.open-link", { id: "quiet" })).ok, true);
+    assert.deepEqual(opened, ["https://auth.openai.com/oauth/authorize?x=1"]);
+  });
+
+  it("opens a genex.games sign-in page tagged s=desktop, keeping its code", async () => {
+    const { invoke, opened } = registrar();
+    assert.equal((await invoke("studio:terminal.open-link", { id: "genex" })).ok, true);
+    assert.deepEqual(opened, ["https://genex.games/c/ABCD-EFGH?s=desktop"]);
+  });
+
+  it("refuses a session it does not have and a payload that names none, opening nothing", async () => {
+    const { invoke, opened } = registrar();
+    for (const payload of [{ id: "gone" }, {}, { id: 7 }, undefined]) {
+      assert.equal((await invoke("studio:terminal.open-link", payload)).ok, false, JSON.stringify(payload));
+    }
+    assert.deepEqual(opened, []);
   });
 });

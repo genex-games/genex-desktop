@@ -79,7 +79,7 @@ describe("native job sandbox profile", { skip: !darwin && "Seatbelt is macOS-onl
       gpu: true,
     }).split("\n");
     assert.ok(!gpu.includes("(allow signal)") && !gpu.includes("(allow process*)"));
-    // Flipped deliberately (2026-09-24): AppKit's RegisterApplication needs LaunchServices check-in,
+    // Flipped deliberately: AppKit's RegisterApplication needs LaunchServices check-in,
     // so a GPU render may reach it; opening other apps, the pasteboard, screen capture and the
     // Dock stay refused.
     const deniedMach = gpu.find((rule) => rule.startsWith("(deny mach-lookup")) ?? "";

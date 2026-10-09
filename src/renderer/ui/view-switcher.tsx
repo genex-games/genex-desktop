@@ -17,8 +17,7 @@ export interface ViewSwitcherItem<K extends string> {
    * One explanatory sentence as the chip's hover tooltip. Text chips only —
    * `iconOnly` already owns its tooltip for the label itself, so a hint there
    * is ignored rather than fighting it. Currently unworn: the remix modal's
-   * lane toggle carried the first hints and the owner removed them
-   * (2026-08-25, "remove these tooltips") once the halves got icons — a
+   * lane toggle carried the first hints, removed once the halves got icons — a
    * labelled+iconed half explains itself. The slot stays for a future half
    * that genuinely needs a sentence.
    */

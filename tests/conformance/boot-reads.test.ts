@@ -119,14 +119,14 @@ describe("a later launch reads only what came after the last one", () => {
   it("the boot repair folds on from its checkpoint and closes exactly what the new lifetime left open", async () => {
     const lite = await coreLite();
     const { core } = lite;
-    const thread = await core.store.createThread({ title: "nights" });
-    await core.store.appendEvents(thread, [custom("run_started", { runId: "night_1", project: "arena" })]);
+    const thread = await core.store.createThread({ title: "runs" });
+    await core.store.appendEvents(thread, [custom("run_started", { runId: "run_1", project: "arena" })]);
     await new RecoveryService(core, {} as CoreInternals).closeInterruptedWork();
 
-    // The next lifetime starts another night, a turn and a question, and dies too.
+    // The next lifetime starts another run, a turn and a question, and dies too.
     await core.store.appendEvents(thread, [
-      custom("run_registered", { runId: "night_2", project: "arena", mode: "autopilot" }),
-      custom("run_started", { runId: "night_2", project: "arena", mode: "director" }),
+      custom("run_registered", { runId: "run_2", project: "arena", mode: "autopilot" }),
+      custom("run_started", { runId: "run_2", project: "arena", mode: "director" }),
     ]);
     const turn = await new TurnFactory(core.store).beginTurn(thread, { input: [{ role: "user", content: "again" }] });
     await core.store.appendEvents(thread, [question(thread)]);
@@ -136,7 +136,7 @@ describe("a later launch reads only what came after the last one", () => {
 
     assert.equal(reads.full.size, 0, "no conversation is read in full");
     const events = await core.store.listEvents(thread);
-    assert.deepEqual(closures(events), ["run night_1", `turn ${turn.turnId}`, "question publish", "run night_2"]);
+    assert.deepEqual(closures(events), ["run run_1", `turn ${turn.turnId}`, "question publish", "run run_2"]);
     const lastRun = events.findLast((e) => e.data.type === "custom" && e.data.event_type === "run_finished");
     assert.equal(
       lastRun?.data.type === "custom" ? (lastRun.data.payload as { mode?: string }).mode : null,
@@ -153,8 +153,8 @@ describe("a later launch reads only what came after the last one", () => {
   it("closes a run with the time its work last happened, not the time of the repair's own records", async () => {
     const lite = await coreLite();
     const { core } = lite;
-    const thread = await core.store.createThread({ title: "night" });
-    await core.store.appendEvents(thread, [custom("run_started", { runId: "night", project: "arena" })]);
+    const thread = await core.store.createThread({ title: "run" });
+    await core.store.appendEvents(thread, [custom("run_started", { runId: "held", project: "arena" })]);
     await new RecoveryService(core, {} as CoreInternals).closeInterruptedWork();
     // The next lifetime starts it again, a worker asks a question, and the app dies under both.
     await core.store.appendEvents(thread, [
@@ -177,14 +177,14 @@ describe("a later launch reads only what came after the last one", () => {
     const { core } = lite;
     const thread = await core.store.createThread({ title: "damaged" });
     await new RecoveryService(core, {} as CoreInternals).closeInterruptedWork();
-    await core.store.appendEvents(thread, [custom("run_started", { runId: "night", project: "arena" })]);
+    await core.store.appendEvents(thread, [custom("run_started", { runId: "held", project: "arena" })]);
     await writeFile(path.join(core.store.threadDir(thread), "repair-state.json"), "{ torn");
 
     const reads = await countReads(core.store, () =>
       new RecoveryService(core, {} as CoreInternals).closeInterruptedWork(),
     );
     assert.equal(reads.full.get(thread), 1);
-    assert.deepEqual(closures(await core.store.listEvents(thread)), ["run night"]);
+    assert.deepEqual(closures(await core.store.listEvents(thread)), ["run held"]);
     await lite.close();
   });
 
@@ -285,7 +285,7 @@ describe("the harness boot restores its inbox from the host", () => {
       ...queued("read-by-done", "and ducks"),
       custom("coordinator_message_delivered", { messageId: "read-by-done", into: "done", how: "native" }),
       custom("coordinator_message_handled", { messageId: "done" }),
-      ...queued("cut", "make it night"),
+      ...queued("cut", "make it run"),
       custom("coordinator_message_processing", { messageId: "cut" }),
       ...queued("read", "and stars"),
       custom("coordinator_message_steering", { messageId: "read", into: "cut" }),

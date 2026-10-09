@@ -2,7 +2,7 @@ import { type JSX, lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
+import { inDock, TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
 import { readText, STORAGE_KEYS, writeText } from "../storage.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -48,6 +48,7 @@ function sessionStatus(current: TerminalSession): string {
 /** The dock's name for its one session: a sign-in, a command a reply offered, or the terminal. */
 function dockLabel(current: TerminalSession | undefined): string {
   if (current?.kind === TerminalKind.ClaudeLogin) return "Claude Code sign-in";
+  if (current?.kind === TerminalKind.OpenCodeLogin) return "OpenCode sign-in";
   return current?.kind === TerminalKind.Command ? "Command" : "Terminal";
 }
 
@@ -82,6 +83,7 @@ function useTerminalSessions(
     const unsubscribe = window.studio.onTerminal((event) => {
       if (event.type === "session") {
         seen.add(event.session.id);
+        if (!inDock(event.session)) return;
         setSessions((old) => [...old.filter((session) => session.id !== event.session.id), event.session]);
         if (!event.reveal) return;
         on.select(event.session.id);
@@ -96,7 +98,8 @@ function useTerminalSessions(
     void window.studio
       .terminalList()
       .then((list) => {
-        if (live) setSessions((old) => [...old, ...list.filter((session) => !seen.has(session.id))]);
+        const docked = list.filter((session) => inDock(session) && !seen.has(session.id));
+        if (live) setSessions((old) => [...old, ...docked]);
       })
       .catch(() => {});
     const toggle = () => {

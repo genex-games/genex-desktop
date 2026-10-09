@@ -7,7 +7,7 @@
  * tool calls, usage) is genuinely exercised. What it cannot tell us is whether a given *model*
  * is any good — that is what the live check against the user's Ollama is for.
  */
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 export type FakeReply =
@@ -173,80 +173,7 @@ export async function startFakeOllama(options: FakeOllamaOptions = {}): Promise<
         const scripted = options.respond?.(
           flattenRequest(body as { messages: Array<{ role: string; content: unknown }>; tools?: unknown[] }),
         );
-        const reply = scripted ?? replies.shift() ?? { text: "ok" };
-        if ("stall" in reply) return; // no headers, no body — only the client's own clock ends this
-        if ("httpStatus" in reply) {
-          res.writeHead(reply.httpStatus, { "content-type": "application/json" });
-          return res.end(reply.body);
-        }
-        res.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        const send = (payload: unknown) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
-        const base = {
-          id: "chatcmpl-fake",
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model: (body as { model?: string } | null)?.model ?? "fake",
-        };
-        send({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
-
-        if ("cutAfter" in reply) {
-          send({ ...base, choices: [{ index: 0, delta: { content: reply.cutAfter }, finish_reason: null }] });
-          return res.destroy();
-        }
-        if ("hangAfter" in reply) {
-          // One delta, then silence with the connection held open — the shape of a local model
-          // generating a huge tool call. Only a client abort (or server close) ends it.
-          send({ ...base, choices: [{ index: 0, delta: { content: reply.hangAfter }, finish_reason: null }] });
-          return;
-        }
-        if ("toolCalls" in reply) {
-          if (reply.text) {
-            send({ ...base, choices: [{ index: 0, delta: { content: reply.text }, finish_reason: null }] });
-          }
-          reply.toolCalls.forEach((call, index) => {
-            send({
-              ...base,
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: [
-                      {
-                        index,
-                        id: call.id,
-                        type: "function",
-                        function: { name: call.name, arguments: JSON.stringify(call.arguments) },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            });
-          });
-          send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
-        } else {
-          // Deltas arrive in pieces, like a real stream.
-          for (const piece of chunkText(reply.text, 7)) {
-            send({ ...base, choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] });
-          }
-          send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
-        }
-        send({
-          ...base,
-          choices: [],
-          usage: {
-            prompt_tokens: "usage" in reply ? (reply.usage?.prompt ?? 11) : 11,
-            completion_tokens: "usage" in reply ? (reply.usage?.completion ?? 5) : 5,
-            total_tokens: 16,
-          },
-        });
-        res.write("data: [DONE]\n\n");
-        return res.end();
+        return writeChatCompletion(res, body, scripted ?? replies.shift() ?? { text: "ok" });
       }
 
       json({ error: `unhandled ${url}` }, 404);
@@ -266,6 +193,88 @@ export async function startFakeOllama(options: FakeOllamaOptions = {}): Promise<
         server.close(() => resolve());
       }),
   };
+}
+
+/**
+ * One scripted reply on the OpenAI-compatible `chat/completions` SSE stream, as Ollama and OpenRouter
+ * both send it: text in pieces or tool calls, then usage, then `[DONE]`; or a failure, a cut or a stall.
+ */
+export function writeChatCompletion(res: ServerResponse, body: unknown, reply: FakeReply): void {
+  if ("stall" in reply) return; // no headers, no body — only the client's own clock ends this
+  if ("httpStatus" in reply) {
+    res.writeHead(reply.httpStatus, { "content-type": "application/json" });
+    res.end(reply.body);
+    return;
+  }
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  const send = (payload: unknown) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  const base = {
+    id: "chatcmpl-fake",
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: (body as { model?: string } | null)?.model ?? "fake",
+  };
+  send({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
+
+  if ("cutAfter" in reply) {
+    send({ ...base, choices: [{ index: 0, delta: { content: reply.cutAfter }, finish_reason: null }] });
+    res.destroy();
+    return;
+  }
+  if ("hangAfter" in reply) {
+    // One delta, then silence with the connection held open — the shape of a local model
+    // generating a huge tool call. Only a client abort (or server close) ends it.
+    send({ ...base, choices: [{ index: 0, delta: { content: reply.hangAfter }, finish_reason: null }] });
+    return;
+  }
+  if ("toolCalls" in reply) {
+    if (reply.text) {
+      send({ ...base, choices: [{ index: 0, delta: { content: reply.text }, finish_reason: null }] });
+    }
+    reply.toolCalls.forEach((call, index) => {
+      send({
+        ...base,
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index,
+                  id: call.id,
+                  type: "function",
+                  function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      });
+    });
+    send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
+  } else {
+    // Deltas arrive in pieces, like a real stream.
+    for (const piece of chunkText(reply.text, 7)) {
+      send({ ...base, choices: [{ index: 0, delta: { content: piece }, finish_reason: null }] });
+    }
+    send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+  }
+  send({
+    ...base,
+    choices: [],
+    usage: {
+      prompt_tokens: "usage" in reply ? (reply.usage?.prompt ?? 11) : 11,
+      completion_tokens: "usage" in reply ? (reply.usage?.completion ?? 5) : 5,
+      total_tokens: 16,
+    },
+  });
+  res.write("data: [DONE]\n\n");
+  res.end();
 }
 
 function chunkText(text: string, size: number): string[] {

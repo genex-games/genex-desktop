@@ -92,6 +92,20 @@ export function isDelegatedEngine(engine: Pick<EngineDescriptor, "kind">): boole
   return engine.kind === EngineKind.Delegated;
 }
 
+/** Does the engine hold sessions of its own: a subscription's CLI, or Bonsai's local sessions? */
+export function holdsSessions(engine: Pick<EngineDescriptor, "supportsSessions" | "kind">): boolean {
+  return engine.supportsSessions ?? isDelegatedEngine(engine);
+}
+
+/**
+ * Can a game chat on this engine give each job its own model? A session engine can, and so can a
+ * completion-only local engine that offers a model with tools: its jobs run on its own models in
+ * the classic loop, without pretending it holds sessions.
+ */
+export function splitsRoles(engine: Pick<EngineDescriptor, "supportsSessions" | "kind" | "models">): boolean {
+  return holdsSessions(engine) || engine.models.some((model) => model.supportsTools);
+}
+
 /** Can a build run on this engine now: ready, and either delegated or offering a model with tools? */
 export function canBuildWith(engine: Pick<EngineDescriptor, "status" | "kind" | "models">): boolean {
   if (!isEngineReady(engine)) return false;

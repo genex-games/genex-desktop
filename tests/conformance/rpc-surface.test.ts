@@ -2,7 +2,7 @@
  * Characterization of the substrate RPC surface: the table `StudioCore.api()` hands the harness.
  *
  * The harness is the agent's own code and is copied, not imported, so a renamed or dropped key
- * breaks it only at run time, in the middle of a night. These tests make any change to the table
+ * breaks it only at run time, in the middle of a run. These tests make any change to the table
  * a deliberate edit: add or remove a key here in the same change that adds or removes it there.
  */
 import { test } from "node:test";
@@ -86,6 +86,7 @@ const API_KEYS = [
   "preview.state",
   "preview.statsOf",
   "preview.status",
+  "preview.viewport",
   "run.artifact",
   "run.exec",
   "snapshot.create",

@@ -320,7 +320,7 @@ test("a running web lookup says it is looking something up", () => {
 });
 
 test("a run control the host records itself is one row, and a recorded resume shows once, when it runs", () => {
-  // The chat's own session after a night calls run_status live: the engine mirrors the call, and
+  // The chat's own session after a run calls run_status live: the engine mirrors the call, and
   // the host records its own request and result (conversation.ts `coordinatorTool`).
   const mirrored = (id: number, name: string, callId: string, engine = "claude-code") =>
     custom(id, `delegated.${engine}`, {
@@ -336,7 +336,7 @@ test("a run control the host records itself is one row, and a recorded resume sh
   const labels = (events: EventEnvelope[]) =>
     toEntries(events).flatMap((e) => (e.kind === "tools" ? e.rows.map((row) => row.label) : []));
 
-  // Flipped (owner, 2026-10-02): no time-of-day words in the app's copy.
+  // Flipped: no time-of-day words in the app's copy.
   assert.deepEqual(
     labels([mirrored(1, "mcp__studio__run_status", "t1"), ...hosted(2, "run_status", "coord_1", "{}")]),
     ["checked on the build"],
@@ -344,8 +344,8 @@ test("a run control the host records itself is one row, and a recorded resume sh
   );
   // Another server's tool that shares the name is not the studio's: the host records none, so it keeps its row.
   assert.equal(labels([mirrored(1, "mcp__github__run_status", "t3")]).length, 1);
-  // After a paused night the session records resume_run (Codex through the bridge): nothing has
-  // resumed yet. The chat resumes the night once the reply ends, and the host records it then.
+  // After a paused run the session records resume_run (Codex through the bridge): nothing has
+  // resumed yet. The chat resumes the run once the reply ends, and the host records it then.
   const recorded = mirrored(1, "mcp__studio__resume_run", "t2", "codex");
   assert.deepEqual(labels([recorded]), [], "a recorded resume is not a resumed build");
   assert.deepEqual(

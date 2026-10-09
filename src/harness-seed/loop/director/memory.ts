@@ -1,14 +1,14 @@
 /**
  * The director's own memory, `.studio/DIRECTOR.md`: the one file that survives a compaction and
- * a resume. The studio keeps a copy of it all night (`keepMemory`, night.ts) and hands it back
+ * a resume. The studio keeps a copy of it for the whole run (`keepMemory`, loop-run.ts) and hands it back
  * to the next session clamped to a size a session can afford.
  */
 
 /**
  * The most of `.studio/DIRECTOR.md` a session is handed back. The director's own memory is the
- * one file that survives a compaction and a resume, so it grows all night — and a night that
+ * one file that survives a compaction and a resume, so it grows for the whole run — and a run that
  * paused twice would otherwise hand the third session a file bigger than the brief that
- * explains it. Head and tail, because the top of that file is what the night set out to do and
+ * explains it. Head and tail, because the top of that file is what the run set out to do and
  * the bottom is where it actually is.
  */
 export const MAX_DIRECTOR_MEMORY = 24_000;
@@ -46,7 +46,7 @@ function tailLines(lines: readonly string[], budget: number, floor: number): str
 /**
  * Clamp the director's memory to `max` characters, on line boundaries, keeping the head and the
  * tail and saying how much went. Any banner a previous clamp left is stripped BEFORE measuring,
- * so a night resumed four times carries one banner and not four — the file is clamped on the way
+ * so a run resumed four times carries one banner and not four — the file is clamped on the way
  * out (the artifact the next session restores from) and again on the way in (what is written
  * into the new worktree), and the two together would otherwise accumulate.
  */
@@ -76,7 +76,7 @@ export function clampDirectorMemory(text: unknown, max = MAX_DIRECTOR_MEMORY): s
  * What one `keepMemory` pass makes of the file it just read: the text to keep, whether that is
  * new, and the one note worth saying about it. The note belongs to a CHANGE, not to a size:
  * `clampDirectorMemory` keeps clamping for as long as the file is over the ceiling, and the
- * note used to be said before the "nothing changed" guard — so once a night's DIRECTOR.md
+ * note used to be said before the "nothing changed" guard — so once a run's DIRECTOR.md
  * passed the ceiling, every director tool call pushed the same sentence into the log, and
  * within a couple of hundred calls the 400 entries the director's own `wait` reads were
  * nothing else.

@@ -16,6 +16,7 @@
   ],
   "checkClass": "arena",
   "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
   "pack": "arena",
   "note": "Fine repeating stripes on ceilings and skies shimmer: keep the mean neighbour luma step low on the player's own view.",
   "intent": "Fine repeating detail — grating, corrugation, tight brick, a striped sky — aliases into a shimmering pattern the moment the camera moves. Fix it at the source: increase the feature size so it survives at the distance it is seen, turn on mipmaps and anisotropy on the map, and let the material's roughness rise with distance. Antialiasing helps and does not solve it. Measure it as the mean neighbour luma step on the player's own camera; the threshold is a seed guess, so calibrate it on the first run that carries the check.",

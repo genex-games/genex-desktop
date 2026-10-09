@@ -260,7 +260,7 @@ try {
     await op(i, "click", { selector: '[role="dialog"] button[data-delete-game]' });
     await until(async () => !(await snap(i, "nav")).text.includes("Snow Temple II"), "game removed");
     assert.ok(fs.existsSync(path.join(i.identity.roots.games, made.project, "studio.json")), "folder is retained");
-    // Intentionally flipped (2026-10-01): removing the game on the stage used to open Studio; it opens home.
+    // Intentionally flipped: removing the game on the stage used to open Studio; it opens home.
     await until(
       async () => (await snap(i)).state.room === "home" && (await snap(i)).state.project === "",
       "removed game leaves active workspace",

@@ -1,11 +1,11 @@
 /**
  * The verdict record — one shape for every judged build, and one sentence a player can read.
  *
- * A night judges builds in five places: a worker's own round, the lead's fork gate, the lead's
+ * A run judges builds in five places: a worker's own round, the lead's fork gate, the lead's
  * judge, the health pass after a merge, and the close. Before `loop/verdict.ts` each of those
  * answered in its own shape and its own words, so the app's build box showed boilerplate about
  * the run, a round card counted checks the judge had *grown* as wins, and `report.json` dropped
- * `verdictSource` and the scoreboard on every one of the first real night's twenty-one rounds.
+ * `verdictSource` and the scoreboard on every one of the first real run's twenty-one rounds.
  *
  * Two gates run here. The first is the shape: every pass produces the same keys. The second is
  * the sentence: no `because` may carry a check id, a commit, a branch, a path or a harness word,
@@ -81,9 +81,9 @@ function assertShape(record: Record<string, any>, what: string): void {
   assertPlain(record.because, `${what}.because`);
 }
 
-// ── the free text a real night hands in ───────────────────────────────────────────────────
+// ── the free text a real run hands in ───────────────────────────────────────────────────
 
-/** Gaps, problems and reasons taken verbatim from the first real night's own event journal. */
+/** Gaps, problems and reasons taken verbatim from the first real run's own event journal. */
 const REAL_FREE_TEXT = [
   "the build does not run: 1 console error(s)",
   "regressed state.contact.speedKept, motion-blur-at-speed",
@@ -151,7 +151,7 @@ describe("one record, whatever judged the build", () => {
         landingLine: "made live, a judge preferred it",
       }),
       verdictRecord({ pass: "close", kept: false, rule: "not-landed", notLanded: "does-not-run" }),
-      // A game with a repository of its own inside it: the night may not add that folder to the
+      // A game with a repository of its own inside it: the run may not add that folder to the
       // user's history, so the build waits for the button that may (`landBuild`).
       verdictRecord({ pass: "close", kept: false, rule: "not-landed", notLanded: "nested-not-versioned" }),
       // The lead's last edits could not be committed (HQ-2): the land is refused, and says why.
@@ -165,7 +165,7 @@ describe("one record, whatever judged the build", () => {
     assert.equal(new Set(records.map((record) => record.because)).size, records.length, "each rule reads differently");
   });
 
-  it("survives the free text a real night hands it", () => {
+  it("survives the free text a real run hands it", () => {
     for (const text of REAL_FREE_TEXT) {
       for (const rule of ["vetoed", "unfixed", "broken"]) {
         const record = verdictRecord({ pass: "round", kept: false, rule, gap: text });
@@ -234,7 +234,7 @@ describe("one record, whatever judged the build", () => {
   });
 });
 
-// ── the report the night leaves behind ────────────────────────────────────────────────────
+// ── the report the run leaves behind ────────────────────────────────────────────────────
 
 /** A seed loop module and every module under its folder, joined, so a count covers the split. */
 function loopTree(module: string, folder: string): string {
@@ -280,13 +280,13 @@ describe("one producer, and every path that judges a build calls it", () => {
 
 describe("the report keeps how a round was judged", () => {
   const journal = JSON.parse(
-    readFileSync(new URL("../fixtures/director-night.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../fixtures/director-loop-run.json", import.meta.url), "utf8"),
   ) as EventEnvelope[];
   const rounds = journal
     .filter((event) => event.data.type === "custom" && event.data.event_type === "facet_iteration")
     .map((event) => (event.data as { payload: Record<string, any> }).payload);
 
-  it("keeps verdictSource and the scoreboard for all twenty-one rounds of the synthetic night", () => {
+  it("keeps verdictSource and the scoreboard for all twenty-one rounds of the synthetic run", () => {
     assert.equal(rounds.length, 21);
     for (const round of rounds) {
       const digest = iterationDigest(round);
@@ -296,7 +296,7 @@ describe("the report keeps how a round was judged", () => {
       assert.deepEqual(digest.scoreboard!.flips, round.scoreboard.flips);
       assert.equal(digest.scoreboard!.results.length, round.scoreboard.results.length);
     }
-    // The synthetic night has ten kept rounds and no stopped rounds.
+    // The synthetic run has ten kept rounds and no stopped rounds.
     assert.equal(rounds.filter((round) => iterationDigest(round).won).length, 10);
   });
 
@@ -306,7 +306,7 @@ describe("the report keeps how a round was judged", () => {
       verdict: { because: "Undone: the game did not start after this build." },
     });
     assert.equal(withRecord.verdict!.because, "Undone: the game did not start after this build.");
-    assert.equal(iterationDigest(rounds[0]).verdict, null, "the first night wrote none");
+    assert.equal(iterationDigest(rounds[0]).verdict, null, "the first run wrote none");
     const stopped = iterationDigest({ iteration: 4, verdictSource: "stopped", winner: null, scoreboard: null });
     assert.equal(stopped.stopped, true);
     assert.equal(stopped.won, false);
@@ -327,10 +327,10 @@ const event = (type: string, payload: Record<string, unknown>): EventEnvelope =>
 
 describe("every round says why, in one sentence", () => {
   const journal = JSON.parse(
-    readFileSync(new URL("../fixtures/director-night.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../fixtures/director-loop-run.json", import.meta.url), "utf8"),
   ) as EventEnvelope[];
 
-  it("gives each of the synthetic night's judged rounds a reason, with no id in it", () => {
+  it("gives each of the synthetic run's judged rounds a reason, with no id in it", () => {
     const graph = buildRunGraph(journal)!;
     const judged = graph.nodes.filter(
       (node): node is IterationNode =>
@@ -339,7 +339,7 @@ describe("every round says why, in one sentence", () => {
     assert.equal(judged.length, 21);
     for (const node of judged) {
       // What the drawer prints: the round's own record when it has one, and the mapping from
-      // `verdictSource` when it does not — that night wrote no records at all.
+      // `verdictSource` when it does not — that run wrote no records at all.
       const words = verdictWords({
         winner: node.winner,
         satisfied: node.satisfied,
@@ -419,7 +419,7 @@ describe("every round says why, in one sentence", () => {
       "the board keeps both, as it always did",
     );
     assert.deepEqual(plannedFlips(node), ["state.mud.visible"], "the card counts one");
-    // A night with no record keeps every flip: nothing there can tell them apart.
+    // A run with no record keeps every flip: nothing there can tell them apart.
     const older = buildRunGraph([
       event("run_started", { project: "p" }),
       event("facet_iteration", {
@@ -435,7 +435,7 @@ describe("every round says why, in one sentence", () => {
 });
 
 describe("the build box shows the last look at the build, not a line about the run", () => {
-  it("takes the newest verdict for the merged head, and falls back when a night has none", () => {
+  it("takes the newest verdict for the merged head, and falls back when a run has none", () => {
     const base = [event("run_started", { project: "p" }), event("autopilot_started", { director: true })];
     const bare = buildRunGraph(base)!;
     assert.deepEqual(bare.verdicts, []);
@@ -517,15 +517,15 @@ describe("the build box shows the last look at the build, not a line about the r
   });
 });
 
-// ── the night itself ──────────────────────────────────────────────────────────────────────
+// ── the run itself ──────────────────────────────────────────────────────────────────────
 
 /**
- * One short night through the real core and the real harness child: a worker is started (the
+ * One short run through the real core and the real harness child: a worker is started (the
  * fork gate looks), its commit is merged (the health pass looks), the merged build is judged,
  * and the run is closed (the landing). All four of the lead's passes must reach the log as
  * `director_verdict`, in the one shape, each with a sentence the app can print as it stands.
  */
-describe("every pass of a real night writes one", () => {
+describe("every pass of a real run writes one", () => {
   const rigs: Rig[] = [];
   after(async () => {
     await Promise.all(rigs.map((rig) => rig.stop().catch(() => {})));
@@ -537,7 +537,7 @@ describe("every pass of a real night writes one", () => {
       { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
     );
     rigs.push(rig);
-    const project = await rig.core.games.scaffold("verdict-night", { title: "Verdict night" });
+    const project = await rig.core.games.scaffold("verdict-run", { title: "Verdict run" });
     const trace: Array<{ tool: string; result: unknown }> = [];
     rig.core.engines.register({
       id: "codex",
@@ -559,9 +559,9 @@ describe("every pass of a real night writes one", () => {
             trace.push({ tool: name, result });
             return result;
           };
-          // A night says what it is for before a builder starts (M3.8).
+          // A run says what it is for before a builder starts (M3.8).
           await call("plan", {
-            summary: "Tonight: a red plaza.",
+            summary: "This run: a red plaza.",
             workers: JSON.stringify([
               {
                 id: "plaza",
@@ -588,7 +588,7 @@ describe("every pass of a real night writes one", () => {
           await call("integrate", { worker: "plaza" });
           await call("judge", { target: "integration", against: "none" });
           await call("finish", { summary: "the plaza is red", land: "yes", victory: "no" });
-          return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-1", summary: "night done" };
+          return { ok: true, engine: "codex", turns: 6, usage: {}, sessionId: "director-1", summary: "run done" };
         }
         await mkdir(path.join(request.cwd, "src"), { recursive: true });
         await writeFile(path.join(request.cwd, "src", "plaza.js"), "export const plaza = 'red';\n");
@@ -617,7 +617,7 @@ describe("every pass of a real night writes one", () => {
       rig.core,
       (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
       120_000,
-      "the night to close",
+      "the run to close",
     );
 
     const verdicts = customEvents(events, "director_verdict").filter((e) => e.runId === runId);
@@ -628,7 +628,7 @@ describe("every pass of a real night writes one", () => {
       ["gate", "health", "judge", "judge", "close"],
       `the five passes, in the order they looked: ${JSON.stringify(verdicts.map((v) => [v.pass, (v as { decision: { rule: string } }).decision?.rule]))}; tool trace: ${JSON.stringify(trace)}; decisions: ${JSON.stringify(customEvents(events, "autopilot_decision"))}`,
     );
-    for (const verdict of verdicts) assertShape(verdict as Record<string, any>, `${verdict.pass} of the night`);
+    for (const verdict of verdicts) assertShape(verdict as Record<string, any>, `${verdict.pass} of the run`);
     const byPass = Object.fromEntries(
       verdicts.map((verdict) => [String(verdict.pass), verdict as Record<string, any>]),
     );
@@ -664,6 +664,6 @@ describe("every pass of a real night writes one", () => {
     )!;
     assert.equal(graph.verdicts.length, 5);
     assert.equal(headVerdict(graph)!.pass, "close", "the last word on the build that landed");
-    assertPlain(buildVerdictLine(graph)!, "the build box of a finished night");
+    assertPlain(buildVerdictLine(graph)!, "the build box of a finished run");
   });
 });

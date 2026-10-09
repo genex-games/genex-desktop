@@ -4,6 +4,7 @@ import type { AnyRecord } from "../../types/harness.d.ts";
 import { FACET_POLICY } from "./policy.ts";
 import { CLIP_REASON, sharesStem } from "../text.ts";
 import type { FacetPolicy } from "./policy.ts";
+import { isUnfilledOpenRung } from "./growth.ts";
 
 /** How much of a defect's words its check id is slugged from. */
 const DEFECT_SLUG_CHARS = 40;
@@ -184,7 +185,7 @@ function defectOpening(text: unknown, words: number): string[] {
 
 /**
  * The second dedupe net (M3.2). `similarDefect` scores whole texts, so one terse wording and one
- * long one of the same complaint can fall under 0.5 and grow twins — a real night grew
+ * long one of the same complaint can fall under 0.5 and grow twins — a real run grew
  * `defect-coupe-trunk-deck-reads-as-a-smoot` and `…-smoot-2`, then kept a round because one twin
  * answered "yes" while the other still failed at 0.80. Two questions opening the same way on the
  * same camera are the same question, whatever their tails say.
@@ -258,16 +259,19 @@ function fileStem(file: unknown): string | undefined {
     ?.replace(/\.[^.]+$/, "");
 }
 
+/** Each rung's words, but an open rung nobody has filled: it says the same on every ladder, so its words are no part's own. */
+function ladderWords(spec: AnyRecord | null | undefined): unknown[] {
+  return (spec?.milestones ?? []).filter((m: AnyRecord) => !isUnfilledOpenRung(m)).map((m: AnyRecord) => m?.what);
+}
+
 /** The words a facet is known by: its id, title, identity, owned file names, cameras, intent, ladder and plan-written checks. */
 function facetVocabulary(spec: AnyRecord | null | undefined): Set<string> {
   const texts: unknown[] = [spec?.id, spec?.title, ...(spec?.identity ?? [])];
   for (const own of spec?.owns ?? []) texts.push(fileStem(own));
   texts.push(...(spec?.cameras ?? []));
   // The plan's own words: "chickens peck… the dog trots a loop" is how a dog defect finds the
-  // life facet — the village run grew the dog on ground-and-atmosphere, whose vocabulary was
-  // file names and camera names only.
-  texts.push(spec?.intent);
-  for (const m of spec?.milestones ?? []) texts.push(m?.what);
+  // life facet rather than one whose vocabulary is file names and camera names only.
+  texts.push(spec?.intent, ...ladderWords(spec));
   for (const check of spec?.checks ?? []) {
     if (check.origin === CheckOrigin.Harness || check.origin === CheckOrigin.Judge) continue;
     for (const m of String(check.js ?? "").matchAll(/\(['"]([a-z0-9-_]+)['"]\)/g)) texts.push(m[1]);
@@ -317,8 +321,8 @@ interface Candidate {
  * that happened to be judged. The live count is capped.
  *
  * A defect about a reading rather than a sight never becomes a picture question at all (M3.2):
- * "the live probe reports speedKept 0.069" was asked of a JPEG twelve times in one night and
- * answered "no, no readout is visible" every time. Those go to `noteDefect` — the ledger the
+ * "the live probe reports speedKept 0.069", asked of a JPEG, is answered "no, no readout is
+ * visible" every time. Those go to `noteDefect` — the ledger the
  * builder's brief already carries — with the probe expression that would measure them.
  */
 export function defectsToChecks(

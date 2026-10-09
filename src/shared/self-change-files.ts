@@ -28,3 +28,17 @@ export function agentChangedFile(eventType: string, payload: Record<string, unkn
   }
   return typeof payload.file === "string" && isWorkspaceRelative(payload.file) ? payload.file : null;
 }
+
+/**
+ * What a staged suggestion changes: one skill file, or the lessons every builder's brief carries.
+ * A record without a target predates lessons and is a skill edit. Persisted: never rename a value.
+ * The harness keeps a copy (`loop/contract-lessons.ts`), held to this one by seed-contracts.test.ts.
+ */
+export const StagedTarget = { Skill: "skill", Lessons: "lessons" } as const;
+export type StagedTarget = (typeof StagedTarget)[keyof typeof StagedTarget];
+
+/** The one file a lessons suggestion may write, relative to the harness workspace. */
+export const CONTRACT_LESSONS_FILE = "library/contract-lessons.md";
+
+/** The name a lessons suggestion is staged, refused and remembered under. */
+export const LESSONS_SKILL = "contract-lessons";

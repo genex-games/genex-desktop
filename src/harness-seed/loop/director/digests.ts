@@ -1,7 +1,7 @@
 /**
  * What the director reads about its workers: one round as the report keeps it, one worker in
  * full (`run_status`, `worker_status`) or in a line (`wait`), its loop as a digest, and the
- * transitions in that loop worth waking for. Pure, with no night of their own.
+ * transitions in that loop worth waking for. Pure, with no run of their own.
  */
 import { summarizeScoreboard } from "../checks.ts";
 import { FACET_POLICY, ITERATION_HEADROOM } from "../facet-loop.ts";
@@ -12,9 +12,11 @@ import { minutes } from "../time.ts";
 import { VerdictSource } from "../verdict.ts";
 import { medianMinutes } from "./budgets.ts";
 import { Side } from "../judge.ts";
+import { FacetStage, isFinishing } from "../facet/stage.ts";
+import { isBeyondScope } from "../scope.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
-// Type-only: erased at runtime, so this module still imports no part of the night.
-import type { Worker } from "./night.ts";
+// Type-only: erased at runtime, so this module still imports no part of the run.
+import type { Worker } from "./loop-run.ts";
 
 /** How many entries of a list a digest shows before it says how many more there are. */
 const DIGEST_ENTRIES = 6;
@@ -24,6 +26,8 @@ const DIGEST_MOVE = 300;
 const DIGEST_STOPPED = 200;
 /** How much of a reviewer's proposal a digest carries. */
 const DIGEST_IDEA = 220;
+/** How a reviewer's proposal beyond the ask is labelled in a digest: the user's call, not a rung. */
+const BEYOND_ASK_IDEA = "reviewer, outside the ask (the user decides; never a rung)";
 /** A round's defects, frames and board results the report keeps. */
 const ROUND_DEFECTS = 8;
 const ROUND_SHOTS = 8;
@@ -63,7 +67,7 @@ export interface RoundRecord {
   verdict?: { because?: string } | null;
   move?: RoundMove | null;
   /** The taste judge's one big move for the part this round. */
-  bigMove?: { what?: string; why?: string } | null;
+  bigMove?: { what?: string; why?: string; scope?: string } | null;
   /** The liveness critic's card: the principle that would change the feel most, and its fix. */
   liveness?: { biggest?: string | null; biggestFix?: string | null } | null;
   /** What the round's reviewers proposed next, once the round is digested (`iterationDigest`). */
@@ -89,13 +93,16 @@ function moveDigest(move: RoundMove | null | undefined): AnyRecord | null {
 
 /**
  * What the round's reviewers propose for the part next: the taste judge's big move and the
- * liveness critic's biggest fix, one line each, or none. The golden-goal night's lead never heard
- * either and steered its workers one defect at a time.
+ * liveness critic's biggest fix, one line each, or none: a lead that never hears them steers its
+ * workers one defect at a time.
  */
 function roundIdeas(record: RoundRecord): string[] {
   const ideas: string[] = [];
   const bigMove = record.bigMove?.what;
-  if (bigMove) ideas.push(`reviewer: ${clip(bigMove, DIGEST_IDEA)}`);
+  // A step beyond the ask is the user's decision (the worker already put it to them): the lead
+  // reads it labelled, so it is never promoted to the next rung.
+  const who = isBeyondScope(record.bigMove) ? BEYOND_ASK_IDEA : "reviewer";
+  if (bigMove) ideas.push(`${who}: ${clip(bigMove, DIGEST_IDEA)}`);
   const critic = record.liveness?.biggestFix;
   if (critic) ideas.push(`critic (${record.liveness?.biggest ?? "feel"}): ${clip(critic, DIGEST_IDEA)}`);
   return ideas;
@@ -104,8 +111,8 @@ function roundIdeas(record: RoundRecord): string[] {
 /**
  * What the run's report keeps of one worker round.
  *
- * The first night's report dropped `verdictSource` and the scoreboard on every one of its
- * twenty-one rounds, so `report.json` — the only durable record of a night — could say a round
+ * The first run's report dropped `verdictSource` and the scoreboard on every one of its
+ * twenty-one rounds, so `report.json` — the only durable record of a run — could say a round
  * was lost but never how it was judged or what it measured. They are kept now, beside the
  * round's own verdict record; the frames are not (the report is read, not looked at).
  */
@@ -146,7 +153,7 @@ function boundEntries(list: unknown): { shown: AnyRecord[]; more: number } {
 }
 
 /**
- * A worker's board, bounded. `run_status` carries every worker's whole board, and a night with
+ * A worker's board, bounded. `run_status` carries every worker's whole board, and a run with
  * six workers and forty checks each spent a quarter of its turns re-reading them. The counts,
  * `identityAllPass` and the first few failing checks are what a decision is made on; the rest
  * is a number, and `worker_status` still answers with all of it.
@@ -235,8 +242,13 @@ function retiredChecksNote(id: string, was: AnyRecord | null, now: AnyRecord): s
   return `worker ${id}: ${retired} retired (${fresh.slice(0, DIGEST_ENTRIES).join(", ")})`;
 }
 
-/** A polish streak that has just reached the point where the next brief makes the move mandatory. */
+/**
+ * A polish streak that has just reached the point where the next brief makes the move mandatory.
+ * Never for a worker whose streak cannot escalate (`escalates: false` — a director-owned or a
+ * finishing one); a loop state from before the field keeps the old note.
+ */
 function polishStreakNote(id: string, was: AnyRecord | null, now: AnyRecord, policy: AnyRecord): string | null {
+  if (now.escalates === false) return null;
   if (!(now.polishStreak >= policy.polishStreakEscalate && now.polishStreak > (was?.polishStreak ?? 0))) return null;
   return `worker ${id}: ${now.polishStreak} accepted builds in a row only polished — the next brief makes the move mandatory`;
 }
@@ -329,6 +341,8 @@ export function workerDigest(w: Worker, now = Date.now()): AnyRecord {
     state: w.state,
     minutesRunning: minutes((w.endedAt ?? now) - w.startedAt),
     minutesLeft: isRunning(w) ? minutes(w.deadline - now) : 0,
+    // Only a finishing worker says its stage: polish is its work, and it takes no move.
+    ...(isFinishing(w.spec) ? { stage: FacetStage.Finish } : {}),
     ...roundFields(w),
     lastCommit: w.lastCommit ? shortSha(w.lastCommit) : null,
     board: boardOf(w),
@@ -341,10 +355,9 @@ export function workerDigest(w: Worker, now = Date.now()): AnyRecord {
 }
 
 /**
- * One worker in a line, for `wait`. A wait used to answer with the whole status blob — every
- * worker's board, the window pool, the screen strip — twenty-three times in one night, and the
- * director's turns ran at a quarter of a million tokens each. What a waiting director needs is
- * what changed; `run_status` is one call away for the rest.
+ * One worker in a line, for `wait`. The whole status blob — every worker's board, the window
+ * pool, the screen strip — on every wait would swell the director's turns to hundreds of
+ * thousands of tokens. What a waiting director needs is what changed; `run_status` is one call away for the rest.
  */
 export function waitDigest(w: Worker, now = Date.now()): AnyRecord {
   const board = [...w.iterations].reverse().find((i: AnyRecord) => i.scoreboard)?.scoreboard ?? null;
@@ -357,7 +370,7 @@ export function waitDigest(w: Worker, now = Date.now()): AnyRecord {
     accepted: w.iterations.filter((i: AnyRecord) => i.won).length,
     ...(board ? { passing: `${board.passing}/${board.total}` } : {}),
     // One line of the loop, and only the one a waiting director must act on: a gap the brief has
-    // made mandatory. `wait` is called dozens of times a night; the rest is on `run_status`.
+    // made mandatory. `wait` is called dozens of times a run; the rest is on `run_status`.
     ...(w.loop?.fix?.mandatory ? { mandatoryFix: clipOrNull(w.loop.fix.what, DIGEST_REASON) } : {}),
     ...monitorFields(w.monitor),
     ...(because ? { stoppedBecause: String(because).slice(0, DIGEST_STOPPED) } : {}),

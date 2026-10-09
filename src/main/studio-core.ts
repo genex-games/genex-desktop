@@ -32,7 +32,8 @@ import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
-import type { ExportReview, PluginBinding } from "../shared/plugins.ts";
+import type { ExportReview, PluginBinding, PluginStillAnswer, PluginStillOrder } from "../shared/plugins.ts";
+import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import {
   type BootNotice,
@@ -44,7 +45,7 @@ import {
   HarnessState,
 } from "../shared/protocol.ts";
 import { EngineId } from "../shared/providers.ts";
-import { RunState } from "../shared/run-state.ts";
+import { JournalPhase, RunState } from "../shared/run-state.ts";
 import { credentialEnvValues, redactTokens, secretRedactor } from "../shared/redact.ts";
 import { ActivityIndex, feedsActivity, type StudioActivityItem } from "../shared/studio-activity.ts";
 import {
@@ -63,6 +64,10 @@ import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
+import { OpenCodeEngine } from "../substrate/engines/opencode.ts";
+import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
+import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
+import { OPENROUTER_KEY_SECRET, secretKeyStore } from "../substrate/provider-keys.ts";
 import { EngineRegistry } from "../substrate/engines/registry.ts";
 import type { Engine, LiveToolResult } from "../substrate/engines/types.ts";
 import { EventStore } from "../substrate/event-store.ts";
@@ -117,6 +122,8 @@ import { layoutFor, type StudioLayout } from "./core/layout.ts";
 import { createPlanReviews } from "./core/plan-drafts.ts";
 import { CONSENT_TIMEOUT_MS, PluginToolService } from "./core/plugin-tools.ts";
 import { PreviewService } from "./core/previews.ts";
+import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
+import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
 import { SelfEditGateService } from "./core/self-edit-gate.ts";
@@ -322,6 +329,12 @@ export interface StudioCoreOptions {
    * it waits on; a test seam.
    */
   rewindBuildStop?: { timeoutMs?: number; now?: () => number; sleep?: (ms: number) => Promise<unknown> };
+  /** The clock, timers and memory reading host auto-resume uses (`core/auto-resume.ts`); a test seam. */
+  autoResume?: Partial<Pick<AutoResumeDeps, "now" | "setTimer" | "clearTimer" | "freeMb">>;
+  /** A plugin still's budget (default one minute) and the clock it runs on (`core/view-still.ts`); a test seam. */
+  pluginStill?: ViewStillOptions;
+  /** A planned automatic resume started (true) or stopped (false) waiting; main holds the Mac awake meanwhile. */
+  onAutoResumePending?: (pending: boolean) => void;
   onUiEvent?: (event: UiEvent) => void;
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
 }
@@ -369,6 +382,8 @@ export class StudioCore {
   readonly #previews: PreviewService;
   readonly #delegation: DelegationService;
   readonly #recovery: RecoveryService;
+  /** Resumes a paused build on its own once its limit resets or its loop runs again. */
+  readonly #autoResume: AutoResumeService;
   readonly #selfImprovement: SelfImprovementService;
   readonly #selfEditGate: SelfEditGateService;
   readonly #pluginTools: PluginToolService;
@@ -391,6 +406,7 @@ export class StudioCore {
     buildersMax: DEFAULT_BUILDERS,
     agentsMax: DEFAULT_POOL_MAX,
     blender: true,
+    autoResume: true,
   };
   #assetCheckpointStore?: AssetCheckpoints;
   #planReviews?: PlanReviewController;
@@ -437,6 +453,7 @@ export class StudioCore {
     this.#previews = new PreviewService(this, this.#x);
     this.#delegation = new DelegationService(this, this.#x);
     this.#recovery = new RecoveryService(this, this.#x);
+    this.#autoResume = this.#createAutoResume();
     this.#selfImprovement = new SelfImprovementService(this, this.#x);
     this.#selfEditGate = new SelfEditGateService(this, this.#x);
     this.#pluginTools = new PluginToolService(this, this.#x);
@@ -446,6 +463,28 @@ export class StudioCore {
     this.#gameFiles = new GameFileService(this);
     this.#rewind = new ChatRewindService(this, this.#x);
     this.#permissions = new ChatPermissionService(this);
+  }
+
+  #createAutoResume(): AutoResumeService {
+    const seam: NonNullable<StudioCoreOptions["autoResume"]> = this.options.autoResume ?? {};
+    return new AutoResumeService({
+      ...seam,
+      enabled: () => this.#settings.autoResume,
+      harnessReady: () => this.host?.state === HarnessState.Ready,
+      freeMb: seam.freeMb ?? (async () => (await availableMemory()).freeMb),
+      events: (threadId) => this.store.listEvents(threadId),
+      record: async (threadId, payload) => {
+        await this.append([customEventData(CustomEvent.RunAutoResumed, { ...payload })], threadId);
+      },
+      resume: (runId) => this.#resumeAutopilot(runId),
+      onLog: (line) => this.options.onLog?.(line, "stderr"),
+      onPendingChange: (pending) => this.options.onAutoResumePending?.(pending),
+    });
+  }
+
+  /** When the soonest planned automatic resume is due (ms), or null when none waits; a quit names it. */
+  get autoResumeAt(): number | null {
+    return this.#autoResume.nextResumeAt();
   }
 
   /**
@@ -652,7 +691,7 @@ export class StudioCore {
   /**
    * An applied seed moves the workspace past every existing healthy snapshot, and the
    * watchdog rewinds to the newest healthy one — without a fresh baseline here, the first
-   * wedge of the night lands the harness back on a weeks-old promotion instead of the seed
+   * wedge of the run lands the harness back on a weeks-old promotion instead of the seed
    * that just shipped. Failure is logged, never fatal: a boot matters more than a baseline.
    * Healthy by the usual rules, not by being taken: at once when its code is an already-healthy
    * snapshot's (a skill or prompt fix), else once start() has booted exactly it. The workspace it
@@ -721,7 +760,7 @@ export class StudioCore {
     this.pluginServices = new PluginServices(
       path.join(this.layout.engineHomes, "plugins", "data"),
       { genex: path.join(this.layout.engineHomes, "genex") },
-      (binding, files) => this.#observeAssets(binding, files),
+      (binding, files, still) => (still ? this.#observeStill(binding, still) : this.#observeAssets(binding, files)),
     );
     this.pluginServices.onEvent = (id, event, binding) =>
       this.emit(UiEvent.PluginEvent, { id, event, project: binding?.project, threadId: binding?.threadId });
@@ -829,6 +868,14 @@ export class StudioCore {
   }
 
   /**
+   * A plugin's still of one named view (`observe` with `still`): on a hidden window of its own at
+   * the asked size, never Live, given back however it ends (`core/view-still.ts`).
+   */
+  #observeStill(binding: PluginBinding, still: PluginStillOrder): Promise<PluginStillAnswer> {
+    return viewStill(this.#previews, binding, still, this.options.pluginStill);
+  }
+
+  /**
    * The delivery record is the host's, not the plugin's: it is written after the files have
    * landed, so a plugin can neither forge one nor stay quiet about a delivery it made.
    */
@@ -919,8 +966,15 @@ export class StudioCore {
     const engines = this.options.engines ?? this.#defaultEngines();
     for (const engine of engines) this.engines.register(engine);
     // Local first: it is the one engine that cannot be rate limited, which is what makes it
-    // the fallback when a subscription throttles mid-night.
-    this.engines.setPreferredOrder([EngineId.Bonsai, EngineId.Ollama, ...SUBSCRIPTION_ENGINES]);
+    // the fallback when a subscription throttles mid-run. The metered engines come last, and
+    // the registry never picks them on its own anyway (`isMetered`).
+    this.engines.setPreferredOrder([
+      EngineId.Bonsai,
+      EngineId.Ollama,
+      ...SUBSCRIPTION_ENGINES,
+      EngineId.OpenCode,
+      EngineId.OpenRouter,
+    ]);
   }
 
   #defaultEngines(): Engine[] {
@@ -948,6 +1002,23 @@ export class StudioCore {
         protectedPaths: this.#protectedPaths(),
         ...(this.options.codexExecutable ? { executable: this.options.codexExecutable } : {}),
       }),
+      // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
+      // Settings. Registered like the subscriptions, so the picker can offer them.
+      new OpenCodeEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.OpenCode),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      new OpenRouterEngine({
+        root: path.join(this.layout.engineHomes, EngineId.OpenRouter),
+        scratchRoot: path.join(this.layout.scratch, EngineId.OpenRouter),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        keys: secretKeyStore(path.join(this.layout.secrets, "providers"), OPENROUTER_KEY_SECRET),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenRouter }),
+      }),
     ];
   }
 
@@ -974,7 +1045,12 @@ export class StudioCore {
         }
         this.emit(UiEvent.HarnessState, { state });
       },
-      onUnexpectedExit: () => this.#recovery.onHarnessDied(),
+      onUnexpectedExit: async () => {
+        const died = await this.#recovery.onHarnessDied();
+        // A pause the reborn loop writes for one of these runs came from this crash.
+        this.#autoResume.noteCrash(died.openRuns);
+        return died;
+      },
       onCrashLoop: (exits) => this.recover(`harness crashed ${exits.length}× in a row`),
       onWedged: (silenceMs) => this.recover(`harness stopped responding for ${Math.round(silenceMs / SECOND_MS)}s`),
     });
@@ -1079,6 +1155,9 @@ export class StudioCore {
 
   async stop(): Promise<void> {
     this.#planReviews?.stop();
+    // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
+    // awake that it asked for, end with the core either way.
+    this.#autoResume.dispose();
     // `init()` opened the sandbox, so a core that never started still gives it back.
     if (!this.#started) return this.sandbox?.dispose();
     this.#started = false;
@@ -1135,7 +1214,7 @@ export class StudioCore {
   /**
    * Ask every subscription engine whether its session is actually alive. Credential *files*
    * outlive dead logins, so the cheap `status()` can say ready for an account that will refuse
-   * the first brief of the night.
+   * the first brief of the run.
    */
   async #probeSubscriptions(): Promise<void> {
     for (const id of SUBSCRIPTION_ENGINES) {
@@ -1170,6 +1249,7 @@ export class StudioCore {
       }
     }
     for (const runId of changedRuns) this.emit(UiEvent.RunSummaryChanged, { runId });
+    this.#autoResume.observe(threadId, result.events);
     return result.latestEventId;
   }
 
@@ -1354,6 +1434,7 @@ export class StudioCore {
         buildersMax,
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
+        autoResume: parsed.autoResume !== false,
       };
     } catch {
       /* first launch — defaults stand */
@@ -1499,7 +1580,7 @@ export class StudioCore {
 
   /**
    * What a picked folder holds — every game in it and one level down, how each runs, and what
-   * would stop a night. Read-only on purpose: the Open Game sheet shows this *before* the user
+   * would stop a run. Read-only on purpose: the Open Game sheet shows this *before* the user
    * consents to anything being written (a folder used to be scaffolded the moment it was picked).
    */
   async inspectFolder(dir: string): Promise<FolderInspection> {
@@ -1509,7 +1590,7 @@ export class StudioCore {
 
   /**
    * Open a folder as a game, with what the user consented to in the Open Game sheet: which game
-   * inside it (`subdir` — the nested game is offered as *the* game, decision 1), and whether the
+   * inside it (`subdir` — the nested game is offered as *the* game), and whether the
    * studio may write a starter game there. Adoption is the first moment anything is written.
    */
   async adoptProject(dir: string, options: AdoptOptions = {}): Promise<GameProject> {
@@ -2012,6 +2093,8 @@ export class StudioCore {
 
   // ── recovery ─────────────────────────────────────────────────────────────────────────────
   recover(...args: Parameters<RecoveryService["recover"]>): ReturnType<RecoveryService["recover"]> {
+    // A loop the watchdog has to rewind crashed in a loop: its runs are the user's to resume.
+    this.#autoResume.forgetCrashes();
     return this.#recovery.recover(...args);
   }
 
@@ -2047,7 +2130,17 @@ export class StudioCore {
   }
 
   stopThread(...args: Parameters<ConversationService["stopThread"]>): ReturnType<ConversationService["stopThread"]> {
+    this.#autoResume.userStopped(args[0]);
     return this.#conversation.stopThread(...args);
+  }
+
+  /**
+   * Stop one run through the run controls (`studio:run.stop`): the user's word, so the run never
+   * resumes on its own afterwards, then the harness is asked to settle and close it.
+   */
+  async stopRun(runId: string, timeoutMs?: number): Promise<void> {
+    this.#autoResume.userStoppedRun(runId);
+    await this.host.dispatch({ type: DispatchActionType.RunStop, runId }, timeoutMs);
   }
 
   async changeQueuedMessage(
@@ -2098,10 +2191,17 @@ export class StudioCore {
   }
 
   /**
-   * Resume a paused Autopilot run — the user's click, never a boot side effect (A4). The run
-   * is found by its journal artifact; completed facets replay from it, unfinished work restarts.
+   * Resume a paused Autopilot run — the user's click, never a boot side effect (A4); host
+   * auto-resume (`core/auto-resume.ts`) takes the same path. The run is found by its journal
+   * artifact; completed facets replay from it, unfinished work restarts.
    */
   async resumeAutopilot(runId: string): Promise<void> {
+    // The user's own Resume: a resume the studio planned for this run is no longer needed.
+    this.#autoResume.cancelRun(runId);
+    await this.#resumeAutopilot(runId);
+  }
+
+  async #resumeAutopilot(runId: string): Promise<void> {
     this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
@@ -2111,7 +2211,7 @@ export class StudioCore {
         phase?: string;
       } | null;
       if (!journal) continue;
-      if (journal.phase === "done") throw new Error(MESSAGE.runAlreadyFinished(runId));
+      if (journal.phase === JournalPhase.Done) throw new Error(MESSAGE.runAlreadyFinished(runId));
       // A rewind stopping this chat's build waits for it to close: a Resume must not restart it.
       this.#rewind.assertNotRewinding(thread.id);
       await this.host.dispatch({ type: DispatchActionType.AutopilotResume, threadId: thread.id, runId });

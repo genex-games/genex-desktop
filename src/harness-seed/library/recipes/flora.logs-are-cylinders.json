@@ -6,7 +6,7 @@
   "kind": "craft",
   "pack": "flora",
   "note": "A log is a cylinder with cut ends, never a row of spheres; foliage.js makeLog/makeLogPile.",
-  "intent": "One village run shipped a felled log built from six ovoids; it read as a caterpillar. A log is a cylinder with a slight taper, a darker cut face at each end, and bark from a material map rather than geometry. A pile is those cylinders crossed and stacked with a little rotation jitter so no two lie parallel, resting on each other rather than floating. foliage.js makeLog({ length, radius, bark }) and makeLogPile({ seed, bark }) build both.",
+  "intent": "A felled log built from six ovoids reads as a caterpillar. A log is a cylinder with a slight taper, a darker cut face at each end, and bark from a material map rather than geometry. A pile is those cylinders crossed and stacked with a little rotation jitter so no two lie parallel, resting on each other rather than floating. foliage.js makeLog({ length, radius, bark }) and makeLogPile({ seed, bark }) build both.",
   "check": {
     "id": "logs-are-cylinders",
     "kind": "scene",

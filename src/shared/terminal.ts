@@ -1,10 +1,24 @@
-/** What a terminal session runs: the game's shell, a Claude Code sign-in, or one command a chat reply offered. */
+/**
+ * What a terminal session runs: the game's shell, a Claude Code or OpenCode sign-in, or one command a
+ * chat reply offered.
+ */
 export const TerminalKind = {
   Shell: "shell",
   ClaudeLogin: "claude-login",
+  OpenCodeLogin: "opencode-login",
   Command: "command",
 } as const;
 export type TerminalKind = (typeof TerminalKind)[keyof typeof TerminalKind];
+
+/** Sign-ins Settings shows in their own row: revealing the dock would close Settings over them. */
+const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([TerminalKind.OpenCodeLogin]);
+
+/** Whether the dock lists this session; a Settings sign-in shows in Settings instead. */
+export const inDock = (session: { kind: TerminalKind }): boolean => !SETTINGS_TERMINALS.has(session.kind);
+
+/** Whether opening this kind brings up the dock: not a chat command's output, nor a Settings sign-in. */
+export const revealsDock = (kind: TerminalKind): boolean =>
+  kind !== TerminalKind.Command && !SETTINGS_TERMINALS.has(kind);
 
 /** Ephemeral user terminals. Never part of the game/harness tool contract or event store. */
 export interface TerminalSession {
@@ -19,6 +33,8 @@ export interface TerminalSession {
   command?: string;
   /** A finished command session's last lines of output: plain text, credentials redacted. */
   output?: string[];
+  /** It printed a sign-in page the host can open; the address itself stays in main. */
+  signInPage?: boolean;
 }
 
 export type TerminalEvent =
@@ -83,3 +99,7 @@ export function terminalSize(cols: unknown, rows: unknown): { cols: number; rows
     throw new Error("Invalid terminal size");
   return { cols: cols as number, rows: rows as number };
 }
+
+/** The open session of a sign-in kind, while it has not exited. */
+export const liveSignIn = (sessions: readonly TerminalSession[], kind: TerminalKind): TerminalSession | undefined =>
+  sessions.find((session) => session.kind === kind && session.phase !== "exited");

@@ -4,6 +4,7 @@
   "tags": ["cone", "shaft", "godray", "volumetric", "light", "translucent", "pyramid", "hut", "beam", "arena"],
   "checkClass": "arena",
   "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
   "pack": "arena",
   "note": "Translucent cone meshes standing in for light shafts read as pale pyramids from every wide camera; use bloom on the emitter or a soft sprite.",
   "intent": "A translucent ConeGeometry under a lamp reads as a pale pyramid — from a wide camera a street of them looks like a row of tents. If the shaft is worth having, get it from the light itself: bloom on a bright emitter, a soft radial sprite billboarded to the camera with additive blending and a fade at the top and bottom, or a real volumetric pass. If none of those fit the budget, no shaft at all is better than a cone.",

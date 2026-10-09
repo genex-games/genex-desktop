@@ -203,8 +203,10 @@ titles and a keyboard-reachable overflow menu 6px from the row edge. The row's e
 buttons use the derived `--sidebar-selected`/`--sidebar-hover` fills (quieter than the shared hover in
 dark themes, visible in light ones). The toggle sits 80px from the window edge, just clear of the
 native window buttons, on one line with them and the header title (24px down), and stays there
-when the sidebar is hidden. Pinned
-games sort first, then recent activity. The sidebar has no global readiness/build footer; activity
+when the sidebar is hidden. Send feedback's bug ends that line, centred over the bell's column,
+and leaves with the sidebar; it opens an lg dialog: the text field, Attach app logs and (with a
+chat open) Attach this chat, two switches that start off with a line each on what they add,
+Cancel and Send. Pinned games sort first, then recent activity. The sidebar has no global readiness/build footer; activity
 belongs to each game row and conversation, with Stop in the chat. No folder disclosures or chat counts. Sidebar visibility persists on wide
 windows; at 900 CSS pixels and below it becomes a dismissible drawer so both content panes remain
 usable at zoom. Hidden navigation and the content behind an open drawer are inert. Command-B

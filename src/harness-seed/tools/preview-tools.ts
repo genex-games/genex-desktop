@@ -7,7 +7,7 @@
  * *plays* the game instead of watching the clock.
  */
 import { applyPlayScript, CONTROL_EXERCISE, shotToImage } from "../loop/play-script.ts";
-import type { AnyRecord, HarnessTool } from "../types/harness.d.ts";
+import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { PageMethod } from "../loop/page-contract.ts";
 import { SECOND_MS } from "../loop/time.ts";
@@ -26,6 +26,11 @@ const DEFAULT_STEPS = 300;
 const STEPS_PER_CALL = 60;
 /** The most recent console lines console_log reads back. */
 const CONSOLE_LINES = 80;
+
+/** The racing-line assist on or off around a held press; a page without one answers so, never throws here. */
+async function steerWhileHeld(ctx: ToolCtx, on: boolean): Promise<void> {
+  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Assist, arg: { steer: on } }).catch(() => null);
+}
 
 /** The keys a press_keys call names: its `keys` list, or its single `key`. */
 function keysToPress(args: AnyRecord): string[] {
@@ -109,15 +114,27 @@ export const tools: HarnessTool[] = [
         },
         key: str("single key, if not using keys[]"),
         holdMs: { type: "number", description: "how long to hold, default 400" },
+        autosteer: {
+          type: "boolean",
+          description:
+            "racing games with a racing line (config.steer): the game's line steers while you hold the keys — hold the throttle with it to drive the course; steer yourself to judge the handling",
+        },
       },
     },
     async execute(args, ctx) {
       const keys = keysToPress(args);
       if (!keys.length) return { ok: false, content: 'press_keys needs keys: ["w"] (or key: "w").' };
       await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start });
-      await ctx.call(HostMethod.PreviewInput, {
-        actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }],
-      });
+      // The game's own racing line steers the hold when asked (a game without one answers so).
+      const autosteer = args.autosteer === true;
+      if (autosteer) await steerWhileHeld(ctx, true);
+      try {
+        await ctx.call(HostMethod.PreviewInput, {
+          actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }],
+        });
+      } finally {
+        if (autosteer) await steerWhileHeld(ctx, false);
+      }
       const state = await ctx.call(HostMethod.PreviewState, {});
       return JSON.stringify(state, null, 2);
     },

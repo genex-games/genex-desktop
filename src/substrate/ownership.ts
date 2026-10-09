@@ -189,7 +189,7 @@ export function relativeGamePath(
   if (platform === StudioPlatform.Windows) return windowsGamePath(raw, cwd);
   const normalisedCwd = path.posix.normalize(cwd).replace(/\/+$/, "");
   // Read what the path resolves to, not how it is spelled: `src/sky/../../index.html` is the
-  // entry page, not a file under an owned `src/sky/` (P02-F2).
+  // entry page, not a file under an owned `src/sky/`.
   const target = path.posix.normalize(raw).replace(/\/+$/, "");
   if (!target.startsWith("/")) return target === "." ? null : target;
   if (target === normalisedCwd) return null;

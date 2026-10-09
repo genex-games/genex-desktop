@@ -208,7 +208,7 @@ interface DelegationSession {
   /**
    * A lead in its game's folder: the worktree it leads, as its seat checked it (`seat.leads`). Its
    * plugins act there (the binding's directory), as a director's in its worktree, so what they
-   * deliver reaches the game when the night lands; and, the lead not being the chat's turn, another
+   * deliver reaches the game when the run lands; and, the lead not being the chat's turn, another
    * turn's end leaves its consent cards and connector calls going. Null otherwise.
    */
   leads: string | null;
@@ -224,7 +224,7 @@ interface DelegationSession {
   chatTurn?: string;
   /** Its input mid-turn, when it answers a chat turn on an engine that reads messages as it works. */
   door?: SteerDoor;
-  /** The run's controls it keeps: the chat's own session after a night it led (`honouredRunControls`). */
+  /** The run's controls it keeps: the chat's own session after a run it led (`honouredRunControls`). */
   runControls?: RunControlGrant;
 }
 
@@ -299,7 +299,7 @@ function isChatsOwnSession(p: DelegateParams): boolean {
 
 /**
  * A brief shaped for work nobody answers: a run's builder, a worker, a playtester, the coordinator,
- * a night's lead, an optimization candidate, improvement work, or anything with a clock or a
+ * a run's lead, an optimization candidate, improvement work, or anything with a clock or a
  * folder of its own. Read from what the caller asked for: forging the absence of these fields only
  * makes a session ask the person, in the mode the person chose.
  */
@@ -318,7 +318,7 @@ function unattendedBrief(p: DelegateParams): boolean {
 }
 
 /**
- * The run's controls the chat's own session keeps after a night it led (`runControls`): honoured
+ * The run's controls the chat's own session keeps after a run it led (`runControls`): honoured
  * only for the chat's own session — never a run's director, builder, scout, playtester or
  * coordinator, a read-only session, or one in a build worktree. A control for a run that is not the
  * chat's latest is refused when it is called (`conversation.ts` `applyCoordinatorTool`).
@@ -339,8 +339,8 @@ interface DelegationSeat {
 }
 
 /**
- * The director (director, 2026-09-07): honoured only for the worktree the session runs in — its own
- * integration worktree, under scratch — or, for a waking night's lead, for its game's folder while
+ * The director: honoured only for the worktree the session runs in — its own
+ * integration worktree, under scratch — or, for a waking run's lead, for its game's folder while
  * it leads that worktree (`#seatOf`), which the grant then names by its checked real path.
  */
 function honouredDirector(p: DelegateParams, cwd: string, seat: DelegationSeat): DirectorGrant | null {
@@ -438,7 +438,7 @@ export class DelegationService {
   }
 
   /**
-   * The computer (computer use, 2026-09-07): hands and eyes on one pooled window for the whole session — the
+   * The computer: hands and eyes on one pooled window for the whole session — the
    * builder's worktree, the playtester's build under test, the scout's live folder. Loaded
    * once through the served entry, the setup script applied, then kept running between
    * actions so a map the worker switched to stays switched. Actions are Anthropic's computer
@@ -454,7 +454,7 @@ export class DelegationService {
   }
 
   /**
-   * The director's tools (director, 2026-09-07): the computer on a window of its own, `look` to point that
+   * The director's tools: the computer on a window of its own, `look` to point that
    * window at any build of the run, capture of whatever it is looking at, and the harness's
    * run tools — plan, worker_start, wait, judge, playtest, integrate, show, note, finish — which
    * live in the harness process (it owns the loops and the merge) and are reached through a
@@ -811,7 +811,7 @@ export class DelegationService {
     } finally {
       session.ended.abort();
       asking?.end();
-      // P05-F7: a release that throws (a pending plugin update that cannot activate) is logged and
+      // A release that throws (a pending plugin update that cannot activate) is logged and
       // never skips the rest: the folder's lock, the budget and the windows are freed below.
       await releasePlugins().catch((error) => this.#logCleanupFailure("plugin lease", error));
       await releaseMcp().catch((error) => this.#logCleanupFailure("connector lease", error));
@@ -1008,7 +1008,7 @@ export class DelegationService {
 
   /**
    * Whether this delegation sits in its game's own folder, and whether its director grant is a
-   * lead's there (one session): the lead of a waking night is its chat's own session, so it sits
+   * lead's there (one session): the lead of a waking run is its chat's own session, so it sits
    * in the game folder and reads the run's integration worktree it leads (`root`) without writing.
    */
   async #seatOf(p: DelegateParams, target: DelegationTarget): Promise<DelegationSeat> {
@@ -1429,7 +1429,7 @@ export class DelegationService {
 
   /**
    * Host tools: the window's own tools first, then the cover, the run's controls (the chat's own
-   * session after a night it led), the plugins and the connectors.
+   * session after a run it led), the plugins and the connectors.
    */
   #hostToolFields(
     p: DelegateParams,

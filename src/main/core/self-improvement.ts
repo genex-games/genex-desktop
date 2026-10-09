@@ -4,7 +4,8 @@
  * stays in the core.
  */
 import path from "node:path";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { StagedTarget } from "../../shared/self-change-files.ts";
 import { undoneSelfChanges } from "../../shared/run-review.ts";
 import {
   RUNS_AS_CODE,
@@ -13,6 +14,7 @@ import {
   findStaged,
   proposalTarget,
   rebaseProposal,
+  type ChangeRecord,
   type StagedRecord,
 } from "../self-changes.ts";
 import type { SnapshotRecord } from "../../substrate/snapshots.ts";
@@ -32,7 +34,8 @@ import { architectPickPrompt, architectRewritePrompt } from "./self-improvement-
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ImprovementStatus } from "../../substrate/improvement-journal.ts";
 import { SnapshotScope } from "../../shared/event-log.ts";
-import { toPosixRelative } from "../../substrate/paths.ts";
+import { samePath, toPosixRelative } from "../../substrate/paths.ts";
+import { readRegularFile, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
 
 /** How often the idle watch looks for a quiet stretch, unless the options say otherwise. */
 const ARCHITECT_CHECK_MS = MINUTE_MS;
@@ -56,6 +59,10 @@ const ARCHITECT_MAX_DEPTH = 3;
 const ARCHITECT_TYPE_ERRORS_LIMIT = { maxLines: 10, maxChars: 1_500 } as const;
 /** How many entries the analyst's step buffer keeps. */
 const STEP_BUFFER_MAX_ENTRIES = 50;
+/** The largest instructions file a suggestion may be applied to, in bytes. */
+const SUGGESTION_FILE_MAX_BYTES = 1024 * 1024;
+/** What `mkdir` says when a file or a link already stands where a suggestion's folder should be. */
+const FOLDER_TAKEN: ReadonlySet<string> = new Set(["EEXIST", "ENOTDIR"]);
 /** The longest diff Activity shows for one change, in characters. */
 const CHANGE_DIFF_MAX_CHARS = 400_000;
 
@@ -63,6 +70,8 @@ const CHANGE_DIFF_MAX_CHARS = 400_000;
 const MESSAGE = {
   suggestionGone: "This suggestion is no longer waiting. Harness may have applied or discarded it already.",
   suggestionTargetGone: "The instructions this suggestion changes are gone. Discard it.",
+  suggestionOutside:
+    "This suggestion’s file is not a plain file in Harness’s instructions, so Studio did not apply it. Discard it.",
   changeNotFound: "Harness couldn’t find this change.",
   changeAlreadyUndone: "This change was already undone.",
   changeBaseGone: "Harness no longer has the version from before this change, so it can’t undo it.",
@@ -118,7 +127,7 @@ async function collectArchitectFiles(workspace: string, dir: string, depth: numb
       if (architectMayEdit(entry.name)) out.push(toPosixRelative(path.relative(workspace, full)));
       continue;
     }
-    // library/games/*.md is the night ledger's derived output (loop/ledger.ts): the studio
+    // library/games/*.md is the run ledger's derived output (loop/ledger.ts): the studio
     // rewrites it at every close, so an architect edit there is gone by morning.
     if (path.relative(workspace, full) === path.join("library", "games")) continue;
     await collectArchitectFiles(workspace, full, depth + 1, out);
@@ -126,6 +135,66 @@ async function collectArchitectFiles(workspace: string, dir: string, depth: numb
 }
 
 const isRefusal = (value: object): value is Refusal => "refused" in value;
+
+/** The error a write through a planted link gets (`O_NOFOLLOW`), or a dangling link on the way. */
+const isLinkRefusal = (err: unknown): boolean => (err as NodeJS.ErrnoException | null)?.code === "ELOOP";
+
+/**
+ * Refuse unless `folder` is a real folder exactly where its spelling says: no link at it, and none
+ * on the way to it.
+ */
+async function assertRealFolder(folder: string): Promise<void> {
+  const [info, real] = await Promise.all([lstat(folder).catch(() => null), realpath(folder).catch(() => null)]);
+  const plain = info?.isDirectory() === true && real !== null && samePath(real, folder);
+  if (!plain) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+}
+
+/**
+ * Where a suggestion's workspace-relative `file` lands: under the workspace's real path, in a
+ * folder that is no link and leads nowhere else, created when it is missing. A link the harness
+ * planted on the way (dangling, to an outside folder, or to another folder of the workspace) or a
+ * file where the folder should be refuses the suggestion before anything is created or written.
+ */
+async function suggestionFile(harnessWs: string, file: string): Promise<string> {
+  const target = path.join(await realpath(harnessWs), file);
+  const folder = path.dirname(target);
+  const planned = await realpathNearest(folder).catch(() => null);
+  if (planned === null || !samePath(planned, folder)) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+  // Something else standing where the folder should be is refused just below; a passing failure
+  // (a full disk) is no refusal, and the suggestion waits for the next try.
+  await mkdir(folder, { recursive: true }).catch((err: NodeJS.ErrnoException) => {
+    if (!FOLDER_TAKEN.has(err.code ?? "")) throw err;
+  });
+  await assertRealFolder(folder);
+  return target;
+}
+
+/**
+ * A suggestion's file as it reads now, never through a link: `missing` when there is none, and a
+ * refusal for a link, a folder, a device or anything too large to be instructions.
+ */
+async function readSuggestionFile(file: string, missing: string | null): Promise<string | null> {
+  try {
+    return (await readRegularFile(file, SUGGESTION_FILE_MAX_BYTES)).toString("utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return missing;
+    throw new SuggestionRefused(MESSAGE.suggestionOutside);
+  }
+}
+
+/**
+ * Write a suggestion's text, its folder checked again just before (the harness runs meanwhile)
+ * and never through a link planted at the file's own name.
+ */
+async function writeSuggestionFile(file: string, text: string): Promise<void> {
+  await assertRealFolder(path.dirname(file));
+  try {
+    await writeFileNoFollow(file, text);
+  } catch (err) {
+    if (isLinkRefusal(err)) throw new SuggestionRefused(MESSAGE.suggestionOutside);
+    throw err;
+  }
+}
 
 const CHANGE_DIFFS_KEPT = 32;
 
@@ -476,15 +545,20 @@ export class SelfImprovementService {
     const staged = await this.stagedList();
     const proposal = staged[findStaged(staged, index, key)];
     if (!proposal) throw new Error(MESSAGE.suggestionGone);
-    const { skill, file } = proposalTarget(proposal);
-    const target = path.join(this.#core.layout.harnessWs, file);
-    const current = await readFile(target, "utf8").catch(() => null);
+    const { target: kind, skill, file } = proposalTarget(proposal);
+    const lessons = kind === StagedTarget.Lessons;
+    // The harness can plant links in its workspace and this process is not sandboxed: the file is
+    // reached only through real folders of the workspace, and never through a link of its own.
+    const target = await suggestionFile(this.#core.layout.harnessWs, file);
+    // The first lessons suggestion starts their file; a skill's file must still be there.
+    const current = await readSuggestionFile(target, lessons ? "" : null);
     if (current === null) throw new SuggestionRefused(MESSAGE.suggestionTargetGone);
     const text = rebaseProposal(proposal, current);
 
     const snapshot = await this.#core.snapshot(SnapshotScope.Harness, `skillopt: approved edits to ${skill}`);
-    await writeFile(target, text);
-    await writeFile(path.join(this.#core.layout.harnessWs, "skills", `${skill}.best.md`), text);
+    await writeSuggestionFile(target, text);
+    // A skill keeps its accepted version beside it; lessons are no skill and leave no archive.
+    if (!lessons) await writeSuggestionFile(path.join(path.dirname(target), `${skill}.best.md`), text);
     // The change's own "after": its exact diff, what an undo reverses, and — once it is known
     // to be as healthy as the last good version — the point a later rewind keeps it at.
     const post = await this.#core.snapshot(
@@ -496,6 +570,7 @@ export class SelfImprovementService {
     await this.removeStaged(proposal);
     await this.#core.append([
       customEventData(CustomEvent.SkilloptAccepted, {
+        ...(lessons ? { target: kind, file } : {}),
         skill,
         edits: proposal.edits,
         gate: proposal.gate,
@@ -573,10 +648,7 @@ export class SelfImprovementService {
       throw new Error(MESSAGE.undoConflict);
     }
     if (!reverted) throw new Error(MESSAGE.changeAlreadyGone);
-    if (change.skill) {
-      const live = await readFile(path.join(this.#core.layout.harnessWs, change.file), "utf8");
-      await writeFile(path.join(this.#core.layout.harnessWs, "skills", `${change.skill}.best.md`), live);
-    }
+    await this.#archiveSkill(change);
     const undo = await this.#core.snapshot(SnapshotScope.Harness, `after undo: ${change.file}`);
     await this.#x.recovery.inheritHealth(undo);
     await this.#core.append([
@@ -602,6 +674,13 @@ export class SelfImprovementService {
         await this.#core.recover(`undoing ${change.file} failed its live healthcheck`);
     }
     return { file: change.file };
+  }
+
+  /** An undone skill edit's skill keeps its live text as its accepted version; lessons keep no archive. */
+  async #archiveSkill(change: ChangeRecord): Promise<void> {
+    if (!change.skill || change.target === StagedTarget.Lessons) return;
+    const live = await readFile(path.join(this.#core.layout.harnessWs, change.file), "utf8");
+    await writeFile(path.join(this.#core.layout.harnessWs, "skills", `${change.skill}.best.md`), live);
   }
 
   /**

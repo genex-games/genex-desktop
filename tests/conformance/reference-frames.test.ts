@@ -37,6 +37,21 @@ describe("pickJudge", () => {
     assert.deepEqual(pickJudge(engines, "claude-code", "opus"), { judgeEngine: "claude-code" });
   });
 
+  it("never picks a metered engine as the judge on its own", () => {
+    const metered = {
+      id: "openrouter",
+      kind: "direct",
+      status: { code: "ready" },
+      models: [{ id: "v", supportsVision: true }],
+    };
+    assert.deepEqual(pickJudge([metered, ...engines]), {
+      judgeEngine: "ollama",
+      judgeModel: "qwen3.8:27b-mlx",
+    });
+    // The person's own pick of OpenRouter as the builder is theirs to make.
+    assert.deepEqual(pickJudge([metered], "openrouter", "x"), { judgeEngine: "openrouter", judgeModel: "v" });
+  });
+
   it("falls back to the builder model when nothing on that engine can see", () => {
     assert.deepEqual(
       pickJudge(

@@ -1,7 +1,7 @@
 /**
  * A failed shared base must never erase the user's own work.
  *
- * The base builder edits the live game folder. When it fails, the night rolls the folder back so
+ * The base builder edits the live game folder. When it fails, the run rolls the folder back so
  * facets fork from something that runs — and that rollback used to be a raw
  * `git reset --hard HEAD && git clean -fd`, which also deleted whatever the user had not committed
  * yet (an adopted repository with edits in progress). The rollback now returns to a snapshot taken

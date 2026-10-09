@@ -115,10 +115,12 @@ export interface Run extends RunSpec {
   ownShape?: boolean;
   preferences?: ModelPreferences;
   effort?: string;
-  /** What `game.validate` said about the folder when the night was asked for. */
+  /** What `game.validate` said about the folder when the run was asked for. */
   readiness?: AnyRecord | null;
-  /** What earlier nights on this game cost (ledger.ts), one sentence each. */
+  /** What earlier runs on this game cost (ledger.ts), one sentence each. */
   gameLessons?: string[];
+  /** The generation of an edited, older `src/hud.js` the game keeps (held-hud.ts); absent when it holds the template's. */
+  heldHudGeneration?: number;
   blender?: unknown;
   optimizationDeadline?: number;
   optimizationThreadId?: string;

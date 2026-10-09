@@ -339,7 +339,7 @@ describe("the threads store: the open game is derived from the open chat", () =>
   });
 
   it("removing the stage's game opens home and forgets the return to it", () => {
-    // Intentionally flipped (2026-10-01): removing the game on the stage used to open Studio.
+    // Intentionally flipped: removing the game on the stage used to open Studio.
     const inPond = threadSelected(loaded, "pond-chat");
     const removed = gameRemovedFromThreads(inPond, "pond");
     assert.equal(removed.activeThreadId, null);
@@ -665,7 +665,7 @@ describe("the studio: one subscription, the bootstrap and the commands that span
   }
 
   it("opens home, loads no preview, keeps the way back to the last chat, and asks nothing before the cursor", async () => {
-    // Intentionally flipped (2026-10-01): a launch used to reopen the remembered chat and load its game.
+    // Intentionally flipped: a launch used to reopen the remembered chat and load its game.
     const storage = memoryStorage({ "studio.activeThread": "rift-chat", "studio.lastGameThread": "rift-chat" });
     const { fake, app } = started({}, storage);
     assert.equal(app.session.getState().status, "loading");
@@ -685,7 +685,7 @@ describe("the studio: one subscription, the bootstrap and the commands that span
   });
 
   it("an empty library opens home and loads no preview", async () => {
-    // Intentionally flipped (2026-10-01): an empty library used to open Create game over Studio.
+    // Intentionally flipped: an empty library used to open Create game over Studio.
     const { fake, app } = started({
       bootstrap: async () => boot({ threads: [studioThread], games: [], events: [] }) as never,
     });
@@ -706,7 +706,7 @@ describe("the studio: one subscription, the bootstrap and the commands that span
   });
 
   it("a first launch is welcomed once, and home follows the welcome", async () => {
-    // Intentionally flipped (2026-10-01): Create game used to follow the welcome.
+    // Intentionally flipped: Create game used to follow the welcome.
     const empty = { threads: [studioThread], games: [], events: [] };
     const { app, storage, fake } = started({ bootstrap: async () => boot({ ...empty, welcome: true }) as never });
     await tick();
@@ -838,7 +838,7 @@ describe("the studio: one subscription, the bootstrap and the commands that span
   });
 
   it("removing the stage's game opens home; removing another game leaves the stage", async () => {
-    // Intentionally flipped (2026-10-01): removing the game on the stage used to open Studio.
+    // Intentionally flipped: removing the game on the stage used to open Studio.
     const storage = memoryStorage({ "studio.reviewProject": "pond" });
     const { app } = started({}, storage);
     await tick();

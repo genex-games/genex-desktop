@@ -4,6 +4,7 @@
   "tags": ["breath", "puff", "smoke", "coverage", "bright", "blob", "sprite", "firstperson", "frame", "fog", "fps"],
   "checkClass": "fps",
   "kind": "craft",
+  "kinds": ["first-person"],
   "pack": "fps",
   "note": "Bright puff pixels cover at most a tenth of the first-person frame during the breath effect, else it is a blob, not breath.",
   "intent": "The pixel side of the breath effect: whatever the sprites measure in world units, what matters is how much of the frame they whiten. Keep the bright fraction of the first-person frame under about a tenth by spawning few particles (five to ten per breath), keeping them small and low-opacity, and letting them drift away from the camera rather than across it. If the effect still washes the frame, the emitter is too close to the near plane — move it forward, do not lower the opacity until it disappears.",

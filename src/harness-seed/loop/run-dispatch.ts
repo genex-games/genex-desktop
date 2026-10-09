@@ -1,5 +1,5 @@
 /**
- * Starting a run: the refusals a night meets before it is registered, the loop that conducts it,
+ * Starting a run: the refusals a run meets before it is registered, the loop that conducts it,
  * the self-improvement pass that follows it, and the record a run that died still owes its chat.
  */
 import { EngineId, modelOn, supportsSessions, withRoles } from "./model-roles.ts";
@@ -14,12 +14,13 @@ import { readJournal } from "./run-journal.ts";
 import { EventKind, ExecutionStatus, RunEvent, RunMode } from "./run-events.ts";
 import { type ActiveRun, RunnerKind, type RunStart, type Studio, heldRuns } from "./studio-state.ts";
 import { passCtx } from "./live-chat.ts";
-import { resumeStopped } from "./after-night.ts";
+import { resumeStopped } from "./after-loop-run.ts";
+import { forgetProviderLosses } from "./provider-loss.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent, Host, Run } from "../types/harness.d.ts";
 import type { EngineDescriptor } from "../types/host-api.d.ts";
 
 /**
- * This start reads a reopened night's inbox from its ask (`RunStart.reopen`), and closes a crashed
+ * This start reads a reopened run's inbox from its ask (`RunStart.reopen`), and closes a crashed
  * reopen (`closeFailedRun`): the chat reopens a finished build only when every part it depends on
  * says so (reopen-run.ts).
  */
@@ -57,7 +58,7 @@ const RUNNERS: Record<RunnerKind, Runner> = {
 };
 
 /**
- * Which loop conducts `run`. Session-capable engines (including Bonsai) conduct a director night.
+ * Which loop conducts `run`. Session-capable engines (including Bonsai) conduct a director run.
  * Completion-only engines keep the classic loop, as does an explicit run.classic.
  */
 export function chooseRunner(run: Run, described: readonly EngineDescriptor[]): RunnerKind {
@@ -156,13 +157,13 @@ export async function handleRunStart(
   const { stopped } = await afterClosedRuns(studio, action);
   if (stopped) return;
   // Read again after that await, in the same step as the reservation below: another start of this
-  // chat or project may have reserved it while this one waited (P07-F1). A run that closed since
+  // chat or project may have reserved it while this one waited. A run that closed since
   // is waited out again.
   const conflict = conflictOf(studio, action);
   if (conflict?.done) return handleRunStart(studio, action, { keepStop });
   if (conflict) return refuseSecondRun(studio.host, action, conflict);
-  // A night the chat's own session asked to resume, stopped since its reply ended: the reservation
-  // below clears the thread's Stop, so it is asked first (after-night.ts).
+  // A run the chat's own session asked to resume, stopped since its reply ended: the reservation
+  // below clears the thread's Stop, so it is asked first (after-loop-run.ts).
   if (resumeStopped(studio, action)) return;
   // Reserve before the first await, including resumed runs dispatched by the coordinator.
   let settle: (value?: unknown) => void = () => {};
@@ -197,7 +198,7 @@ async function refuseSecondRun(host: Host, action: RunStart, conflict: ActiveRun
         reason: MESSAGE.runOwnsThread,
       }),
       // Without this the refusal is an event nothing renders, and the chat's last word is a
-      // promise to build all night.
+      // promise to build for the whole run.
       assistantSays(MESSAGE.alreadyBuilding(conflict.run.project)),
     ],
   });
@@ -211,11 +212,11 @@ async function startReservedRun(
 ): Promise<void> {
   const { host } = studio;
   const { threadId } = action;
-  // Whatever asked for this night — an interview, the run IPC, a resume — a folder the studio
+  // Whatever asked for this run — an interview, the run IPC, a resume — a folder the studio
   // can never build on refuses here as well, before a run is registered. Only the folder's own
   // impossibility counts at this point: what is merely missing is the launch path's question.
   const games = await host.call(HostMethod.GameList, {}).catch(() => []);
-  const refused = nightRefusal(games.find((g) => g.name === action.run.project) ?? null, []);
+  const refused = loopRunRefusal(games.find((g) => g.name === action.run.project) ?? null, []);
   if (refused) {
     await host.call(HostMethod.EventsAppend, {
       threadId,
@@ -292,11 +293,13 @@ async function conductRun(
     threadId,
     batch: [customEvent(RunEvent.RunRegistered, { ...run, reference: { name: run.reference?.name }, resumed: resume })],
   });
-  // A finished build reopened hears the user from its ask on: what was said before was that night's.
+  // A finished build reopened hears the user from its ask on: what was said before was that run's.
   const inbox = createRunInbox(ctx, { threadId, runId: run.runId, after });
   ctx.runInbox = inbox;
   const described =
     run.mode === RunMode.Autopilot ? await host.call(HostMethod.EngineDescribe, {}).catch(() => []) : [];
+  // A run (a Resume included) starts trusting its providers again: a loss was the last stretch's.
+  forgetProviderLosses(run.runId);
   const report = await RUNNERS[chooseRunner(run, described)](ctx, { threadId, run, resume });
   closed();
   host.notify("run.finished", report);
@@ -311,12 +314,15 @@ async function conductRun(
  * new rounds, and learning is on.
  */
 async function wantsToLearn(pass: HarnessCtx, inbox: RunInbox, report: AnyRecord): Promise<boolean> {
+  // A run its provider paused (`report.limit`: a limit, a lost sign-in, an outage) is not over, and
+  // its provider is gone: it is learned from when it ends, not now against a dead account.
+  if (report?.limit) return false;
   if (pass.cancelled || (await inbox.finishing()) || !keptNewRounds(report)) return false;
   return (await learningOn(pass)) && !pass.cancelled;
 }
 
 /**
- * Did this session keep rounds of its own? A resumed or reopened night that kept none — the user's
+ * Did this session keep rounds of its own? A resumed or reopened run that kept none — the user's
  * quick fix, made by its lead — has nothing the pass after its earlier session did not already mine
  * (golden-boot-glory: such a fix was learned from as a call made without the user).
  */
@@ -363,7 +369,7 @@ async function closeFailedRun(host: Host, ctx: HarnessCtx, run: Run, err: any): 
   const failure = err?.message ?? String(err);
   try {
     // Durable closure before any UI push: an unmatched run_started reads as a run still
-    // going, and a notify dies with the window while the log survives the night. But the
+    // going, and a notify dies with the window while the log survives the run. But the
     // gauntlet may have written its own run_finished before dying — a report-artifact
     // failure after a blind win, say — and a second closure would overwrite a victory
     // with a defeat in every reader that keeps the last word. Only this session's close
@@ -406,16 +412,16 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
 }
 
 /**
- * Why this folder cannot have a night spent on it — a sentence for the chat, or null to launch.
+ * Why this folder cannot have a run spent on it — a sentence for the chat, or null to launch.
  *
  * Two refusals, and both are about the folder rather than the model. A folder that cannot load
  * has nothing for six builders to work on: say what is missing now instead of judging black
- * frames all night (skate-prod, 2026-09-06). And an engine export is already compiled — there is
- * no source to edit and no contract to read, so the night would photograph a page nobody can
- * change (Godot/Unity exports, 2026-09-07); the studio still opens it, plays it and screenshots
+ * frames for the whole run. And an engine export is already compiled — there is
+ * no source to edit and no contract to read, so the run would photograph a page nobody can
+ * change (Godot/Unity exports); the studio still opens it, plays it and screenshots
  * it. A missing studio contract is *not* a refusal: installing it is the base builder's first job.
  */
-export function nightRefusal(
+export function loopRunRefusal(
   descriptor: { name?: string; shape?: { kind?: string } | null } | null | undefined,
   problems: readonly string[] | null | undefined,
 ): string | null {

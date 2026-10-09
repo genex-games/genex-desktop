@@ -31,7 +31,7 @@ export async function consentAudience(core: StudioCore, binding: PluginBinding, 
 /**
  * A declined run prerequisite is not asked again until the user explicitly resumes that run; a
  * chat's declined call, not until the user's next message — a model that asked again at once got
- * a new card for the same no, as often as it asked (P06-F6).
+ * a new card for the same no, as often as it asked.
  */
 export async function priorConsentDecline(
   core: StudioCore,

@@ -41,19 +41,22 @@ export interface DiscoveryOptions {
   platform?: NodeJS.Platform;
 }
 /** The executable each coding CLI installs as. */
-const CLI_BINARY = { [EngineId.Codex]: "codex", [EngineId.ClaudeCode]: "claude" } as const satisfies Record<
-  CodingProvider,
-  string
->;
+const CLI_BINARY = {
+  [EngineId.Codex]: "codex",
+  [EngineId.ClaudeCode]: "claude",
+  [EngineId.OpenCode]: "opencode",
+} as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
   [EngineId.Codex]: "https://developers.openai.com/codex/cli/",
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
+  [EngineId.OpenCode]: "https://opencode.ai/docs/",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["exec", "--help"],
   [EngineId.ClaudeCode]: ["--help"],
+  [EngineId.OpenCode]: ["run", "--help"],
 };
 const REQUIRED_FLAGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -67,6 +70,8 @@ const REQUIRED_FLAGS: Record<CodingProvider, string[]> = {
     "--allowedTools",
     "--disallowedTools",
   ],
+  // `opencode run` 1.18 lists every one; an older CLI without `--variant` or `--pure` is refused.
+  [EngineId.OpenCode]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
 };
 /** How long reading the login shell's PATH, and each `--version`/`--help` probe, may take. */
 const LOGIN_PATH_TIMEOUT_MS = 8 * SECOND_MS;
@@ -99,7 +104,7 @@ const MESSAGE = {
 const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
 /**
  * The login shell's PATH, read once and shared by every discovery: a login shell takes seconds to
- * start (2.1–2.3 s on a developer's Mac, 2026-10-01), and every session start discovers its CLI.
+ * start (2.1–2.3 s on a developer's Mac), and every session start discovers its CLI.
  * Recheck and a settings change read it again; a read that failed is not kept.
  */
 let loginPathRead: Promise<string | null> | null = null;
@@ -257,6 +262,7 @@ export async function standardCliDirs(
     path.join(home, ".volta/bin"),
     path.join(home, ".bun/bin"),
     path.join(home, ".codex/bin"),
+    path.join(home, ".opencode/bin"),
     path.join(home, mac ? "Library/pnpm" : ".local/share/pnpm"),
     path.join(home, ".local/share/mise/shims"),
     path.join(home, ".asdf/shims"),

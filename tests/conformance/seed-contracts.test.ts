@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as seedChatDispatch from "../../src/harness-seed/loop/chat-dispatch.ts";
+import * as seedContractLessons from "../../src/harness-seed/loop/contract-lessons.ts";
 import * as seedCompletionPolicy from "../../src/harness-seed/loop/completion-policy.ts";
 import { endsSessions as seedEndsSessions } from "../../src/harness-seed/loop/compaction-log.ts";
 import * as seedDelegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
@@ -16,14 +17,20 @@ import * as seedQueue from "../../src/harness-seed/loop/message-queue.ts";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
 import * as seedOutage from "../../src/harness-seed/loop/outage.ts";
 import * as seedOutcomes from "../../src/harness-seed/loop/outcomes.ts";
+import {
+  PreviewConsoleSource as seedPreviewConsoleSource,
+  PreviewGone as seedPreviewGone,
+} from "../../src/harness-seed/loop/preview-gone.ts";
+import { PageMethod as seedPageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import * as seedJudgeProvenance from "../../src/harness-seed/loop/judge-provenance.ts";
 import * as seedRunEvents from "../../src/harness-seed/loop/run-events.ts";
 import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
+import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
 import { SteerDelivery as seedSteerDelivery } from "../../src/harness-seed/loop/steer-delivery.ts";
 import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
-import { RESUME_RUN as seedResumeRun } from "../../src/harness-seed/loop/after-night.ts";
+import { RESUME_RUN as seedResumeRun } from "../../src/harness-seed/loop/after-loop-run.ts";
 import { REOPEN_RUN as seedReopenRun } from "../../src/harness-seed/loop/reopen-run-prompts.ts";
 import { tools as seedGameTools } from "../../src/harness-seed/tools/game-tools.ts";
 import * as seedVerdict from "../../src/harness-seed/loop/verdict.ts";
@@ -40,15 +47,19 @@ import * as duration from "../../src/shared/duration.ts";
 import { DelegationRefusal, EngineFailureKind, StopReason } from "../../src/shared/engine-requests.ts";
 import * as queue from "../../src/shared/message-queue.ts";
 import * as roles from "../../src/shared/model-roles.ts";
+import { GameFront, GameSteer, PreviewConsoleSource, PreviewGone } from "../../src/shared/preview-contract.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import {
   CompletionPolicy,
   ExecutionStatus,
+  JournalPhase,
   VerdictPass,
   VerdictRule,
   recordedRunLoop,
 } from "../../src/shared/run-state.ts";
 import { applyEdits, SKILL_EDIT_OPS } from "../../src/shared/skill-edits.ts";
+import * as studioStateShape from "../../src/shared/studio-state-shape.ts";
+import { CONTRACT_LESSONS_FILE, LESSONS_SKILL, StagedTarget } from "../../src/shared/self-change-files.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
 import { DIRECTOR_LOOP_ENV, harnessRunEnv } from "../../src/shared/protocol.ts";
 
@@ -104,8 +115,8 @@ const LOGS: Record<string, EventEnvelope[]> = {
     custom(5, "coordinator_message_queued", { messageId: "b", action: { text: "and ducks" } }),
     custom(6, "coordinator_message_steering", { messageId: "b", into: "a" }),
     custom(7, "coordinator_message_delivered", { messageId: "b", into: "a", how: "native" }),
-    user(8, "make it night"),
-    custom(9, "coordinator_message_queued", { messageId: "c", action: { text: "make it night" } }),
+    user(8, "make it run"),
+    custom(9, "coordinator_message_queued", { messageId: "c", action: { text: "make it run" } }),
     custom(10, "coordinator_message_steering", { messageId: "c", into: "a" }),
     custom(11, "coordinator_message_requeued", { messageId: "c" }),
     user(12, "and rain"),
@@ -148,7 +159,7 @@ describe("the coordinator contract (shared/coordinator.ts ↔ loop/run-inbox.ts)
     assert.equal(coordinator.isCoordinatorTool("delete_game"), false);
   });
 
-  it("the chat's own session after a night keeps the host's own tools: live run controls, and the resume it records", () => {
+  it("the chat's own session after a run keeps the host's own tools: live run controls, and the resume it records", () => {
     for (const tool of coordinator.runControlTools) assert.equal(coordinator.isCoordinatorTool(tool.name), true);
     assert.deepEqual(
       coordinator.runControlTools.map((tool) => tool.name),
@@ -311,13 +322,21 @@ describe("model roles (shared/model-roles.ts ↔ loop/model-roles.ts)", () => {
     assert.deepEqual(roles.ENGINE_LABELS, seedRoles.ENGINE_LABELS);
   });
 
-  const engines = ["claude-code", "codex", "bonsai", "ollama", undefined];
+  const engines = ["claude-code", "codex", "bonsai", "ollama", "opencode", "openrouter", undefined];
   const models = [undefined, "default", roles.FABLE, roles.OPUS, "sonnet", roles.SOL, "gpt-5.9-new", "qwen3:8b"];
 
   it("resolves every preset and names every model the same way", () => {
     for (const engine of engines) {
       assert.equal(roles.isDelegated(engine), seedRoles.isDelegated(engine), String(engine));
       assert.equal(roles.hasSessionRoles(engine), seedRoles.hasSessionRoles(engine), String(engine));
+      assert.equal(roles.takesRoles(engine), seedRoles.takesRoles(engine), String(engine));
+      for (const key of ["planner", "builder", "judge"] as const)
+        for (const other of engines)
+          assert.equal(
+            roles.crossesTo(engine, key, other),
+            seedRoles.crossesTo(engine, key, other),
+            `${engine} ${key} → ${other}`,
+          );
       assert.equal(roles.engineLabel(engine), seedRoles.engineLabel(engine), String(engine));
       assert.deepEqual(roles.modelsFor(engine), seedRoles.modelsFor(engine), String(engine));
       for (const model of models) {
@@ -340,6 +359,9 @@ describe("model roles (shared/model-roles.ts ↔ loop/model-roles.ts)", () => {
       { builder: roles.SOL, engines: { builder: "codex" } },
       { engines: { judge: "codex", planner: "codex" } },
       { judge: roles.OPUS, engines: { judge: "claude-code", builder: "ollama" } },
+      { judge: "vl", engines: { judge: "ollama" } },
+      { builder: roles.OPUS, judge: "vl", engines: { builder: "claude-code", judge: "ollama" } },
+      { builder: "coder", engines: { builder: "ollama", judge: "bonsai" } },
       { planner: "sonnet", efforts: { planner: "high", builder: 3, judge: "low" } },
       { planner: "sonnet", efforts: { builder: 3 } },
       { builder: 7, judge: null, unknown: "x" },
@@ -372,12 +394,22 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
     assert.deepEqual(seedRunEvents.EventKind, EventKind);
   });
 
+  it("stages a lessons suggestion for the file the host lets it write", () => {
+    assert.deepEqual(seedContractLessons.StagedTarget, StagedTarget);
+    assert.equal(seedContractLessons.CONTRACT_LESSONS_FILE, CONTRACT_LESSONS_FILE);
+    assert.equal(seedContractLessons.LESSONS_SKILL, LESSONS_SKILL);
+  });
+
   it("marks a reply's usage source as the log does", () => {
     assert.deepEqual(seedDelegatedTurn.MessageUsageSource, MessageUsageSource);
   });
 
   it("has the same run execution statuses", () => {
     assert.deepEqual(seedRunEvents.ExecutionStatus, ExecutionStatus);
+  });
+
+  it("names a run journal's phases as the harness writes them", () => {
+    assert.deepEqual(seedRunEvents.JournalPhase, JournalPhase);
   });
 
   it("has the same engine ids", () => {
@@ -390,6 +422,22 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("reads a delegated build's stop reasons the same way", () => {
     assert.deepEqual(seedOutage.StopReason, StopReason);
+  });
+
+  it("reads why a game window's renderer went away as the host reports it", () => {
+    assert.deepEqual(seedPreviewGone, PreviewGone);
+  });
+
+  it("tells the studio's own console lines from the page's the way the host writes them", () => {
+    assert.deepEqual(seedPreviewConsoleSource, PreviewConsoleSource);
+  });
+
+  it("calls the game's front-end verb by the name the harness drives it with", () => {
+    assert.equal(GameFront.Begin, seedPageMethod.Begin);
+  });
+
+  it("calls the racing-line assist by the name the harness steers with", () => {
+    assert.equal(GameSteer.Assist, seedPageMethod.Assist);
   });
 
   it("reads why the host refused a delegation the same way", () => {
@@ -438,6 +486,24 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("names what ends a run (its budgets' completion policy) the same way", () => {
     assert.deepEqual(seedCompletionPolicy.CompletionPolicy, CompletionPolicy);
+  });
+
+  it("names a bounded state's markers and keep limits the same way, and validates keep paths the same way", () => {
+    assert.deepEqual(seedStateShape.StateShape, studioStateShape.StateShape);
+    assert.deepEqual(seedStateShape.ElidedKind, studioStateShape.ElidedKind);
+    assert.equal(seedStateShape.MAX_KEEP_PATHS, studioStateShape.MAX_KEEP_PATHS);
+    assert.equal(seedStateShape.MAX_KEEP_PATH_CHARS, studioStateShape.MAX_KEEP_PATH_CHARS);
+    const raws: unknown[] = [
+      undefined,
+      "race.cars",
+      [1, null, {}, ["race"]],
+      ["", ".race", "race.", "race..cars", "a".repeat(121), "a".repeat(120)],
+      ["__proto__.polluted", "a.constructor", "prototype", "race.cars", "race.cars", "cars.0.x"],
+      Array.from({ length: 200 }, (_, i) => `p${i}`),
+    ];
+    for (const raw of raws) {
+      assert.deepEqual(seedStateShape.keepPathsOf(raw), studioStateShape.keepPathsOf(raw), String(raw).slice(0, 40));
+    }
   });
 
   it("has the same time units", () => {
@@ -490,7 +556,7 @@ describe("run budgets (shared/run-state.ts ↔ loop/chat-dispatch.ts)", () => {
   });
 });
 
-describe("how many workers a night may run (shared/builders.ts ↔ loop/director/budgets.ts)", () => {
+describe("how many workers a run may run (shared/builders.ts ↔ loop/director/budgets.ts)", () => {
   it("lets the lead run every worker the Maximum concurrent workers setting offers, and keeps the lead's own windows apart", async () => {
     const { LEAD_WINDOWS, MAX_BUILDERS, DEFAULT_BUILDERS } = await import("../../src/shared/builders.ts");
     const budgets = await import("../../src/harness-seed/loop/director/budgets.ts");

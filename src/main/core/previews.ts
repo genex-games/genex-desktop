@@ -44,12 +44,13 @@ import { iterationDir, safePathSegment } from "./run-shots.ts";
 import { readyNote, servedKey, strayPage } from "./page-report.ts";
 import type { SessionPort } from "./session-port.ts";
 import { serial } from "./serial.ts";
-import { isInside, samePath } from "../../substrate/paths.ts";
+import { isInside, samePath, toPosixRelative } from "../../substrate/paths.ts";
 import { isEffectivelyBlack } from "../../substrate/pixel-stats.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ReadyPhase, CaptureSurface } from "../../shared/preview-contract.ts";
+import { ReadyPhase, CaptureSurface, GameClock, GameFront } from "../../shared/preview-contract.ts";
+import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { LiveGate, type LiveOffer } from "./live-gate.ts";
 import type { LiveBehindEvent } from "../../shared/live-behind.ts";
@@ -84,6 +85,9 @@ const CARD_QUALITY = 62;
 /** How long a setup script may let the page settle, and how long it waits when it does not say. */
 const SETUP_SETTLE_MAX_MS = 10_000;
 const SETUP_SETTLE_DEFAULT_MS = 400;
+/** After `__studio.begin()`, how often the window is asked whether the game is in play, and for how long (wall time: it runs). */
+const PLAY_POLL_MS = 200;
+const PLAY_WAIT_MS = 5 * SECOND_MS;
 /** How much of the page's state a setup note quotes. */
 const SETUP_STATE_EXCERPT_CHARS = 240;
 /** The most reference stills one call returns, their long side, and the largest file read. */
@@ -106,10 +110,24 @@ const STAND_IN_IDLE_MS = 2 * MINUTE_MS;
 /** Errors the user reads when a build cannot be shown or landed, and why a reference is no still. */
 const MESSAGE = {
   noPreview: "no preview is attached (headless mode)",
+  benchRefused: (page: string, why: string) =>
+    `capture did not load the bench page "${page}": ${why}. Nothing was loaded. A bench page is a .html file inside this workspace, such as bench/<part>.html.`,
+  benchUnnamed: "no page was named",
+  benchNotHtml: "it is not a .html page",
+  benchOutside: "it is outside this workspace",
+  benchMissing: "there is no such file",
+  benchBuilt:
+    "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
+  benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
+  benchAfter:
+    "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
   previewChanged: "The selected preview changed while this build was preparing. Open the build again when ready.",
   noGameInSnapshot: "that snapshot has no game to play",
   sessionEnded: "the session ended before its window opened",
+  viewportNeedsLease: "preview.viewport sizes one leased window: name its handle (never Live or the stand-in)",
+  viewportInSession: (handle: string) =>
+    `preview window ${handle} is a computer session's: its view stays the size the agent plays at`,
   notRunArtefact: (file: string) => `not a run artefact: ${file}`,
   notStill: (file: string) => `not a run artefact or a reference still: ${file}`,
   notCommitHash: (commit: string) => `"${commit}" is not a commit hash`,
@@ -138,6 +156,92 @@ interface SkippedStill {
 function renderedCamera(state: unknown): string | null {
   const camera = (state as { camera?: unknown } | null)?.camera;
   return typeof camera === "string" ? camera : null;
+}
+
+/** The only kind of page a bench capture loads. */
+const BENCH_EXTENSION = ".html";
+
+/**
+ * A bench page a capture may load in place of the game, checked by its real path: an existing
+ * `.html` file inside the workspace, never a link out of it. Answers the served entry relative to
+ * the workspace, or the sentence that refuses it; a refused page is never loaded.
+ */
+async function benchEntry(root: string, page: string): Promise<{ entry: string } | { refusal: string }> {
+  const refuse = (why: string) => ({ refusal: MESSAGE.benchRefused(page, why) });
+  const named = page.trim();
+  if (!named) return refuse(MESSAGE.benchUnnamed);
+  if (path.extname(named).toLowerCase() !== BENCH_EXTENSION) return refuse(MESSAGE.benchNotHtml);
+  const realRoot = await realpath(root).catch(() => null);
+  if (!realRoot || path.isAbsolute(named) || !isInside(realRoot, path.resolve(realRoot, named)))
+    return refuse(MESSAGE.benchOutside);
+  const real = await realpath(path.resolve(realRoot, named)).catch(() => null);
+  if (!real) return refuse(MESSAGE.benchMissing);
+  if (!isInside(realRoot, real) || samePath(realRoot, real)) return refuse(MESSAGE.benchOutside);
+  if (path.extname(real).toLowerCase() !== BENCH_EXTENSION) return refuse(MESSAGE.benchNotHtml);
+  const file = await stat(real).catch(() => null);
+  if (!file?.isFile()) return refuse(MESSAGE.benchMissing);
+  return { entry: toPosixRelative(path.relative(realRoot, real)) };
+}
+
+/** Whose screen a capture's frames land on: the session's window, labelled for the worker. */
+function captureScreen(
+  sc: NonNullable<DelegateRequest["selfCapture"]>,
+  session: SessionPort,
+  role: AgentScreen["role"],
+): AgentScreen {
+  return {
+    handle: session.handle() ?? LIVE_HANDLE,
+    label: sc.label ?? sc.facetId ?? sc.project,
+    project: sc.project,
+    runId: sc.runId ?? null,
+    facetId: sc.facetId ?? null,
+    role,
+  };
+}
+
+/**
+ * The cameras one capture shoots. Unasked, a worker's capture shoots its own part's cameras (the
+ * grant's), not every one the game registers; a bench page shoots its default view.
+ */
+function camerasForShot(
+  sc: NonNullable<DelegateRequest["selfCapture"]>,
+  bench: { entry: string } | null,
+  asked: string | undefined,
+  known: readonly string[],
+): string[] {
+  if (bench) return camerasToCapture(asked, []);
+  // The grant comes from the agent-editable seed: anything but a list of names is no grant.
+  const granted: unknown = sc.cameras;
+  const own = Array.isArray(granted)
+    ? granted.filter((camera): camera is string => typeof camera === "string" && camera !== "").join(",")
+    : "";
+  return camerasToCapture(asked ?? (own || undefined), known);
+}
+
+/** The capture tool's answer: what was shot, the console's errors, the load's note and what the window shows now. */
+function captureAnswer({
+  bench,
+  root,
+  lines,
+  errors,
+  setupNote,
+}: {
+  bench: { entry: string } | null;
+  root: string;
+  lines: readonly string[];
+  errors: Parameters<typeof consoleErrorsLine>[0];
+  setupNote: string | null;
+}): string {
+  const workspace = path.basename(root);
+  return [
+    bench ? MESSAGE.benchCaptured(bench.entry, workspace) : `Captured your CURRENT build (workspace ${workspace}):`,
+    ...lines,
+    consoleErrorsLine(errors),
+    ...(setupNote ? [`note: ${setupNote}`] : []),
+    bench
+      ? MESSAGE.benchAfter
+      : "Read the image files above to actually look at them. The window keeps running this build — the computer tool continues from here.",
+  ].join("\n");
 }
 
 /** The cameras a capture photographs: the ones asked for, else the page's own, else `default`. */
@@ -228,13 +332,85 @@ async function runSetupDemo(port: PreviewPort, demo: string | undefined): Promis
   return `setup demo "${demo}" did not run: ${result.reason ?? "unknown"}`;
 }
 
-/** The note for a setup whose `verify` the page's state does not meet, or null. */
+/** Whether the state bounder left an elision stub on `path` or one of its parents: the value was not read. */
+function elidedAlong(state: unknown, path: string): boolean {
+  let current: unknown = state;
+  for (const key of path.split(".")) {
+    if (current === null || typeof current !== "object") return false;
+    current = (current as Record<string, unknown>)[key];
+    const stub = current !== null && typeof current === "object" && !Array.isArray(current);
+    if (stub && typeof (current as Record<string, unknown>)[StateShape.Elided] === "string") return true;
+  }
+  return false;
+}
+
+/**
+ * The note for a setup whose `verify` the page's state does not meet, or null. The verified path
+ * is kept whole when the state is over budget; one the bounder still cut is unmeasured, not missed.
+ */
 async function setupVerifyNote(port: PreviewPort, setup: PreviewSetup): Promise<string | null> {
   if (!setup.verify) return null;
-  const state = await port.studioState().catch(() => null);
+  const keep = keepPathsOf([setup.verify.path]);
+  const state = await port.studioState(keep.length ? { keep } : undefined).catch(() => null);
+  if (elidedAlong(state, setup.verify.path)) return null;
   if (setupReached(setup.verify, state) !== false) return null;
   const value = JSON.stringify(state).slice(0, SETUP_STATE_EXCERPT_CHARS);
   return `REQUESTED STATE NOT REACHED: ${setup.verify.path} is not ${expectedValue(setup.verify)} after the setup script (${setup.note ?? "no note"}); state: ${value}`;
+}
+
+/** A setup's demo and input actions, then the settle it asked for; what went wrong goes on `notes`. */
+async function replaySetup(
+  port: PreviewPort,
+  setup: PreviewSetup,
+  notes: string[],
+  wait: (ms: number) => Promise<unknown>,
+): Promise<void> {
+  const demoNote = await runSetupDemo(port, setup.demo);
+  if (demoNote) notes.push(demoNote);
+  if (Array.isArray(setup.actions) && setup.actions.length) {
+    await port
+      .input(capActions(setup.actions))
+      .catch((err) => notes.push(`setup input failed: ${String(errorMessage(err))}`));
+  }
+  await wait(Math.min(SETUP_SETTLE_MAX_MS, setup.settleMs ?? SETUP_SETTLE_DEFAULT_MS));
+}
+
+/** `state().flow.playing`: true or false for a game that reports a front-end, null for one that does not. */
+function flowPlaying(state: unknown): boolean | null {
+  const flow = state !== null && typeof state === "object" ? (state as { flow?: unknown }).flow : null;
+  const playing = flow !== null && typeof flow === "object" ? (flow as { playing?: unknown }).playing : null;
+  return typeof playing === "boolean" ? playing : null;
+}
+
+/** Whether a setup replays anything a page must settle after: `{ begin: false }` alone replays nothing. */
+function replaysSomething(setup: PreviewSetup): boolean {
+  const acts = Array.isArray(setup.actions) && setup.actions.length > 0;
+  return Boolean(setup.gesture || setup.demo || setup.verify || acts);
+}
+
+/**
+ * Past the game's own title, menu and countdown into play, the way every judge sees it: only for a
+ * game that says it is not in play (`state().flow.playing === false`), never when the setup keeps
+ * the front-end (`begin: false`, the worker that builds it and the playtester). `begin()` leaves the
+ * game paused, so the window is started again, before any setup is replayed. The note when play
+ * was not reached, or null.
+ */
+async function beginPlay(
+  port: PreviewPort,
+  setup: PreviewSetup | null | undefined,
+  wait: (ms: number) => Promise<unknown>,
+): Promise<string | null> {
+  if (setup?.begin === false) return null;
+  if (flowPlaying(await port.studioState().catch(() => null)) !== false) return null;
+  const began = (await port.studioCall(GameFront.Begin).catch(() => null)) as { ok?: unknown } | null;
+  if (began?.ok !== true)
+    return "this game shows a title, menu or countdown and has no __studio.begin(), so the frames show its front-end — give config.begin";
+  await port.studioCall(GameClock.Start).catch(() => null);
+  for (let waited = 0; waited < PLAY_WAIT_MS; waited += PLAY_POLL_MS) {
+    if (flowPlaying(await port.studioState().catch(() => null)) === true) return null;
+    await wait(PLAY_POLL_MS);
+  }
+  return `the game did not reach play within ${PLAY_WAIT_MS / SECOND_MS} s of __studio.begin() (state().flow.playing is still false)`;
 }
 
 /** A still resized to `maxPx` on its long side as JPEG, or null when the preview cannot. */
@@ -273,6 +449,8 @@ export class PreviewService {
   #liveObservers = 0;
   /** What the Live game's sound depends on, bar the stage and the agents that `#applySound` reads. */
   #sound: Pick<LiveSound, "on" | "foreground"> = { on: true, foreground: true };
+  /** Pooled windows a computer session plays in, by how many sessions hold each: none changes size. */
+  readonly #sessionWindows = new Map<string, number>();
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -546,6 +724,20 @@ export class PreviewService {
   }
 
   /**
+   * A bench page for this project, or the sentence that refuses it. The page is served from the
+   * workspace itself, so a game the preview serves from elsewhere (its build's output, a serve
+   * folder) is refused up front: the page is not there, and a failed load would read as a broken
+   * build.
+   */
+  async #benchFor(project: string, root: string, page: string): Promise<{ entry: string } | { refusal: string }> {
+    const descriptor = (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    const servedElsewhere = descriptor?.built === true || shape.build !== null || (shape.serve ?? ".") !== ".";
+    if (servedElsewhere) return { refusal: MESSAGE.benchRefused(page, MESSAGE.benchBuilt) };
+    return benchEntry(root, page);
+  }
+
+  /**
    * Builder eyes: renders the contractor's own workspace in a pooled hidden preview and saves
    * frames it can Read mid-turn — the counter to a whole run of coding blind (44% acceptance).
    * One lease per call, held only for the seconds of the capture, so three parallel facets and
@@ -564,8 +756,10 @@ export class PreviewService {
   ): NonNullable<DelegateRequest["onCapture"]> {
     let sequence = 0;
     let sequenceSeeded = false;
-    const label = sc.label ?? sc.facetId ?? sc.project;
-    return async ({ cameras } = {}) => {
+    return async ({ cameras, page } = {}) => {
+      // A bench page is checked before anything is touched: a refused one loads nothing.
+      const bench = page === undefined ? null : await this.#benchFor(sc.project, currentRoot(), String(page));
+      if (bench && "refusal" in bench) return bench.refusal;
       const outDir = iterationDir(outBase, sc.iteration);
       await ensureDir(outDir);
       // The counter continues from what is already on disk, so a review-fix turn (a second
@@ -575,44 +769,45 @@ export class PreviewService {
         sequence = Math.max(sequence, await lastCaptureNumber(outDir));
       }
       const call = ++sequence;
-      // The session's window: a capture is a fresh load of the workspace (edits included)
-      // through the served entry — a game with its own build is built first — then the
-      // setup script, then the shots. The window stays loaded for the computer tool after.
       const port = await session.get();
-      const target = currentRoot();
-      const loaded = await this.loadServed(port, sc.project, target, sc.entry);
-      if (loaded.problem) {
-        session.loaded = null;
+      const loaded = await this.#loadForCapture(port, sc, session, { target: currentRoot(), bench });
+      if ("problem" in loaded)
         return `your build failed to load: ${loaded.problem} — fix that before polishing anything.`;
-      }
-      const applied = await this.applySetup(port, sc.setup);
-      // A page the studio never heard report itself ready is still photographed — the frames
-      // just come with the sentence that says what they are worth.
-      const setupNote = [loaded.note, applied].filter(Boolean).join("; ") || null;
-      session.loaded = { root: target, at: Date.now() };
-      const screen: AgentScreen = {
-        handle: session.handle() ?? LIVE_HANDLE,
-        label,
-        project: sc.project,
-        runId: sc.runId ?? null,
-        facetId: sc.facetId ?? null,
-        role,
-      };
+      const screen = captureScreen(sc, session, role);
       this.openScreen(screen);
       const registered = await port.studioCall("cameras").catch(() => null);
       const known = Array.isArray(registered) ? registered.map(String) : [];
       const lines: string[] = [];
-      for (const camera of camerasToCapture(cameras, known))
+      for (const camera of camerasForShot(sc, bench, cameras, known))
         lines.push(await this.#captureCamera(port, screen, { outDir, call, camera, known }));
       const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
-      return [
-        `Captured your CURRENT build (workspace ${path.basename(root)}):`,
-        ...lines,
-        consoleErrorsLine(errors),
-        ...(setupNote ? [`note: ${setupNote}`] : []),
-        "Read the image files above to actually look at them. The window keeps running this build — the computer tool continues from here.",
-      ].join("\n");
+      return captureAnswer({ bench, root, lines, errors, setupNote: loaded.setupNote });
     };
+  }
+
+  /**
+   * The session's window for a capture: a fresh load of the workspace (edits included) through
+   * the served entry — a game with its own build is built first — then the setup script. A bench
+   * page loads through the same served root and skips the setup: it mounts one module, and the
+   * game's script has nothing there to replay. The window stays loaded for the computer tool
+   * after a capture of the build; after a bench page the computer tool loads the game again.
+   */
+  async #loadForCapture(
+    port: PreviewPort,
+    sc: NonNullable<DelegateRequest["selfCapture"]>,
+    session: SessionPort,
+    { target, bench }: { target: string; bench: { entry: string } | null },
+  ): Promise<{ problem: string } | { setupNote: string | null }> {
+    const loaded = await this.loadServed(port, sc.project, target, bench?.entry ?? sc.entry);
+    if (loaded.problem) {
+      session.loaded = null;
+      return { problem: loaded.problem };
+    }
+    const applied = bench ? null : await this.applySetup(port, sc.setup);
+    session.loaded = bench ? null : { root: target, at: Date.now() };
+    // A page the studio never heard report itself ready is still photographed — the frames
+    // just come with the sentence that says what they are worth.
+    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null };
   }
 
   /** One camera's frame of a capture, saved beside the facet's others; its line of the answer. */
@@ -641,7 +836,7 @@ export class PreviewService {
     }
   }
 
-  // ── the computer: one pooled window per session (computer use, 2026-09-07) ──────────────────────────────
+  // ── the computer: one pooled window per session ──────────────────────────────
 
   /**
    * One preview port for a whole delegation: the facet's idle observation lease when the
@@ -663,10 +858,18 @@ export class PreviewService {
     let observing = false;
     const ended = new AbortController();
     const named = options.handle && !SHARED_WINDOWS.has(options.handle) ? options.handle : null;
+    let held: string | null = null;
+    const hold = (window: string): void => {
+      held = window;
+      this.#holdSessionWindow(window);
+    };
     if (named) {
       try {
         port = this.pool().port(named);
         handle = named;
+        // The computer tool plays at the facet size: a window the harness resized for a look is put back.
+        this.pool().restoreSize(named);
+        hold(named);
       } catch {
         port = null;
       }
@@ -693,6 +896,7 @@ export class PreviewService {
       }
       lease = taken;
       handle = taken.handle;
+      hold(taken.handle);
       port = pool.port(taken.handle);
       return port;
     };
@@ -714,6 +918,8 @@ export class PreviewService {
             .catch(() => {});
         lease = null;
         if (handle) this.closeScreen(handle);
+        if (held) this.#dropSessionWindow(held);
+        held = null;
         port = null;
         if (observing) {
           observing = false;
@@ -723,6 +929,29 @@ export class PreviewService {
       },
     };
     return session;
+  }
+
+  #holdSessionWindow(handle: string): void {
+    this.#sessionWindows.set(handle, (this.#sessionWindows.get(handle) ?? 0) + 1);
+  }
+
+  #dropSessionWindow(handle: string): void {
+    const held = (this.#sessionWindows.get(handle) ?? 0) - 1;
+    if (held > 0) this.#sessionWindows.set(handle, held);
+    else this.#sessionWindows.delete(handle);
+  }
+
+  /**
+   * `preview.viewport`: one leased window at another size for a look (`PreviewPool.resize`),
+   * back at the facet size when the lease is released. Refused, with nothing moved, for no
+   * handle, Live, the stand-in and a window a computer session plays in, so the computer tool's
+   * view of a worker's or the lead's window never changes size.
+   */
+  viewport(p: HarnessParams<"preview.viewport">): HarnessResult<"preview.viewport"> {
+    const handle = p?.handle;
+    if (typeof handle !== "string" || SHARED_WINDOWS.has(handle)) throw new Error(MESSAGE.viewportNeedsLease);
+    if (this.#sessionWindows.has(handle)) throw new Error(MESSAGE.viewportInSession(handle));
+    return { handle, ...this.pool().resize(handle, p) };
   }
 
   /** What the studio asks the page to wait for: the folder's own `bootMs`, or the default. */
@@ -735,9 +964,8 @@ export class PreviewService {
 
   /**
    * Load a build into a port the way the judges do: through the served entry, so a game with
-   * its own build (Vite, TypeScript) is built first. The builders' capture used to skip this
-   * step and load `index.html` raw — on skate-prod every worker saw `src/main.ts` served as
-   * text and spent the night blind.
+   * its own build (Vite, TypeScript) is built first. Loaded raw from `index.html`, such a game
+   * serves `src/main.ts` as text and every worker works blind.
    *
    * Then it waits for a FACT instead of the flat 1.5 s it used to sleep: one budget, resolved
    * from `studio.json`'s `bootMs`, given both to the page (so the shim's own bound and this
@@ -777,30 +1005,33 @@ export class PreviewService {
   }
 
   /**
-   * The requested state, reached the way a player reaches it — the run's setup script after
-   * every load, before anyone looks. Returns a note when it did not land, never throws: a
-   * wrong state is something to tell the worker, not a reason to stop looking.
+   * Play, then the requested state, reached the way a player reaches it — before anyone looks.
+   * A game with a title, menu or countdown is put past it the way every judge sees it
+   * (`beginPlay`), with no setup at all as much as with one, unless the setup keeps the front-end
+   * (`begin: false`) or the window is the playtester's (`keepFrontEnd`: it meets the real menu
+   * whatever an older seed sends). The run's setup script is replayed after that, from the state
+   * the scout recorded it in: its window was begun too. Returns a note when it did not land, never
+   * throws: a wrong state is something to tell the worker, not a reason to stop looking.
+   * `options.sleep` is the wall clock's wait, injectable for a test.
    */
-  async applySetup(port: PreviewPort, setup: PreviewSetup | null | undefined): Promise<string | null> {
+  async applySetup(
+    port: PreviewPort,
+    setup: PreviewSetup | null | undefined,
+    options: { sleep?: (ms: number) => Promise<unknown>; keepFrontEnd?: boolean } = {},
+  ): Promise<string | null> {
+    const wait = options.sleep ?? ((ms: number) => sleep(ms));
     // The knock comes first, before the clock is even started: a trusted click is what grants
     // user activation, and a title screen waiting for one is not "started" until it has it.
     if (setup?.gesture) {
       const at = setup.gesture === true ? null : setup.gesture;
       await unlockGesture(port, at, at?.keys).catch(() => null);
     }
-    await port.studioCall("start").catch(() => null);
-    if (!setup) return null;
+    await port.studioCall(GameClock.Start).catch(() => null);
     const notes: string[] = [];
-    const demoNote = await runSetupDemo(port, setup.demo);
-    if (demoNote) notes.push(demoNote);
-    if (Array.isArray(setup.actions) && setup.actions.length) {
-      await port
-        .input(capActions(setup.actions))
-        .catch((err) => notes.push(`setup input failed: ${String(errorMessage(err))}`));
-    }
-    const settleMs = Math.min(SETUP_SETTLE_MAX_MS, setup.settleMs ?? SETUP_SETTLE_DEFAULT_MS);
-    await sleep(settleMs);
-    const verifyNote = await setupVerifyNote(port, setup);
+    const playNote = options.keepFrontEnd === true ? null : await beginPlay(port, setup, wait);
+    if (playNote) notes.push(playNote);
+    if (setup && replaysSomething(setup)) await replaySetup(port, setup, notes, wait);
+    const verifyNote = setup ? await setupVerifyNote(port, setup) : null;
     if (verifyNote) notes.push(verifyNote);
     return notes.length ? notes.join("; ") : null;
   }
@@ -1131,7 +1362,7 @@ export class PreviewService {
   /**
    * Make a build live: merge it into the game folder (the branch the user plays from) and load
    * it. Refuses a dirty game folder and a merge that conflicts — the user's edits are never
-   * overwritten from here, and since M2.7 nowhere else either: the night's own landing refuses
+   * overwritten from here, and since M2.7 nowhere else either: the run's own landing refuses
    * the same way and leaves the build on its ref for this button to land. A landing nobody on the
    * stage asked for (`offerLive`: a harness's `land_build` with no message of the person's waiting
    * on it) lands the same, and only offers the landed folder to Live's Reload.
@@ -1154,7 +1385,7 @@ export class PreviewService {
     const resolved = (await git(projectDir, ["rev-parse", "--verify", `${commit}^{commit}`]).catch(() => "")).trim();
     if (!resolved) throw new Error(MESSAGE.notInHistory(commit, project));
     // A build never brings Claude Code's project settings or hooks: the person's own session in
-    // the game loads them, and nothing a night or the harness made may choose them.
+    // the game loads them, and nothing a run or the harness made may choose them.
     const settings = await claudeFolderChanges(projectDir, "HEAD", resolved);
     if (settings.length) throw new Error(MESSAGE.claudeFolder(resolved.slice(0, 10), settings));
     // The dirty check first, and only then the conversion. Converting renames the nested game's
@@ -1167,7 +1398,7 @@ export class PreviewService {
       throw new Error(MESSAGE.uncommittedEdits(dirty.length));
     }
     // The conversion happens only with the consent the Open Game sheet recorded — the one place
-    // the studio touches somebody else's version history (decision 1, 2026-09-08).
+    // the studio touches somebody else's version history.
     const versioned = await versionNestedForLanding(projectDir, resolved, {
       consent: await this.#core.games.nestedConsent(projectDir),
     });
@@ -1207,7 +1438,7 @@ export class PreviewService {
   }
 
   /**
-   * Install the game's packages, in the user's own folder. Decision 3 (2026-09-08): this is the
+   * Install the game's packages, in the user's own folder. This is the
    * only thing the studio ever opens the network for, it happens because the user pressed a
    * button, and it opens exactly one domain for exactly this command.
    */

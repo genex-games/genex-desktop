@@ -5,7 +5,7 @@
  * recorded in stream order among the turn's mirrored rows; any other session is interrupted —
  * marked `steered`, so its caller (the harness's `loop/chat-steer.ts`) resumes it with the
  * messages in front instead of reading a Stop. Only a chat's own session answers a turn, and a
- * night's lead, which answers the chat while its build runs (addressed by its run id, and told
+ * run's lead, which answers the chat while its build runs (addressed by its run id, and told
  * without recording where: the queue recorded the hand-over): a builder's never.
  */
 import { setTimeout as sleep } from "node:timers/promises";
@@ -76,7 +76,7 @@ interface NarrowerPurpose {
 
 /**
  * The chat turn a delegation answers (`chatTurn`): a chat's own session, by the message it
- * answers — or a night's lead, by its own run and nothing else. Never a build worktree, a
+ * answers — or a run's lead, by its own run and nothing else. Never a build worktree, a
  * playtester or an optimization candidate, whatever the caller claims.
  */
 export function chatTurnOf(p: DelegateParams, narrower: NarrowerPurpose): string | undefined {

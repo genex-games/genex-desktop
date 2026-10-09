@@ -1,5 +1,6 @@
 /** The per-game terminal dock: sessions live in the terminal host, the renderer only draws them. */
 import os from "node:os";
+import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { runnableCommand, TerminalKind } from "../../shared/terminal.ts";
 import { withEnvPath } from "../../substrate/toolchain.ts";
 import { commandShell, type TerminalShell, terminalShell } from "../terminal-shell.ts";
@@ -19,7 +20,12 @@ const STUDIO_ONLY_ENV = /^(STUDIO_|ELECTRON_|CLAUDE_CONFIG_DIR$|CODEX_HOME$)/;
 
 export interface TerminalIpcDeps {
   core: Pick<StudioCore, "games" | "assertProjectAllowed">;
-  terminals: Pick<TerminalService, "list" | "open" | "attach" | "write" | "resize" | "acknowledge" | "stop" | "remove">;
+  terminals: Pick<
+    TerminalService,
+    "list" | "open" | "attach" | "write" | "resize" | "acknowledge" | "stop" | "remove" | "link"
+  >;
+  /** Open an https page in the person's browser. */
+  openExternal(url: string): Promise<void>;
   /** Whether macOS reports an assistive technology (VoiceOver) as active. */
   accessibilityEnabled(): boolean;
   /** The PATH the user's login shell sets up (the toolchain's). */
@@ -73,4 +79,10 @@ export function registerTerminalIpc(handle: IpcHandle, deps: TerminalIpcDeps): v
   handle("studio:terminal.ack", (payload) => terminals.acknowledge(payload?.id, payload?.count));
   handle("studio:terminal.stop", (payload) => terminals.stop(payload?.id));
   handle("studio:terminal.remove", (payload) => terminals.remove(payload?.id));
+  // Only the page the session itself printed: the renderer names a session, never an address.
+  // A genex.games page goes tagged `s=desktop`.
+  handle("studio:terminal.open-link", async (payload) => {
+    const url = terminals.link(payload?.id);
+    if (url) await deps.openExternal(tagGenexLink(url));
+  });
 }

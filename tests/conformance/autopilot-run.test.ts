@@ -241,7 +241,7 @@ describe("autopilot scheduling primitives", () => {
     assert.deepEqual(await inheritedConsoleAfterLoad(dead as never, { settleMs: 1, beatMs: 1 }), []);
   });
 
-  it("promises the night only once the start can be accepted", async () => {
+  it("promises the run only once the start can be accepted", async () => {
     const appended: Array<{ batch: Array<Record<string, unknown>> }> = [];
     const host = {
       workspace: "/nowhere",
@@ -270,7 +270,7 @@ describe("autopilot scheduling primitives", () => {
       launchFromIntake(studio as never, ctx as never, { threadId: "t-1", project: "moth" }, { goal: "a moth game" }),
       /a build is already running for moth/,
     );
-    // …and it refuses before the user is promised a night that never starts.
+    // …and it refuses before the user is promised a run that never starts.
     assert.doesNotMatch(JSON.stringify(appended), /Building until about/);
     // The boot path's own refusal reaches the chat, not only an event no surface renders.
     const run = {
@@ -532,8 +532,8 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     });
 
     // The game declares one scripted demo, so accepted facets must record its `demo:` camera
-    // (run_mtidvyqlpocx reported demos: [] on every facet — the filter matched the on-disk
-    // demo_ file prefix instead of the demo: camera name, leaving the loss check inert).
+    // (a filter that matches the on-disk demo_ file prefix instead of the demo: camera name
+    // reports demos: [] on every facet and leaves the loss check inert).
     rig.preview.demoNames = ["boot"];
 
     const runId = rig.core.newRunId();
@@ -655,7 +655,7 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     // message carries frames; and with a contractor selected the interview now runs on the
     // contractor itself (intake tools bridged in as MCP tools). The run spec must still get
     // the board (kind "reference") and must NOT inherit any interview model (sword-fighting
-    // burned a night delegating to Claude Code with model "qwen3.8:27b-mlx").
+    // burned a run delegating to Claude Code with model "qwen3.8:27b-mlx").
     const rig = await startRig({ respond: () => ({ text: "ok" }) });
     rigs.push(rig);
 
@@ -708,13 +708,13 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
           };
         }
         if (request.director) {
-          // The intake leads to a director's night (director, 2026-09-07): this director starts one judged
+          // The intake leads to a director's run: this director starts one judged
           // worker, waits for it, and finishes without landing.
           delegateModels.push(request.model);
           const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
           // The plan the user reads, before any builder starts (M3.8).
           await call("plan", {
-            summary: "Tonight: a grey courtyard you can wander in.",
+            summary: "This run: a grey courtyard you can wander in.",
             workers: JSON.stringify([
               {
                 id: "courtyard",
@@ -743,7 +743,7 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
           await call("finish", { summary: "a grey courtyard, one worker", land: "no" });
           return {
             ok: true,
-            summary: "night done",
+            summary: "run done",
             usage: {},
             turns: 3,
             engine: "fake-delegate",
@@ -1066,9 +1066,8 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
 
 /**
  * M3.3 — who owns the move. The harness's planner and its liveness critic used to name "the ONE
- * structural move" every iteration and make it mandatory: on one night five workers were told
- * that puddles, a wreck-cam and a tow truck were what mattered while the director's brief said
- * mud, and the rounds they spent on the brief were reset for missing what nobody had asked for.
+ * structural move" every iteration and make it mandatory, so rounds spent on the director's
+ * brief were reset for missing what nobody had asked for.
  */
 /** A seed loop module and every module under its folder, joined, so a count covers the split. */
 function loopTree(module: string, folder: string): string {
@@ -1107,7 +1106,7 @@ describe("the move belongs to the director", () => {
     });
     assert.deepEqual(climbed, { source: "none", mandatory: false });
     // Nobody owning the ladder: the harness still names one — it is what stops polish-only
-    // nights — and the critic's own gap beats a planner guess.
+    // runs — and the critic's own gap beats a planner guess.
     assert.equal(chooseMove({ spec: spec(), lastLiveness: grew("a wet-mud puddle zone system") }).source, "critic");
     assert.equal(chooseMove({ spec: spec() }).source, "planner");
   });
@@ -1277,7 +1276,7 @@ describe("the move belongs to the director", () => {
 
 /**
  * Rounds that can finish (M3.4). The only start gate a worker had was "is there any time left?",
- * so on the first real night every second-round worker began a round it could not finish: the
+ * so on the first real run every second-round worker began a round it could not finish: the
  * build turn was cut at the deadline, the half-written game was judged as a partial, three of
  * the five lost, and the morning counted those rounds as undone. A worker now measures its own
  * rounds — the build turn, then evidence and the judge — and starts another only when what is

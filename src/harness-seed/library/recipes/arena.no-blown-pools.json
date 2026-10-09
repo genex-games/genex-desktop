@@ -4,6 +4,7 @@
   "tags": ["bloom", "clipping", "blown", "white", "lamp", "pool", "highlight", "exposure", "tonemap", "arena"],
   "checkClass": "arena",
   "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
   "pack": "arena",
   "note": "Lamp pools and bloom stay below clipping: at most 2% of the eye-height frame is burned to white.",
   "intent": "Clipped white has no colour and no detail, so a blown lamp pool reads as a hole in the image. Keep the bloom threshold above the diffuse range so only real emitters bloom, tone-map (ACES or Reinhard) instead of clamping, and lower the emitter's intensity rather than its radius when the pool blows. Check it on the eye-height frame under the lamp, which is where it happens, not on the default camera.",

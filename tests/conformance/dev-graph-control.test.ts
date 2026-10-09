@@ -87,7 +87,7 @@ it("the fixture append keeps lead-run order and follows the existing facet itera
   assert.equal(changed, 1);
 });
 
-it("the fixture's worker frames start a night with a try in hand and show its builder at work", async () => {
+it("the fixture's worker frames start a run with a try in hand and show its builder at work", async () => {
   const { applyGraphFixture } = await import("../../src/main/dev/fixture-graph-control.ts");
   const { GraphFixtureAction } = await import("../../src/main/dev/protocol.ts");
   const { largeBuildGraph } = await import("../helpers/large-build-graph.ts");
@@ -114,7 +114,7 @@ it("the fixture's worker frames start a night with a try in hand and show its bu
   const started = customRecord(emitted[2] ?? { type: "custom", event_type: "", payload: {} });
   assert.ok(frames.length >= 2);
   for (const frame of frames) {
-    assert.equal(frame.runId, runIds[0], "the frames are the running night's");
+    assert.equal(frame.runId, runIds[0], "the frames are the running run's");
     assert.equal(frame.facetId, started?.payload.facetId);
     assert.ok(frame.act, "every frame says what the builder did");
   }

@@ -1,10 +1,10 @@
 import { CompletionPolicy } from "./completion-policy.ts";
 /**
  * One user message, from the queue to its answer: which run (if any) it belongs to, the turn that
- * answers it — the chat's own, after a night its lead led too (after-night.ts), else the run's
- * coordinator — the follow-up a coordinator commissions, the paused night the chat's own session
+ * answers it — the chat's own, after a run its lead led too (after-loop-run.ts), else the run's
+ * coordinator — the follow-up a coordinator commissions, the paused run the chat's own session
  * resumes, the finished build it or the coordinator reopens with Loop on (reopen-run.ts), and the
- * night an interview launches.
+ * run an interview launches.
  */
 import { runTurn, type TurnOptions, type TurnOutcome } from "./turn-loop.ts";
 import * as turnLoopParts from "./turn-loop.ts";
@@ -14,12 +14,12 @@ import * as coordinatorParts from "./coordinator.ts";
 import * as coordinatorPromptsParts from "./coordinator-prompts.ts";
 import * as chatSessionParts from "./chat-session.ts";
 import * as delegatedTurnParts from "./delegated-turn.ts";
-import * as afterNightPromptsParts from "./after-night-prompts.ts";
+import * as afterLoopRunPromptsParts from "./after-loop-run-prompts.ts";
 import * as runDispatchParts from "./run-dispatch.ts";
-import { afterLeadNight, resumeAfterReply, servesAfterNight, type AfterNight } from "./after-night.ts";
+import { afterLeadLoopRun, resumeAfterReply, servesAfterLoopRun, type AfterLoopRun } from "./after-loop-run.ts";
 import {
   commissionHours,
-  finishedNight,
+  finishedLoopRun,
   firstLoopUnused,
   keepsCommission,
   type ReopenAsk,
@@ -38,20 +38,21 @@ import { StudioContract } from "./page-contract.ts";
 import { EventKind, RunEvent, RunState } from "./run-events.ts";
 import { HOUR_MS } from "./time.ts";
 import { endClock } from "./wall-clock.ts";
-import { handleRunStart, nightRefusal } from "./run-dispatch.ts";
+import { handleRunStart, loopRunRefusal } from "./run-dispatch.ts";
 import { runUnderWay } from "./live-chat.ts";
 import { readJournal } from "./run-journal.ts";
 import { followupAsk } from "./studio-prompts.ts";
 import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studio-state.ts";
 import { clampRunHours } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
+import { createScope, userWordsInLog } from "./scope.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
 import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
 import type { QueueAction, SteerHandle } from "./message-queue.ts";
 
-/** The night an interview commissions when it names no length, in hours. */
+/** The run an interview commissions when it names no length, in hours. */
 const DEFAULT_RUN_HOURS = 8;
-/** The folder a night builds in when neither the chat nor the interview names one. */
+/** The folder a run builds in when neither the chat nor the interview names one. */
 const FALLBACK_PROJECT = "game";
 /** A goal that says nothing: empty, or a missing value spelled out. */
 const EMPTY_GOALS = new Set(["", "undefined", "null"]);
@@ -71,10 +72,10 @@ const MESSAGE = {
   stoppedBeforeTurn: "Stopped before it started — nothing was done. Send a message to go on.",
   turnFailed: (failure: unknown) => `turn failed: ${failure}`,
   // What the user is owed before they walk away: when to come back, that the machine has to
-  // stay awake, and that a paused night is not a lost one. "until the critics are satisfied"
-  // answered none of those — the first real night ended on the plan's five-hour window at 105
+  // stay awake, and that a paused run is not a lost one. "until the critics are satisfied"
+  // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
-  nightPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
+  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
     `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
@@ -88,32 +89,32 @@ const MESSAGE = {
 type RunRecord = AnyRecord;
 
 /**
- * The parts the chat's own session after a lead's night depends on: the runner that picks its
+ * The parts the chat's own session after a lead's run depends on: the runner that picks its
  * turn, the turn, and its brief.
  */
-const AFTER_NIGHT_PARTS = [turnLoopParts, delegatedTurnParts, chatSessionParts];
+const AFTER_LOOP_RUN_PARTS = [turnLoopParts, delegatedTurnParts, chatSessionParts];
 
 /**
- * Does the chat after a lead's night go to the chat's own session (after-night.ts)? Only when its
+ * Does the chat after a lead's run go to the chat's own session (after-loop-run.ts)? Only when its
  * runner, its turn and its brief serve it: a kept copy of any from before could give that session
  * no run controls and tell it to pick up where it left off — then the coordinator answers, as before.
  */
-export function ownSessionAfterNight(): boolean {
-  return servesAfterNight(AFTER_NIGHT_PARTS);
+export function ownSessionAfterLoopRun(): boolean {
+  return servesAfterLoopRun(AFTER_LOOP_RUN_PARTS);
 }
 
 /**
  * What reopening a finished build depends on: the runner (its model), the turn (its tools), the note
  * (its words) and the run's start (its inbox from the ask, its own close).
  */
-const REOPEN_PARTS = [turnLoopParts, delegatedTurnParts, afterNightPromptsParts, runDispatchParts];
+const REOPEN_PARTS = [turnLoopParts, delegatedTurnParts, afterLoopRunPromptsParts, runDispatchParts];
 
 /**
  * May a Loop message after a finished build the chat's own session led reopen that same run
  * (reopen-run.ts)? A kept older runner, turn, note or start: the message is answered as with Loop off.
  */
 export function ownSessionReopens(): boolean {
-  return ownSessionAfterNight() && servesReopen(REOPEN_PARTS);
+  return ownSessionAfterLoopRun() && servesReopen(REOPEN_PARTS);
 }
 
 /**
@@ -124,7 +125,7 @@ const COORDINATOR_REOPEN_PARTS = [coordinatorParts, coordinatorPromptsParts, run
 
 /**
  * May a Loop message after a finished build the run's coordinator answers for reopen it through the
- * coordinator's continue_build (reopen-run.ts `finishedNight`)? A kept older coordinator, prompt or
+ * coordinator's continue_build (reopen-run.ts `finishedLoopRun`)? A kept older coordinator, prompt or
  * start: the message is answered as with Loop off.
  */
 export function coordinatorReopens(): boolean {
@@ -132,7 +133,7 @@ export function coordinatorReopens(): boolean {
 }
 
 /**
- * Answer one user message: route it, run its turn, and launch the night an interview asked for.
+ * Answer one user message: route it, run its turn, and launch the run an interview asked for.
  * `steer` is the queue's door into this turn for what the person sends while it works
  * (chat-steer.ts); Studio's own chat never takes it.
  */
@@ -143,8 +144,8 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   // other session engine is found by its description below, once the turn's engine is known.
   if (steering && hasSessionRoles(action.engine)) await steering.expect();
   const existing = await routeMessage(studio, action);
-  const nights = await nightsFor(studio.host, action, existing);
-  const { after } = nights;
+  const loopRuns = await loopRunsFor(studio.host, action, existing);
+  const { after } = loopRuns;
   carryMoodBoard(studio.moodBoards, action);
   const ctx = studio.scoped(action.threadId, StatusLane.Chat);
   if (steering) await expectSession(studio.host, action, existing, steering);
@@ -159,7 +160,7 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   try {
     // Stopped before its turn began: nothing answers it, and the chat is told.
     if (ctx.cancelled) await stoppedBeforeTurn(studio.host, ctx, turn.turnId);
-    else await answerMessage(studio, ctx, action, { turnId: turn.turnId, existing, ...nights }, steering);
+    else await answerMessage(studio, ctx, action, { turnId: turn.turnId, existing, ...loopRuns }, steering);
   } catch (err: any) {
     await failChatTurn(studio.host, ctx, turn.turnId, err);
   } finally {
@@ -174,8 +175,8 @@ async function stoppedBeforeTurn(host: Host, ctx: HarnessCtx, turnId: string): P
   await endInterrupted(host, turnId);
 }
 
-/** The engine and model a turn is recorded on: the message's, or the lead's session's after its night. */
-function turnMetadata(action: QueueAction, after: AfterNight | null): { engine: string; model?: string } {
+/** The engine and model a turn is recorded on: the message's, or the lead's session's after its run. */
+function turnMetadata(action: QueueAction, after: AfterLoopRun | null): { engine: string; model?: string } {
   const engine = after?.engine ?? action.engine ?? EngineId.Ollama;
   const model = after ? after.model : action.model;
   return { engine, ...(model ? { model } : {}) };
@@ -208,42 +209,42 @@ async function answersInSession(host: Host, engine: string): Promise<boolean> {
 }
 
 /**
- * The nights a routed message answers after, resolved once: the chat's own session's (after-night.ts)
+ * The runs a routed message answers after, resolved once: the chat's own session's (after-loop-run.ts)
  * — its engine and model are the turn's — or, for the run's coordinator, a finished build its
  * continue_build may reopen with the message's Loop. A message for a run drops its commission, so it
  * cannot commission a second run — unless the build it answers after may be reopened with it
  * (reopen-run.ts). Decided once: from here the turn takes the messages sent meanwhile with the
  * commission it kept (message-queue.ts). A Loop dropped after a finished build is `loopUnused`.
  */
-async function nightsFor(host: Host, action: QueueAction, existing: RunRecord | null): Promise<RoutedNights> {
+async function loopRunsFor(host: Host, action: QueueAction, existing: RunRecord | null): Promise<RoutedLoopRuns> {
   if (!existing) return { after: null, coordinated: null, loopUnused: false };
   // Words the chat wrote itself are never the person asking for more: whatever Loop they came with.
   if (chatWrote(action)) dropCommission(action);
-  const after = await afterNightFor(host, action, existing);
-  const coordinated = after ? null : await coordinatorNight(host, action, existing);
+  const after = await afterLoopRunFor(host, action, existing);
+  const coordinated = after ? null : await coordinatorLoopRun(host, action, existing);
   const kept = keepsCommission(existing, after ?? coordinated);
   const commissioned = Boolean(action.autopilot ?? action.loop);
   if (!kept) dropCommission(action);
   return { after, coordinated, loopUnused: commissioned && !kept && existing.state === RunState.Finished };
 }
 
-/** The nights a message answers after (`nightsFor`). */
-interface RoutedNights {
-  after: AfterNight | null;
-  coordinated: AfterNight | null;
+/** The runs a message answers after (`loopRunsFor`). */
+interface RoutedLoopRuns {
+  after: AfterLoopRun | null;
+  coordinated: AfterLoopRun | null;
   loopUnused: boolean;
 }
 
 /**
  * A finished build the run's coordinator answers for, when a Loop came with the message and the
- * coordinator may reopen it (reopen-run.ts `finishedNight`). A coordinator on a model without
+ * coordinator may reopen it (reopen-run.ts `finishedLoopRun`). A coordinator on a model without
  * sessions answers with tools in bounded rounds and could take a question for work: it is never
  * handed a build's hours.
  */
-async function coordinatorNight(host: Host, action: QueueAction, existing: RunRecord): Promise<AfterNight | null> {
+async function coordinatorLoopRun(host: Host, action: QueueAction, existing: RunRecord): Promise<AfterLoopRun | null> {
   if (!(action.autopilot ?? action.loop) || !coordinatorReopens()) return null;
   if (!(await answersInSession(host, turnEngine(action, existing)))) return null;
-  return finishedNight(host, action.threadId, existing, action.messageId);
+  return finishedLoopRun(host, action.threadId, existing, action.messageId);
 }
 
 /** Does this run own the message's thread or the game the message is about? */
@@ -255,7 +256,7 @@ function ownsMessage(active: ActiveRun, action: QueueAction): boolean {
 /**
  * The run a message is for: the one under way on its thread or game, else the thread's last one.
  * A run that has closed is the log's (finished or paused) even while its learning pass runs. Whether
- * the message keeps its commission is decided once the night it answers after is known
+ * the message keeps its commission is decided once the run it answers after is known
  * (`keepsCommission`).
  */
 async function routeMessage(studio: Studio, action: QueueAction): Promise<RunRecord | null> {
@@ -356,14 +357,14 @@ async function answerStudioThreadBuild(host: Host, ctx: HarnessCtx, action: Queu
   }
 }
 
-/** The turn a message is answered in: its id, the run it is about, and the nights it answers after. */
-interface AnswerTurn extends RoutedNights {
+/** The turn a message is answered in: its id, the run it is about, and the runs it answers after. */
+interface AnswerTurn extends RoutedLoopRuns {
   turnId: string;
   existing: RunRecord | null;
 }
 
 /**
- * The turn itself: the chat's own turn — after a night its lead led too, with the run's controls —
+ * The turn itself: the chat's own turn — after a run its lead led too, with the run's controls —
  * or the run's coordinator with any follow-up it commissions; then what the reply asked for.
  */
 async function answerMessage(
@@ -388,7 +389,7 @@ async function answerMessage(
     return;
   }
   // How the loop ended it stays on the turn's own record: a throttled or round-capped turn is not
-  // an answer (P07-F3).
+  // an answer.
   const stopped = outcome?.stopped;
   await studio.host.call(HostMethod.TurnEnd, {
     turnId,
@@ -399,16 +400,16 @@ async function answerMessage(
 }
 
 /**
- * The night the chat's own session answers after (after-night.ts), with the message it answers;
- * null when the coordinator answers: a run under way, a night no lead of the chat's own led, an
+ * The run the chat's own session answers after (after-loop-run.ts), with the message it answers;
+ * null when the coordinator answers: a run under way, a run no lead of the chat's own led, an
  * engine without sessions, or a kept chat turn or brief that does not serve it.
  */
-async function afterNightFor(host: Host, action: QueueAction, existing: RunRecord): Promise<AfterNight | null> {
-  if (!ownSessionAfterNight()) return null;
-  const night = await afterLeadNight(host, action, existing);
-  if (!night) return null;
+async function afterLoopRunFor(host: Host, action: QueueAction, existing: RunRecord): Promise<AfterLoopRun | null> {
+  if (!ownSessionAfterLoopRun()) return null;
+  const loopRun = await afterLeadLoopRun(host, action, existing);
+  if (!loopRun) return null;
   return {
-    ...night,
+    ...loopRun,
     ...(action.messageId ? { messageId: action.messageId } : {}),
     // Its finished build may be reopened only when every part the reopen depends on serves it, and
     // only by the person's own words: a question's Loop a command's result would inherit is not theirs.
@@ -422,8 +423,8 @@ interface CoordinatorAsk {
   turnId: string;
   existing: RunRecord;
   steer: SteerHandle | undefined;
-  /** The finished build its continue_build may reopen with the message's Loop (`coordinatorNight`). */
-  coordinated: AfterNight | null;
+  /** The finished build its continue_build may reopen with the message's Loop (`coordinatorLoopRun`). */
+  coordinated: AfterLoopRun | null;
 }
 
 /**
@@ -455,24 +456,24 @@ function reopenOutcome(hours: number | null, text: string): TurnOutcome {
 }
 
 /**
- * What the reply asked for, done once it has ended: the paused night the chat's own session asked
+ * What the reply asked for, done once it has ended: the paused run the chat's own session asked
  * to resume (its lead is that same session), the finished build it or the run's coordinator asked to
- * reopen, or the night an interview launched.
+ * reopen, or the run an interview launched.
  */
 async function afterTheReply(
   studio: Studio,
   ctx: HarnessCtx,
   action: QueueAction,
   outcome: TurnOutcome | undefined,
-  { after, coordinated }: RoutedNights,
+  { after, coordinated }: RoutedLoopRuns,
 ): Promise<void> {
   const resume = after ? outcome?.details?.resumeRun : null;
   if (after && resume) return resumeAfterReply(studio, ctx, after, resume);
-  const night = after ?? coordinated;
-  const reopen: ReopenAsk | null = night ? outcome?.details?.reopenRun : null;
+  const loopRun = after ?? coordinated;
+  const reopen: ReopenAsk | null = loopRun ? outcome?.details?.reopenRun : null;
   // The chat's own session's reopen takes the message's models; the coordinator's keeps the build's.
-  if (night && reopen)
-    return reopenOrSayWhy(studio, ctx, action, night, { ...reopen, models: sessionModels(action, after, reopen) });
+  if (loopRun && reopen)
+    return reopenOrSayWhy(studio, ctx, action, loopRun, { ...reopen, models: sessionModels(action, after, reopen) });
   const spec = outcome?.stopped === TurnStop.LaunchRun ? outcome.details?.run : null;
   if (spec) await launchOrSayWhy(studio, ctx, action, spec);
 }
@@ -482,7 +483,7 @@ async function afterTheReply(
  * the model it answers on, the Loop's roles and the message's effort and preferences, as a launch
  * from that message takes them; none (the build's own) after the coordinator's.
  */
-function sessionModels(action: QueueAction, after: AfterNight | null, ask: ReopenAsk): ReopenModels | null {
+function sessionModels(action: QueueAction, after: AfterLoopRun | null, ask: ReopenAsk): ReopenModels | null {
   if (!after) return null;
   return { model: after.model, ...(ask.roles ? { roles: ask.roles } : {}), ...commissionedWith(action) };
 }
@@ -496,13 +497,13 @@ function reopenOrSayWhy(
   studio: Studio,
   ctx: HarnessCtx,
   action: QueueAction,
-  night: AfterNight,
+  loopRun: AfterLoopRun,
   ask: ReopenAsk & { models: ReopenModels | null },
 ): Promise<void> {
   const { threadId } = action;
   const start = (run: RunSpec & AnyRecord, reopen: RunReopen): Promise<void> =>
     handleRunStart(studio, { type: "run_start", threadId, run, resume: true, reopen }, { keepStop: true });
-  return reopenAfterReply(studio, ctx, night, { ...ask, words: String(action.text ?? "") }, start);
+  return reopenAfterReply(studio, ctx, loopRun, { ...ask, words: String(action.text ?? "") }, start);
 }
 
 /**
@@ -532,7 +533,7 @@ function chatTurnOptions(
   action: QueueAction,
   turnId: string,
   steer: SteerHandle | undefined,
-  after: AfterNight | null,
+  after: AfterLoopRun | null,
 ): TurnOptions {
   return {
     text: action.text,
@@ -552,17 +553,17 @@ function chatTurnOptions(
     ...(action.loop ? { loop: action.loop } : {}),
     ...(action.autopilot ? { autopilot: action.autopilot } : {}),
     ...(steer ? { steer } : {}),
-    ...(after ? afterNightOptions(after) : {}),
+    ...(after ? afterLoopRunOptions(after) : {}),
   };
 }
 
 /**
- * The chat's own session after its night: the night it answers after, on the lead's engine — also
+ * The chat's own session after its run: the run it answers after, on the lead's engine — also
  * for a message that names none — and on the model it led on when the message names none: the same
  * session on the same model, which a Resume's lead continues.
  */
-function afterNightOptions(after: AfterNight): Partial<TurnOptions> {
-  return { afterNight: after, engine: after.engine, ...(after.model ? { model: after.model } : {}) };
+function afterLoopRunOptions(after: AfterLoopRun): Partial<TurnOptions> {
+  return { afterLoopRun: after, engine: after.engine, ...(after.model ? { model: after.model } : {}) };
 }
 
 /**
@@ -619,7 +620,7 @@ function unrestated(messages: readonly QueueAction[], request: string): QueueAct
 /**
  * The ask a coordinator's continued work reopens the build with: its request, plus what the person
  * steered into its turn that it did not restate — a replay's carried messages too, since the
- * reopened night's inbox reads only from this ask on.
+ * reopened run's inbox reads only from this ask on.
  */
 function reopenRequest(request: string, steer: SteerHandle | undefined): string {
   const steered = unrestated(steer?.delivered ?? [], request);
@@ -654,7 +655,7 @@ function lastReviewedPlan(events: readonly HarnessEvent[]): unknown {
     ?.plan;
 }
 
-/** Launch the night an interview asked for, or say in the chat why it did not start. */
+/** Launch the run an interview asked for, or say in the chat why it did not start. */
 async function launchOrSayWhy(studio: Studio, ctx: HarnessCtx, action: QueueAction, spec: AnyRecord): Promise<void> {
   const { host } = studio;
   await launchFromIntake(studio, ctx, action, spec).catch(async (err: any) => {
@@ -695,7 +696,7 @@ async function failChatTurn(host: Host, ctx: HarnessCtx, turnId: string, err: an
 }
 
 /**
- * Launch the night an interview commissioned. Throws the sentence the chat is owed when it cannot
+ * Launch the run an interview commissioned. Throws the sentence the chat is owed when it cannot
  * start: no goal, a folder that refuses, or a build already running for this chat or game.
  */
 export async function launchFromIntake(
@@ -715,19 +716,19 @@ export async function launchFromIntake(
       threadId: action.threadId,
     });
   }
-  // What the folder itself refuses (nightRefusal): a page that cannot load, a game that is
+  // What the folder itself refuses (loopRunRefusal): a page that cannot load, a game that is
   // already compiled. Said in chat now, instead of found out at 3am.
   const readiness = await host.call(HostMethod.GameValidate, { project }).catch(() => null);
-  const refusal = nightRefusal(games.find((g) => g.name === project) ?? null, readiness?.problems ?? []);
+  const refusal = loopRunRefusal(games.find((g) => g.name === project) ?? null, readiness?.problems ?? []);
   if (refusal) throw new Error(refusal);
-  const run = intakeRun(spec, action, project, readiness);
-  // A promise the night cannot keep is worse than no promise: a second Overnight for a game
+  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action));
+  // A promise the run cannot keep is worse than no promise: a second Loop for a game
   // that already owns a run is refused below, and the only record of that refusal is an event
   // no chat surface renders. Ask the same question here, before anything is promised — once a
-  // run that has closed there is past its learning pass, which a new night waits out.
+  // run that has closed there is past its learning pass, which a new run waits out.
   const busy = await runUnderWay(studio, action.threadId, project);
   if (busy) throw new Error(MESSAGE.alreadyBuilding(busy.run.project));
-  // Stop while that pass was waited out was for this night too.
+  // Stop while that pass was waited out was for this run too.
   if (ctx.cancelled) throw new Error(MESSAGE.stoppedBeforeLaunch);
   // The board did its job — the run spec carries the frames now; the next interview on this
   // thread starts with a clean slate.
@@ -743,7 +744,7 @@ export async function launchFromIntake(
       ],
     })
     .catch(() => {});
-  // Same thread: the night is this chat's story. handleRunStart holds keep-awake via notify.
+  // Same thread: the run is this chat's story. handleRunStart holds keep-awake via notify.
   // The commission is handled at launch, so restart cannot replay it. Synchronous run
   // reservation keeps later queued messages behind the build until it saves and settles.
   // A Stop since this message is for this build: the start keeps it (`keepStop`).
@@ -762,7 +763,7 @@ function requireGoal(spec: AnyRecord): void {
 }
 
 /**
- * Where the night builds is the chat's answer, never the interviewer's. A thread bound to a
+ * Where the run builds is the chat's answer, never the interviewer's. A thread bound to a
  * folder keeps it; otherwise the loop's own resolved folder rides on the spec (turn-loop
  * stamps it), and only a chat with no folder at all falls back to the tool's slug. The
  * slug once won over the binding and the run built in a second, empty folder — with the
@@ -789,12 +790,40 @@ export function intakeBudgets(spec: AnyRecord): RunSpec["budgets"] {
   };
 }
 
+/**
+ * The user's own messages for this build, as the log has them (scope.ts `userWordsInLog`): since the
+ * thread's previous run, up to the one that launched, never the chat's own reports nor a model's
+ * words. With none in the log, the launching message's own text.
+ */
+async function userWordsSoFar(host: Host, action: QueueAction): Promise<string[]> {
+  const events: HarnessEvent[] = await host
+    .call(HostMethod.EventsList, { threadId: action.threadId })
+    .then((listed) => (Array.isArray(listed) ? listed : []))
+    .catch(() => []);
+  const said = userWordsInLog(events, { through: action.messageId, sinceLastRun: true });
+  return said.length ? said : [String(action.text ?? "")];
+}
+
+/**
+ * What the run is for (loop/scope.ts): the user's words as the log has them, and the in-scope and cut
+ * lists the launch named. None when there are no words to keep.
+ */
+function intakeScope(spec: AnyRecord, asked: readonly string[]): AnyRecord {
+  const scope = createScope({
+    asked,
+    inScope: Array.isArray(spec.inScope) ? spec.inScope : [],
+    cut: Array.isArray(spec.cut) ? spec.cut : [],
+  });
+  return scope.asked.length ? { scope } : {};
+}
+
 /** The run an interview commissioned, as `run_start` takes it. */
 function intakeRun(
   spec: AnyRecord,
   action: QueueAction,
   project: string,
   readiness: { contract?: string; problems?: string[] } | null,
+  asked: readonly string[] = [],
 ): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
@@ -803,7 +832,7 @@ function intakeRun(
     reference: spec.reference,
     budgets: intakeBudgets(spec),
     // What the folder still needs, as `game.validate` found it a moment ago. Not a refusal —
-    // `nightRefusal` above decides those — but the night's own first job: a page that never
+    // `loopRunRefusal` above decides those — but the run's own first job: a page that never
     // loads the studio contract cannot be judged at all, so the run carries the fact and the
     // director installs it before anyone builds (M2.6, loop/director.ts `installContract`).
     ...(readiness
@@ -814,6 +843,7 @@ function intakeRun(
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),
+    ...intakeScope(spec, asked),
     // The run inherits the interview's effort: builders work at exactly the model and effort
     // the user generates with, never a quieter tier than the chat that commissioned them.
     ...commissionedWith(action),
@@ -829,9 +859,9 @@ function commissionedWith(action: QueueAction): { effort?: string; preferences?:
 }
 
 /**
- * The one sentence a night owes the user before they walk away when their game cannot yet be
+ * The one sentence a run owes the user before they walk away when their game cannot yet be
  * judged: the studio has to wire its own connection into the game before it can tell whether
- * anything it changes is an improvement, and that is the first thing tonight does (M2.6). Said
+ * anything it changes is an improvement, and that is the first thing this run does (M2.6). Said
  * here, in the chat, rather than discovered in the morning as "the other build could not be
  * observed" — the words no one outside the harness could read.
  */
@@ -848,7 +878,7 @@ export function launchPromise(
 ): string {
   const when = budgets.untilSatisfied
     ? MESSAGE.untilSatisfiedPromised(dayAndClockAfter(budgets.wallClockMs, now))
-    : MESSAGE.nightPromised(clockAfter(budgets.wallClockMs, now));
+    : MESSAGE.buildPromised(clockAfter(budgets.wallClockMs, now));
   return when + MESSAGE.planWindow + judgeableFirst(readiness);
 }
 

@@ -1,6 +1,6 @@
 /**
  * Home's Suggest prompt: one game idea at a time, put in the composer for someone who does not
- * know where to start. Each is one sentence a person might type, small enough to build tonight.
+ * know where to start. Each is one sentence a person might type, small enough to build in one run.
  */
 
 /** The ideas Suggest prompt draws from. */

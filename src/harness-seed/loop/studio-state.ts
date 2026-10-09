@@ -41,7 +41,7 @@ export interface ActiveRun {
   stopped?: boolean;
 }
 
-/** A finished build reopened: the reopened night hears what was said after `after` (reopen-run.ts). */
+/** A finished build reopened: the reopened run hears what was said after `after` (reopen-run.ts). */
 export interface RunReopen {
   after: string | null;
 }

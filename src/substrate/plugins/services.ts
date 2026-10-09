@@ -1,7 +1,16 @@
 import { deliverAssetFiles } from "../genex-delivery.ts";
 import path from "node:path";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { PluginService, type PluginBinding } from "../../shared/plugins.ts";
+import {
+  PLUGIN_STILL_DEFAULT_BYTES,
+  PLUGIN_STILL_MAX_BYTES,
+  PLUGIN_STILL_MIN_BYTES,
+  PLUGIN_STILL_VIEW_NAME,
+  PluginService,
+  type PluginBinding,
+  type PluginStillOrder,
+} from "../../shared/plugins.ts";
+import { VIEWPORT_MAX, VIEWPORT_MIN } from "../preview-pool.ts";
 import type { ExportResult } from "../game-export.ts";
 import type { GenexGameManifest } from "../../shared/genex.ts";
 import { readGenexGameManifest } from "../genex-game-manifest.ts";
@@ -40,8 +49,23 @@ const MESSAGE = {
   PathEscapes: "Path escapes project",
   SymlinkOutput: "Symlink output refused",
   InvalidJobReference: "Invalid job reference",
+  InvalidObservation: "Invalid observation: give { project, root, files }",
+  InvalidStill: (why: string) => `Invalid still: ${why}`,
   Unknown: "Unknown plugin service",
 } as const;
+
+/** Why a still request is refused, in the words of {@link MESSAGE.InvalidStill}. */
+const STILL_REFUSAL = {
+  NotObject: "it must be an object",
+  UnknownKey: (key: string) => `unknown key ${JSON.stringify(key)}`,
+  OneView: "name exactly one of demo or camera",
+  ViewName: "a view name is 1–64 letters, digits, ':', '_' or '-', starting with a letter or digit",
+  Side: (side: string, min: number, max: number) => `${side} must be a whole number from ${min} to ${max}`,
+  Bytes: `maxBytes must be a whole number from ${PLUGIN_STILL_MIN_BYTES} to ${PLUGIN_STILL_MAX_BYTES}`,
+  Files: "a still observes no files: send files: []",
+} as const;
+/** The keys a still request may carry. */
+const STILL_KEYS = new Set(["demo", "camera", "width", "height", "maxBytes"]);
 
 /** One service call: the plugin, its storage root, the backend's untyped arguments and the bound game. */
 interface ServiceCall {
@@ -57,6 +81,42 @@ const isProtectedProjectPath = (relative: string) =>
   relative.split("/").some((part) => part.startsWith(".") || PROTECTED_SEGMENTS.includes(part));
 
 const isMissing = (error: NodeJS.ErrnoException) => error.code === "ENOENT";
+
+const isWholeWithin = (value: unknown, min: number, max: number): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+
+/** The one view a still names, as `{demo}` or `{camera}`; refused unless exactly one is a valid name. */
+function stillView(still: Record<string, unknown>): { demo: string } | { camera: string } {
+  const demo = still.demo;
+  const camera = still.camera;
+  if ((demo === undefined) === (camera === undefined)) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.OneView));
+  const name = demo ?? camera;
+  if (typeof name !== "string" || !PLUGIN_STILL_VIEW_NAME.test(name))
+    throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.ViewName));
+  return demo === undefined ? { camera: name } : { demo: name };
+}
+
+/**
+ * A plugin's still request, checked field by field and rebuilt from its known keys, so nothing
+ * unchecked reaches the host: one view by a plain name, whole-pixel sides a pooled window can take,
+ * and a byte limit (defaulted) within the host's bounds. Throws before anything else runs.
+ */
+export function stillOrder(raw: unknown): PluginStillOrder {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.NotObject));
+  const still = raw as Record<string, unknown>;
+  const unknown = Object.keys(still).find((key) => !STILL_KEYS.has(key));
+  if (unknown !== undefined) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.UnknownKey(unknown)));
+  const view = stillView(still);
+  if (!isWholeWithin(still.width, VIEWPORT_MIN.width, VIEWPORT_MAX.width))
+    throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Side("width", VIEWPORT_MIN.width, VIEWPORT_MAX.width)));
+  if (!isWholeWithin(still.height, VIEWPORT_MIN.height, VIEWPORT_MAX.height))
+    throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Side("height", VIEWPORT_MIN.height, VIEWPORT_MAX.height)));
+  const maxBytes = still.maxBytes === undefined ? PLUGIN_STILL_DEFAULT_BYTES : still.maxBytes;
+  if (!isWholeWithin(maxBytes, PLUGIN_STILL_MIN_BYTES, PLUGIN_STILL_MAX_BYTES))
+    throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Bytes));
+  return { ...view, width: still.width, height: still.height, maxBytes };
+}
 
 function requireBinding(binding: PluginBinding | undefined): PluginBinding {
   if (!binding) throw new Error(MESSAGE.ProjectRequired);
@@ -133,11 +193,12 @@ async function jobReferenceFile({ root, args }: ServiceCall): Promise<string> {
 export class PluginServices {
   readonly dataRoot: string;
   readonly adoptedRoots: Record<string, string>;
-  readonly observe: (binding: PluginBinding, files: string[]) => Promise<unknown>;
+  /** The host's look at the bound game: its loaded files, or (with `still`) one named view. */
+  readonly observe: (binding: PluginBinding, files: string[], still?: PluginStillOrder) => Promise<unknown>;
   constructor(
     dataRoot: string,
     adoptedRoots: Record<string, string>,
-    observe: (binding: PluginBinding, files: string[]) => Promise<unknown>,
+    observe: (binding: PluginBinding, files: string[], still?: PluginStillOrder) => Promise<unknown>,
   ) {
     this.dataRoot = dataRoot;
     this.adoptedRoots = adoptedRoots;
@@ -241,17 +302,25 @@ export class PluginServices {
     const genex = await readGenexGameManifest(bound.directory);
     return genex ? { ...result, genex } : result;
   }
+  /**
+   * `observe`: every argument is checked before the host looks: the bound game's own project and
+   * root, a bounded list of files that exist inside it, and a still request (if any) with no files.
+   */
   async #observeFiles({ args, binding }: ServiceCall): Promise<unknown> {
+    if (args === null || typeof args !== "object" || typeof args.root !== "string")
+      throw new Error(MESSAGE.InvalidObservation);
     const inWorktree =
       binding && args.project === binding.project && path.resolve(args.root) === path.resolve(binding.directory);
     if (!binding || !inWorktree) throw new Error(MESSAGE.OutsideWorktree);
     if (!Array.isArray(args.files) || args.files.length > MAX_OBSERVED_FILES) throw new Error(MESSAGE.InvalidAssetList);
+    const still = args.still === undefined ? undefined : stillOrder(args.still);
+    if (still && args.files.length) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Files));
     for (const file of args.files)
       await containedReal(binding.directory, file).catch((e: NodeJS.ErrnoException) => {
         if (isMissing(e)) throw new Error(MESSAGE.NotInWorkspace(file));
         throw e;
       });
-    return this.observe(binding, args.files);
+    return this.observe(binding, args.files, still);
   }
 }
 

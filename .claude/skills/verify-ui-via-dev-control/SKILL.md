@@ -12,6 +12,8 @@ description: Verify renderer, IPC, preview or startup changes through owned stud
   That request authorizes the live launch; do not ask again. The window is visible and focusable.
   Isolated app data does not isolate provider accounts, Keychain, quotas or compute. Do not copy
   or inspect credentials, and do not perform paid generations merely to check startup.
+  The launch drops your agent session's own variables (`envStripped` in the start JSON) and
+  warns when the games root sits under a `.claude` folder (`warnings`).
 - A new user's first launch (no Claude Code, Codex or sign-in): add `--fresh-machine` to that live
   start; `shell --profile <name>` is that account's terminal.
 - Human review explicitly using fixture data: set `STUDIO_FIXTURE_INTERACTIVE=1` on start/restart.
@@ -65,6 +67,14 @@ Templates (one per request; `--request FILE` also works):
 {"method":"game.input","params":{"actions":[{"type":"tap","keys":["ArrowRight"]},{"type":"wait","ms":300}]}}
 {"method":"game.state","params":{}}
 ```
+
+Hooks for the controls an unattended operator presses: `[data-run-resume="<runId>"]` (Resume on
+the result card and on the chat's paused line), `[data-onboarding-action="next|skip|start"]` (the
+welcome). `key` sends Arrow keys (all four), PageUp/PageDown, Home/End with real key codes, so
+sliders and segment groups move as they do under a keyboard. `runs --profile P` lists each open
+run and the open chat's newest (state, phase, clock, last record, stop reason, `resumable`); it
+reads the profile's records, asks the window which chat is open, and answers on a stale build
+or with the harness down.
 
 ## Evidence
 

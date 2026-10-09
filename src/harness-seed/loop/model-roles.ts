@@ -38,6 +38,8 @@ export const EngineId = {
   Codex: "codex",
   Bonsai: "bonsai",
   Ollama: "ollama",
+  OpenCode: "opencode",
+  OpenRouter: "openrouter",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -53,8 +55,38 @@ export function supportsSessions(
 ): boolean {
   return descriptor?.supportsSessions ?? descriptor?.kind === "delegated";
 }
+/** Session engines that are not delegated presets: they hold a session and can cross roles too. */
+const SESSION_ENGINES: readonly string[] = [EngineId.Bonsai, EngineId.OpenCode, EngineId.OpenRouter];
+
+/** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */
 export function hasSessionRoles(engine: string | null | undefined): boolean {
-  return isDelegated(engine) || engine === EngineId.Bonsai;
+  return isDelegated(engine) || SESSION_ENGINES.includes(engine as string);
+}
+
+/**
+ * This copy crosses a game run's jobs to and from a completion-only local engine (`crossesTo`).
+ * main.ts claims the local-roles capability only when it does (local-roles-served.ts): a kept
+ * older copy drops such a cross but keeps the slot's model on the run's own engine.
+ */
+export const SERVES_LOCAL_ROLES = true;
+
+/** The completion-only local engines whose jobs run on their own models in the classic loop. */
+const COMPLETION_ROLE_ENGINES = new Set<string>([EngineId.Ollama]);
+
+/** Can this engine take a job of a game run: a session engine, or a completion-only local one. */
+export function takesRoles(engine: string | null | undefined): boolean {
+  return hasSessionRoles(engine) || (engine != null && COMPLETION_ROLE_ENGINES.has(engine));
+}
+
+/**
+ * May a run on `engine` send this job to `other`? Never the orchestrator, never to its own engine,
+ * and both must take roles. Workers go only to a session engine, since the director hires every
+ * worker as a session; reviewers ask `engine.complete`, so any engine that takes roles serves.
+ */
+export function crossesTo(engine: string | null | undefined, key: string, other: string | null | undefined): boolean {
+  if (!CROSSABLE.has(key) || !other || other === engine) return false;
+  if (!takesRoles(engine) || !takesRoles(other)) return false;
+  return key === RoleKey.Judge || hasSessionRoles(other);
 }
 
 export const FABLE = "claude-fable-5-1";
@@ -73,7 +105,7 @@ export const CLAUDE_CODE_MODELS: ModelRow[] = [];
  */
 export const CODEX_MODELS: ModelRow[] = [];
 
-/** Every subscription engine the studio can run a night on, and the models each offers. */
+/** Every subscription engine the studio can run a run on, and the models each offers. */
 export const ENGINE_MODELS: Record<string, ModelRow[]> = {
   [EngineId.ClaudeCode]: CLAUDE_CODE_MODELS,
   [EngineId.Codex]: CODEX_MODELS,
@@ -122,7 +154,7 @@ export function resolveRoles(
   return { planner: picked, builder: picked, judge: picked };
 }
 
-/** The jobs the composer may send to the other subscription. Never the orchestrator. */
+/** The jobs the composer may send to another engine. Never the orchestrator. */
 const CROSSABLE = new Set<string>([RoleKey.Builder, RoleKey.Judge]);
 
 /**
@@ -130,11 +162,11 @@ const CROSSABLE = new Set<string>([RoleKey.Builder, RoleKey.Judge]);
  * default), unknown keys dropped. Null when nothing usable was given, so callers fall back to
  * the preset table.
  *
- * `roles.engines` may put the workers or the judges on the other subscription. It is kept only
- * where it means something: a session engine other than the run's own, on a run whose own
- * engine supports session roles too. Completion-only local engines cannot cross. The record carries
- * `engines` with just those slots — and none at all when nothing is crossed, so a
- * single-subscription record reads byte for byte as it always did.
+ * `roles.engines` may put the workers or the judges on another engine. It is kept only where it
+ * means something: an engine other than the run's own that the run may send that job to
+ * (`crossesTo`) — workers only to a session engine, reviewers to a completion-only local engine
+ * too. The record carries `engines` with just those slots — and none at all when nothing is
+ * crossed, so a single-subscription record reads byte for byte as it always did.
  */
 export function normalizeRoles(engine: string, input: unknown): RunRoles | null {
   if (!input || typeof input !== "object") return null;
@@ -173,12 +205,10 @@ function slotModel(raw: unknown, crossed: boolean): { given: boolean; model?: st
   return { given: true, model: id && id !== "default" ? id : undefined };
 }
 
-/** The other session engine a slot was sent to, or "" when it stays on the run's own. */
+/** The other engine a slot was sent to, or "" when it stays on the run's own. */
 function crossedEngine(engine: string, key: string, given: AnyRecord): string {
-  const canCross = CROSSABLE.has(key) && hasSessionRoles(engine) && typeof given[key] === "string";
-  const other = canCross ? given[key].trim() : "";
-  const crosses = other !== "" && other !== engine && hasSessionRoles(other);
-  return crosses ? other : "";
+  const other = typeof given[key] === "string" ? given[key].trim() : "";
+  return crossesTo(engine, key, other) ? other : "";
 }
 
 /** The efforts the composer named, one per role, and nothing else it sent. */
@@ -238,7 +268,7 @@ export function withRoles<T extends RoleRun>(run: T): T & RoleRun & { roles: Run
   const next: RoleRun = { ...run, roles, rolesApplied: true };
   if (roles.builder === undefined) delete next.model;
   else next.model = roles.builder;
-  // The workers' engine is written only when it is not the run's own, so a night on one
+  // The workers' engine is written only when it is not the run's own, so a run on one
   // subscription carries nothing new; every build site reads `roleEngine(run, RoleKey.Builder)`.
   const builderEngine = engineOfRole(engine, roles, RoleKey.Builder);
   if (builderEngine !== engine) next.builderEngine = builderEngine;
@@ -272,7 +302,7 @@ export function roleEngine(run: RoleRun | null | undefined, key: string): string
 /**
  * A model id that is valid on `engine`, or undefined for that engine's own default. The
  * builders' pick where the builders run there, else the orchestrator's, else the judges'.
- * Before two subscriptions could share a night every job's model was valid everywhere; now a
+ * Before two subscriptions could share a run every job's model was valid everywhere; now a
  * Codex slug handed to the Claude CLI is a session that never starts, so a site that speaks to
  * an engine other than the one its model was picked on asks here.
  */
@@ -296,9 +326,9 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 }
 
 /**
- * How a Codex session spells a studio tool. Claude Code receives the studio's tools as MCP
- * tools and calls them by name; Codex has no tool channel of its own, so the studio ships a
- * bridge and the session runs it as a shell command. The two spellings are the ONLY thing in
+ * How a Codex or OpenCode session spells a studio tool. Claude Code receives the studio's tools as
+ * MCP tools and calls them by name; Codex and OpenCode have no tool channel of the studio's, so the
+ * studio ships a bridge and the session runs it as a shell command. The two spellings are the ONLY thing in
  * the whole harness that branches on the engine, and every prompt that mentions a tool renders
  * it through `toolCall` — a Claude session that reads a bridge command tries to run it, and a
  * Codex session that reads an `mcp__` name asks for a tool it does not have.
@@ -309,11 +339,14 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
  */
 export const BRIDGE_TOOL_CMD = "node .studio/bridge/tool.mjs";
 
+/** The engines whose sessions reach the studio's tools through the bridge command. */
+const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode];
+
 /** One studio tool, spelled the way this engine's session must write it. */
 export function toolCall(engine: string | null | undefined, name: unknown): string {
   const tool = String(name ?? "");
   if (engine === EngineId.ClaudeCode) return `mcp__studio__${tool}`;
-  if (engine === EngineId.Codex) return `${BRIDGE_TOOL_CMD} ${tool}`;
+  if (BRIDGE_ENGINES.includes(engine as string)) return `${BRIDGE_TOOL_CMD} ${tool}`;
   // A local engine drives its tools through the studio's own tool loop, where a tool is its
   // bare name and neither spelling exists.
   return tool;
@@ -322,7 +355,7 @@ export function toolCall(engine: string | null | undefined, name: unknown): stri
 /** The clause at the head of a TOOLS block: how this engine calls the tools listed under it. */
 export function toolSyntax(engine: string | null | undefined): string {
   if (engine === EngineId.ClaudeCode) return "call each one by its name, mcp__studio__<name>";
-  if (engine === EngineId.Codex) return `run each one as \`${BRIDGE_TOOL_CMD} <name> --field=value\``;
+  if (BRIDGE_ENGINES.includes(engine as string)) return `run each one as \`${BRIDGE_TOOL_CMD} <name> --field=value\``;
   return "call each one by its name";
 }
 

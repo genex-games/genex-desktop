@@ -273,7 +273,7 @@ const respond = (request) => {
     return { text: "Done with this facet iteration." };
   }
 
-  // Loop-on intake: commission the night instead of chatting.
+  // Loop-on intake: commission the run instead of chatting.
   if (text.includes("Loop is ON") && !commissioned) {
     commissioned = true;
     return {
@@ -288,7 +288,7 @@ const respond = (request) => {
           },
         },
       ],
-      text: "Commissioning the night.",
+      text: "Commissioning the run.",
     };
   }
 

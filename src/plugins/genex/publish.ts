@@ -121,16 +121,13 @@ const CLI_ARGS_FOR_PHASE: Partial<Record<GenexPublishPhase, string[]>> = {
 };
 
 /**
- * The CLI arguments that carry out an upload phase. Listing names the game; a game listed before
- * under another name (or none Studio sent) also has its cover redrawn, since Genex paints the name on it.
+ * The CLI arguments that carry out an upload phase. Listing names the game. Its cover is a real
+ * frame of the game with no name in it (`cover.ts`), so a new name never asks for a new picture.
  */
-export function publishArgs(
-  phase: GenexPublishPhase,
-  listing: { title?: string; redrawCover?: boolean } = {},
-): string[] {
+export function publishArgs(phase: GenexPublishPhase, listing: { title?: string } = {}): string[] {
   const args = [...(CLI_ARGS_FOR_PHASE[phase] ?? [])];
   if (phase !== GenexPublishPhase.Listing || !listing.title) return args;
-  return [...args, "--title", listing.title, ...(listing.redrawCover ? ["--regenerate-cover"] : [])];
+  return [...args, "--title", listing.title];
 }
 
 /**

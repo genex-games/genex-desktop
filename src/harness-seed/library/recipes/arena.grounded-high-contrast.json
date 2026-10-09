@@ -4,6 +4,7 @@
   "tags": ["grade", "contrast", "eye", "spawn", "luma", "lit", "black", "arena", "exposure", "wide", "camera"],
   "checkClass": "arena",
   "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
   "pack": "arena",
   "note": "The eye-height frame at spawn sits in a grounded, contrasty band — measured where the player looks, not on a wide default camera.",
   "intent": "A mid-key band satisfied on a wide default camera while every eye-height frame was washed out: the wide shot averages sky and ground, the player's view does not. Grade against eye:spawn — mean luma low, well under half the pixels lit, and a real black floor with at least a tenth of the frame near black. Get there with lighting rather than exposure: fewer, brighter, more directional sources; unlit surfaces genuinely dark; ambient low. Then check the wide camera, not the other way round.",

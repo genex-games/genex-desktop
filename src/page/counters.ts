@@ -5,7 +5,7 @@
  * uses something three does not count for itself: a post-processing composer draws its passes
  * through a renderer that resets between them, and the WebGPU path records draws into a render
  * bundle once and replays it every frame, so `info` reports the recording and not the replay.
- * A night that measured only `info` reported a blank optimization stage for exactly those two
+ * A run that measured only `info` reported a blank optimization stage for exactly those two
  * shapes, which are the two shapes a good-looking game is most likely to have.
  *
  * So the counting moves one layer down, to the calls the browser itself receives: the WebGL

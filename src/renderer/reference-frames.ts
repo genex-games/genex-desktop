@@ -1,5 +1,6 @@
 import { EngineKind, EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { isMetered } from "../shared/providers.ts";
 /** Run-start intake of the quality bar's actual pixels. */
 
 export const MIN_REFERENCE_FRAMES = 2;
@@ -94,6 +95,10 @@ function readAsBase64(file: File): Promise<string> {
   });
 }
 
+/** A ready direct engine the app may pick on its own: never a metered one (OpenRouter). */
+const isUnmeteredReadyDirect = (engine: { id: string; kind: string; status: { code: string } }): boolean =>
+  engine.kind === EngineKind.Direct && engine.status.code === EngineStatusCode.Ready && !isMetered(engine.id);
+
 /**
  * The critic is the same engine the user picked to build. Local stays local (a vision
  * install on that engine, when there is one). Claude Code stays Claude Code — a fresh
@@ -110,8 +115,7 @@ export function pickJudge(
   builderModel?: string,
 ): { judgeEngine?: string; judgeModel?: string } {
   const builder =
-    engines.find((engine) => engine.id === builderEngine) ??
-    engines.find((engine) => engine.kind === EngineKind.Direct && engine.status.code === EngineStatusCode.Ready);
+    engines.find((engine) => engine.id === builderEngine) ?? engines.find((engine) => isUnmeteredReadyDirect(engine));
   const judgeEngine = builder?.id ?? builderEngine;
   if (!judgeEngine) return {};
   if (builder?.kind === EngineKind.Delegated) {

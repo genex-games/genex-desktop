@@ -268,6 +268,67 @@ export interface PluginExportResult {
   };
 }
 
+/**
+ * API 3: which view a still photographs, exactly one of a demo (a `config.demos` key, run to its
+ * end state) or a camera (a `config.cameras` key or a built-in `eye:*`). A name is 1 to 64 letters,
+ * digits, `:`, `_` or `-`, starting with a letter or digit.
+ */
+export type PluginStillView = { demo: string; camera?: undefined } | { camera: string; demo?: undefined };
+/**
+ * API 3: `observe` with a `still` photographs one view of the bound game on a hidden window of its
+ * own at `width`×`height` (whole pixels, 320–1920 by 240–1200), encoded as PNG, or as the
+ * best JPEG (quality 95, 90, then 85) that fits `maxBytes` (64 KiB to 16 MiB, default 8 MiB).
+ * The image is never larger than asked; a game that draws smaller is not scaled up. A host older
+ * than this option ignores `still` and answers an ordinary observation ({@link PluginStillIgnored}),
+ * so check the answer for `still`, then `stillProblem`, and handle neither.
+ */
+export type PluginStillRequest = PluginStillView & { width: number; height: number; maxBytes?: number };
+/**
+ * Why no still was taken. `unavailable`: the host has no hidden window (a still never borrows the
+ * person's own) or could not open or size one; `view_unknown` comes with `available`.
+ */
+export type PluginStillProblemCode =
+  | "unavailable"
+  | "load_failed"
+  | "view_unknown"
+  | "view_failed"
+  | "capture_failed"
+  | "too_large"
+  | "timeout";
+/** The still's exposure on a small downscale, each 0–1: Rec.709 luma of the sRGB bytes. */
+export interface PluginStillExposure {
+  lumaMean: number;
+  lumaStdDev: number;
+  /** The share of samples whose luma is below 0.10. */
+  nearBlackFraction: number;
+  /** The share of samples above the preview's unlit threshold (8 of 255). */
+  litFraction: number;
+}
+export interface PluginStill {
+  image: Uint8Array;
+  mimeType: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
+  /** `page` is the page's own read of its canvas; `compositor` is the window's frame. */
+  source: "page" | "compositor";
+  view: PluginStillView;
+  stats: PluginStillExposure;
+  /** JPEG, at most 1280 px on its long side: for showing, never for sending on. */
+  preview: Uint8Array;
+}
+export interface PluginStillProblem {
+  code: PluginStillProblemCode;
+  reason?: string;
+  /** With `view_unknown`: the demo or camera names the game has, at most 32. */
+  available?: string[];
+}
+export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
+/**
+ * What an API-3 host older than stills answers instead: it ignores `still` and returns an ordinary
+ * observation, with neither `still` nor `stillProblem`. Check for each before reading it.
+ */
+export type PluginStillIgnored = { still?: undefined; stillProblem?: undefined; [key: string]: unknown };
+
 /** Sanitized progress for Studio. `kind: 'toolbar'` updates a toolbar item's badge. */
 export interface PluginEvent {
   kind?: string;
@@ -308,6 +369,14 @@ export interface PluginHostCall {
   (method: "jobs.read", args: { id: string }): Promise<unknown>;
   (method: "jobs.write", args: { id: string; value: unknown }): Promise<true>;
   (method: "events.emit", args: PluginEvent): Promise<true>;
+  /**
+   * API 3: one named view of the bound game as a still; see {@link PluginStillRequest}. A host
+   * older than the option answers an ordinary observation ({@link PluginStillIgnored}).
+   */
+  (
+    method: "observe",
+    args: { project: string; root: string; files: []; still: PluginStillRequest },
+  ): Promise<PluginStillAnswer | PluginStillIgnored>;
   (method: "observe", args: { project: string; root: string; files: string[] }): Promise<unknown>;
   /** Current plugin's explicitly unlocked memory lease; null never triggers OS access. */
   (method: "credentials.session"): Promise<string | null>;

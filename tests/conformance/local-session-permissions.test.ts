@@ -13,14 +13,16 @@ import { BONSAI_MODELS } from "../../src/substrate/bonsai/manifest.ts";
 import { LocalSessions } from "../../src/substrate/engines/local-session.ts";
 import { deniedWithWords, LOCAL_NOTE, modeChangedNote } from "../../src/substrate/engines/local-session-prompts.ts";
 import type { PermissionMode } from "../../src/shared/permissions.ts";
-import type {
-  CompleteRequest,
-  CompleteResponse,
-  DelegatePermissions,
-  DelegateRequest,
-  PermissionAsk,
-  PermissionControl,
-  PermissionReply,
+import {
+  type CompleteRequest,
+  type CompleteResponse,
+  type DelegateEvent,
+  DelegateEventType,
+  type DelegatePermissions,
+  type DelegateRequest,
+  type PermissionAsk,
+  type PermissionControl,
+  type PermissionReply,
 } from "../../src/substrate/engines/types.ts";
 
 const model = BONSAI_MODELS[0].id;
@@ -57,6 +59,7 @@ describe("a Bonsai chat session in the chat's mode", () => {
     steps: Step[],
     replies: PermissionReply[] = [],
     onRound: (round: number, control: PermissionControl | null) => void = () => {},
+    engine?: "openrouter",
   ) {
     cwd = await mkdtemp(path.join(root, "game-"));
     await mkdir(cwd, { recursive: true });
@@ -65,7 +68,9 @@ describe("a Bonsai chat session in the chat's mode", () => {
     const requests: CompleteRequest[] = [];
     const controls: Array<PermissionControl | null> = [];
     let round = 0;
+    const events: DelegateEvent[] = [];
     const sessions = new LocalSessions({
+      ...(engine ? { engine } : {}),
       root: path.join(root, "sessions"),
       scratchRoot: path.join(root, "scratch"),
       protectedPaths: [path.join(root, "sessions")],
@@ -97,9 +102,14 @@ describe("a Bonsai chat session in the chat's mode", () => {
               controls.push(control);
             },
           };
-    const request: DelegateRequest = { cwd, prompt: "Make it jump", ...(permissions ? { permissions } : {}) };
+    const request: DelegateRequest = {
+      cwd,
+      prompt: "Make it jump",
+      onEvent: (event) => events.push(event),
+      ...(permissions ? { permissions } : {}),
+    };
     const result = await sessions.run(request, model);
-    return { result, asked, answers, requests, controls };
+    return { result, asked, answers, requests, controls, events };
   }
 
   const exists = (file: string) =>
@@ -129,6 +139,21 @@ describe("a Bonsai chat session in the chat's mode", () => {
     assert.equal(run.answers[0], deniedWithWords("Not yet"));
     assert.equal(await exists("jump.js"), false, "the denied write did not happen");
     assert.equal(await exists("ran.txt"), true, "the allowed command ran");
+  });
+
+  it("asks, reports and accounts in the name of the engine whose session it is", async () => {
+    const run = await session("default", [WRITE], [{ decision: "deny" }], () => {}, "openrouter");
+    assert.deepEqual(
+      run.asked.map((ask) => ask.title),
+      ["OpenRouter wants to write jump.js"],
+    );
+    assert.equal(run.result.engine, "openrouter");
+    const engines = new Set(
+      run.events.flatMap((event) =>
+        event.type === DelegateEventType.Activity ? [(event.payload as { engine: string }).engine] : [],
+      ),
+    );
+    assert.deepEqual([...engines], ["openrouter"], "no activity reads as Bonsai's");
   });
 
   it("asks only before commands in Accept edits", async () => {

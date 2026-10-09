@@ -24,7 +24,7 @@ export type RunControlAction = (typeof RunControlAction)[keyof typeof RunControl
 
 /**
  * The coordinator's tools, by name, in menu order: the host's own tools a run's coordinator calls,
- * some of which the chat's own session keeps after a night it led (`RunControl`). The model calls
+ * some of which the chat's own session keeps after a run it led (`RunControl`). The model calls
  * them by these names, and the log records them so: never rename one (the harness's copy of the
  * specs is `loop/run-inbox.ts` `coordinatorTools`).
  */
@@ -135,9 +135,9 @@ export function isCoordinatorTool(name: string): name is CoordinatorTool {
 }
 
 /**
- * The run's controls the chat's own session keeps after a night it led (`runControls`), answered
+ * The run's controls the chat's own session keeps after a run it led (`runControls`), answered
  * live by the host: some of the coordinator's tools, by their names there. Its `resume_run` is not
- * one: the harness bridges it in and does it once the reply ends, since the resumed night's lead is
+ * one: the harness bridges it in and does it once the reply ends, since the resumed run's lead is
  * that same session.
  */
 export const RunControl = {
@@ -229,7 +229,7 @@ function coordinatorRunStep(
 
 /**
  * Has the run's current session been asked to wrap up? Only a `finish` after the run's latest
- * `run_registered` counts: a resume registers the run again, and a resumed night that inherited
+ * `run_registered` counts: a resume registers the run again, and a resumed run that inherited
  * an earlier session's ask would skip every builder. The harness's inbox reads it the same way.
  */
 export function finishRequested(events: readonly LogRecord[], runId: string): boolean {
@@ -248,7 +248,7 @@ const PROGRESS = /facet_|autopilot_|integration_|director_|optimization_updated|
 /**
  * Events that look like progress and are not: a wake of the lead is the lead being told, not the
  * run moving, and with up to thirty an hour they pushed the workers' own events off the list; so
- * did a steer's hand-over, two for every chat message a night's lead takes (live chat). The
+ * did a steer's hand-over, two for every chat message a run's lead takes (live chat). The
  * seed's copy is loop/run-inbox.ts `NOT_PROGRESS`.
  */
 const NOT_PROGRESS: ReadonlySet<string> = new Set([CustomEvent.DirectorContinued, CustomEvent.RunSteeringDelivered]);

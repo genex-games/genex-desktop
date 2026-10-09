@@ -56,7 +56,7 @@ export const VerdictRule = {
 } as const;
 export type VerdictRule = (typeof VerdictRule)[keyof typeof VerdictRule];
 
-/** The rules of a build judged with nothing before it: a night from an empty game, or a start nobody could photograph. */
+/** The rules of a build judged with nothing before it: a run from an empty game, or a start nobody could photograph. */
 const NOTHING_TO_COMPARE: ReadonlySet<string> = new Set([VerdictRule.FirstBuild, VerdictRule.NoStart]);
 
 /** Whether a verdict's build had nothing to be compared with, so it was judged on its own. */
@@ -134,6 +134,28 @@ export const ExecutionStatus = {
 export type ExecutionStatus = (typeof ExecutionStatus)[keyof typeof ExecutionStatus];
 
 /**
+ * Where a run's journal stands (`journal.phase`); a Resume reads it back. The harness writes these
+ * (its copy is `JournalPhase` in `loop/run-events.ts`): never rename a value.
+ */
+export const JournalPhase = {
+  /** The classic pipeline's one-part run. */
+  Single: "single",
+  /** A director run: the lead's own session. */
+  Director: "director",
+  Base: "base",
+  Facets: "facets",
+  Integrate: "integrate",
+  Ledger: "ledger",
+  IntegrationFacet: "integration-facet",
+  Verdict: "verdict",
+  Optimization: "optimization",
+  /** Stopped before it finished: a resume picks it up. */
+  Paused: "paused",
+  Done: "done",
+} as const;
+export type JournalPhase = (typeof JournalPhase)[keyof typeof JournalPhase];
+
+/**
  * What a run's budgets say ends it (`budgets.completionPolicy`): the judge's satisfaction, or its
  * time. The harness writes these (its copy is `CompletionPolicy` in `loop/completion-policy.ts`):
  * never rename a value.
@@ -154,7 +176,7 @@ export function isCompletionPolicy(value: unknown): value is CompletionPolicy {
 /**
  * How long a run has worked since its working time began: the stretches it ran, never a pause or
  * the hours the app was closed under it. The harness counts its budget the same way (its journal's
- * `nightClock`), so a resumed build goes on from the time it worked, not from its first start.
+ * `loopRunClock`), so a resumed build goes on from the time it worked, not from its first start.
  */
 export interface RunWorked {
   /** The working time of its closed stretches, in ms. */

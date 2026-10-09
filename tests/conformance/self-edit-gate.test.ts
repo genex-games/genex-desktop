@@ -67,7 +67,7 @@ describe("the self-edit gate", () => {
       'import type { Host } from "../types/harness.d.ts";',
       'import { HostMethod } from "./host-methods.ts";',
       'export { judgeableFirst } from "./chat-dispatch.ts";',
-      'export { nightRefusal } from "./run-dispatch.ts";',
+      'export { loopRunRefusal } from "./run-dispatch.ts";',
       "export async function createStudio(host: Host) {",
       "  await host.call(HostMethod.EngineAbort, {}).catch(() => {});",
       '  await host.call(HostMethod.GameWrite, {project:"pong", file:"intrusion.txt", contents:"forged"}).catch(() => {});',

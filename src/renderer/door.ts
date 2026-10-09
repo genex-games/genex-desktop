@@ -1,8 +1,8 @@
 /**
- * The night's promise: what the hours control says a timed build will do, and when it ends.
+ * The run's promise: what the hours control says a timed build will do, and when it ends.
  *
  * The hours control once offered no cap, so "until the critics are satisfied" was all the user
- * was told about a night that their Claude plan could pause at 1 am. The promise is a wall clock —
+ * was told about a run that their Claude plan could pause at 1 am. The promise is a wall clock —
  * "until about 7:10 AM" is an answer to "when can I look?", "3 h" is not. Pure functions, tested
  * without a window (tests/conformance/door.test.ts). Where a launch lands is no choice any more:
  * every launch opens home (`state/studio.ts`).

@@ -6,6 +6,7 @@ import {
   terminalSize,
   type TerminalEvent,
   type TerminalSession,
+  revealsDock,
 } from "../shared/terminal.ts";
 import { commandOutput, keepTail } from "./terminal-command.ts";
 
@@ -82,6 +83,8 @@ interface Entry {
   resolve: () => void;
   /** A command session's newest output, where its last lines are read from when it ends. */
   tail: string;
+  /** The newest https sign-in page it printed, opened only when the person asks. */
+  link: string | null;
 }
 
 /** Main owns admission and lifecycle. Only the dedicated child loads the native addon. */
@@ -103,7 +106,7 @@ export class TerminalService {
     // A second command would take the first one's place in the chat that offered it.
     if (existing && launch.kind === TerminalKind.Command) throw new Error(MESSAGE.commandRunning);
     if (existing) {
-      this.emit({ type: "session", session: { ...existing.state }, reveal: true });
+      this.emit({ type: "session", session: { ...existing.state }, reveal: revealsDock(launch.kind) });
       return { ...existing.state };
     }
     this.#makeRoom();
@@ -127,6 +130,7 @@ export class TerminalService {
       done,
       resolve,
       tail: "",
+      link: null,
       timer: setTimeout(() => {
         host.kill();
         this.#finish(entry, 1, MESSAGE.couldNotStart);
@@ -141,8 +145,9 @@ export class TerminalService {
       const expected = state.phase === "stopping" || state.phase === "exited";
       this.#finish(entry, code || 1, expected ? undefined : MESSAGE.endedUnexpectedly);
     });
-    // A command a reply offered shows its output in the chat; the dock opens only when asked.
-    this.#state(entry, launch.kind !== TerminalKind.Command);
+    // A command a reply offered shows its output in the chat, a Settings sign-in in Settings; the
+    // dock opens for them only when asked.
+    this.#state(entry, revealsDock(launch.kind));
     return { ...state };
   }
   /** The live session of this kind for this project, if one is open. */
@@ -176,11 +181,20 @@ export class TerminalService {
         this.emit({ type: "data", id: state.id, data: message.data });
         return;
       case HostEventType.Link:
+        this.#linked(entry, message.url);
         launch.onUrl?.(message.url);
         return;
       case HostEventType.Exit:
         this.#finish(entry, message.code, message.error);
     }
+  }
+  /** Keep the newest https page a session printed, and tell the page it has one to open. */
+  #linked(entry: Entry, url: string): void {
+    if (!isHttps(url)) return;
+    entry.link = url;
+    if (entry.state.signInPage) return;
+    entry.state.signInPage = true;
+    this.#state(entry);
   }
   #state(entry: Entry, reveal = false): void {
     this.emit({ type: "session", session: { ...entry.state }, reveal });
@@ -200,6 +214,10 @@ export class TerminalService {
     const entry = this.#entries.get(id);
     if (!entry) throw new Error(MESSAGE.closed);
     return entry;
+  }
+  /** The newest sign-in page this session printed, or null when it printed none. */
+  link(id: string): string | null {
+    return this.#get(id).link;
   }
   attach(id: string): void {
     const entry = this.#get(id);
@@ -265,4 +283,13 @@ function startCommand(launch: TerminalLaunch) {
     env: launch.env,
     kind: launch.kind,
   };
+}
+
+/** Only an https address is a page to open. */
+function isHttps(url: string): boolean {
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
 }

@@ -33,12 +33,9 @@ import { RunEvent } from "./run-events.ts";
 import { createFacetLoopState, resumeSnapshot } from "./facet/state.ts";
 import { RoundFlow } from "./facet/flow.ts";
 import type { FacetLoopOptions, FacetLoopState, FacetRound } from "./facet/state.ts";
-import { lessonsFromNotes } from "./facet/rules.ts";
+import { lessonsPayload, unseenLessons } from "./facet/lessons.ts";
 import { playRound } from "./facet/round.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
-
-/** The most lessons one facet hands to SkillOpt. */
-const MAX_LESSONS = 12;
 
 export type { FacetLoopOptions } from "./facet/state.ts";
 export {
@@ -59,6 +56,14 @@ export {
 } from "./facet/rules.ts";
 export { FACET_POLICY, FACET_POLICY_RANGE, normalizeFacetPolicy, loopStateOf } from "./facet/policy.ts";
 export type { FacetPolicy } from "./facet/policy.ts";
+export {
+  FacetStage,
+  FINISH_POLISH_NOTES,
+  finishDone,
+  movesInStage,
+  polishCountsInStage,
+  stageOf,
+} from "./facet/stage.ts";
 export {
   MAX_PROMPT_LIST,
   MAX_PROMPT_STEERING,
@@ -112,16 +117,12 @@ async function finishFacetLoop(loop: FacetLoopState): Promise<AnyRecord> {
 
 /**
  * Lessons (WP8): what the builder wrote under `## Fixed by looking` and after `HARNESS:` goes to
- * SkillOpt as candidate contract lines for every future brief.
+ * SkillOpt as candidate contract lines for every future brief. Every round already logged its
+ * own (facet/phases/keep.ts); this last flush logs only what no round did.
  */
-async function keepLessons({ appendRun, facet, run, workdir }: FacetLoopState): Promise<void> {
-  if (!workdir) return;
-  const notes = await readFile(path.join(workdir, facetNotes(facet.id)), "utf8").catch(() => "");
-  const learned = lessonsFromNotes(notes);
-  if (learned.length)
-    await appendRun(RunEvent.FacetLessons, {
-      runId: run.runId,
-      facetId: facet.id,
-      lessons: learned.slice(0, MAX_LESSONS),
-    });
+async function keepLessons(loop: FacetLoopState): Promise<void> {
+  if (!loop.workdir) return;
+  const notes = await readFile(path.join(loop.workdir, facetNotes(loop.facet.id)), "utf8").catch(() => "");
+  const learned = unseenLessons(loop, notes);
+  if (learned.length) await loop.appendRun(RunEvent.FacetLessons, lessonsPayload(loop, learned));
 }

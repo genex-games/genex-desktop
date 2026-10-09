@@ -2,7 +2,8 @@
 
 ## What the user sees
 
-The sidebar contains Search, Notifications, New game, Plugins, Harness, Settings, the Games
+The sidebar contains Search, Notifications, Send feedback
+([what it sends](../../PRIVACY.md#send-feedback)), New game, Plugins, Harness, Settings, the Games
 library and, once an update waits, **Relaunch to update** (Linux: **Download**); only games
 scroll. Pinned games come first, then recent activity. Every launch opens **home** (also the wordmark): nothing
 selected, one composer over an optional dithered picture. A game opens its conversation beside
@@ -34,10 +35,10 @@ is missing, commands to copy, Retry.
 - **Settings → Games** moves new games to another empty folder (default `~/AI Games`).
 - **Settings → Privacy**: Share build metrics (off by default), See what would be sent and
   Delete what I shared ([PRIVACY](../../PRIVACY.md)).
-- Home's **Open a folder…** inspects a folder before anything is written; the sheet trusts its
+- Home's **Open a folder…** inspects before anything is written; the sheet trusts its
   Claude settings and hooks unless switched off.
-- A game's menu offers Rename, Pin/Unpin, Change image and Delete. Renaming changes the
-  title, not the folder. Delete removes the library entry, keeping files and history; active
+- A game's menu offers Rename, Pin/Unpin, Change image and Delete. Renaming keeps the
+  folder. Delete removes the library entry, keeping files and history; active
   work blocks it; reopening its folder restores it.
 - The chat header shows the title, Show in Finder, Terminal and ⋯ (Export game…, Rename);
   Harness and unbound drafts have no Export. Search reaches older and unbound chats.

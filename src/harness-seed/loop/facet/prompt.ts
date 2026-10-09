@@ -5,6 +5,15 @@ import { roleEngine, RoleKey, toolCall } from "../model-roles.ts";
 import { facetNotes } from "../repo.ts";
 import { CLIP_QUOTE } from "../text.ts";
 import { DEFAULT_CAMERA } from "../cameras.ts";
+import { FacetStage, moveEscalated, stageOf } from "./stage.ts";
+import { FINISH_FIX_ASK, FINISH_PROMPT_LINE, finishLossEscalate } from "./stage-prompts.ts";
+import { scopeLines } from "../scope-prompts.ts";
+import { visionBriefLines } from "../vision-prompts.ts";
+import { heldHudPromptDraws } from "../held-hud-prompts.ts";
+import { appliesToBuild } from "../applies-to-build.ts";
+import { screenOwnerLine } from "../screen-owner-prompts.ts";
+import { blockPromptLine } from "./build-block-prompts.ts";
+import { reapplyWords } from "./carried-fixes-prompts.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 
 /** Reference stills into the first brief, and pair images later, at most. */
@@ -12,8 +21,8 @@ const MAX_PROMPT_IMAGES = 12;
 
 /**
  * The caps on the lists a build prompt carries (M4.8b). A board of forty checks, a steering
- * thread the user typed all night and a stack trace from a bundler are each unbounded, so the
- * prompt's size was an accident of the night rather than a number anybody chose. Each list is
+ * thread the user typed for the whole run and a stack trace from a bundler are each unbounded, so the
+ * prompt's size was an accident of the run rather than a number anybody chose. Each list is
  * cut with a tail that says how many went, because a silent truncation reads as a shorter board.
  */
 export const MAX_PROMPT_LIST = 8;
@@ -62,7 +71,7 @@ export function briefWithMovedSections(
     build?: string | null;
   } = {},
 ): string {
-  const body = withDoneSection(String(text ?? ""), spec);
+  const body = rulesBeforeHistory(withDoneSection(String(text ?? ""), spec));
   if (body.includes("- YOUR SEAM:") || body.includes("- YOUR FILES:")) return body;
   const rules = [
     seamRule(spec, ownShape),
@@ -78,6 +87,28 @@ export function briefWithMovedSections(
   return body.includes(header)
     ? body.replace(header, [header, ...rules].join("\n"))
     : [body, ``, header, ...rules].join("\n");
+}
+
+/** The brief's rules block, and the sections of history and recipes it must come before. */
+const RULES_HEADER = "## Rules that do not change";
+const HISTORY_HEADERS = ["## Earlier rounds", "## Recipes that apply"];
+
+/**
+ * The brief with its rules block ahead of the earlier rounds and the recipes. Those two are the
+ * longest and least binding sections, and a direct engine's inline brief is cut from the end:
+ * behind them the seam and the entry rule were what the cut took. Moved whole, up to the next
+ * heading, so the lessons after it stay where they were; a brief already in that order is
+ * returned unchanged.
+ */
+function rulesBeforeHistory(body: string): string {
+  const rulesAt = body.indexOf(`\n${RULES_HEADER}`);
+  const historyAt = Math.min(...HISTORY_HEADERS.map((header) => body.indexOf(`\n${header}`)).filter((at) => at !== -1));
+  if (rulesAt === -1 || !Number.isFinite(historyAt) || rulesAt < historyAt) return body;
+  const next = body.indexOf("\n## ", rulesAt + 1);
+  const end = next === -1 ? body.length : next;
+  const block = body.slice(rulesAt, end).replace(/\n+$/, "");
+  const rest = `${body.slice(0, rulesAt)}${body.slice(end)}`;
+  return `${rest.slice(0, historyAt)}${block}\n${rest.slice(historyAt)}`;
 }
 
 /** The brief with its "Done means" section, placed before the scoreboard when it has one. */
@@ -229,6 +260,8 @@ type PromptInput = AnyRecord & {
   failureText: string | null;
   moveLine: string;
   briefPointer: string;
+  /** A finishing worker (facet/stage.ts): no move, polish is the work. */
+  finishing: boolean;
 };
 
 function promptInput({
@@ -251,9 +284,14 @@ function promptInput({
   shape = null,
   ownShape = false,
   game = null,
+  stage = null,
+  buildBlock = null,
   ...rest
 }: AnyRecord): PromptInput {
   const { briefFile } = rest;
+  const finishing = stageOf({ stage }) === FacetStage.Finish;
+  // A worker's first, long round (facet/build-block.ts) says so before its move.
+  const blockLine = buildBlock ? blockPromptLine(buildBlock.bench ?? null) : "";
   return {
     ...rest,
     briefText,
@@ -284,7 +322,10 @@ function promptInput({
     pointsAtBrief: Boolean(briefFile) && briefText === null,
     steering: cappedSteering(userSteering),
     failureText: lastFailure ? cappedFailure(lastFailure) : null,
-    moveLine: [moveAsk(move), fixAsk(fix)].filter(Boolean).join("\n"),
+    finishing,
+    moveLine: (finishing ? [FINISH_PROMPT_LINE, fixAsk(fix, true)] : [blockLine, moveAsk(move), fixAsk(fix)])
+      .filter(Boolean)
+      .join("\n"),
     briefPointer: briefFile
       ? `READ ${briefFile} FIRST — it is this iteration's brief: the checks (your contract), the scoreboard, the attempts that lost, and the recipes that apply.`
       : "",
@@ -298,23 +339,38 @@ function moveAsk(move: AnyRecord | null): string {
     ? ` — measured by check ${move.check.id}`
     : " — the taste judge answers whether it is visible";
   const lead = move.mandatory ? "A build that only tunes what already exists LOSES; make" : "Make";
-  const escalate =
-    move.polishStreak >= 2 ? ` ESCALATE: your last ${move.polishStreak} accepted builds were polish only.` : "";
+  const escalate = moveEscalated(move)
+    ? ` ESCALATE: your last ${move.polishStreak} accepted builds were polish only.`
+    : "";
   return `THE MOVE THIS ITERATION (${move.mandatory ? "mandatory" : "asked for"}): ${move.what}${measured}. ${lead} the move first — the whole step, boldly, so a player notices it in the first minute — then fix up to three ledger items.${escalate}`;
 }
 
-/** THE FIX this iteration names, and how many more namings make it mandatory. */
-function fixAsk(fix: AnyRecord | null): string {
+/** THE FIX this iteration names, and how many more namings make it mandatory; a finisher may tune it closed. */
+function fixAsk(fix: AnyRecord | null, finishing = false): string {
   if (!fix?.what) return "";
   const weight = fix.mandatory
     ? "mandatory — a build that leaves it LOSES"
     : "the judge has named it " + fix.streak + " times; next time it is mandatory";
-  return `THE FIX THIS ITERATION (${weight}): ${fix.what}${fix.checkId ? ` — measured by check ${fix.checkId}` : ""}. Replace the mechanism, do not tune it: if it is a shape, rebuild the shape; if it is a material, change the material kind (foliage.js for anything leafy).`;
+  const how = finishing
+    ? FINISH_FIX_ASK
+    : "Replace the mechanism, do not tune it: if it is a shape, rebuild the shape; if it is a material, change the material kind (foliage.js for anything leafy).";
+  return `THE FIX THIS ITERATION (${weight}): ${fix.what}${fix.checkId ? ` — measured by check ${fix.checkId}` : ""}. ${how}`;
 }
 
-/** The board's failing entries and the ones nobody could measure. */
-function boardState(board: AnyRecord): { failing: AnyRecord[]; unmeasuredNow: AnyRecord[] } {
-  const entries = Object.values(board) as AnyRecord[];
+/** A losing streak's ESCALATE: the build stage's own words, or a finisher's "change the approach". */
+function lossEscalate(p: PromptInput, buildWords: string): string {
+  return p.finishing ? finishLossEscalate(p.loseStreak) : buildWords;
+}
+
+/**
+ * The board's failing entries and the ones nobody could measure, of this build's questions only: a
+ * harness check the build cannot answer (loop/applies-to-build.ts) is not named to its builder.
+ */
+function boardState(
+  board: AnyRecord,
+  spec: AnyRecord | null | undefined,
+): { failing: AnyRecord[]; unmeasuredNow: AnyRecord[] } {
+  const entries = (Object.values(board) as AnyRecord[]).filter((e) => appliesToBuild(e, spec));
   return {
     failing: entries.filter((e) => e.pass === false),
     unmeasuredNow: entries.filter((e) => e.pass !== true && e.pass !== false),
@@ -338,10 +394,12 @@ function unmeasuredLine(unmeasuredNow: AnyRecord[]): string {
 /** The prompt that continues the builder's own session: what happened, and what is still open. */
 function resumedPrompt(p: PromptInput): string {
   const { run, spec: facet, iteration, pointsAtBrief, integrationNote, spike, failureText } = p;
-  const { unmeasuredNow } = boardState(p.board);
+  const { unmeasuredNow } = boardState(p.board, p.spec);
   return [
     `Iteration ${iteration} of your facet "${facet.title}" (run ${run.runId}). You are resuming your own session — you remember what you tried.`,
     p.briefPointer,
+    // A direct engine has no brief to point at, and the screen's owner can change between rounds.
+    ...(pointsAtBrief ? [] : screenOwnerLines(p)),
     ...steeringLines(p.steering),
     // Three sections the brief carries in full: repeated here only when there is no brief.
     ...(!pointsAtBrief && integrationNote ? ["", integrationNote] : []),
@@ -359,7 +417,10 @@ function resumedPrompt(p: PromptInput): string {
       : "",
     resumedLedger(p),
     p.loseStreak >= 2
-      ? `ESCALATE: ${p.loseStreak} losses in a row on the same checks — change the mechanism, do not re-tune numbers.`
+      ? lossEscalate(
+          p,
+          `ESCALATE: ${p.loseStreak} losses in a row on the same checks — change the mechanism, do not re-tune numbers.`,
+        )
       : "",
     "",
     "Flip failing checks, identity first; do not break passing ones. Capture and LOOK before you finish. Update " +
@@ -372,11 +433,23 @@ function resumedPrompt(p: PromptInput): string {
 /** How the last build went: accepted, lost (and where its code is kept), or nothing yet. */
 function lastAttemptLine(lastAttempt: AnyRecord | null): string {
   if (!lastAttempt) return "";
+  const unseen = unseenDemosLine(lastAttempt.skippedDemos);
   if (lastAttempt.won)
-    return `Your last build was ACCEPTED${lastAttempt.flips.length ? ` (flipped: ${lastAttempt.flips.join(", ")})` : ""}.`;
-  const kept = lastAttempt.flips.length ? ` (it did flip ${lastAttempt.flips.join(", ")} — keep that)` : "";
+    return `Your last build was ACCEPTED${lastAttempt.flips.length ? ` (flipped: ${lastAttempt.flips.join(", ")})` : ""}.${unseen}`;
+  // The worktree went back to the accepted build: what the lost build fixed is re-applied, not "kept".
+  const kept = lastAttempt.flips.length ? reapplyWords(lastAttempt.flips) : "";
   const retained = lastAttempt.branch ? `. Its code is retained on ${lastAttempt.branch}` : "";
-  return `Your last build LOST: ${lastAttempt.why || "no check flipped"}${kept}${retained}. The worktree is back on the accepted build.`;
+  return `Your last build LOST: ${lastAttempt.why || "no check flipped"}${kept}${retained}. The worktree is back on the accepted build.${unseen}`;
+}
+
+/**
+ * The demos the last round's look registered but did not photograph (the look's cap): a builder
+ * whose new demo is never seen spends rounds on a move no judge can look at.
+ */
+function unseenDemosLine(skipped: unknown): string {
+  const names = Array.isArray(skipped) ? skipped.map(String).filter(Boolean) : [];
+  if (!names.length) return "";
+  return ` Its look did not photograph the demos ${names.join(", ")} (a look runs every demo a check names, and only so many more) — name one in a check (a demo check, or a vision check on demo:<name>) to have it photographed every round.`;
 }
 
 /** Identity checks first. */
@@ -385,7 +458,7 @@ const byIdentityFirst = (a: AnyRecord, b: AnyRecord): number =>
 
 /** What is still failing, or — when nothing is — what this iteration works on instead. */
 function resumedBoardLine(p: PromptInput): string {
-  const { failing } = boardState(p.board);
+  const { failing } = boardState(p.board, p.spec);
   if (failing.length)
     return `STILL FAILING (identity first): ${cappedList(failing.sort(byIdentityFirst).map((e) => `${e.id} — ${String(e.reason).slice(0, FAILING_REASON_CHARS)}`)).join("; ")}`;
   if (p.legacy) return `THE BIGGEST REMAINING GAP: ${p.defectList[0] ?? ""}`;
@@ -411,7 +484,7 @@ function resumedLedger(p: PromptInput): string {
 
 /** The prompt that opens a builder's session: who it is, the goal, the contract and this iteration's news. */
 function openingPrompt(p: PromptInput): string {
-  const lines = [...openingHead(p), ...ownershipLines(p), ...conventionLines(p)];
+  const lines = [...openingHead(p), ...ownershipLines(p), ...conventionLines(p), ...screenOwnerLines(p)];
   lines.push(...steeringLines(p.steering));
   if (p.moveLine) lines.push("", p.moveLine);
   if (!p.pointsAtBrief && p.integrationNote) lines.push("", p.integrationNote);
@@ -436,10 +509,16 @@ function kindLine(game: AnyRecord | null): string {
 /** The opening's head: who the builder is, the goal, the facet, and the contract when there is no brief. */
 function openingHead(p: PromptInput): string[] {
   const { run, spec: facet, pointsAtBrief } = p;
+  const scope = scopeLines(run);
+  const vision = visionBriefLines(run);
   return [
     `You are building ONE FACET of a game inside Autopilot run ${run.runId}, iteration ${p.iteration}.`,
     ``,
     `GAME GOAL: ${run.goal}`,
+    // What the user asked for, in their words, and what is cut (loop/scope.ts); nothing for a run without it.
+    ...(scope ? [scope] : []),
+    // Where the whole world is going (loop/vision.ts): the direction to grow toward; nothing without one.
+    ...(vision ? [vision] : []),
     `PROJECT: ${run.project}`,
     // A game that declares no kind says nothing here.
     kindLine(p.game),
@@ -509,10 +588,20 @@ function templateOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): s
 function conventionLines(p: PromptInput): string[] {
   if (p.pointsAtBrief) return [];
   return [
-    `- Keep your working notes in ${facetNotes(p.spec.id)} — do not edit the shared NOTES.md; the integrator folds notes together.`,
+    `- Keep your working notes in ${facetNotes(p.spec.id)} — do not edit the shared NOTES.md.`,
     `- Tag every object you create (obj.userData.tag = "<tag>") with the tag names the checks use. Untagged objects do not exist to the checks.`,
     p.ownShape ? ownShapeLine(p) : oneScreenLine(p),
   ];
+}
+
+/**
+ * Who owns the screen (loop/screen-owner.ts), said in the prompt even when the brief carries the
+ * rest: the owner draws the HUD, the menus and the layout, every other part publishes its values.
+ * Nothing in a game of its own shape, where the rule is inert, or when no part owns the screen.
+ */
+function screenOwnerLines({ ownShape, spec }: PromptInput): string[] {
+  const line = ownShape ? null : screenOwnerLine(spec);
+  return line ? [line] : [];
 }
 
 function ownShapeLine({ entryMain, shape }: PromptInput): string {
@@ -523,7 +612,7 @@ function ownShapeLine({ entryMain, shape }: PromptInput): string {
   return `- THIS GAME HAS ITS OWN SHAPE: its entry is ${entryMain}${built} and the studio serves ${shape?.entry ?? "index.html"}. Keep its UI and input handling as they are — no __studio.hud overlays, no second input path. Keep window.__studio working (installStudio in ${entryMain}).${runBuild}`;
 }
 
-function oneScreenLine({ spec: facet }: PromptInput): string {
+function oneScreenLine({ spec: facet, run }: PromptInput): string {
   // Only the harness-owned checks this facet actually carries — under the declared-only rule a
   // board may carry none of them, and naming a check nobody scores teaches the wrong lesson.
   const harnessOnBoard = (facet.checks ?? [])
@@ -533,7 +622,11 @@ function oneScreenLine({ spec: facet }: PromptInput): string {
   const enforced = harnessOnBoard.length
     ? ` The harness-owned check${one ? "" : "s"} ${harnessOnBoard.join(", ")} enforce${one ? "s" : ""} this.`
     : "";
-  return `- ONE SCREEN, ONE INPUT PATH: all UI through __studio.hud (drawn into the canvas; no DOM, no second HUD); all input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse).${enforced} A label that belongs to something in the world — a player's name, a marker over a target — is a sprite or mesh in the scene, attached to that object and tagged with it (never hud), so it moves and hides with it; __studio.hud holds only what stays on the screen.`;
+  // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
+  const draws =
+    heldHudPromptDraws(run) ??
+    "drawn into the canvas: text, bars, arcs and gauges, paths, images, panels and fonts, anchored in frame fractions; keep the middle of the view for the game — the harness measures the HUD's coverage and overlap";
+  return `- ONE SCREEN, ONE INPUT PATH: all UI through __studio.hud (${draws}; no DOM, no second HUD); all input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse).${enforced} A label that belongs to something in the world — a player's name, a marker over a target — is a sprite or mesh in the scene, attached to that object and tagged with it (never hud), so it moves and hides with it; __studio.hud holds only what stays on the screen.`;
 }
 
 /** The last build's news: its failure, the legacy gap, or the board. */
@@ -581,8 +674,9 @@ function legacyProgress({ defectList, loseStreak, gapHistory }: PromptInput): st
 }
 
 /** A checked facet's news: what still fails, what nobody could measure, and a losing streak. */
-function boardProgress({ board, loseStreak }: PromptInput): string[] {
-  const { failing, unmeasuredNow } = boardState(board);
+function boardProgress(p: PromptInput): string[] {
+  const { board, loseStreak } = p;
+  const { failing, unmeasuredNow } = boardState(board, p.spec);
   const lines: string[] = [];
   if (failing.length)
     lines.push(
@@ -593,7 +687,10 @@ function boardProgress({ board, loseStreak }: PromptInput): string[] {
   if (loseStreak >= 2)
     lines.push(
       "",
-      `ESCALATE: ${loseStreak} losses in a row — parameter tweaks on the current approach have failed. Replace the mechanism.`,
+      lossEscalate(
+        p,
+        `ESCALATE: ${loseStreak} losses in a row — parameter tweaks on the current approach have failed. Replace the mechanism.`,
+      ),
     );
   return lines;
 }

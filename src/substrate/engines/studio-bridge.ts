@@ -22,7 +22,11 @@ import { constants } from "node:fs";
 import { lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { LiveToolResult } from "./types.ts";
+import type { DelegateRequest, LiveToolResult } from "./types.ts";
+import { DelegateEventType } from "./types.ts";
+import { CHECKPOINT_NOTE_CHARS } from "./common.ts";
+import { CHECKPOINT_TOOL, CODEX_CAPTURE_TOOL, intakeToolReply, StudioTool } from "./studio-tool-prompts.ts";
+import { captureArgs } from "./capture-args.ts";
 import { openNoFollow, readRegularFile } from "../fsx.ts";
 import { schemaType } from "./tool-schema.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -499,4 +503,59 @@ export class StudioBridge {
       await rm(this.dir, { recursive: true, force: true }).catch(() => {});
     }
   }
+}
+
+/** The studio tools a delegation grants a bridge engine (Codex, OpenCode) — the bridge declares exactly these. */
+export function bridgeTools(request: DelegateRequest): BridgeTool[] {
+  const tools: BridgeTool[] = [];
+  if (!request.readOnly) {
+    tools.push({
+      name: StudioTool.Checkpoint,
+      description: CHECKPOINT_TOOL.description,
+      parameters: {
+        type: "object",
+        properties: { note: { type: "string", description: CHECKPOINT_TOOL.note } },
+        required: ["note"],
+      },
+    });
+  }
+  if (request.onCapture) {
+    tools.push({
+      name: StudioTool.Capture,
+      description: CODEX_CAPTURE_TOOL.description,
+      parameters: {
+        type: "object",
+        properties: {
+          cameras: { type: "string", description: CODEX_CAPTURE_TOOL.cameras },
+          page: { type: "string", description: CODEX_CAPTURE_TOOL.page },
+        },
+      },
+    });
+  }
+  if (request.onLiveTool) tools.push(...(request.liveTools ?? []));
+  tools.push(...(request.interviewTools ?? []));
+  return tools;
+}
+
+/** One bridge call, routed to whichever studio handler this delegation was given. */
+export async function answerBridgeCall(
+  name: string,
+  args: Record<string, unknown>,
+  request: DelegateRequest,
+): Promise<LiveToolResult> {
+  if (name === StudioTool.Checkpoint) {
+    const note = String(args.note ?? "").slice(0, CHECKPOINT_NOTE_CHARS);
+    request.onEvent?.({ type: DelegateEventType.Checkpoint, payload: { note } });
+    return CHECKPOINT_TOOL.reply;
+  }
+  if (name === StudioTool.Capture && request.onCapture) {
+    return request.onCapture(captureArgs(args));
+  }
+  if (request.onLiveTool && (request.liveTools ?? []).some((tool) => tool.name === name)) {
+    // The file bridge materializes attached images beside its response for the session to view.
+    return request.onLiveTool(name, args);
+  }
+  // Intake tools only record: the harness executes the real thing once the reply ends.
+  if ((request.interviewTools ?? []).some((tool) => tool.name === name)) return intakeToolReply(name);
+  return `the studio has no tool called '${name}' in this session`;
 }

@@ -76,6 +76,8 @@ import { readJournal, writeJournal } from "./run-journal.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
+import { noteHudUpgrade } from "./held-hud.ts";
+import { keptContractWords } from "./contract-kept.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CompleteResponse, EngineDescriptor, Message, SnapshotRecord } from "../types/host-api.d.ts";
 import type { ScoutReport } from "./scout.ts";
@@ -103,7 +105,7 @@ const INTEGRATION_PLAY_RESERVE_MS = 6 * MINUTE_MS;
 export { PLAN_REVIEW_WAIT_MS };
 /** How often a plan review looks for the user's steering. */
 const PLAN_STEERING_POLL_MS = 2 * SECOND_MS;
-/** The longest the base builder gets, however much of the night is left. */
+/** The longest the base builder gets, however much of the run is left. */
 const BASE_BUILD_TIMEOUT_MS = 45 * MINUTE_MS;
 /** The share of the run's clock kept after the facets for integrating and judging them. */
 const FACETS_CLOSE_SHARE = 0.15;
@@ -163,7 +165,7 @@ const INTEGRATION_CAMERAS = 10;
 /** The merged build's problems its record keeps, and the ledger defects the integration facet starts with. */
 const MERGED_PROBLEMS_KEPT = 5;
 const MAX_INITIAL_DEFECTS = 24;
-/** The iteration id of the night's last evidence pass. */
+/** The iteration id of the run's last evidence pass. */
 const FINAL_ITERATION = "final";
 /** The iteration id the optimization pass is judged under. */
 const OPTIMIZATION_ITERATION = "optimization-final";
@@ -248,8 +250,8 @@ export function concurrencyProfile(
 
 /**
  * What the game already logged when the studio opened it, before anyone in this run touched it.
- * Every pass forgives these — a night once threw its whole merge away at the last gate for one
- * shader line that was in the game when the run began.
+ * Every pass forgives these, so a shader warning that was in the game when the run began never
+ * throws the whole merge away at the last gate.
  *
  * `preview.load` resolves at did-finish-load: before the first frame, before a shader compiles.
  * Read on the next line, the baseline came back empty for exactly the deferred error it exists
@@ -283,7 +285,7 @@ export async function inheritedConsoleAfterLoad(
 /**
  * ~15 lines of semaphore — the whole local-vs-cloud scheduling difference (A7). A failure stops
  * new items from starting and is thrown once the ones already running have settled: rejecting at
- * once left their facets building behind a run that had moved on (P13-F8).
+ * once left their facets building behind a run that had moved on.
  */
 export async function schedule<T, R>(
   items: readonly T[],
@@ -650,7 +652,7 @@ function finishPlan({
   known,
 }: PlannerAnswer & { scout: AnyRecord | null; run: Run; known: KnownGame }): AnyRecord {
   let facets = planned;
-  // The scout's builder count is the ceiling (computer use, 2026-09-07): a plan that split one scene into six
+  // The scout's builder count is the ceiling: a plan that split one scene into six
   // anyway is folded back — the first N by share, and at one builder a single facet that
   // keeps every check the planner wrote, so nothing is judged by taste alone.
   const ceiling = scout?.workers?.count;
@@ -924,7 +926,7 @@ async function planFacets(pipeline: Pipeline): Promise<PipelineEnd> {
   pipeline.plan = plan;
   stampRunFromPlan(run, plan, ownShape);
   // A kind the plan itself declared is written back into the user's studio.json once, so the
-  // next night on this game starts knowing it. A scout's guess is never written.
+  // next run on this game starts knowing it. A scout's guess is never written.
   const planDeclaredGame = !priorJournal?.plan && plan.gameFrom === GameSource.Plan && plan.game;
   if (planDeclaredGame) {
     await writeDeclaredGame(ctx, run.project, plan.game, { from: GameSource.Plan }).catch(() => {});
@@ -941,7 +943,7 @@ async function planFacets(pipeline: Pipeline): Promise<PipelineEnd> {
 }
 
 /**
- * A fresh plan: the look before it (computer use, 2026-09-07) — a read-only session opens the
+ * A fresh plan: the look before it — a read-only session opens the
  * game with the computer tool, plays to the state the brief is about, and says how many builders
  * the ask deserves — then the planner. A direct engine or a failed scout leaves the planner to
  * the brief alone, and the decision card says so.
@@ -951,7 +953,7 @@ async function newPlan(pipeline: Pipeline): Promise<AnyRecord> {
   const scouted = ctx.cancelled ? null : await scoutTheGame(pipeline);
   const scout = scouted?.report ?? null;
   // studio.json's nested `game` block — the third declaration source, and the file the plan's
-  // own declaration is written back into once a night.
+  // own declaration is written back into once a run.
   const storedGame = await readDeclaredGame(ctx, run.project).catch(() => null);
   pipeline.storedGame = storedGame;
   const plan = await decompose(ctx, { run, profile: pipeline.profile, scout, storedGame, ownShape });
@@ -1110,8 +1112,8 @@ async function runSingleFacet(pipeline: Pipeline): Promise<PipelineEnd> {
         await save();
       },
       beforeFinalPublication: async ({ report, incumbent, incumbentEvidence, startingSnapshot, startingEvidence }) => {
-        // A user Stop pauses the building where it was (P13-V1): journaling the finalization here
-        // made Resume skip the rest of the night and optimize the build as it stood.
+        // A user Stop pauses the building where it was: journaling the finalization here
+        // made Resume skip the rest of the run and optimize the build as it stood.
         if (report.stopCode === StopCode.UserStop) return pauseSingle(ctx, { threadId, run, journal });
         journal.finalization = withoutFrames({
           report,
@@ -1139,7 +1141,7 @@ async function runSingleFacet(pipeline: Pipeline): Promise<PipelineEnd> {
   };
 }
 
-/** A one-facet night the user stopped: its journal paused on the progress it saved, and the paused card. */
+/** A one-facet run the user stopped: its journal paused on the progress it saved, and the paused card. */
 async function pauseSingle(
   ctx: HarnessCtx,
   { threadId, run, journal }: { threadId: string; run: Run; journal: AnyRecord },
@@ -1363,6 +1365,24 @@ async function prepareFolder(pipeline: Pipeline): Promise<void> {
       at: new Date().toISOString(),
     });
   }
+  // An edited older HUD stays and is said so; its generation rides on the run into every brief.
+  const hud = noteHudUpgrade(run, upgraded);
+  if (hud)
+    await appendRunEvent(ctx, threadId, RunEvent.AutopilotDecision, {
+      runId: run.runId,
+      decision: hud.decision,
+      at: new Date().toISOString(),
+    });
+  // An edited contract stays as it is, and the record says which HUD calls its facade may lack.
+  const kept = keptContractWords(upgraded);
+  if (kept) {
+    await appendRunEvent(ctx, threadId, RunEvent.AutopilotDecision, {
+      runId: run.runId,
+      decision: kept.record,
+      plain: kept.plain,
+      at: new Date().toISOString(),
+    });
+  }
   await ctx.call(HostMethod.PreviewLoad, { project: run.project });
   pipeline.startingConsole = await inheritedConsoleAfterLoad(ctx);
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
@@ -1400,7 +1420,7 @@ async function buildSharedBase(pipeline: Pipeline): Promise<PipelineEnd> {
   ctx.setStatus(`run ${run.runId} · building the shared base`);
   // The base builder edits the live folder. Keep a way back that includes the user's own
   // uncommitted and untracked work: a failed base returns here, never to a bare `reset --hard`
-  // (which erased pre-run edits in adopted repositories). A resumed night reuses the snapshot
+  // (which erased pre-run edits in adopted repositories). A resumed run reuses the snapshot
   // taken before its first attempt, so the way back is always the user's state, not a half-built base.
   if (!journal.preBaseSnapshot) {
     const before = await ctx
@@ -1560,8 +1580,7 @@ async function rollBackBase(pipeline: Pipeline, error: string): Promise<Pipeline
 
 /**
  * A game with its own shape has no runnable scaffold to fall back to: facets forked from a
- * base that does not load would work blind (skate-prod, 2026-09-06 — six builders, not one
- * judged frame). Stop here and say why; the user fixes the entry, or asks a chat build to
+ * base that does not load would work blind, every builder without one judged frame. Stop here and say why; the user fixes the entry, or asks a chat build to
  * install the contract in it, and starts a new build.
  */
 async function refuseBlindFacets(pipeline: Pipeline): Promise<PipelineEnd> {
@@ -1611,7 +1630,7 @@ async function reviewPlan(pipeline: Pipeline): Promise<PipelineEnd> {
   // `game` rides on the card for the same reason the facets do: the kind decides the critic,
   // the harness's own checks and the controls driven before every judgement, and it is
   // written back into the user's studio.json — the review window used to show everything
-  // about the night except that.
+  // about the run except that.
   await appendRunEvent(ctx, threadId, RunEvent.AutopilotPlanReview, planReviewCard(run, plan, waitMs));
   ctx.setStatus(`run ${run.runId} · plan ready — waiting for steering`);
   const go = await waitForPlanSteering(pipeline, Date.now() + waitMs);
@@ -2181,12 +2200,12 @@ async function judgeIntegration(pipeline: Pipeline): Promise<PipelineEnd> {
     if (ended) return ended;
   }
   // ── the integration facet: the merged build gets its own scoreboard and iterations ──
-  // The integration facet needs real time left — five minutes on a night, a slice of a short run.
+  // The integration facet needs real time left — five minutes on a run, a slice of a short run.
   pipeline.integrationRan = false;
   const timeLeft = deadline - Date.now() > Math.min(MIN_INTEGRATION_MS, total * INTEGRATION_CLOCK_SHARE);
   if (!ctx.cancelled && hasChecks && timeLeft) await runIntegrationFacet(pipeline);
-  // A Stop in the merge, the ledger or the integration facet is a pause, like one in the facets
-  // (P13-V2): past here the night was judged, accepted and optimized as if it had finished.
+  // A Stop in the merge, the ledger or the integration facet is a pause, like one in the facets;
+  // past here the run would be judged, accepted and optimized as if it had finished.
   if (ctx.cancelled) {
     report.stoppedBecause = STOPPED_BY_USER;
     return { value: closeRun(ctx, { threadId, run, report, journal, catalogue }) };
@@ -2203,7 +2222,7 @@ async function judgeMergedBuild(pipeline: Pipeline): Promise<PipelineEnd> {
   try {
     const mergedEvidence = await mergedBuildEvidence(pipeline, handle);
     // On the record beside the merges: does the merged build actually run? The stage offers a
-    // build to the user mid-night, and takes one on by itself, only once something has looked.
+    // build to the user mid-run, and takes one on by itself, only once something has looked.
     if (pipeline.worktreeMode && pipeline.integrationHead) {
       await appendRunEvent(ctx, threadId, RunEvent.IntegrationHealth, {
         runId: run.runId,
@@ -2353,8 +2372,8 @@ async function landIntegrated(pipeline: Pipeline): Promise<PipelineEnd> {
       // which throws those commits away; the build waits on its integration ref instead, and
       // "Make it live" lands it when the folder is theirs to merge into.
       report.landing = "not landed: the merge conflicted with changes of your own in the game folder";
-      // The night ends here (P13-F1): what the folder holds now is the user's, not this build,
-      // so no verdict, acceptance, optimization or rollback may treat it as the night's.
+      // The run ends here: what the folder holds now is the user's, not this build,
+      // so no verdict, acceptance, optimization or rollback may treat it as the run's.
       report.stoppedBecause = `${report.landing} — the integrated build waits on its ref`;
       await removeWorktrees(pipeline);
       return { value: closeRun(ctx, { threadId, run, report, journal, catalogue }) };
@@ -2413,7 +2432,7 @@ async function judgeGlobally(pipeline: Pipeline): Promise<PipelineEnd> {
   } else {
     try {
       pipeline.verdict = await globalVerdict(pipeline);
-      // P14-F2: a judge that never gave usable JSON gave no verdict. Read as a tie it rolled the
+      // A judge that never gave usable JSON gave no verdict. Read as a tie it rolled the
       // whole integrated build back; as no verdict the run closes and the build stays unjudged.
       if (pipeline.verdict?.unusable === true) throw new Error(GLOBAL_JUDGE_UNUSABLE);
     } catch (err: any) {
@@ -2443,7 +2462,7 @@ async function snapshotIntegrated(pipeline: Pipeline): Promise<void> {
 /**
  * The final pass runs every demo and adds the user's-eye frame: the one picture with the
  * DOM on it, so a HUD the canvas never shows is seen at least once.
- * The last gate of the night forgives what the night inherited: the base's own errors (or,
+ * The last gate of the run forgives what the run inherited: the base's own errors (or,
  * failing that, the ones the game logged before the run began) are not this merge's fault.
  */
 async function finalEvidence(pipeline: Pipeline): Promise<AnyRecord> {
@@ -2470,7 +2489,7 @@ async function finalEvidence(pipeline: Pipeline): Promise<AnyRecord> {
 /**
  * Final evidence whose gathering threw: the studio failed to look, which says nothing about the
  * build. Marked as such (`lookFailed`), not read back from its sentence: a thrown look once
- * counted as a broken build and rolled the whole night back (P13-F5).
+ * counted as a broken build and rolled the whole run back.
  */
 export function lookThatThrew(err: unknown): AnyRecord {
   return {
@@ -2518,8 +2537,8 @@ async function refuseUnjudgeable(pipeline: Pipeline): Promise<PipelineEnd> {
 }
 
 /**
- * A facet's accepted demos must survive the merge — run_mthlnp75kmex shipped a build where
- * every ritual demo existed in its facet and none in the integrated game, and nothing said so.
+ * A facet's accepted demos must survive the merge: a build whose demos exist in their facets and
+ * not in the integrated game would otherwise ship without anything saying so.
  * Compared against what the merged game DECLARES, not what a capped capture photographed:
  * the first v2 run reported three demos "lost" that all ran in the merged build.
  */
@@ -2544,7 +2563,7 @@ function lostDemosOf(pipeline: Pipeline): string[] {
 }
 
 /**
- * The global verdict is the one call that must not die with a 529: the whole night's
+ * The global verdict is the one call that must not die with a 529: the whole run's
  * work is judged here. A provider hiccup is waited out (about half an hour at most).
  */
 function globalVerdict(pipeline: Pipeline): Promise<AnyRecord> {
@@ -2729,7 +2748,7 @@ export { observationOnlyFailure } from "./evidence.ts";
 
 /**
  * Put the game back on `snapshot` and say whether that happened. The studio refuses a restore
- * that would drop commits it did not make, and a night that could not roll back must not
+ * that would drop commits it did not make, and a run that could not roll back must not
  * report that it did.
  */
 export async function rollBackGame(
@@ -2931,7 +2950,7 @@ async function finalizeOptimization(
 }
 
 /**
- * Does the optimized build still beat the starting point (and the reference, when the night
+ * Does the optimized build still beat the starting point (and the reference, when the run
  * beat it)? Same quality boundary as before the pass; an accepted change cannot reuse the ledger.
  */
 async function optimizedQualityHolds(

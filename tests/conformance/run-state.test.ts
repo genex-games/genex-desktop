@@ -16,7 +16,7 @@ import {
   workStart,
 } from "../../src/shared/run-state.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
-import { lastNightForProject } from "../../src/shared/run-review.ts";
+import { lastLoopRunForProject } from "../../src/shared/run-review.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import { buildRunGraph, type IterationNode } from "../../src/renderer/run-graph.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
@@ -61,9 +61,9 @@ describe("how a round ended", () => {
   });
 });
 
-describe("the projections agree on a night's rounds", () => {
+describe("the projections agree on a run's rounds", () => {
   clock = 0;
-  const night = [
+  const loopRun = [
     custom("run_started", { ...run, goal: "a pond" }),
     round(1, { winner: "challenger", verdictSource: "taste" }),
     round(2, { winner: "incumbent", verdictSource: "taste-veto" }),
@@ -75,10 +75,10 @@ describe("the projections agree on a night's rounds", () => {
   ];
 
   it("the summary, the Builds graph and the morning card count one kept and one undone", () => {
-    const summary = summarizeRun(night, "pond", "run-1");
-    const graph = buildRunGraph(night)!;
+    const summary = summarizeRun(loopRun, "pond", "run-1");
+    const graph = buildRunGraph(loopRun)!;
     const rounds = graph.nodes.filter((node): node is IterationNode => node.kind === "iteration");
-    const morning = toEntries(night).find((entry) => entry.kind === "morning");
+    const morning = toEntries(loopRun).find((entry) => entry.kind === "morning");
     assert.deepEqual(
       rounds.map((node) => node.status),
       ["accepted", "rolled", "stopped", "unjudged"],
@@ -112,7 +112,7 @@ describe("the projections agree on a night's rounds", () => {
       custom("run_iteration", { ...run, iteration: 2, shots: [{ camera: "a", path: "/2.jpg" }] }),
       custom("run_iteration", { ...run, iteration: 3, winner: "incumbent", shots: [{ camera: "a", path: "/3.jpg" }] }),
     ];
-    const review = lastNightForProject(gauntlet, "pond").iterations.slice().reverse();
+    const review = lastLoopRunForProject(gauntlet, "pond").iterations.slice().reverse();
     assert.deepEqual(
       review.map((row) => [row.winner, row.outcome]),
       [
@@ -263,7 +263,7 @@ describe("where a run stands", () => {
     );
   });
 
-  it("a resumed night is running again everywhere: summary, Builds graph, history and the chat's run", () => {
+  it("a resumed run is running again everywhere: summary, Builds graph, history and the chat's run", () => {
     clock = 300;
     const log = [
       custom("run_started", run),
@@ -290,20 +290,20 @@ describe("where a run stands", () => {
     assert.equal(runExecution(resumed)?.state, "running");
   });
 
-  it("a finished night reopened forgets its close and counts its time from the reopen", () => {
+  it("a finished run reopened forgets its close and counts its time from the reopen", () => {
     clock = 400;
-    const night = [
+    const loopRun = [
       custom("run_started", run),
       round(1, { winner: "challenger" }),
       custom("run_finished", { ...run, landed: true, integrationHead: "h1", stoppedBecause: "satisfied" }),
     ];
     const reopen = custom("run_registered", { ...run, resumed: true });
-    const log = [...night, reopen, custom("run_started", { ...run, resumed: true })];
+    const log = [...loopRun, reopen, custom("run_started", { ...run, resumed: true })];
     const summary = summarizeRun(log, "pond", "run-1");
     assert.deepEqual(
       [summary.execution, summary.landed, summary.reason, summary.startedAt],
       ["running", null, null, reopen.created_at],
-      "the first close's landing and reason are not the reopened night's",
+      "the first close's landing and reason are not the reopened run's",
     );
     assert.deepEqual([summary.deliveredHead, summary.deliveredSourceHead], [null, null]);
     assert.equal(summary.head, "h1", "the build it goes on from is still the one it stands on");

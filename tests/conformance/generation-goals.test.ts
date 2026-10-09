@@ -6,6 +6,7 @@ import {
   startGoalAttempt,
   recordGoalEvidence,
   GoalStatus,
+  restoreGoals,
   reviseGoals,
 } from "../../src/harness-seed/loop/director/goals.ts";
 
@@ -106,4 +107,26 @@ it("a verified goal cannot receive cosmetic workers while another required goal 
   recordGoalEvidence(goals, "board", "head", true);
   assert.match(startGoalAttempt(goals, "board") ?? "", /verified/);
   assert.equal(startGoalAttempt(goals, "online"), null);
+});
+
+it("a part the plan added beyond the user's ask is an optional goal: the required ones decide, and an older ledger stays required", () => {
+  const goals = createGoals([
+    { id: "race", done: ["Four rivals race one lap"] },
+    { id: "pursuit", done: ["A pursuit meter fills"], added: true },
+  ]);
+  assert.deepEqual(
+    goals.entries.map((goal) => [goal.id, goal.required]),
+    [
+      ["race", true],
+      ["pursuit", false],
+    ],
+  );
+  recordGoalEvidence(goals, "race", "a", true);
+  assert.equal(goalDecision(goals, "a"), GoalStatus.Passed, "the added part never holds the finish");
+  const older = restoreGoals({ ...goals, entries: goals.entries.map(({ required: _, ...goal }) => goal) });
+  assert.deepEqual(
+    older?.entries.map((goal) => goal.required),
+    [true, true],
+    "a journal from before the flag keeps every goal required",
+  );
 });

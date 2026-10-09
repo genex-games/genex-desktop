@@ -5,7 +5,7 @@
  * read a message mid-turn is interrupted and resumed with it in front.
  *
  * Generic on purpose: whichever session is the chat's current turn — the contractor (a Loop
- * chat's too, and the chat's own session after a night it led), or a run's coordinator — runs
+ * chat's too, and the chat's own session after a run it led), or a run's coordinator — runs
  * through here unchanged.
  */
 import { isResumeFailure } from "./chat-session.ts";

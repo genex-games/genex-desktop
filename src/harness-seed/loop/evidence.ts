@@ -15,14 +15,19 @@
  * exported, so a harness file the in-app agent edited before the move keeps its imports.
  */
 import { applyPlayScript } from "./play-script.ts";
-import { playScriptFor, wantsEyeCameras } from "./kinds.ts";
+// A namespace, not named imports: a seed upgrade may keep an older kinds.ts the agent edited, which
+// has no `cruiseFor` or `startKeysFor`, and a missing named import would stop this file loading.
+import * as kinds from "./kinds.ts";
 import { LOAD_RACE_RETRY_MS, OBSERVATION_RETRY_MS, RACE_RETRY_MS, WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
 import { PageMethod } from "./page-contract.ts";
+import { PreviewConsoleSource, PreviewGone } from "./preview-gone.ts";
+import { isElidedStub, isKeepPath, isTruncatedState, stateCutOf } from "./state-shape.ts";
 import { clip } from "./text.ts";
-import { SECOND_MS, sleep } from "./time.ts";
+import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isRecord } from "./json.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
+import { CORNER_CAMERA, isPassFrame } from "./pass-frames.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CheckEvidence } from "./checks.ts";
 
@@ -51,8 +56,41 @@ export interface Evidence extends CheckEvidence {
   consoleErrors: string[];
   readyAfterMs?: number | null;
   attempts?: number;
+  /** Whether the drive started in play — only for a game that reports `state().flow`. */
+  play?: PlayReach;
+  /** The OS killed the window (memory pressure), so its problems are the machine's, not the build's. Only when true. */
+  machineKilled?: boolean;
+  /** The cameras the game registers (`__studio.cameras()`), whatever the pass photographed; null when it never said. */
+  registeredCameras?: string[] | null;
+  /** Whether the game's racing line steered the held throttle — only for a drive that held one. */
+  drive?: { steered: boolean };
+  /** The racer's turn-in the drive photographed (`drive:corner`), or why there is none — only for a kind with corners. */
+  corner?: { seen: boolean; atMs?: number; turnDegPerSecond?: number; unreadable?: boolean };
+  /** The throttle-only bot's race — only when the pass was asked to race it. */
+  challenge?: AnyRecord;
   // biome-ignore lint/suspicious/noExplicitAny: every other reading of the pass, read by name where it is used.
   [field: string]: any;
+}
+
+/** How a pass took the game into play (`PlayReach.via`): it already was, `begin()`, start keys, waiting, or not at all. */
+export const PlayVia = {
+  Boot: "boot",
+  Begin: "begin",
+  Keys: "keys",
+  Wait: "wait",
+  /** The setup said `begin: false`: the worker that owns the front-end is judged on it. */
+  Kept: "kept",
+} as const;
+export type PlayVia = (typeof PlayVia)[keyof typeof PlayVia];
+
+/** Whether the drive of a game with a front-end started in play, and how it got there. */
+export interface PlayReach {
+  declared: true;
+  reached: boolean;
+  phase: string | null;
+  via: PlayVia;
+  /** Simulated milliseconds stepped after `begin()` (or the keys) before play. */
+  ms: number;
 }
 
 /** What one evidence pass is asked to look at, and how. */
@@ -70,10 +108,21 @@ export interface GatherOptions {
   audio?: boolean;
   maxDemos?: number;
   requiredDemos?: string[];
+  /**
+   * The demos the build this one is compared with registers: under the cap, a demo this build
+   * added runs before the ones the other already showed.
+   */
+  knownDemos?: string[] | null;
+  /** Race the throttle-only bot after the demos (`raceThrottleBot`): a board carries `throttle-bot-loses`, or a ship look. */
+  challenge?: boolean;
   userView?: boolean;
   scaffold?: boolean;
   setup?: AnyRecord | null;
   inheritedConsole?: string[];
+  /** The state paths the board reads (`statePathsNamedByChecks`): the studio cuts them last. */
+  keepPaths?: string[];
+  /** Look at this size: a leased window is sized before it loads (`preview.viewport`), never the live view. */
+  viewport?: { width: number; height: number } | null;
 }
 
 /** The pass's own state, phase to phase: its arguments, then what each phase found. */
@@ -85,9 +134,12 @@ interface Look extends GatherOptions {
   audio: boolean;
   maxDemos: number;
   requiredDemos: string[];
+  knownDemos: string[] | null;
+  challenge: boolean;
   userView: boolean;
   scaffold: boolean;
   inheritedConsole: string[];
+  keepPaths: string[];
   // biome-ignore lint/suspicious/noExplicitAny: each phase adds the readings the phases after it read.
   [field: string]: any;
 }
@@ -130,6 +182,39 @@ const PROOF_STEP_MS = 320;
 const DRIVE_STEPS = 29;
 const DRIVE_STEP_MS = 960;
 const LAST_DRIVE_STEP = DRIVE_STEPS - 1;
+/** Reaching play: the clock steps this long between reads of `flow.playing`, for at most this long. */
+const PLAY_WAIT_STEP_MS = 240;
+const PLAY_WAIT_MAX_MS = 12 * SECOND_MS;
+/** How much of what `__studio.begin()` answered when it refused a warning quotes. */
+const BEGIN_REASON_CHARS = 160;
+/**
+ * The demos a look runs beyond the ones checks name, unless its caller says otherwise: enough that
+ * a demo a builder registers to show its move is photographed and judged.
+ */
+const DEMOS_PER_LOOK = 12;
+/**
+ * The drive's corner (`drive:corner`): steps before this one are the controls' own swerve and the
+ * line taking the car back; a heading turning faster than this (radians per second, about 20°/s)
+ * is a corner, not a lane change.
+ */
+const CORNER_SETTLE_STEPS = 3;
+const CORNER_TURN_RAD_PER_S = 0.35;
+const DEGREES_PER_RADIAN = 180 / Math.PI;
+/**
+ * The throttle-only bot's race (`raceThrottleBot`): stepped this long at a time, for at most this
+ * much racing, enough for a race of several laps. The time keeps it affordable: about a minute
+ * of a page's own stepping at most, and only when a board carries the check or a ship look asks.
+ */
+const CHALLENGE_STEP_MS = 5 * SECOND_MS;
+const CHALLENGE_MAX_MS = 6 * MINUTE_MS;
+/** The state paths the bot's race is read by: kept whole when the state is over the studio's budget. */
+const RACE_PATHS = ["race.position", "race.finished"];
+/** Why the throttle-only bot did not race: the words a probe's reason and a judge read. */
+const MESSAGE = {
+  botNoRace: "the game reports no race.position in state() — there is no race to win",
+  botNoThrottle: "this kind of game has no throttle to hold",
+  botNoPlay: "the race never reached play after begin()",
+} as const;
 /** A pass without a spec photographs at most this many cameras. */
 const MAX_CAMERAS = 6;
 /** The harness's own viewpoints, asked of a game that declares fewer than two. */
@@ -150,6 +235,9 @@ const MAX_GPU_ERRORS = 16;
  * race classifier is built from it: a sentence two files re-type is a sentence that drifts. */
 export const MISSING_CONTRACT = "window.__studio is missing — the build cannot be judged";
 
+/** The sentence a pass pushes when the window's renderer went away, whoever's doing it was. */
+const RENDERER_CRASHED = "the renderer crashed";
+
 /** The sentence a pass with no frame owes its reader; also an observation problem. */
 const NO_FRAME = /^no camera produced a frame/;
 
@@ -169,9 +257,8 @@ const NO_FRAME = /^no camera produced a frame/;
  *    catch-all for a dead preview, and it must cost its iteration rather than be retried three
  *    times against the same corpse.
  *  - `load`: what the director's patient pass looks again for — a load that raced the window (no
- *    __studio yet, a capture before the first frame) is not a broken build. Eight health passes in
- *    one night failed this way while the judge, forty seconds later, found every one of those
- *    builds fine. A pass that took no frame at all has never been one of these.
+ *    __studio yet, a capture before the first frame) is not a broken build: the judge finds such a
+ *    build fine seconds later. A pass that took no frame at all has never been one of these.
  */
 /** What one problem can mean (`EVIDENCE_FAILURES`). */
 const ProblemMeaning = {
@@ -220,15 +307,35 @@ function allMean(problems: readonly unknown[] | null | undefined, kind: ProblemM
  *    when it did. A short retry, because a slow boot is not a defect.
  *  - `build`: everything else, including a missing contract on a page whose boot WAS measured.
  *
+ * `machineKilled` is the window's own typed word (`preview.status` `gone`), never read off a
+ * sentence: when the OS killed the renderer for memory, the crash and what a dead window cannot
+ * answer (no drive, no frame, no contract) are the machine's, and the look is an outage.
  */
 export function classifyEvidenceFailure(
   problems: readonly unknown[] | null | undefined,
-  { readyAfterMs = null }: { readyAfterMs?: number | null } = {},
+  { readyAfterMs = null, machineKilled = false }: { readyAfterMs?: number | null; machineKilled?: boolean } = {},
 ): EvidenceFailure {
   if (!(problems ?? []).length) return EvidenceFailure.None;
   if (allMean(problems, ProblemMeaning.Observation)) return EvidenceFailure.Observation;
+  if (machineKilled && deadWindowOnly(problems)) return EvidenceFailure.Observation;
   if (readyAfterMs === null && allMean(problems, ProblemMeaning.Race)) return EvidenceFailure.Race;
   return EvidenceFailure.Build;
+}
+
+/** Is every problem the crash itself, or something a dead window could not answer (a blind camera, a lost drive or contract)? */
+function deadWindowOnly(problems: readonly unknown[] | null | undefined): boolean {
+  const rest = (problems ?? []).map((problem) => String(problem)).filter((problem) => problem !== RENDERER_CRASHED);
+  const deadWindowMeanings: readonly ProblemMeaning[] = [ProblemMeaning.Observation, ProblemMeaning.Load];
+  return rest.every((problem) =>
+    EVIDENCE_FAILURES.some(
+      (failure) => failure.means.some((means) => deadWindowMeanings.includes(means)) && failure.match.test(problem),
+    ),
+  );
+}
+
+/** Did the OS kill this window (`preview.status` `gone`), rather than the build crash it? */
+function killedByMachine(status: { gone?: unknown } | null | undefined): boolean {
+  return status?.gone === PreviewGone.Killed || status?.gone === PreviewGone.Oom;
 }
 
 /**
@@ -256,7 +363,7 @@ export function loadRaced(problems: readonly unknown[] | null | undefined): bool
  * a minute. `raceDelays: []` turns that off entirely, which is what the classic run passes.
  */
 export async function withObservationPatience<
-  E extends { ok?: boolean; problems: readonly unknown[]; readyAfterMs?: number | null },
+  E extends { ok?: boolean; problems: readonly unknown[]; readyAfterMs?: number | null; machineKilled?: boolean },
 >(
   ctx: { readonly cancelled: boolean; setStatus?: (status: string) => void },
   gatherOnce: () => Promise<E>,
@@ -279,7 +386,10 @@ export async function withObservationPatience<
   };
   for (;;) {
     if (evidence.ok) return evidence;
-    const kind = classifyEvidenceFailure(evidence.problems, { readyAfterMs: evidence.readyAfterMs ?? null });
+    const kind = classifyEvidenceFailure(evidence.problems, {
+      readyAfterMs: evidence.readyAfterMs ?? null,
+      machineKilled: evidence.machineKilled === true,
+    });
     const delay = left[kind]?.shift();
     if (delay === undefined) return evidence;
     if (ctx.cancelled || Date.now() + delay > deadline) return evidence;
@@ -333,10 +443,20 @@ async function verifySetup(
   h: { handle?: string },
 ): Promise<{ reached: boolean | null; reason: string }> {
   const { verify } = setup;
-  const state = (await ctx.call(HostMethod.PreviewState, { ...h }).catch(() => null)) as AnyRecord | null;
+  // The verified path is kept whole: an over-budget state is cut largest-first, and the value
+  // this probe reads must not be the part that went.
+  const keep = isKeepPath(verify.path) ? { keep: [verify.path] } : {};
+  const state = (await ctx.call(HostMethod.PreviewState, { ...h, ...keep }).catch(() => null)) as AnyRecord | null;
   const value = lookupState(state, verify.path);
+  // An older studio cut an over-budget state to a string: nothing in it can be read, which is not
+  // the same as a state that was read and is wrong.
+  if (isTruncatedState(state))
+    return { reached: null, reason: "the game's state is unreadable: state() came back cut to a string" };
   const usable = state && typeof state === "object" && !state.__missing;
   if (!usable) return { reached: null, reason: "the game's state is unreadable" };
+  // A studio that could not keep the path left a stub on it: unmeasured, not wrong.
+  if (elidedAlong(state, verify.path))
+    return { reached: null, reason: `${verify.path} was cut out of an over-budget state() — unmeasured` };
   const note = setup.note ? ` (${setup.note})` : "";
   if ("equals" in verify) {
     const reached = value === verify.equals || String(value) === String(verify.equals);
@@ -358,7 +478,7 @@ export async function applySetup(
   h: { handle?: string } = {},
 ): Promise<SetupOutcome> {
   const out: SetupOutcome = { applied: false, reached: null, reason: "", error: null };
-  if (!setup || typeof setup !== "object") return out;
+  if (!setup || typeof setup !== "object" || !replaysSomething(setup)) return out;
   try {
     if (setup.gesture) {
       await knock(ctx, setup.gesture, h);
@@ -380,6 +500,26 @@ export async function applySetup(
     out.error = String(err?.message ?? err);
   }
   return out;
+}
+
+/**
+ * Whether a setup replays anything on the page. `{ begin: false }` alone (the worker that owns the
+ * front-end) only says what the pass must not skip, and is not a script to replay and settle after.
+ */
+function replaysSomething(setup: AnyRecord): boolean {
+  const acts = Array.isArray(setup.actions) && setup.actions.length > 0;
+  return Boolean(setup.gesture || setup.demo || setup.verify?.path || acts);
+}
+
+/** Whether the studio left an elision stub anywhere on `path` (the value itself or one of its parents). */
+function elidedAlong(state: unknown, path: string): boolean {
+  let current: unknown = state;
+  for (const key of String(path).split(".")) {
+    if (!isRecord(current)) return false;
+    current = current[key];
+    if (isElidedStub(current)) return true;
+  }
+  return false;
 }
 
 function lookupState(state: unknown, path: string): unknown {
@@ -624,14 +764,19 @@ export async function gatherEvidence(
     eyes = true,
     motion = 0,
     audio = true,
-    maxDemos = 3,
+    maxDemos = DEMOS_PER_LOOK,
     requiredDemos = [],
+    knownDemos = null,
+    challenge = false,
     userView = true,
     scaffold = false,
     setup = undefined,
     inheritedConsole = [],
+    keepPaths = [],
+    viewport = null,
   }: GatherOptions,
 ): Promise<Evidence> {
+  const kept = Array.isArray(keepPaths) ? keepPaths.map(String) : [];
   // The pass's own state, phase to phase: its arguments, then what each phase found for the
   // phases after it.
   const look: Look = {
@@ -649,10 +794,15 @@ export async function gatherEvidence(
     audio,
     maxDemos,
     requiredDemos,
+    knownDemos: Array.isArray(knownDemos) ? knownDemos.map(String) : null,
+    challenge: challenge === true,
     userView,
     scaffold,
     setup,
     inheritedConsole,
+    // The bot's race is read by its position and finish: cut last, like the board's own paths.
+    keepPaths: challenge === true ? [...new Set([...kept, ...RACE_PATHS])] : kept,
+    viewport,
   };
   for (const phase of LOOK_OPENING) {
     const done = await phase(look);
@@ -666,12 +816,31 @@ export async function gatherEvidence(
       if (done) return done.value;
     }
   } finally {
-    // However this pass ends, the game is handed back running. A night that crashed here used
-    // to leave the user's own stage frozen on a paused frame until they reloaded it.
-    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start, ...look.h }).catch(() => {});
+    await handBack(look);
   }
   // Unreachable: the last phase (reportLook) always answers.
   return undefined as never;
+}
+
+/**
+ * However this pass ends, the game is handed back running. A run that crashed here used to
+ * leave the user's own stage frozen on a paused frame until they reloaded it. The live view (a
+ * pass with no window of its own) is the user's stage: a pass that took the game past its title
+ * puts it back on its first screen before it lets it run, rather than mid-race.
+ */
+async function handBack(look: Look): Promise<void> {
+  const { ctx, h } = look;
+  // The bot's race ends wherever it ended — a results screen, mid-race at the time limit.
+  const raced = look.challengeRace?.ran === true;
+  const movedPastFrontEnd = raced || look.play?.via === PlayVia.Begin || look.play?.via === PlayVia.Keys;
+  if (movedPastFrontEnd && !look.handle)
+    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: look.seed, ...h }).catch(() => {});
+  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start, ...h }).catch(() => {});
+}
+
+/** `preview.state`'s params for this pass: its window, and the paths its board reads, cut last. */
+function stateParams(look: Look): { handle?: string; keep?: string[] } {
+  return look.keepPaths.length ? { ...look.h, keep: look.keepPaths } : { ...look.h };
 }
 
 /**
@@ -692,7 +861,9 @@ const LOOK_PHASES: Array<(look: Look) => Promise<LookEnd>> = [
   photographCameras,
   photographUserView,
   runDemos,
+  runChallenge,
   weighFrames,
+  readLateStatus,
   readConsole,
   reportLook,
 ];
@@ -741,7 +912,7 @@ async function readReadiness(look: Look): Promise<void> {
 /** (1) load, (2) ready and (3) status: read on a settled page, not on one still loading. */
 async function loadPage(look: Look): Promise<LookEnd> {
   const { ctx, entry, handle, iterationId, labelPrefix, root, run, scaffold, setup } = look;
-  // The state to look at: a worker's own (director, 2026-09-07 — one map per worker on a big game), else the run's.
+  // The state to look at: a worker's own (one map per worker on a big game), else the run's.
   look.requestedSetup = setup === undefined ? run.setup : setup;
   const h = handle ? { handle } : {};
   look.h = h;
@@ -752,8 +923,10 @@ async function loadPage(look: Look): Promise<LookEnd> {
   // otherwise judgeable challenger over.
   look.warnings = [];
   // The base pass of a shared scaffold is the one place a dead clock or a dead contract must
-  // stop the night; a later iteration warns, so one regression never voids a whole run.
+  // stop the run; a later iteration warns, so one regression never voids a whole run.
   look.baseStage = scaffold === true && iterationId === "base";
+
+  await sizeWindow(look);
 
   // ── (1) load ──
   if (root || entry)
@@ -771,14 +944,34 @@ async function loadPage(look: Look): Promise<LookEnd> {
   // ── (3) status: read on a settled page, not on one still loading ──
   const status = await ctx.call(HostMethod.PreviewStatus, { ...h });
   look.status = status;
+  // The OS reclaiming memory kills a window whatever it runs: a typed flag the classifier reads,
+  // so a build is not rolled back for the machine's pressure (`classifyEvidenceFailure`).
+  look.machineKilled = killedByMachine(status);
   if (status.loadError) problems.push(status.loadError);
-  if (status.crashed) problems.push("the renderer crashed");
+  if (status.crashed) problems.push(RENDERER_CRASHED);
+}
+
+/**
+ * (0) size: a look asked at another size (the art director's 1600×900) resizes its leased window
+ * before the load, so the page lays itself out at that size; the live view is the user's and is
+ * never resized. A window the host will not size is judged at its own size, with a warning.
+ */
+async function sizeWindow(look: Look): Promise<void> {
+  const { ctx, handle, viewport, warnings } = look;
+  if (!handle || !viewport) return;
+  try {
+    await ctx.call(HostMethod.PreviewViewport, { handle, width: viewport.width, height: viewport.height });
+  } catch (err: any) {
+    warnings.push(
+      `the window could not be sized to ${viewport.width}×${viewport.height} (${err?.message ?? err}) — it was judged at its own size`,
+    );
+  }
 }
 
 /** (4) setup, the player-eye cameras the game has, and the readings the page phases fill. */
 async function reachRequestedState(look: Look): Promise<LookEnd> {
   const { ctx, eyes, h, prefix, requestedSetup, run, status, warnings } = look;
-  // ── (4) setup: the requested state (computer use, 2026-09-07) — the scout's setup script,
+  // ── (4) setup: the requested state — the scout's setup script,
   // replayed before anyone looks: the gesture, then start, then the map picker opened, the map
   // chosen, and a probe that says it landed. A build judged on the boot screen while the brief
   // was about another map cost a whole run. Replayed AFTER the readiness poll, because the scout
@@ -796,7 +989,7 @@ async function reachRequestedState(look: Look): Promise<LookEnd> {
   // `player()` into installStudio. A board game has no eye worth photographing, so it is not
   // asked; a game that declares no kind is looked at exactly as before.
   look.eyeNames = [];
-  const looksThroughEyes = eyes && look.bootedFor && wantsEyeCameras(run?.game);
+  const looksThroughEyes = eyes && look.bootedFor && kinds.wantsEyeCameras(run?.game);
   if (looksThroughEyes) {
     try {
       const declared = await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Eyes, ...h });
@@ -832,6 +1025,7 @@ async function reachRequestedState(look: Look): Promise<LookEnd> {
 
   look.state = null;
   look.stateEarly = null;
+  look.play = null;
   look.audioProbe = null;
   look.clockProof = {
     ok: null,
@@ -852,7 +1046,7 @@ async function reachRequestedState(look: Look): Promise<LookEnd> {
  *
  * An empty shared base draws nothing because there is nothing in it. That is the one stage where
  * blankness is allowed, and the exemption is settled by inspection a few steps below
- * (emptyScene) — so the no-draw verdict waits for it rather than failing the scaffold every night.
+ * (emptyScene) — so the no-draw verdict waits for it rather than failing the scaffold every run.
  */
 function weighClockFailure(look: Look, proof: StepProof): void {
   const { baseStage, problems, warnings } = look;
@@ -884,22 +1078,190 @@ async function proveClock(look: Look): Promise<void> {
 }
 
 /**
- * (6) drive. Two samples, ~30 simulated seconds apart: the first run judged on 5 uneventful
- * seconds, where every build's numbers look identical. The judge needs to see what MOVED. The
- * early sample is taken BEFORE the scripted controls, so `delta('player.yaw')` and
+ * (6) the opening sample. Two samples, ~30 simulated seconds apart: the first run judged on 5
+ * uneventful seconds, where every build's numbers look identical. The judge needs to see what
+ * MOVED. The early sample is taken BEFORE the scripted controls, so `delta('player.yaw')` and
  * `delta('player.x')` measure what the controls did — the first v2 run took it after them and
  * every probe delta measured drift. The two proving steps sit before it, so the early sample is
  * the same distance into the simulation for every build.
  */
-async function driveGame(look: Look): Promise<void> {
-  const { ctx, h, motion, motionFrames, run, takeMotionFrame } = look;
+async function sampleOpening(look: Look): Promise<void> {
+  const { ctx, h } = look;
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: DRIVE_STEP_MS, ...h });
-  look.stateEarly = await ctx.call(HostMethod.PreviewState, { ...h });
-  // Drive the game's OWN controls every iteration so feel/play are judged on play, not idle
-  // time — and so a board game is clicked rather than walked.
-  await applyPlayScript(ctx, playScriptFor(run?.game), { clock: "step", runId: run.runId, ...h });
-  // The motion strip: a few frames spread over the scripted walk, from the player's eye —
-  // feel is judged from motion, not from two JSON snapshots.
+  look.stateEarly = await ctx.call(HostMethod.PreviewState, stateParams(look));
+}
+
+/** `state().flow` as the harness reads it: whether the game is in play, and the phase it names. */
+function flowOf(state: unknown): { playing: boolean; phase: string | null } | null {
+  const flow = isRecord(state) ? state.flow : null;
+  if (!isRecord(flow) || typeof flow.playing !== "boolean") return null;
+  return { playing: flow.playing, phase: typeof flow.phase === "string" ? flow.phase : null };
+}
+
+/** What the pass records of the front-end: always declared, reached only when `flow.playing`. */
+function playReach(flow: { playing: boolean; phase: string | null }, via: PlayVia, ms: number): PlayReach {
+  return { declared: true, reached: flow.playing, phase: flow.phase, via, ms };
+}
+
+/**
+ * (6a) play. A game with a title, menu or countdown reports `state().flow`, and the drive must
+ * start in play: otherwise every throttle lands in the countdown `seed()` just restarted and the
+ * judges rate a standing car. Read off the opening sample, so a game that
+ * reports no flow, or is in play already, is driven call for call as before. Stepped, never slept;
+ * a game that does not get there is a warning, never a voided challenger.
+ */
+async function reachPlay(look: Look): Promise<void> {
+  const flow = flowOf(look.stateEarly);
+  if (!flow) return;
+  if (flow.playing) {
+    look.play = playReach(flow, PlayVia.Boot, 0);
+    return;
+  }
+  // The worker that owns the front-end is judged on its menu, not past it.
+  if (look.requestedSetup?.begin === false) {
+    look.play = playReach(flow, PlayVia.Kept, 0);
+    return;
+  }
+  const via = await enterPlay(look);
+  const { state, ms } = await waitForPlay(look);
+  // The early sample is the state the controls start from: in play, after the countdown.
+  look.stateEarly = state;
+  look.play = playReach(flowOf(state) ?? flow, via, ms);
+  if (!look.play.reached) look.warnings.push(outsidePlay(look.play, startKeysOf(look.run?.game), look.beginRefusal));
+}
+
+/** `__studio.begin()`, or the declared start keys when the page has none; how the pass asked. */
+async function enterPlay(look: Look): Promise<PlayVia> {
+  const { ctx, h, run } = look;
+  const began = await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Begin, ...h }).catch(() => null);
+  if (isRecord(began) && began.ok === true) return PlayVia.Begin;
+  // What the page answered, quoted in the warning: a config.begin that threw is not a missing one.
+  look.beginRefusal =
+    isRecord(began) && typeof began.reason === "string" ? clip(began.reason, BEGIN_REASON_CHARS) : null;
+  const keys = startKeysOf(run?.game);
+  if (!keys.length) return PlayVia.Wait;
+  await applyPlayScript(ctx, [{ type: "tap", keys }], { clock: "step", runId: run.runId, ...h });
+  return PlayVia.Keys;
+}
+
+/** Step the clock until the game says it is in play, or the wait runs out: the last state, and how long. */
+async function waitForPlay(look: Look): Promise<{ state: unknown; ms: number }> {
+  const { ctx, h } = look;
+  let ms = 0;
+  let state = await ctx.call(HostMethod.PreviewState, stateParams(look));
+  while (flowOf(state)?.playing !== true && ms < PLAY_WAIT_MAX_MS) {
+    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: PLAY_WAIT_STEP_MS, ...h });
+    ms += PLAY_WAIT_STEP_MS;
+    state = await ctx.call(HostMethod.PreviewState, stateParams(look));
+  }
+  return { state, ms };
+}
+
+/**
+ * What a judge and the next builder are told when the drive started outside play. `refusal` is
+ * what `__studio.begin()` answered when it would not begin, quoted as the page said it.
+ */
+function outsidePlay(play: PlayReach, keys: string[], refusal: string | null = null): string {
+  const seconds = PLAY_WAIT_MAX_MS / SECOND_MS;
+  const refused = refusal ? `__studio.begin() answered "${refusal}"` : "the game has no __studio.begin()";
+  const keysFailed = `the start keys (${keys.join("/")}) did not bring the game to flow.playing within ${seconds} s`;
+  const asked =
+    play.via === PlayVia.Keys
+      ? `${refusal ? `${refused}; ` : ""}${keysFailed}`
+      : `__studio.begin() did not bring the game to flow.playing within ${seconds} s`;
+  const why =
+    play.via === PlayVia.Wait
+      ? `${refused} and no declared start keys, and did not reach flow.playing on its own within ${seconds} s`
+      : asked;
+  return `the drive began outside play (flow.phase "${play.phase ?? "unknown"}") — ${why}; the scripted controls landed in the front-end`;
+}
+
+/** The declared start keys, from a kinds.ts that may predate them. */
+function startKeysOf(game: AnyRecord | null | undefined): string[] {
+  return typeof kinds.startKeysFor === "function" ? kinds.startKeysFor(game) : [];
+}
+
+/** The keys this kind cruises on through the drive, from a kinds.ts that may predate them. */
+function cruiseOf(game: AnyRecord | null | undefined): string[] {
+  return typeof kinds.cruiseFor === "function" ? kinds.cruiseFor(game) : [];
+}
+
+/** The throttle the bot holds, whatever script the plan wrote, from a kinds.ts that may predate it. */
+function throttleOf(game: AnyRecord | null | undefined): string[] {
+  return typeof kinds.throttleFor === "function" ? kinds.throttleFor(game) : [];
+}
+
+/** Whether the drive of this kind watches for a corner, from a kinds.ts that may predate it. */
+function cornersOf(game: AnyRecord | null | undefined): boolean {
+  return typeof kinds.cornersFor === "function" ? kinds.cornersFor(game) : false;
+}
+
+/**
+ * The racing-line assist on or off (`__studio.assist`, the template's `config.steer`): whether the
+ * game's own line steers now. A game without one answers that it has none, and an older studio.js
+ * has no such verb at all: either way the drive is today's — the throttle held, nothing steering.
+ */
+async function steerByLine(look: Look, on: boolean): Promise<boolean> {
+  const { ctx, h } = look;
+  const answer = await ctx
+    .call(HostMethod.PreviewCall, { method: PageMethod.Assist, arg: { steer: on }, ...h })
+    .catch(() => null);
+  return isRecord(answer) && answer.ok === true && answer.steer === true;
+}
+
+/**
+ * The controls the drive presses. A kept front-end (`setup.begin === false`) is pressed by
+ * nothing: the kind's exercise would start a title that takes any key on its throttle, and a
+ * script the game declared is written for play, so its first Enter would start it too. The
+ * worker building that title is judged on it, not on the countdown behind it; the clock still runs.
+ */
+function driveScriptOf(look: Look): unknown {
+  return look.play?.via === PlayVia.Kept ? [] : kinds.playScriptFor(look.run?.game);
+}
+
+/**
+ * (6b) drive: the game's OWN controls every iteration so feel/play are judged on play, not idle
+ * time — and so a board game is clicked rather than walked. A racer or a craft then holds its
+ * throttle through the rest of the drive (`cruise`), released before the cameras: a racer
+ * photographed after thirty seconds of coasting is a parked car. Both sides of every comparison
+ * get the same inputs.
+ *
+ * The cruise steers by the game's own racing line when it has one (`config.steer`): a held
+ * throttle that nothing steers ends the drive with the car against a wall. A racer's drive also
+ * watches its heading for a corner to photograph (`watchCorner`).
+ */
+async function driveGame(look: Look): Promise<void> {
+  const { ctx, h, run } = look;
+  await applyPlayScript(ctx, driveScriptOf(look), { clock: "step", runId: run.runId, ...h });
+  // A menu is never held on the throttle: the front-end's own worker, or a game that never got into play.
+  const onMenu = Boolean(look.play && !look.play.reached);
+  const cruise = onMenu ? [] : cruiseOf(run?.game);
+  look.cornerWatch = !onMenu && cornersOf(run?.game) ? newCornerWatch() : null;
+  if (cruise.length) {
+    await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "down", keys: cruise }], ...h });
+    look.drive = { steered: await steerByLine(look, true) };
+  }
+  try {
+    await stepThroughDrive(look);
+  } finally {
+    await releaseCruise(look, cruise);
+  }
+  look.corner = cornerReport(look);
+}
+
+/** Let go of the cruise: the line's steering, then the throttle. */
+async function releaseCruise(look: Look, cruise: string[]): Promise<void> {
+  if (!cruise.length) return;
+  if (look.drive?.steered) await steerByLine(look, false);
+  await look.ctx.call(HostMethod.PreviewInput, { actions: [{ type: "up", keys: cruise }], ...look.h }).catch(() => {});
+}
+
+/**
+ * The drive's steps, with the motion strip: a few frames spread over them, from the player's eye
+ * — feel is judged from motion, not from two JSON snapshots.
+ */
+async function stepThroughDrive(look: Look): Promise<void> {
+  const { ctx, h, motion, motionFrames, takeMotionFrame } = look;
   const motionAt = new Set<number>();
   if (motion > 0)
     for (let k = 0; k < motion; k++) motionAt.add(Math.round((k * LAST_DRIVE_STEP) / Math.max(1, motion - 1)));
@@ -912,15 +1274,143 @@ async function driveGame(look: Look): Promise<void> {
       }
     }
     await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: DRIVE_STEP_MS, ...h });
+    await watchCorner(look, i);
   }
+}
+
+// ── the drive's corner ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The player's heading, read page-side after a drive step: `state().player.yaw` in radians, or
+ * null when the game reports none. One small answer, not the whole state over the wire.
+ */
+const CORNER_PROBE = `(() => {
+  /* studio corner probe */
+  try {
+    var s = window.__studio;
+    var state = s && typeof s.state === "function" ? s.state() : null;
+    var player = state && state.player;
+    var yaw = player ? player.yaw : null;
+    return { yaw: typeof yaw === "number" && isFinite(yaw) ? yaw : null };
+  } catch (err) {
+    return null;
+  }
+})()`;
+
+/** What the drive has seen of a racer's heading so far, and the corner once it photographed one. */
+interface CornerWatch {
+  /** The heading after the last step, radians; null before the first read. */
+  yaw: number | null;
+  /** The fastest turn seen after the settle, radians per second. */
+  maxTurn: number;
+  /** The first read answered nothing: the game reports no heading, and the drive stops asking. */
+  unreadable: boolean;
+  /** The turn-in the drive photographed: when, and how fast the heading was turning. */
+  corner: { atMs: number; turn: number } | null;
+}
+
+const newCornerWatch = (): CornerWatch => ({ yaw: null, maxTurn: 0, unreadable: false, corner: null });
+
+/** The heading the probe read, or null when the game reports none. */
+async function readHeading(look: Look): Promise<number | null> {
+  const { ctx, h } = look;
+  const answer = await ctx.call(HostMethod.PreviewEvaluate, { expression: CORNER_PROBE, ...h }).catch(() => null);
+  const yaw = isRecord(answer) ? answer.yaw : null;
+  return typeof yaw === "number" && Number.isFinite(yaw) ? yaw : null;
+}
+
+/** The signed change from one heading to the next, wrapped to a half turn either way. */
+const headingChange = (from: number, to: number): number => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+
+/**
+ * After drive step `step`: read the heading, and when it is turning like a corner (and the controls'
+ * own swerve is behind), photograph the turn-in once — what the corner warnings, the braking and
+ * the line look like, which the frame wherever the drive ended almost never shows.
+ */
+async function watchCorner(look: Look, step: number): Promise<void> {
+  const watch: CornerWatch | null = look.cornerWatch;
+  if (!watch || watch.unreadable || watch.corner) return;
+  const yaw = await readHeading(look);
+  if (yaw === null) {
+    watch.unreadable = watch.yaw === null;
+    return;
+  }
+  const previous = watch.yaw;
+  watch.yaw = yaw;
+  if (previous === null || step < CORNER_SETTLE_STEPS) return;
+  const turn = Math.abs(headingChange(previous, yaw)) / (DRIVE_STEP_MS / SECOND_MS);
+  watch.maxTurn = Math.max(watch.maxTurn, turn);
+  if (turn < CORNER_TURN_RAD_PER_S) return;
+  watch.corner = { atMs: (step + 1) * DRIVE_STEP_MS, turn };
+  await photographCorner(look);
+}
+
+/** The turn-in as the game renders it, filed as `drive:corner`; a lost frame is a thinner look, never a failure. */
+async function photographCorner(look: Look): Promise<void> {
+  const { ctx, h, prefix, run } = look;
+  try {
+    // A motion frame may have left the lens on the player's eye: the corner is the game's own view.
+    if (look.motionCamera)
+      await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: DEFAULT_CAMERA, ...h });
+    const shot = await ctx.call(HostMethod.PreviewScreenshot, {
+      runId: run.runId,
+      label: `${prefix}/screenshots/drive-corner`,
+      surface: "canvas",
+      ...h,
+    });
+    look.cornerShot = {
+      camera: CORNER_CAMERA,
+      path: shot.path,
+      bytes: shot.bytes,
+      base64: shot.base64,
+      stats: shot.stats ?? null,
+      surface: photographed(shot),
+    };
+  } catch {
+    look.cornerShot = null;
+  }
+}
+
+/** What the drive says of corners (`evidence.corner`): the turn-in it photographed, the fastest turn it saw, or that it could not tell. */
+function cornerReport(look: Look): AnyRecord | null {
+  const watch: CornerWatch | null = look.cornerWatch;
+  if (!watch) return null;
+  if (watch.unreadable) return { seen: false, unreadable: true };
+  const { corner } = watch;
+  if (!corner || !look.cornerShot)
+    return { seen: false, turnDegPerSecond: Math.round(watch.maxTurn * DEGREES_PER_RADIAN) };
+  return { seen: true, atMs: corner.atMs, turnDegPerSecond: Math.round(corner.turn * DEGREES_PER_RADIAN) };
+}
+
+/**
+ * What the studio's bound did to the state, said once: a bounded state names what it cut (a
+ * check reading into a stub is unmeasured), and an older studio's string cut left nothing to read.
+ */
+function sayStateCut(look: Look): void {
+  const { state, warnings } = look;
+  const cut = stateCutOf(state);
+  if (cut) {
+    const paths = cut.paths.length ? cut.paths.join(", ") : "its largest values";
+    warnings.push(
+      `__studio.state() is ${cut.chars.toLocaleString("en-US")} chars, over what the studio reads whole, so it cut ${paths} to stubs — a check that reads into them is unmeasured; keep long lists out of state()`,
+    );
+    return;
+  }
+  if (!isTruncatedState(state)) return;
+  const chars = Number(state.length);
+  const size = Number.isFinite(chars) ? `${chars.toLocaleString("en-US")} chars` : "over budget";
+  warnings.push(
+    `__studio.state() is ${size} and came back cut to a string — nothing in it could be read; report less in state()`,
+  );
 }
 
 /** The state the drive left, what it says is wrong with the page, and what the game sounds like. */
 async function readDrivenState(look: Look): Promise<void> {
   const { audio, ctx, h, problems } = look;
-  look.state = await ctx.call(HostMethod.PreviewState, { ...h });
+  look.state = await ctx.call(HostMethod.PreviewState, stateParams(look));
   if (look.state?.__missing) problems.push(MISSING_CONTRACT);
   if (look.state?.error) problems.push(`runtime error: ${look.state.error.message}`);
+  sayStateCut(look);
   if (!audio || look.state?.__missing) return;
   try {
     const probe = (await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Audio, ...h })) as AnyRecord | null;
@@ -930,11 +1420,13 @@ async function readDrivenState(look: Look): Promise<void> {
   }
 }
 
-/** (5) prove the studio owns the clock, then (6) drive the game's own controls. */
+/** (5) prove the studio owns the clock, (6) sample it, reach play, then drive the game's own controls. */
 async function proveAndDrive(look: Look): Promise<LookEnd> {
   if (!look.bootedFor) return;
   try {
     await proveClock(look);
+    await sampleOpening(look);
+    await reachPlay(look);
     await driveGame(look);
     await readDrivenState(look);
   } catch (err: any) {
@@ -1052,6 +1544,17 @@ async function takeShot(
   };
 }
 
+/** The cameras the game registers (`__studio.cameras()`), or null for a game predating cameras(). */
+async function registeredCameraNames(look: Look): Promise<string[] | null> {
+  const { ctx, h } = look;
+  try {
+    const answer = await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Cameras, ...h });
+    return Array.isArray(answer) ? answer.map(String) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Add `name` to the cameras to photograph, once. */
 function addCamera(names: string[], name: string): void {
   if (!names.includes(name)) names.push(name);
@@ -1064,14 +1567,8 @@ function addCamera(names: string[], name: string): void {
  * for close and wide, and an unregistered one of those is skipped silently.
  */
 async function declaredCameraNames(look: Look, cameraNames: string[], floorCameras: Set<string>): Promise<void> {
-  const { ctx, h } = look;
   cameraNames.push(DEFAULT_CAMERA);
-  try {
-    const answer = await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Cameras, ...h });
-    if (Array.isArray(answer)) look.declaredCameras = answer.map(String);
-  } catch {
-    /* a game predating cameras() declares none */
-  }
+  look.declaredCameras = await registeredCameraNames(look);
   const declared: string[] = look.declaredCameras ?? [];
   for (const name of declared)
     if (!cameraNames.includes(name) && cameraNames.length < MAX_CAMERAS) cameraNames.push(name);
@@ -1106,13 +1603,21 @@ async function chooseCameras(look: Look): Promise<void> {
   look.floorCameras = floorCameras;
   const wantEyes = look.eyeNames.filter((name: string) => EYE_CAMERAS.includes(name));
   look.wantEyes = wantEyes;
+  // What the game registers, recorded whichever cameras are photographed: a camera another facet
+  // depends on that a build deleted is a regression, and only this list can show it.
+  look.registeredCameras = null;
   if (!look.bootedFor) cameraNames.push(DEFAULT_CAMERA);
   else if (Array.isArray(cameras) && cameras.length > 0) {
-    for (const name of [DEFAULT_CAMERA, ...cameras.map(String)]) addCamera(cameraNames, name);
+    // A facet's camera that is a demo's end or the drive's corner is a frame the pass takes on its
+    // own, never a viewpoint to ask debugCamera for (nor one "not registered in config.cameras").
+    const viewpoints = cameras.map(String).filter((name) => !isPassFrame(name));
+    for (const name of [DEFAULT_CAMERA, ...viewpoints]) addCamera(cameraNames, name);
     for (const name of wantEyes) addCamera(cameraNames, name);
+    look.registeredCameras = await registeredCameraNames(look);
   } else {
     await declaredCameraNames(look, cameraNames, floorCameras);
     for (const name of wantEyes) addCamera(cameraNames, name);
+    look.registeredCameras = look.declaredCameras;
   }
   // The viewpoints the GAME claims to have: the floor's guesses are not among them, so an
   // identical frame from a camera nobody declared is not evidence of dead wiring.
@@ -1283,22 +1788,32 @@ async function photographUserView(look: Look): Promise<LookEnd> {
   }
 }
 
+/** The most demos beyond the check-named ones a look with this cap runs: one at the least. */
+const demoBudget = (maxDemos: number): number => (Number.isFinite(maxDemos) ? Math.max(1, maxDemos) : Infinity);
+
 /**
  * Which demos run, in order, and which the cap leaves out. Every demo a check names runs, always;
- * the cap applies only to the unreferenced remainder. A cap that silently dropped check-named
- * demos made the harness report "ADS never engages" for a feature it never looked at.
+ * the cap applies only to the unreferenced remainder, and in it a demo the compared build does not
+ * register (`known`) comes first — a builder registers a demo to show its move. A cap that silently
+ * dropped check-named demos made the harness report "ADS never engages" for a feature it never
+ * looked at, and one that drops the newest judges a builder's move without its frame.
  */
 function demosToRun(
   registered: string[],
   requiredDemos: readonly unknown[] | null | undefined,
   maxDemos: number,
+  known: readonly string[] | null = null,
 ): { toRun: string[]; skipped: string[] } {
   const required = new Set((requiredDemos ?? []).map(String));
+  const shown = known === null ? null : new Set(known);
+  const added = (n: string): boolean => shown !== null && !shown.has(n);
+  const rest = registered.filter((n: string) => !required.has(n));
   const ordered: string[] = [
     ...registered.filter((n: string) => required.has(n)),
-    ...registered.filter((n: string) => !required.has(n)),
+    ...rest.filter(added),
+    ...rest.filter((n: string) => !added(n)),
   ];
-  const budget = Number.isFinite(maxDemos) ? Math.max(1, maxDemos) : Infinity;
+  const budget = demoBudget(maxDemos);
   const toRun: string[] = [];
   const skipped: string[] = [];
   let extra = 0;
@@ -1318,9 +1833,9 @@ function demosToRun(
  * is answered from this snapshot instead.
  */
 async function demoEndState(look: Look, name: string): Promise<void> {
-  const { ctx, demoStates, h } = look;
+  const { ctx, demoStates } = look;
   try {
-    const after = (await ctx.call(HostMethod.PreviewState, { ...h })) as AnyRecord | null;
+    const after = (await ctx.call(HostMethod.PreviewState, stateParams(look))) as AnyRecord | null;
     if (isRecord(after) && !after.__missing) demoStates[name] = after;
   } catch {
     /* a lost snapshot leaves the probe unmeasured, never failed */
@@ -1363,24 +1878,108 @@ async function runDemo(look: Look, name: string): Promise<void> {
  * switch: the demo composes its own view).
  */
 async function runDemos(look: Look): Promise<LookEnd> {
-  const { ctx, h, maxDemos, requiredDemos } = look;
+  const { ctx, h, knownDemos, maxDemos, requiredDemos } = look;
   look.demos = {} as Record<string, AnyRecord>;
   look.demoStates = {} as Record<string, AnyRecord>;
   look.demoShots = [] as Shot[];
   look.registeredDemos = null;
   const skippedDemos: string[] = [];
   look.skippedDemos = skippedDemos;
+  look.demoCap = null;
   if (!look.bootedFor) return;
   try {
     const names = await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Demos, ...h });
     if (!Array.isArray(names)) return;
     look.registeredDemos = names.map(String);
-    const { toRun, skipped } = demosToRun(look.registeredDemos, requiredDemos, maxDemos);
+    const { toRun, skipped } = demosToRun(look.registeredDemos, requiredDemos, maxDemos, knownDemos);
     skippedDemos.push(...skipped);
+    // The cap that left them out, for the judge's line and the builder's next prompt: the harness's
+    // limit, never a defect of the build (so not a warning a judge may name as the gap).
+    if (skipped.length) look.demoCap = demoBudget(maxDemos);
     for (const name of toRun) await runDemo(look, name);
   } catch {
     /* a game predating the demo contract simply has none */
   }
+}
+
+/**
+ * The throttle-only bot's race (`throttle-bot-loses`), after the demos because it moves the game
+ * to wherever the race ends. Asked for by a board that carries the check, or a ship look; a race
+ * that throws is a reading the pass could not take, never a voided challenger.
+ */
+async function runChallenge(look: Look): Promise<LookEnd> {
+  look.challengeRace = null;
+  if (!look.challenge || !look.bootedFor) return;
+  look.challengeRace = await raceThrottleBot(look).catch((err: unknown) => ({
+    ran: false,
+    reason: `the race could not be driven: ${(err as Error)?.message ?? err}`,
+  }));
+}
+
+/** The race block a game reports in `state()`, when it reports a position to win. */
+function raceOf(state: unknown): AnyRecord | null {
+  const race = isRecord(state) ? state.race : null;
+  return isRecord(race) && typeof race.position === "number" ? race : null;
+}
+
+/**
+ * A bot that holds the throttle, lets the game's racing line steer when it has one, and never
+ * brakes, from the game's first screen through its race: a race it wins is no challenge. Stepped in
+ * `CHALLENGE_STEP_MS` until the game says the race is finished or `CHALLENGE_MAX_MS` of racing
+ * have passed; the state it ends on is what `throttle-bot-loses` reads.
+ */
+async function raceThrottleBot(look: Look): Promise<AnyRecord> {
+  const { ctx, h, run, seed } = look;
+  if (!raceOf(look.state)) return { ran: false, reason: MESSAGE.botNoRace };
+  const throttle = throttleOf(run?.game);
+  if (!throttle.length) return { ran: false, reason: MESSAGE.botNoThrottle };
+  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: seed, ...h });
+  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Pause, ...h });
+  const early = await startRace(look);
+  if (!early) return { ran: false, reason: MESSAGE.botNoPlay };
+  await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "down", keys: throttle }], ...h });
+  const steered = await steerByLine(look, true);
+  try {
+    const { state, ms } = await driveRace(look);
+    const race = raceOf(state);
+    return {
+      ran: true,
+      state,
+      early,
+      simulatedMs: ms,
+      finished: race?.finished === true,
+      position: race?.position ?? null,
+      steered,
+    };
+  } finally {
+    if (steered) await steerByLine(look, false);
+    await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "up", keys: throttle }], ...h }).catch(() => {});
+  }
+}
+
+/** Into the race from the game's first screen, the way the drive gets into play: its state there, or null when it never got there. */
+async function startRace(look: Look): Promise<unknown> {
+  const { ctx } = look;
+  const first = await ctx.call(HostMethod.PreviewState, stateParams(look));
+  const flow = flowOf(first);
+  if (!flow || flow.playing) return first;
+  await enterPlay(look);
+  const { state } = await waitForPlay(look);
+  return flowOf(state)?.playing === true ? state : null;
+}
+
+/** Step the race until it is finished or the bot's time is up: the last state, and the racing it took. */
+async function driveRace(look: Look): Promise<{ state: unknown; ms: number }> {
+  const { ctx, h } = look;
+  let ms = 0;
+  let state: unknown = null;
+  while (ms < CHALLENGE_MAX_MS) {
+    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: CHALLENGE_STEP_MS, ...h });
+    ms += CHALLENGE_STEP_MS;
+    state = await ctx.call(HostMethod.PreviewState, stateParams(look));
+    if (raceOf(state)?.finished === true) break;
+  }
+  return { state, ms };
 }
 
 /**
@@ -1493,6 +2092,24 @@ async function weighFrames(look: Look): Promise<LookEnd> {
   weighEmptyBase(look);
 }
 
+/**
+ * (9) the window again, at the end of the pass. The OS kills a window at its memory peak (the
+ * drive, the cameras, the demos), not at the load, and the status read there said nothing of it:
+ * a kill mid-pass would have left every failure after it on the build.
+ */
+async function readLateStatus(look: Look): Promise<LookEnd> {
+  const { ctx, h, problems } = look;
+  const late = (await ctx.call(HostMethod.PreviewStatus, { ...h }).catch(() => null)) as AnyRecord | null;
+  if (!isRecord(late)) return;
+  look.machineKilled = look.machineKilled === true || killedByMachine(late);
+  if (late.crashed && !problems.includes(RENDERER_CRASHED)) problems.push(RENDERER_CRASHED);
+}
+
+/** Is this console line the page's own, rather than the studio's note that the window went away? */
+function loggedByPage(entry: { source?: unknown }): boolean {
+  return entry.source !== PreviewConsoleSource.WindowGone;
+}
+
 /** The console against what the page inherited, and the GPU's own errors. */
 async function readConsole(look: Look): Promise<LookEnd> {
   const { ctx, h, inheritedConsole, problems, warnings } = look;
@@ -1500,7 +2117,9 @@ async function readConsole(look: Look): Promise<LookEnd> {
   look.consoleEntries = consoleEntries;
   const consoleErrors = consoleEntries.filter((entry) => entry.level === "error");
   look.consoleErrors = consoleErrors;
-  const consoleVerdict = consoleProblems(consoleErrors, inheritedConsole);
+  // The studio's own line about a dead window is not an error the build logged: the crash itself
+  // is read off the window's status, typed, and the kill is the machine's when it says so.
+  const consoleVerdict = consoleProblems(consoleErrors.filter(loggedByPage), inheritedConsole);
   look.consoleVerdict = consoleVerdict;
   problems.push(...consoleVerdict.problems);
   warnings.push(...consoleVerdict.warnings);
@@ -1545,6 +2164,15 @@ function sayNoFrame(look: Look): void {
   );
 }
 
+/** What the drive measured beyond the frames, each only when it was measured at all. */
+function drivenReadings(look: Look): AnyRecord {
+  return {
+    ...(look.drive ? { drive: look.drive } : {}),
+    ...(look.corner ? { corner: look.corner } : {}),
+    ...(look.challengeRace ? { challenge: look.challengeRace } : {}),
+  };
+}
+
 /** The pass's answer, never a bare colon. */
 async function reportLook(look: Look): Promise<LookEnd> {
   const { consoleErrors, demoShots, demoStates, demos, missingCameras, motionFrames, problems, shots } = look;
@@ -1559,16 +2187,24 @@ async function reportLook(look: Look): Promise<LookEnd> {
       emptyScene: look.emptyScene,
       problems,
       warnings,
-      // Demo end-frames join the evidence after the honesty guards — a demo that legitimately
-      // ends on a frame matching a camera shot must not read as a dead debugCamera.
-      shots: [...shots, ...demoShots, ...(look.userViewShot ? [look.userViewShot] : [])],
+      // Demo end-frames and the drive's corner join the evidence after the honesty guards — a demo
+      // that legitimately ends on a frame matching a camera shot must not read as a dead debugCamera.
+      shots: [
+        ...shots,
+        ...(look.cornerShot ? [look.cornerShot] : []),
+        ...demoShots,
+        ...(look.userViewShot ? [look.userViewShot] : []),
+      ],
       demos: Object.keys(demos).length ? demos : null,
       // The state each demo left behind, for probes scoped to a demo.
       demoStates: Object.keys(demoStates).length ? demoStates : null,
       // What the game declares vs what the cap left out — so a check can tell "not registered"
       // (the builder's defect) from "not run" (nobody looked).
       registeredDemos: look.registeredDemos,
+      registeredCameras: look.registeredCameras ?? null,
       skippedDemos,
+      // How many unnamed demos the look ran at most — only when it left some out.
+      ...(look.demoCap ? { demoCap: look.demoCap } : {}),
       state: look.state,
       stateEarly: look.stateEarly,
       // The last five, for a judge and a builder to read in a prompt...
@@ -1576,7 +2212,7 @@ async function reportLook(look: Look): Promise<LookEnd> {
       // ...and every distinct message, for the next build's baseline. An error inherited from the
       // build this one forked from must be recognisable when the next pass looks: a baseline of
       // five forgives the wrong ones, and one unforgiven shader line once voided four iterations,
-      // every judge of a night and its landing.
+      // every judge of a run and its landing.
       consoleBaseline: [...new Set(consoleErrors.map((entry: AnyRecord) => String(entry.message)))].slice(
         0,
         MAX_CONSOLE_BASELINE,
@@ -1597,6 +2233,13 @@ async function reportLook(look: Look): Promise<LookEnd> {
       surface: judged?.surface ?? "canvas",
       pageUi: look.pageUi ? { entries: uiEntries, coverage: uiCoverage, primary: uiPrimary } : null,
       canvas: judgedCanvas(judged),
+      // Only when there is something to say, so a game with no front-end, on a window nobody
+      // killed, reports exactly what it always did.
+      ...(look.play ? { play: look.play } : {}),
+      ...(look.machineKilled ? { machineKilled: true } : {}),
+      // The drive's readings: whether the racing line steered it, the corner it photographed, and
+      // the throttle-only bot's race (judge-facts.ts words each one; `throttle-bot-loses` reads the race).
+      ...drivenReadings(look),
     },
   };
 }
@@ -1667,19 +2310,33 @@ async function noWindowFree(ctx: HarnessCtx): Promise<{ noWindow: string }> {
 }
 
 /**
- * A look that is allowed to look again when the load raced the window (`loadRaced`). `look` makes
- * one pass; a pass that throws is a failed pass, never a thrown night. `onRace` hears each race
- * before the next look. The answer carries how many looks it was allowed (`attempts`).
+ * A look that is allowed to look again when the load raced the window (`loadRaced`), or when the
+ * OS killed the window under memory pressure (`machineKilled`). `look` makes one pass; a pass that
+ * throws is a failed pass, never a thrown run. `onRace` hears each race before the next look.
+ * The answer carries how many looks it was allowed (`attempts`). A `viewport` sizes the leased
+ * window (`handle`) once, before the first look; the live view is never sized.
  */
 export async function patientEvidence(
-  ctx: { readonly cancelled?: boolean },
+  ctx: { readonly cancelled?: boolean; call?: HarnessCtx["call"] },
   look: () => Promise<Evidence>,
   {
     attempts = 3,
     delayMs = LOAD_RACE_RETRY_MS,
     onRace = null,
-  }: { attempts?: number; delayMs?: number; onRace?: ((evidence: Evidence) => void) | null } = {},
+    handle = null,
+    viewport = null,
+  }: {
+    attempts?: number;
+    delayMs?: number;
+    onRace?: ((evidence: Evidence) => void) | null;
+    handle?: string | null;
+    viewport?: { width: number; height: number } | null;
+  } = {},
 ): Promise<Evidence | null> {
+  if (handle && viewport && typeof ctx.call === "function")
+    await ctx
+      .call(HostMethod.PreviewViewport, { handle, width: viewport.width, height: viewport.height })
+      .catch(() => null);
   let evidence: Evidence | null = null;
   for (let i = 0; i < attempts; i++) {
     if (i > 0) await sleep(delayMs);
@@ -1693,8 +2350,11 @@ export async function patientEvidence(
       }),
     );
     if (evidence.ok || ctx.cancelled) break;
-    if (!loadRaced(evidence.problems)) break;
-    onRace?.(evidence);
+    const killed =
+      evidence.machineKilled === true &&
+      classifyEvidenceFailure(evidence.problems, { machineKilled: true }) === EvidenceFailure.Observation;
+    if (!loadRaced(evidence.problems) && !killed) break;
+    if (!killed) onRace?.(evidence);
   }
   if (evidence) evidence.attempts = attempts;
   return evidence;

@@ -1,6 +1,6 @@
 /**
  * One conversation, whichever model answers it: the person may switch the chat's model at any
- * message (owner, 2026-10-05). A session goes on only while it is the chat's latest (`goesOn`): one
+ * message. A session goes on only while it is the chat's latest (`goesOn`): one
  * that another model answered after has missed those turns. A fresh session whose brief cannot
  * carry the conversation is briefed with a written summary (`briefSummary`), which a Codex
  * compaction cannot give: Codex keeps its own sealed inside its session.

@@ -1,11 +1,11 @@
 /**
  * When the director is woken, and what the end of one of its turns means — the rules of the
- * wake loop (wake.ts), with no night of their own. A leaf: it imports only time.ts, so every
- * part of the night may type its lines with it.
+ * wake loop (wake.ts), with no run of their own. A leaf: it imports only time.ts, so every
+ * part of the run may type its lines with it.
  *
  * The lead used to live inside one long turn: `wait` in a loop, and a "continue" prompt whenever
- * the turn ended with time left — one night stretched a single session over seventeen hours that
- * way. Now it ends its turn after every decision, nothing of it runs between turns, and the
+ * the turn ended with time left, which stretched a single session over the whole run. Now it
+ * ends its turn after every decision, nothing of it runs between turns, and the
  * studio wakes the same session when something happens. What counts as something is decided
  * here, by typed fields and never by reading a line's English.
  */
@@ -40,7 +40,7 @@ export function directorLoopOf(
 }
 
 /**
- * What a line of the night's log is about, set by whoever writes it outside the lead's own turn
+ * What a line of the run's log is about, set by whoever writes it outside the lead's own turn
  * (`note(text, kind)`). A line with no kind is the lead's own doing when it was written during its
  * turn, and news when it was written while it slept. Wake reasons are persisted: never rename a value.
  */
@@ -97,6 +97,16 @@ export const WakeCause = {
   WrapUp: "wrap_up",
   WorkersLimitLifted: "workers_limit_lifted",
   IdleAsk: "idle_ask",
+  /**
+   * The finish mark: the art director has looked at the whole game (art-direction.ts), and from
+   * here the owners finish their parts. A timed build's timer, or a goal build idle with no review.
+   */
+  FinishMark: "finish_mark",
+  /**
+   * The art director's regular look at the whole game while workers build (art-direction.ts
+   * `shipLookAt`): its defects go to their owners, and the build stage goes on.
+   */
+  ShipLook: "ship_look",
 } as const;
 export type WakeCause = (typeof WakeCause)[keyof typeof WakeCause];
 /** Why one wake happened: a kind of line, or a cause of its own. */
@@ -113,7 +123,14 @@ export const WrapCause = {
 export type WrapCause = (typeof WrapCause)[keyof typeof WrapCause];
 
 /** What the loop does when a turn of the lead's ends. */
-export const TurnEnd = { Sleep: "sleep", AskIdle: "ask_idle", WrapUp: "wrap_up", Close: "close" } as const;
+export const TurnEnd = {
+  Sleep: "sleep",
+  AskIdle: "ask_idle",
+  WrapUp: "wrap_up",
+  Close: "close",
+  /** A goal build idle twice with no ship review on its head: the finish mark is due now, once. */
+  ArtDirection: "art_direction",
+} as const;
 export type TurnEnd = (typeof TurnEnd)[keyof typeof TurnEnd];
 
 /** News that is not the user's settles this long before it wakes the lead, and what else arrives rides along. */
@@ -124,17 +141,17 @@ export const HEARTBEAT_MS = 20 * MINUTE_MS;
 export const MAX_WAKES_PER_HOUR = 30;
 /** The window the wake cap counts in. */
 export const WAKE_WINDOW_MS = HOUR_MS;
-/** A wrap-up turn ends this long before the night's end, and so does a pass it asks for. */
+/** A wrap-up turn ends this long before the run's end, and so does a pass it asks for. */
 export const WRAP_UP_MARGIN_MS = 30 * SECOND_MS;
 
-/** A line of the night's log as the waker reads it. */
+/** A line of the run's log as the waker reads it. */
 export interface WakeLine {
   at: number;
   seq: number;
   kind?: NoteKind;
 }
 
-/** Everything `nextWake` decides on: plain facts, read by the loop from the night. */
+/** Everything `nextWake` decides on: plain facts, read by the loop from the run. */
 export interface WakeView {
   now: number;
   /** Lines the lead has not been told yet. */
@@ -161,6 +178,10 @@ export interface WakeView {
   idleAsked: boolean;
   /** When the lead was woken, recently. */
   wakesAt: readonly number[];
+  /** When the finish mark is due, while it is ahead of the wrap-up and not yet said (absent: none). */
+  finishMarkAt?: number | null;
+  /** When the art director's regular look at the whole game is due (absent: none). */
+  shipLookAt?: number | null;
 }
 
 /** When to wake the lead, and why. */
@@ -175,6 +196,9 @@ interface Candidate {
   reason: WakeReason;
   capped: boolean;
 }
+
+/** The timers a run gone idle does not wait for: the question of what next comes first. */
+const FAR_TIMERS: ReadonlySet<WakeReason> = new Set<WakeReason>([WakeCause.WrapUp, WakeCause.FinishMark]);
 
 /** How soon a line wakes a lead who went to sleep after `asleepFromSeq`. */
 function urgencyOf(line: WakeLine, asleepFromSeq: number): WakeUrgency {
@@ -204,6 +228,18 @@ function userCandidates(view: WakeView): Candidate[] {
   return out;
 }
 
+/**
+ * The finish mark wakes the lead only before the wrap-up is due: a mark still unsaid once the
+ * working time is over (a Mac that slept through both, a Resume of a run paused in its wrap-up)
+ * gives way to the wrap-up rather than spend its reserve on the art director's look.
+ */
+const markAheadOfWrapUp = (view: WakeView): view is WakeView & { finishMarkAt: number } =>
+  !view.wrapping && typeof view.finishMarkAt === "number" && view.now < view.softDeadline;
+
+/** The art director's regular look, like the mark, only in working time: the wrap-up has no room for it. */
+const lookAheadOfWrapUp = (view: WakeView): view is WakeView & { shipLookAt: number } =>
+  !view.wrapping && typeof view.shipLookAt === "number" && view.now < view.softDeadline;
+
 /** The studio's own reasons: the idle ask, and the timers. */
 function timerCandidates(view: WakeView): Candidate[] {
   const out: Candidate[] = [];
@@ -211,6 +247,9 @@ function timerCandidates(view: WakeView): Candidate[] {
   if (view.idleDue) add(view.now, WakeCause.IdleAsk, false);
   if (view.planWindowEndsAt !== null) add(view.planWindowEndsAt, WakeCause.PlanWindow, false);
   if (!view.wrapping) add(view.softDeadline, WakeCause.WrapUp, false);
+  if (markAheadOfWrapUp(view)) add(view.finishMarkAt, WakeCause.FinishMark, false);
+  // Uncapped: busy workers fill the hourly cap with rounds, and the look is what they were missing.
+  if (lookAheadOfWrapUp(view)) add(view.shipLookAt, WakeCause.ShipLook, false);
   if (view.workersLimitLiftsAt !== null) add(view.workersLimitLiftsAt, WakeCause.WorkersLimitLifted, true);
   if (view.running > 0) add(view.asleepSince + HEARTBEAT_MS, WakeCause.Heartbeat, true);
   return out;
@@ -218,13 +257,13 @@ function timerCandidates(view: WakeView): Candidate[] {
 
 /**
  * The question of what next, for a lead that went to sleep busy — a worker it had just stopped
- * was still settling, say — when the night has gone idle under it: nothing runs, nothing but the
+ * was still settling, say — when the run has gone idle under it: nothing runs, nothing but the
  * wrap-up is ahead, and it was not asked yet. Without it, a stopped last worker left the lead
  * asleep until the wrap-up. Whatever else is due keeps its own wake, and the question then waits
  * for that turn's end (`afterTurn`).
  */
 function wentIdle(view: WakeView, others: readonly Candidate[]): Candidate[] {
-  const onlyTheWrapUp = others.every((c) => c.reason === WakeCause.WrapUp);
+  const onlyTheWrapUp = others.every((c) => FAR_TIMERS.has(c.reason));
   const askable = !view.idleAsked && !view.wrapping && view.softDeadline > view.now;
   return onlyTheWrapUp && askable ? [{ at: view.now, reason: WakeCause.IdleAsk, capped: false }] : [];
 }
@@ -240,7 +279,7 @@ function capLiftsAt(view: WakeView): number {
  * When the lead is woken next and why — or null when nothing would ever wake it. The user and
  * the finish request wake it at once; a worker's news waits `WAKE_DEBOUNCE_MS` so what arrives
  * with it rides along; a line the lead caused in its own turn and a line that asks nothing of it
- * only wait for the next digest. A night gone idle with nothing else ahead asks it what next.
+ * only wait for the next digest. A run gone idle with nothing else ahead asks it what next.
  * `at` is never in the past, and the reasons are every one due by then.
  */
 export function nextWake(view: WakeView): Wake | null {
@@ -259,8 +298,13 @@ export function nextWake(view: WakeView): Wake | null {
 /** What the loop knows when one of the lead's turns has ended. */
 export interface TurnFacts {
   ok: boolean;
-  /** The night is over for this session: finished, stopped, a limit it will not wait out, or the wrap-up turn done. */
+  /** The run is over for this session: finished, stopped, or the wrap-up turn done. */
   closed: boolean;
+  /**
+   * A provider is lost under the run — the lead's sign-in, a limit it will not wait out, an outage
+   * it could not outlast, or a sign-in a worker or judge lost (absent: none). The run pauses.
+   */
+  providerLost?: boolean;
   running: number;
   planWindowOpen: boolean;
   workersLimitPending: boolean;
@@ -269,6 +313,8 @@ export interface TurnFacts {
   /** Working time is left and nobody asked to finish. */
   workingTimeLeft: boolean;
   finishRequested: boolean;
+  /** A goal build with no ship review on its head, not yet sent to art direction (absent: never). */
+  artDirectionOwed?: boolean;
 }
 
 /** What the loop does next, whether the idle question has been asked, and why a wrap-up starts. */
@@ -283,11 +329,13 @@ const busy = (turn: TurnFacts): boolean => turn.running > 0 || turn.planWindowOp
 
 /**
  * A turn has ended. With work going on the lead rests until something happens; with nothing
- * running and time left it is asked once what next, and a second idle turn starts the wrap-up.
- * Out of working time — or asked by the user to finish — it wraps up; a failed turn does too.
+ * running and time left it is asked once what next, and a second idle turn starts the wrap-up —
+ * unless the art director is owed a look first (a goal build, once: `artDirectionOwed`).
+ * Out of working time — or asked by the user to finish — it wraps up; a failed turn does too,
+ * unless a lost provider failed it: then the run closes paused, and no wrap-up lands a build.
  */
 export function afterTurn(turn: TurnFacts): TurnVerdict {
-  if (turn.closed) return { next: TurnEnd.Close, idleAsked: turn.idleAsked };
+  if (turn.closed || turn.providerLost === true) return { next: TurnEnd.Close, idleAsked: turn.idleAsked };
   if (!turn.workingTimeLeft) {
     const wrapCause = turn.finishRequested ? WrapCause.Finish : WrapCause.Deadline;
     return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause };
@@ -295,6 +343,7 @@ export function afterTurn(turn: TurnFacts): TurnVerdict {
   if (!turn.ok) return { next: TurnEnd.WrapUp, idleAsked: turn.idleAsked, wrapCause: WrapCause.Failed };
   if (busy(turn)) return { next: TurnEnd.Sleep, idleAsked: false };
   if (!turn.idleAsked) return { next: TurnEnd.AskIdle, idleAsked: true };
+  if (turn.artDirectionOwed === true) return { next: TurnEnd.ArtDirection, idleAsked: true };
   return { next: TurnEnd.WrapUp, idleAsked: true, wrapCause: WrapCause.Idle };
 }
 
@@ -308,7 +357,7 @@ export interface PassClocks {
 /**
  * Until when a pass the lead asks for may run — a judge's patience with its provider, a playtest:
  * the working deadline while there is working time, and the wrap-up's own end once it is over. A
- * wrap-up that the user's finish, an idle night or a failed turn started moves the working
+ * wrap-up that the user's finish, an idle run or a failed turn started moves the working
  * deadline to its start, and a playtest held to that had no time at all.
  */
 export function passDeadline({ now, softDeadline, finalDeadline }: PassClocks): number {

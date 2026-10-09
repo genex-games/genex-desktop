@@ -2,17 +2,19 @@
 
 ## From a request to a game
 
-Auto edits directly; Loop can delegate workers while the chat leads and reviews. Timed builds
-use their working window. Until-satisfied builds finish on verified required
-outcomes; time is a safety ceiling. Acceptance persists across workers and restarts. External
-blockers pause the run, keeping its checkpoint. User Finish overrides the clock, never the
-final judge. Maximum concurrent workers defaults to eight; saved choices stay. [Harness runtime](../harness-runtime.md#goal-completion-and-worker-approvals)
-owns completion and recovery details.
+Auto edits directly; Loop can delegate workers (four by default; a chosen number stays) while the chat leads.
+Parts grow boldly within the ask; an art director regularly reviews the whole game, names what
+must not regress and, from the finish mark, sends defects back for polish, never a veto.
+Timed builds use their window; until-satisfied ones finish on verified required outcomes, time
+only a ceiling. Acceptance persists across workers and restarts. External blockers pause the
+run at its checkpoint. User Finish overrides the clock, never the final judge.
+[Harness runtime](../harness-runtime.md#goal-completion-and-worker-approvals) owns completion and
+recovery details.
 
 An active run opens Builds once; later tab choices are the user's, except that showing a
 build from the chat opens Live. Without a plan or run, a stored Builds
 choice falls back to Live. A file or image opened from the chat adds a tab named for it until
-closed, with Show in Finder for files in the game folder.
+closed, with Show in Finder for game-folder files.
 
 ## The two views
 
@@ -36,20 +38,20 @@ it has run. Its header shows only time worked. A working node shows its agent's 
 node opens in place as a card without zooming; an eye opens it on the reviewers' notes. **Follow up in chat** turns the next message into a note to that node's build.
 An earlier build opens from its chat card.
 
-The agent tests the game in hidden windows, never in Live. Chat reuses
-the lead's frames, which never certify a delivered build. A worker finishing, checks passing,
-integration and Live showing a revision are distinct facts; summaries never merge them into
-unearned success. Chat shows the delivery's capture and Play and keeps failures visible; Builds
+Agents test in hidden windows, never in Live; the lead's frames the chat reuses
+never certify a delivered build. A finished worker, passing checks, integration and Live's
+revision are distinct facts that summaries never merge. Chat shows the delivery's capture and Play, failures included; Builds
 and Studio report missing checks, coverage limits, counts and revisions.
 
 ## Continuation and interruption
 
-After a chat-led night, its session takes follow-ups: editing the game, resuming a paused run
+After a chat-led build, its session takes follow-ups: game edits, resuming a paused run
 with its time left, starting over only when asked. With Loop on, a small change is made directly;
 more work reopens the build until checked. One the chat cannot continue, like Ollama's, is answered
 as with Loop off, noting it once. **Stop** interrupts work immediately, preserving finished
 work; a stopped Loop run shows one Stopped line with Resume, and Builds or a chat request makes its
-build live. A crash or restart settles abandoned activity from persisted state; stopped, failed,
+build live. Limit, outage and crash pauses resume twice unless stopped (Settings → Harness); sign-in
+pauses wait. A crash or restart settles abandoned activity from persisted state; stopped, failed,
 incomplete and delivered outcomes stay distinct.
 
 ## Where to work
@@ -59,6 +61,5 @@ incomplete and delivered outcomes stay distinct.
 - [run-steps](../../src/renderer/run-steps.ts) folds steps; [RunGraph](../../src/renderer/panels/RunGraph.tsx)
   and [RunInspector](../../src/renderer/panels/RunInspector.tsx) draw them.
 - [Conversation coordinator](../conversation-coordinator.md): queue, continuation and Stop.
-- [Harness runtime](../harness-runtime.md): installed game-building agent boundaries.
 - Check [Architecture](../agent/architecture.md) and [Verification](../agent/verification.md)
   before changing a run, preview or recovery contract.

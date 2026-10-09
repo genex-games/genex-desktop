@@ -3,6 +3,7 @@
  * a browser as written, and does it load (or can the studio attach) the contract the judge reads.
  * Read-only: nothing here writes into the game folder.
  */
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ContractWord, type ProjectShape } from "../shared/game-project.ts";
@@ -31,7 +32,7 @@ const MODULE_EXTENSIONS = [".js", ".mjs", ".ts", ".tsx", ".jsx"];
 
 /**
  * The one problem that decides whether a build can be judged at all. It is read by a person —
- * the Open Game sheet prints it under "Before a night can judge it" — so it says what the night
+ * the Open Game sheet prints it under "Before a run can judge it" — so it says what the run
  * will do about it rather than handing the user two lines of JavaScript to type: installing the
  * contract is the base builder's first job (loop/director.ts `installContract`), and the brief
  * the engine reads is where the two lines belong.
@@ -79,19 +80,104 @@ export interface GameValidation {
  *
  * 0 no file at all, 1 predates `inspect()`, 2 has `inspect()` and no HUD, 3 the one-screen
  * contract (HUD and input), 4 the M4 contract: the HUD is a lazy facade over `./hud.js` and an
- * eye camera is borrowed from the game and given back.
+ * eye camera is borrowed from the game and given back, 5 the HUD facade forwards arc, panel,
+ * path, image and font and reports a bounded summary before the module loads, 6 the racing-line
+ * assist (`config.steer`, `assist()`) the harness's drive and its throttle-only bot steer by.
  */
 export function studioContractGeneration(source: string | null): number {
   if (source === null) return 0;
+  if (/\bwithAssistKeys\s*\(/.test(source)) return 6;
+  if (/\bunloadedHudSummary\s*\(/.test(source)) return 5;
   if (/\bcreateHudFacade\s*[(=]/.test(source) || /\bborrowedCamera\b/.test(source)) return 4;
   if (!/\binspect\s*[(:]/.test(source)) return 1;
   return /\bhud\s*:\s*hud\.api/.test(source) ? 3 : 2;
 }
 
 /**
+ * Every `src/hud.js` the studio shipped before the current generation, by the SHA-256 of its text
+ * with LF line endings, and the generation it is. When the template's `HUD_GENERATION` moves on,
+ * the outgoing file's digest joins this table, or games scaffolded with it keep it for good.
+ */
+const SHIPPED_HUD_DIGESTS: Readonly<Record<string, number>> = {
+  // Generation 1 (text, bar, crosshair): as Milestone 4 shipped it, after the Biome format, and
+  // after the readability pass (the copy in Genex 0.1.0).
+  "09dcdfa1b7a45142c081ef972a0388857ac2e4df49432a7f17cbf88e1b5996c5": 1,
+  b08796505b9628fb9fc4a0c1bfa6eb422dfa23cb801f6ea99cf88f2efddd21ad: 1,
+  dbde5256b725fa00c10f81463de1975164c92413765ac76eb789d033e4be0b98: 1,
+};
+
+/**
+ * Which HUD a copy of `src/hud.js` is: 0 no file at all, 1 a copy that predates `HUD_GENERATION`
+ * (text, bar and crosshair only), otherwise the generation it declares.
+ */
+export function hudContractGeneration(source: string | null): number {
+  if (source === null) return 0;
+  const declared = /\bexport\s+const\s+HUD_GENERATION\s*=\s*(\d+)/.exec(source);
+  return declared ? Number(declared[1]) : 1;
+}
+
+/**
+ * The generation of a `src/hud.js` that is byte for byte a copy the studio shipped (line endings
+ * aside, so a CRLF checkout still counts), or null for a copy anyone edited — the only copies an
+ * upgrade may replace, because `src/hud.js` is the main owner's to change.
+ */
+export function shippedHudGeneration(source: string | null): number | null {
+  if (source === null) return null;
+  return SHIPPED_HUD_DIGESTS[shippedDigest(source)] ?? null;
+}
+
+/**
+ * Every `src/studio.js` the studio shipped before the current contract generation, by the SHA-256
+ * of its text with LF line endings, and the generation it is. When `studioContractGeneration` of
+ * the template moves on, the outgoing file's digest joins this table, or every game scaffolded
+ * with it keeps it for good.
+ */
+const SHIPPED_STUDIO_DIGESTS: Readonly<Record<string, number>> = {
+  // Generation 1: the first contract and the four revisions before `inspect()`.
+  e8b340183c844107ab383cea0e2c01146fc9ba8d1dd258006fe18b684eb027ad: 1,
+  f1c7b794be11342132d323a9c0ff7b7e82d47c9facb8cd48f14bd297263c89ec: 1,
+  "6cecdcae53ea95824171084412ca5fef0ab97b505c5dec1c603c22241ab904cc": 1,
+  "4b05db6f5a84b2731d2c2bf616dfdbe90f7dbee5e57e243cac3d4e08d3ece826": 1,
+  "108ea3647d1e5c2ca19f458e46506c438262930b3b1ae53584a7214a756c5ad9": 1,
+  // Generation 2: `inspect()`, no HUD.
+  "1e5eba4f5dc902cf2e37f5771828997ec390b7d946e46f18d0b2df8b5f26a9b5": 2,
+  // Generation 3: the one-screen contract, in its three revisions.
+  "39280834f2d9b7dbc3062913b887ac7eccc39d7639c0b9e750f862d9a9616b4c": 3,
+  "8910ec523c731f8a46a2c010ad2a079fb3129fade999127f18492085c95b72ef": 3,
+  "0e434144f125652d1d313fd754875593dfc6200270313b68975fe49af287271e": 3,
+  // Generation 4: as Milestone 4 shipped it, after the Biome format, after the readability pass
+  // (the copy in Genex 0.1.0 through 0.1.3), and the two front-end revisions before the HUD facade
+  // grew arcs and panels.
+  f84776dfbfeda103c6a5679fe074f019b3e6cf5da2605e7ac701423811e3352b: 4,
+  "34918eb93990699fcac7b2c3f0d534984a5522cdb308112392e34c6a20ce8319": 4,
+  "3fa898dbff35227ae6815493b46ac252aa95ab7fe180150a10e05362a1ca2ece": 4,
+  "64dc5359ff81f8edd7ab815c2d48ca114db0a065dd95bb8a72df1dbccc4faf31": 4,
+  a7221ced2600350b8d8ade6dd6da421fe766132c611c5b6651fa7fad86ea9102: 4,
+  // Generation 5: arcs, panels, paths, images and fonts, in its two revisions before the
+  // racing-line assist.
+  "77f1c1d367c1e63225ff34b10136c04c4866932793a754ce0ff381ae1c7cd384": 5,
+  f5f4cc72c37a789c4f1c1b66bf69bd7e63fa7fe0f1993498f36a72872a62b2da: 5,
+};
+
+/**
+ * The generation of a `src/studio.js` that is byte for byte a copy the studio shipped (line endings
+ * aside), or null for a copy anyone edited. The template asks the main owner to extend the file, so
+ * only a shipped copy may be replaced: an edited one carries exports the game may import.
+ */
+export function shippedStudioGeneration(source: string | null): number | null {
+  if (source === null) return null;
+  return SHIPPED_STUDIO_DIGESTS[shippedDigest(source)] ?? null;
+}
+
+/** The SHA-256 a shipped-copy table keys a file by: its text with LF line endings. */
+function shippedDigest(source: string): string {
+  return createHash("sha256").update(source.replace(/\r\n/g, "\n")).digest("hex");
+}
+
+/**
  * A browser runs JavaScript. Inserting an import map does not make TypeScript run in Chromium,
  * so a folder whose reachable sources are `.ts` is not attachable however its three resolves —
- * telling a night the page attaches and then judging a blank screen is the failure this whole
+ * telling a run the page attaches and then judging a blank screen is the failure this whole
  * milestone exists to remove.
  */
 function nonExecutableSource(sources: string[]): string | null {
@@ -101,7 +187,7 @@ function nonExecutableSource(sources: string[]): string | null {
 /**
  * A dev-only game (Vite with no build script) is served exactly as written, and the browser
  * has no bundler: `import … from "three"` simply fails and the stage goes black. Say so here
- * rather than let a night be judged on a page that never ran. The exception is what the
+ * rather than let a run be judged on a page that never ran. The exception is what the
  * studio's own inserted map answers: a page with no map of its own gets the five vendored
  * keys from the serve layer, so `three` there is resolved, not missing.
  */
@@ -216,7 +302,7 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   warnings.push(...use.randomUsers.map((rel) => MESSAGE.MathRandom(rel)));
   const nonExecutable = reach === "none" ? null : nonExecutableSource(sources);
   if (nonExecutable) problems.push(MESSAGE.TypescriptUnbuilt(toPosixRelative(path.relative(dir, nonExecutable))));
-  // The one problem the night can do something about on its own: a page that never loads the
+  // The one problem the run can do something about on its own: a page that never loads the
   // contract is unjudgeable, and installing it is the first thing a run does (loop/director.ts
   // `installContract`). Answered as a word rather than left for every caller to match the
   // sentence in `problems` — the folder sheet already read it that way.

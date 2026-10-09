@@ -20,6 +20,7 @@ import { EngineFailure } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
 import { clip, CLIP_BRIEF, CLIP_QUOTE, CLIP_REASON } from "./text.ts";
 import { CheckOrigin, normalizeCheck, validateFacetSpec, type Check } from "./spec.ts";
+import { MoveScope } from "./scope.ts";
 import {
   NEXT_MOVE_SYSTEM,
   nextMoveUserPrompt,
@@ -261,8 +262,7 @@ function correctedCheck(spec: PlannedFacet, check: Check, raw: AnyRecord): Repla
  * facet", "belongs to lighting-daycycle", "please re-point this check at village-fabric".
  * Returns the other facet's id when the flag names one (and it is not the flagging facet),
  * else null. The loop then drops the check here, blocks its class from re-growing, and routes
- * the defect to the facet named — the village run burned nine iterations on a mist band that
- * was never village-fabric's to fix.
+ * the defect to the facet named, so no facet burns iterations on a defect that is not its to fix.
  */
 export function flagTarget(
   flag: unknown,
@@ -307,6 +307,7 @@ export async function nextMove(
     moves = [],
     counts = null,
     cameras = [],
+    asked = [],
   }: {
     run: Run;
     spec: PlannedFacet;
@@ -316,11 +317,13 @@ export async function nextMove(
     moves?: ReadonlyArray<{ what?: string; delivered?: boolean }>;
     counts?: unknown;
     cameras?: string[];
+    /** Steps beyond the ask already put to the user (facet/beyond.ts): never proposed again. */
+    asked?: readonly string[];
   },
-): Promise<{ what: string; why: string; check: Check | null } | null> {
+): Promise<{ what: string; why: string; check: Check | null; scope?: MoveScope } | null> {
   let raw: AnyRecord;
   try {
-    const user = nextMoveUserPrompt({ run, spec, defects, notes, moves, counts, cameras });
+    const user = nextMoveUserPrompt({ run, spec, defects, notes, moves, counts, cameras, asked });
     raw = await askPlanner(ctx, run, NEXT_MOVE_SYSTEM, user);
   } catch (err: any) {
     if (isStop(err, ctx)) throw err;
@@ -332,6 +335,8 @@ export async function nextMove(
     what,
     why: typeof raw?.why === "string" ? raw.why.trim().slice(0, CLIP_REASON) : "",
     check: moveCheck(spec, raw.check),
+    // Typed, never read from the move's words: "adds" is the user's decision (facet/phases/plan.ts).
+    ...(raw.scope === MoveScope.Adds ? { scope: MoveScope.Adds } : {}),
   };
 }
 

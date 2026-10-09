@@ -6,14 +6,26 @@ import { startFakeOllama } from "../helpers/fake-ollama.ts";
 /** The run controls the build smoke must always exercise: the composer Stop and the keep-awake hold. */
 const REQUIRED_CHECKS = [
   "running build shows only Stop in an empty composer",
-  "Escape closes the menu and leaves the night running",
+  "Escape closes the menu and leaves the run running",
   "Wrap up asks the run to finish instead of stopping it",
   "Stop in the composer immediately interrupts its own chat",
   "a running build holds the Mac awake",
   "the Mac is still held awake while the stopped build settles",
   "the blocker is released when the run settles",
 ];
-const server = await startFakeOllama({ respond: () => ({ text: "Smoke fixture" }) });
+// Two local models: one that sees, and a coding model that cannot, for the local roles checks.
+const server = await startFakeOllama({
+  respond: () => ({ text: "Smoke fixture" }),
+  models: [
+    {
+      name: "qwen3.6:27b",
+      size: 17_000_000_000,
+      capabilities: ["completion", "tools", "vision"],
+      contextLength: 262144,
+    },
+    { name: "coder:7b", size: 4_000_000_000, capabilities: ["completion", "tools"], contextLength: 32768 },
+  ],
+});
 try {
   const args = process.argv
     .slice(2)

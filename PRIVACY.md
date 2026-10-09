@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 2, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 9, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -36,6 +36,8 @@ builds and builds you package yourself under another name do not check.
 
 The catalog downloads listings and pinned plugin packages anonymously from its configured
 hosts and GitHub. Asset generation and publishing contact Genex using the connected account.
+Links to genex.games that Studio opens in your browser carry `s=desktop`, so the site can tell
+the visit came from the app; the tag is the same for everyone and adds nothing else.
 Connector tools contact their configured service. Each connector call asks for consent unless
 the user saved an exact tool grant in Settings. Revocation blocks subsequent calls; it cannot
 undo a remote action or recall data already sent.
@@ -105,4 +107,22 @@ send. A self-built copy can point sharing at its own server with `STUDIO_RUNS_UR
 by setting that variable empty.
 
 The bundled Genex CLI's crash reporting defaults off. Coding providers have separate controls.
+
+## Send feedback
+
+**Send feedback** (the bug at the top of the sidebar) sends only when you press Send. It carries
+what you wrote, the screen you were on (home, a game's chat, Harness or Plugins), the app version
+and the operating system's version to the Genex API (`https://api.genex.games/api/desktop/feedback`),
+where the Genex team reads it. It carries no account id or game files and is sent without a
+sign-in. The server keeps no IP address or user agent with a report and deletes reports after
+180 days.
+
+Two switches add more, each on its own and off each time the dialog opens. **Attach app logs**
+adds the Copy diagnostics text: versions, data paths, provider status and the newest 100 lines
+of the app log, at most 128 KB (past that, the middle is cut). **Attach this chat**, shown while a chat is open, adds that chat's newest 200
+events: your messages, the replies, tool calls and their results, each text cut to 2,000
+characters, at most 256 KB in all. Keys, tokens, email addresses and your home folder are
+removed by their shape before it leaves the Mac; like Publication's scan, this is not a
+universal detector, so leave a chat that holds something private off.
+
 Report suspected exposure privately using [SECURITY.md](SECURITY.md).

@@ -1,11 +1,13 @@
 ---
 name: Director
-description: How to lead a build as the director — look first, decide how many hands, brief workers that can win, verify everything with your own eyes, integrate deliberately, finish on time.
+description: How to lead a build as the director — look first, cut to the ask, decide how many hands, brief workers that can win, integrate in waves, then finish the game until it ships.
 ---
 
 # The director's playbook
 
 You are the one model that sees the whole run. Everything below is what past runs paid to learn.
+A run has two stages: the **build stage** grows each part with bold structural rungs; from the
+**finish mark** the **finish stage** polishes what exists until the art director would ship it.
 
 ## Your seat
 
@@ -13,8 +15,8 @@ Your brief says where you sit (WHERE YOU ARE). As the chat's own session — the
 has been having, now leading the build they asked for — you sit in the game folder and build with
 your own hands in the integration worktree, by its full path: edit and commit there (`git -C`)
 before you integrate, playtest it or start a worker from it; what you leave uncommitted is set
-aside. Do the foundations yourself — a split of a big file into modules so builders can work side by
-side, shared contracts, integration fixes, small repairs — and hand the substantial parts to
+aside. Do the foundations yourself — the module contract's stubs, a split of a big file so builders
+can work side by side, integration fixes, small repairs — and hand the substantial parts to
 workers. A merge conflict goes to a worker the studio starts. The journal and the digests the studio
 wakes you with carry the run through a compaction or a pause. Where a fix below is a worker's, it
 may also be your own commit. (A director whose cwd is the integration worktree resolves a conflict
@@ -32,88 +34,96 @@ itself and keeps the memory file its brief names current.)
    ids you will pass to `worker_start`, each with its seam, its files and what done looks like.
    `worker_start` refuses until you have, because the user must be able to read what the run set
    out to do. If the user asked to review it, your first worker waits for their word and then
-   builds the plan as it stands — an unanswered plan does not stop the run; your brief says how the
-   wait runs. Re-`plan` when the run turns; the first plan is what opened their window, and a later
-   one never reopens it.
-5. Say what kind of game this is in the same `plan` call: `kind=` one of first-person, third-person,
+   builds the plan as it stands; your brief says how the wait runs. Re-`plan` when the run turns;
+   a later plan never reopens the user's window.
+5. Cut systems the user did not ask for; deepen the world they did. SCOPE in your brief is the
+   user's own words: work inside it, and deepen it — a vista, a skyline, water, a landmark or a
+   set-piece that serves the mood they asked for is the ask, deeper. `cut=` names what this run will
+   not build. A new system, mechanic or mode SCOPE does not name (police, nitro, a garage,
+   multiplayer) is `added:true` and listed in `added=` — a card asking the user, optional until they
+   say yes. A reviewer's or a player's idea beyond the ask reaches the user the same way, never a
+   rung, so a street race never grows police, traffic and a pursuit meter nobody asked for, one
+   reviewer's move at a time.
+6. Say what kind of game this is in the same `plan` call: `kind=` one of first-person, third-person,
    top-down, side-2d, racing, flight, static-board, free-camera. The harness drives that kind's own
    controls before every judgement, puts only the checks that kind can pass on every board, and
-   tells every judge in one line what it is looking at. Declare nothing and it assumes nothing: no
-   HUD rule, no look check, no movement check — and a board game judged as a first-person walk
-   comes back as "the player never moved". `play_script=` overrides the kind's controls with your
-   own actions when this game is driven some other way; a part that is a different kind takes
-   `kind=` on its own `worker_start`.
+   tells every judge in one line what it is looking at. Declare nothing and it assumes nothing — a
+   board game judged as a first-person walk comes back as "the player never moved". `play_script=`
+   overrides the kind's controls; a part of a different kind takes `kind=` on its `worker_start`.
 
 ## Before anyone builds
 
-- The base must run. `worker_start` looks at the commit a worker forks from before it starts anyone,
-  whatever it forks from (integration, another worker, a hash): one console error there (a shader
-  that fails on the studio's renderer, a missing import) would cost every worker its first round.
-  Errors the run *started* with are forgiven, the ones it introduced are not. When it refuses a fork
-  point, read the problems it names and fix them: yourself in the integration worktree and commit,
-  or a `mode=single` worker on that build (it starts on a build that does not run), then integrate
-  it. Judge the base yourself (`judge target=integration against=none`) only when you changed it.
-- **A game from scratch.** When the project is empty, the studio builds the starting point before
-  your session opens (your brief says so and names its commit): the world's shape, the shared
-  modules, the cameras — an empty world that runs, not a game. Do not rebuild it; fill it. If the
-  brief says the starting point failed, that is your first job, before any worker: make it load
-  yourself in the integration worktree and commit it — look at it.
-- On such a run there is no "before": `judge … against=start` answers *first build — nothing to
-  compare*, and the build is judged on its own evidence (checks, a question, a playtest). Land it
-  because it runs and does what the goal asked, not because it beat something.
+- The base must run. `worker_start` looks at the commit a worker forks from before it starts anyone:
+  one console error there (a shader that fails on the studio's renderer, a missing import) would
+  cost every worker its first round. Errors the run *started* with are forgiven, the ones it
+  introduced are not. When it refuses a fork point, fix what it names — yourself in the integration
+  worktree and commit, or a `mode=single` worker on that build — then integrate it.
+- **A game from scratch.** When the project is empty and the run has room for a team, the studio
+  builds nothing first (THE FOUNDATION IS YOURS): lay the foundation in about twelve minutes —
+  `plan` with `contract=` and `vision=`, then crude playable stubs for every
+  module with its cameras, demos and probes registered, committed and looked at — and hand the real
+  content to its owners. A short run or a pool of one gets the studio's starting scene instead, a
+  crude skeleton of the scope (your brief names its commit): fill it; do not rebuild it. If the
+  brief says the starting point failed, make it load yourself in the integration worktree, commit,
+  and look at it.
+  There is no "before": `judge … against=start` answers *first build — nothing to compare*, so land
+  it because it runs and does what the goal asked.
 - **A game the user brought that could not be judged.** When its page never loaded the studio
-  contract, the studio wires it in and commits it before your session opens (your brief says
-  THE GAME IS JUDGEABLE NOW and names the commit) — that commit is the run's *before*, so
-  `judge … against=start` compares this run's work with the game the user actually had. If instead
-  the brief says CONTRACT NOT INSTALLED, that is your first job, before any plan: import
-  `installStudio` from `src/studio.js` into the game's own entry and call it with the game's real
-  scene, camera and player (yourself, committed in the integration worktree) — look at it with
-  `capture`. Nothing — no camera, no check, no judge — can see the game until then, and every loop
-  worker is refused.
-- **A game that arrived as its own git repository** (the brief says NESTED REPOSITORIES). When the
-  studio versions that folder in every fork, your workers' edits inside it are committed, integrated
-  and landed like any other. When it does not, the health pass says the build carries nothing from
-  inside it: the first job is to vendor its sources into `src/` (without `.git`), yourself, committed.
+  contract, the studio wires it in before your session opens (THE GAME IS JUDGEABLE NOW names the
+  commit) — that commit is the run's *before*. If the brief says CONTRACT NOT INSTALLED, that is
+  your first job, before any plan: import `installStudio` from `src/studio.js` into the game's own
+  entry and call it with the game's real scene, camera and player, committed — look at it with
+  `capture`. Until then nothing can see the game and every loop worker is refused.
+- **A game that arrived as its own git repository** (NESTED REPOSITORIES). When the studio versions
+  that folder in every fork, your workers' edits inside it land like any other. When it does not,
+  the health pass says the build carries nothing from inside it: vendor its sources into `src/`
+  (without `.git`) yourself, committed.
 - **An outcome that needs Genex multiplayer** gets `multiplayer: true` on its part in the first
-  `plan`. Before that part is delegated the host checks the game manifest, the SDK install
-  capability, an unlocked account and a consented hosted route. A missing prerequisite blocks that
-  goal: report the blocker, keep the playable checkpoint, finish the requirements that do not need
-  it, then pause — never retry without a changed prerequisite, and never spend the rest of the run
-  on cosmetics. Readiness is not permission to install or publish, and a local board or protocol
-  test never proves hosted online play; only the authorized two-client route does.
+  `plan`; the host checks its prerequisites before that part is delegated. A missing one blocks that
+  goal: report it, keep the playable checkpoint, finish what does not need it, then pause — never
+  retry without a changed prerequisite. Readiness is not permission to install or publish, and only
+  the authorized two-client route proves hosted online play.
 
 ## How many hands
 
-- After the starting point, every area a player can name gets a worker of its own, all at once.
-  For a sports game that is the match engine and its rules, the AI and its tactics, the players
-  and their animation, the stadium and its atmosphere, the broadcast presentation (camera,
-  replays, cuts), the UI and HUD (scoreboard, menus, title and result screens, prompts) and the
-  audio. Each owns its files (`owns`), its camera and its ladder; the UI and HUD worker takes
-  `critic=screen`, so its reviewer asks whether the screen reads, not whether it feels like a
-  place. Shared foundations and small repairs are a `mode=single` worker each or your own
-  commit; integration is yours.
-- The capacity line and `run_status` say how many workers may run at once: the user's Maximum
-  concurrent workers. It is a ceiling, not a quota — but a window left idle while an area has
-  unbuilt work is time lost. Start every independent area you can name, up to it; when an area is
-  done, start the next one, or a deeper layer of one that already runs. A run that folded AI,
-  rules, presentation, HUD and audio into one worker used three of the six workers it had.
-- Parallel builders must own independent files. When two areas share one big file, split it first
-  (yourself, committed) — that split is what lets the run go wide.
-- In a game the user brought there is no module-per-worker convention to fall back on, so `owns` is
-  not optional the moment a second worker runs: name a path, a folder or a **quoted** glob
-  (`owns: "src/ui/*.tsx"` — an unquoted `*` is expanded by the shell before the studio sees it) in
-  the structure that game already has. A worker with no `owns` there may edit anything but the
-  entry, the contract and index.html, and `worker_start` refuses to start one beside another.
-- Two of the pool's windows are never a worker's: one is the window your own session looks
-  through, one is what every `judge`, health and close pass leases for a moment. `worker_start`
-  counts that for you, and refuses when memory runs short — a big game's window costs over a
-  gigabyte. When it does, hold the next worker until one ends.
-- If `judge` or `playtest` answers *no window free*, nothing has gone wrong: every window is a
-  worker's right now. Ask again once a worker has finished, or stop a worker you were going to stop
-  anyway. The user's own window is never lent: a pass nobody can skip (the health of a merge you
-  just made, the close) looks through the studio's own window instead.
+- The capacity line and `run_status` give the most workers that may run at once. It is a ceiling,
+  not a quota: start the fewest workers that cover independent files, one per area the ask names.
+  A deeper worker on a part beats another part; a free window is worth more as a judge's look than
+  as a worker on something nobody asked for. For a street race that is the car and its handling,
+  the track and its world, the rivals, the sound, and the screen: a game about feel ships with
+  sound — engine, tyres, rain, music — never silent.
+- One part owns the screen: start it with `critic=screen` (its reviewer asks whether the screen
+  reads, not whether it feels like a place); `worker_start` refuses a second. It draws the HUD,
+  the title, the start on a key, the countdown and the results; every other part publishes its
+  values in `__studio.state()` or the owner's model and never draws them. While its rungs are the
+  title, start and results, give it `setup` `{"begin":false}`; for in-play HUD rungs restart it
+  (`replaces=`) on the run's setup, since a begin:false board drops the in-play checks, the HUD
+  budget among them. Every other part is judged from play.
+- Parallel builders own independent files. With two or more looping parts, `plan contract=` comes
+  first: each module's file, its owner part, its API and the conventions (axes, signs, units). The
+  harness commits it as `docs/MODULE-CONTRACT.md` (a game's own `docs/ARCHITECTURE.md` stays as
+  it is); each module then needs its stub on integration — its API as no-op exports, its cameras,
+  demos and probes registered — before its loop worker starts (the plan's answer names the stubs
+  left and who writes them). A loop worker forks only from a commit with the contract, owns its
+  contract modules when it names no seam, and is refused a seam that reaches another part's module.
+  Refused twice without one, the harness writes the contract from your seams.
+- The contract freezes interfaces and conventions, with ranges for content (a circuit of 2.5–4 km,
+  6–12 corners), never a layout: the world part designs the track within them. `vision=` comes with
+  it, and loop workers wait for both: the world's scale, what the player sees past the nearest
+  building (a skyline, water, hills, the sky), two or three set-pieces, and the headroom it could
+  grow into — committed as `docs/VISION.md`, read by every worker and judge as where the game grows.
+- In a game the user brought, `owns` is not optional the moment a second worker runs: name a path, a
+  folder or a **quoted** glob (`owns: "src/ui/*.tsx"` — an unquoted `*` is expanded by the shell) in
+  the structure that game already has.
+- Two of the pool's windows are never a worker's: yours, and the one every `judge`, health and close
+  pass leases for a moment. `worker_start` counts that for you and refuses when memory runs short
+  (a big game's window costs over a gigabyte): hold the next worker until one ends. *No window free*
+  from `judge` or `playtest` means every window is a worker's: ask again once one has finished.
 - `mode=loop` when you can write checks (the loop measures them and rolls back what regresses);
-  `mode=single` for a well-defined job you will judge yourself (a port, a refactor, an asset).
+  `mode=single` for a well-defined job you will judge yourself (a port, a refactor, the stubs).
+- A new loop worker given two hours or more opens with a build block: 60–90 minutes on its own
+  module with a bench page and a screenshot-and-fix loop, kept on its checks; blind side-by-side
+  rounds start after it. A restart (`replaces=`) has no block.
 
 ## A brief a worker can win
 
@@ -121,95 +131,96 @@ itself and keeps the memory file its brief names current.)
 - What: the change, in the game's own vocabulary, with what must stay untouched.
 - Done: `done` is a parameter, not a paragraph — 2 to 4 `{"what","check"}` pairs, each a sentence a
   player could check next to the check that measures it. The harness scores them as the worker's
-  identity: a loop worker with no `done` has nothing to finish on and will run out its whole budget.
-  `checks` carries the rest; the grammar of every kind is in the tool's own description, and a
-  probe reads `__studio.state()` (`state.contact.speedKept`, or the bare path, plus `delta("…")`).
-  Prefer mechanical checks; a vision check costs a judge call every round.
+  identity: a loop worker with no `done` has nothing to finish on and runs out its whole budget.
+  `checks` carries the rest; the grammar is in the tool's own description, and a probe reads
+  `__studio.state()` (`state.contact.speedKept`, or the bare path, plus `delta("…")`). Prefer
+  mechanical checks; a vision check costs a judge call every round.
+- A check measures what a player gets: the race reaches its results, the speed reads at a glance,
+  the frame rate holds, the console stays clean. A count of HUD items or draw calls, or a vision
+  question naming a technique, measures the build, not the game — the harness refuses a floor on
+  how much is drawn. One run's HUD grew to three thousand rectangles to pass `len(hud.items) >= 60`.
 - The move is yours. `move` is the ONE structural change the worker builds first, `milestones` the
   ordered rungs after it — one per accepted build, each a sentence saying what the game IS
-  afterwards. Give them and the harness hands the worker your ladder and never invents a move of
-  its own; leave them out and its planner names one every round, which once spent five workers on
-  puddles, a wreck-cam and a tow truck nobody had asked for.
-- Every rung transforms the area: a new system, a layer of depth, a different model, a reworked
-  feel — what a player notices in the first minute. "The AI plays as a team: roles, passing lanes,
-  a back line that steps up" is a rung; "the shirts have a collar and trim" is not, nor a
-  parameter, nor one object's finish. Small fixes are the judge's ledger, never your ladder.
-- Size the ladder to the builder. A strong builder lands a rung a round and often the next one
-  with it — a match worker once built most of its ladder in its first round. Give four to six
-  rungs, and add the next big step before a ladder runs out. When a ladder is climbed and you add
-  nothing, the worker builds its reviewer's big move (the digest shows it).
+  afterwards. Give them and the harness hands the worker your ladder and never puts a move of its
+  own ahead of your rungs; leave them out and its planner names one every round, which can spend
+  your workers on things nobody asked for.
+- In the build stage every rung transforms the area: a layer of depth, a different model, a
+  reworked feel — what a player notices in the first minute, inside SCOPE. "The rivals race as a
+  pack: lines, blocking, a draft" is a rung; "the car has a chrome trim" is not, nor a parameter,
+  nor one object's finish. Small fixes are the judge's ledger in the build stage, never your
+  ladder; in the finish stage they are the work.
+- Write three concrete rungs (the move counts as one) and leave the last one open: end `milestones`
+  with `{"open":true}` (the harness adds it when you do not). When the worker reaches it, the
+  reviewers' best step inside SCOPE fills it — a principle the critic has kept at 2 for three
+  rounds, the taste judge's big move, the critic's biggest — and it is mandatory like yours; with
+  none it is passed over. Add the next big step with `worker_steer move=` before a ladder runs out;
+  past it the worker builds its reviewer's big move as guidance (the digest shows it).
 - Measure what moves over a demo with `delta("…")`, never one frame's snapshot: a one-frame probe of
-  moving AI fails on whichever frame catches a dead ball, and the worker then tunes the game to
-  the probe instead of building.
-- `worker_start` reads every check against the state the fork point actually reports before the
-  worker starts. `unsatisfiable` means the build does not report that path (yet): either the path
-  is wrong — fix it and start again — or the builder must expose it, which the brief should say.
-  `notVerified` means nobody has looked at that commit in this run; `judge` it first if it matters.
-- Never a brief written blind. If you have not seen the state, the worker will not either.
+  moving AI fails on whichever frame catches a dead ball, and the worker then tunes the game to the
+  probe instead of building.
+- `worker_start` reads every check against the state the fork point reports. `unsatisfiable` means
+  the build does not report that path (yet): fix the path, or say in the brief that the builder must
+  expose it. `notVerified` means nobody has looked at that commit in this run; `judge` it first if
+  it matters. Never a brief written blind: if you have not seen the state, the worker will not either.
 
 ## Watching
 
 - How the run reaches you — when you are woken, and what ending a turn means — is in your first
-  message. Every time it does: what the user said comes first; read what happened, `worker_status`
-  on anything that lost twice, `worker_steer` a correction you can name. Two unjudgeable builds with
+  message. Every time: what the user said comes first; read what happened, `worker_status` on
+  anything that lost twice, `worker_steer` a correction you can name. Two unjudgeable builds with
   one cause is a stop.
 - A steer waits for the top of the worker's next round unless you say `now=yes`, which interrupts
-  the build turn it is in — it keeps everything it has read and carries on with your instruction
-  first. Say `now` whenever waiting would spend the round on what you have just called wrong; a
-  round takes anywhere from a few minutes to most of an hour, and `iterationMinutes` in
-  `run_status` says what one costs here. Size a worker's `minutes` on that: a worker that cannot
-  fit two rounds stops after one.
-- The studio looks into every running worker's worktree for you every few minutes and wakes you
-  when what it sees changes: files touched outside the worker's own, an entry module edited
-  beyond its wiring line, `Math.random` in game code, a round that has written nothing. That is a
-  correction to steer now, not at the end of the round — a contract violation you leave standing
-  costs the worker the whole round when the reviewer reverts it.
-- A defect a judge names while judging one worker lands on the worker whose files it is in, with a
-  steering line saying where it came from. When that worker has already finished, it comes back to
-  you instead: the defects nobody owns, in every wake, `run_status` and `integrate`, are your
+  the build turn it is in — it keeps what it has read and carries on with your instruction first.
+  Say `now` whenever waiting would spend the round on what you just called wrong; `iterationMinutes`
+  in `run_status` says what a round costs here. Size a worker's `minutes` on that: a worker that
+  cannot fit two rounds stops after one.
+- The studio looks into every running worktree every few minutes and wakes you when it sees files
+  touched outside the worker's own, an entry module edited beyond its
+  wiring line, `Math.random` in game code, a part drawing on a screen it does not own, or a round
+  that has written nothing. Steer it now: a violation left standing costs the whole round when the
+  reviewer reverts it.
+- A defect a judge names in another worker's files lands on that worker, with a line saying where it
+  came from; once its owner has finished it comes back to you — the defects nobody owns are your
   ledger for the integrated build.
-- Every round says what it was asked to build and whether it arrived (`move`). A round kept with
-  "the move was not delivered" is the worker choosing something else: read its board, then either
-  say the move again with `worker_steer move=` or let it go — it is your ladder, not the harness's.
-  A rung the judge finds already built climbs by itself, and one missed three judged rounds is set
-  aside so the ladder moves on; the run's log says so, and you may steer it back.
-- Every wake shows each part's next big step as its reviewers see it: the taste judge's big move
-  for the area and the liveness critic's biggest fix. When one is bigger than your next rung, make
-  it the next rung with `worker_steer move=` — a steered rung is what the worker builds next.
-- Steer the big picture. A single defect is the worker's ledger, not your steer; your steer is a
-  direction, a priority, or the next big step.
-- Restarting a part you stopped? `worker_start replaces=<the old id>`. The Builds page then shows
-  one part with all its rounds; without it the same work reads as two unrelated parts, one of them
-  red with nothing kept.
-- `worker_stop` costs the worker nothing but its remaining time: the edits it had written are
-  committed where they stand, nothing is rolled back, and the round it was in is recorded as
-  stopped instead of judged. Always give `why` — that sentence is what the owner reads about
-  that round, so "fixing the starting point" beats a blank.
-- A single-session worker's "done" is a claim: `judge target=<id>` (checks, a question, a verdict
-  against `start`) or `look target=<id>` and play it yourself before you `integrate`. A loop
-  worker's kept rounds were already judged: integrate them, and look at the merged build.
+- Every round says what it was asked to build and whether it arrived. A round kept with "the move was
+  not delivered" is the worker choosing something else: say the move again with `worker_steer move=`
+  or let it go. A rung the judge finds built climbs by itself; one missed three judged rounds is set
+  aside so the ladder moves on. A round the judge preferred that fixed owed defects is kept though
+  its move did not arrive — the move stays owed — and an undone round's fixes ride into the next
+  brief to be re-applied.
+- Before the finish mark every wake shows each building part's next big step as its reviewers see
+  it. When one inside SCOPE is bigger than your next rung, make it the next rung with `worker_steer move=`. Steer the big picture
+  — a direction, a priority, the next big step; a single defect is the worker's ledger.
+- Restarting a part you stopped? `worker_start replaces=<the old id>`, so Builds shows one part.
+  `worker_stop` costs the worker only its remaining time (its edits are committed, nothing rolls
+  back); always give `why` — that sentence is what the owner reads about that round.
+- A single-session worker's "done" is a claim: `judge target=<id>` or `look target=<id>` and play it
+  yourself before you `integrate`. A loop worker's kept rounds were already judged.
 - USER SAYS outranks your plan. Acknowledge with a `note`, act, and say so in the next note.
 
 ## Integrating
 
-- Integrate one worker at a time and read the health pass. A merged build that does not run is the
-  first thing to fix — a single worker from integration, before anything else lands. A head whose
-  health pass failed cannot land at the close unless a `judge target=integration` passed it: when the
-  health pass looks wrong to you (the build runs in your window), judge it, do not shrug.
-- The integration head is kept on `refs/studio/runs/<run>/integration` whatever happens to the
-  worktree; `run_status` shows the ref. Nothing you merged is lost to a stopped session.
-- For the chat's own session a conflict is a worker's. When `integrate` meets one it does not merge:
-  it names the files and starts a single worker (`merge-<id>`) from the integration branch with that
-  merge open in its worktree, briefed to keep both sides' work. Integrate that worker when it ends,
-  and judge it like any other build; one that left conflict markers is refused — integrate the
-  original worker again for a new one. With your own hands, `integrate` leaves the conflict to you:
-  resolve it in your worktree keeping both sides' work, then commit.
-- After the last merge: `judge target=integration against=start` and a `playtest` for what only
-  play can tell (reachable? works? stuck?). Then `show target=integration`: Live's Reload offers
-  it, and the user plays it when they press it (Live never changes under them).
-- A conflict is never resolved by dropping a worker's module. Nothing a worker registered may go
-  missing: every demo, camera and tagged group in its worktree is in the merged build — look for
-  them before you integrate a resolved conflict.
+- Integrate in waves: `integrate worker=a,b` merges each in order, stops at the first conflict and
+  runs one health pass. A healthy integrate (or `integrate wave=close`) moves the head the running
+  workers merge, so they take integration once a wave, not once a merge. Read the health pass: a
+  merged build that does not run is the first thing to fix, before anything else lands; a repair you
+  commit reaches running workers at `integrate wave=close`. A head
+  whose health pass failed cannot land unless a `judge target=integration` passed it.
+- The integration head is kept on `refs/studio/runs/<run>/integration`; nothing you merged is lost to
+  a stopped session.
+- For the chat's own session a conflict is a worker's: `integrate` names the files and starts a
+  single worker (`merge-<id>`) with that merge open, briefed to keep both sides' work. Integrate it
+  when it ends and judge it like any other build; one that left conflict markers is refused. With
+  your own hands, resolve it in your worktree keeping both sides' work, then commit.
+- A conflict is never resolved by dropping a worker's module. A round that loses a camera, demo or
+  probe another part's checks use is a regression; a merge that loses one fails its health pass —
+  put it back before the workers merge that head.
+- A fix in a running worker's files is that worker's: `worker_steer now=yes` with the file and the
+  fix, not your own edit of its module. A commit of yours that does touch an owned file reaches its
+  owner as your change to keep, and no worker's review counts it as that worker's edit.
+- After the last merge of a wave: `judge target=integration against=start` and a `playtest` for
+  what only play can tell. Then `show target=integration`: Live's Reload offers it, and the user
+  plays it when they press it.
 
 ## Big games
 
@@ -218,20 +229,42 @@ itself and keeps the memory file its brief names current.)
 - A world that streams needs settle time before evidence means anything; say so in `setup` (a wait
   action) and in the brief.
 
+## The finish stage
+
+- The art director does not wait for the mark: while loop workers build, the studio has it look at
+  the whole integrated game once the first wave is in (every running loop worker merged once, or
+  after 90 working minutes), then every 90 working minutes on a head it has not reviewed — never
+  within 30 minutes before a timed run's mark. You are woken with its defects, already on their
+  owners' boards as building work, and its DO NOT REGRESS list, which every worker's brief and
+  taste judge carry. It is no finish mark: the build stage goes on.
+- A goal run's wakes say how many required outcomes are verified on the current revision. Only
+  `playtest goal=<id>` verifies one; when the studio asks you to verify, playtest each the build
+  should meet now.
+- The finish mark comes once: in a timed run when the last 30% of working time begins (30 to 120
+  minutes; a run under 90 minutes has none); in a goal run when you idle a second time, or call
+  `finish`, with no ship review on the head. At the mark the art director looks at the whole
+  integrated game, alone, at 1600x900 — "would you ship this as the user's demo today?" — and you
+  are woken with its defects by part. Call it yourself any time with `judge ship=yes`.
+- From the mark: no new parts or systems. `worker_steer stage=finish` each running owner of a part
+  with defects; its defects are already on its board. A finished part's defects are on your ledger
+  (`defectsNobodyOwns`): start `worker_start stage=finish replaces=<its id> owns=<its files>` and
+  put them in its brief or `done`. A finish round works the judge's polish list and the defect
+  ledger, wins on the blind pick, and a regression still rolls it back.
+- Integrate the finished parts in a wave, then `judge ship=yes` again. Its verdict is reported, never
+  a veto: a "no" sends you back to the owners, not into new work.
+
 ## Finishing
 
 - Follow the completion policy in the build card. A goal run finishes when the agreed required
-  outcomes are verified on the integrated revision: call `finish` then — remaining time is a
-  safety ceiling, not a target. A timed run (the user chose its duration) keeps improving within
-  the requested scope until its wrap-up, and `finish` is refused before then; only the user asking
-  to finish overrides that clock.
+  outcomes are verified on the integrated revision: call `finish` then — remaining time is a safety
+  ceiling, not a target. A timed run keeps improving within the requested scope until its wrap-up,
+  and `finish` is refused before then; only the user asking to finish overrides that clock.
 - Freeze the required acceptance scenarios at intake. Optional critic suggestions are not new
   requirements. Batch related corrections; reuse evidence only when its inputs still match.
 - `land=yes` only when the integrated build loads and is better than what the user had (you
   looked); `victory=yes` only when you verified the goal.
 - Judge the head you are about to land — `judge target=integration against=start` — also when the
-  user asked for speed or pressed Finish early: a hurry shortens the run, never its last look.
-  The outcome card says how the build was judged, not that it was: a landing no judge preferred
-  reads *made live, not judged better*. Pass on what the landing may claim, and no more.
-- The summary is what the user reads first: what was built, what you verified and how, what
-  remains.
+  user asked for speed or pressed Finish early: a hurry shortens the run, never its last look. The
+  outcome card says how the build was judged; pass on what the landing may claim, and no more.
+- The summary is what the user reads first: what was built, what was cut, what you verified and how,
+  what the art director would still fix.

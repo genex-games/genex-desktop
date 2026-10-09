@@ -2,7 +2,7 @@
  * What the main bundle may load before its first line runs. Every static `import` of an external
  * package is resolved, read and evaluated before main starts, on every launch: sandbox-runtime and
  * the MCP SDK's OAuth client and validator, imported that way, cost each launch about 80 ms warm
- * and 200 ms cold (2026-10-01). These packages load on first use, through `await import()`.
+ * and 200 ms cold. These packages load on first use, through `await import()`.
  */
 
 /** External packages main loads only when it needs them. */

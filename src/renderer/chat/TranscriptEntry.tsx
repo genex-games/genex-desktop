@@ -101,10 +101,11 @@ export const TranscriptEntry = memo(function TranscriptEntry({
           landingLine={entry.landingLine}
           learned={entry.learned}
           stoppedBecause={entry.stoppedBecause}
+          pausedOn={entry.pausedOn}
           kept={entry.kept}
           undone={entry.undone}
           landed={entry.landed}
-          // A night the plan limit cut off is paused, not finished: the card says so and
+          // A run the plan limit cut off is paused, not finished: the card says so and
           // offers Resume itself, instead of leaving it to a grey line underneath.
           paused={!entry.superseded && resumable(entry.runId, context)}
           handedOff={entry.handedOff}
@@ -286,7 +287,7 @@ function ActionEntry({
           <FileText text={entry.text} />
         </span>
         {resumable(entry.runId, context) ? (
-          <ResultButton type="button" onClick={resume(entry.runId)}>
+          <ResultButton type="button" data-run-resume={entry.runId} onClick={resume(entry.runId)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>

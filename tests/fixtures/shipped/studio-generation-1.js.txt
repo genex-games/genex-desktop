@@ -1,0 +1,234 @@
+/**
+ * The studio contract — PLAN.md §7.
+ *
+ * Games are built so the critic can *judge* them: deterministic runs, exposed state, named
+ * camera angles, fixed-timestep stepping. Without this the studio can only look at pretty
+ * pictures; with it, an unattended run can compare two builds on identical inputs.
+ *
+ * The game runs from the moment `installStudio` returns — nobody in the pipeline calls
+ * `start()`, so a build that waits for it ships a frozen screen. `pause()` is how a judge
+ * freezes the simulation to `step()` it deterministically; `seed()` pauses for the same reason.
+ *
+ * This helper is deliberately small and lives in the game workspace, so the agent can extend it
+ * (new probes, new cameras) as it learns what its judge actually needs.
+ */
+
+/** Deterministic RNG (mulberry32). Same seed ⇒ same run ⇒ comparable screenshots. */
+export function makeRng(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a += 0x6d2b79f5;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * @param {{
+ *   fixedStepMs?: number,
+ *   update: (dtSeconds: number, ctx: {rng: () => number, frame: number, keys: Set<string>, look: {x: number, y: number}}) => void,
+ *   render: () => void,
+ *   probes?: () => Record<string, unknown>,
+ *   cameras?: Record<string, () => void>,
+ *   demos?: Record<string, () => unknown>,
+ *   reset?: (seed: number) => void,
+ *   canvas?: HTMLCanvasElement,
+ * }} config
+ */
+export function installStudio(config) {
+  const fixedStepMs = config.fixedStepMs ?? 1000 / 60;
+  let seed = 1;
+  let rng = makeRng(seed);
+  let running = true;
+  let frame = 0;
+  let simulatedMs = 0;
+  let accumulator = 0;
+  let lastFrameTime = 0;
+  let rafHandle = 0;
+  const fpsSamples = [];
+  const heldKeys = new Set();
+  const look = { x: 0, y: 0 };
+
+  function rememberKey(code, key, down) {
+    const aliases = [code, key];
+    if (typeof key === "string" && key.length === 1) {
+      aliases.push(key.toLowerCase(), key.toUpperCase());
+    }
+    for (const alias of aliases) {
+      if (!alias) continue;
+      if (down) heldKeys.add(alias);
+      else heldKeys.delete(alias);
+    }
+  }
+
+  function onKeyDown(event) {
+    rememberKey(event.code, event.key, true);
+  }
+  function onKeyUp(event) {
+    rememberKey(event.code, event.key, false);
+  }
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", () => heldKeys.clear());
+
+  function consumeLook() {
+    const out = { x: look.x, y: look.y };
+    look.x = 0;
+    look.y = 0;
+    return out;
+  }
+
+  function stepOnce() {
+    config.update(fixedStepMs / 1000, { rng, frame, keys: heldKeys, look: consumeLook() });
+    frame++;
+    simulatedMs += fixedStepMs;
+  }
+
+  function loop(now) {
+    rafHandle = requestAnimationFrame(loop);
+    if (!running) return;
+    const delta = lastFrameTime ? now - lastFrameTime : fixedStepMs;
+    lastFrameTime = now;
+    if (delta > 0) fpsSamples.push(1000 / delta);
+    if (fpsSamples.length > 120) fpsSamples.shift();
+    // Clamp so a stall (or a debugger pause) cannot spiral into a thousand catch-up steps.
+    accumulator += Math.min(delta, 250);
+    while (accumulator >= fixedStepMs) {
+      stepOnce();
+      accumulator -= fixedStepMs;
+    }
+    config.render();
+  }
+
+  const api = {
+    version: 1,
+
+    /** Reseed, fully reset — and pause. Judging is stepped, never wall-clocked. */
+    seed(value) {
+      // Seeding is the judge's deterministic entry point; a wall-clock RAF firing between
+      // step() calls would make identical seeds diverge. start() resumes live play.
+      running = false;
+      seed = Number(value) >>> 0;
+      rng = makeRng(seed);
+      frame = 0;
+      simulatedMs = 0;
+      accumulator = 0;
+      fpsSamples.length = 0;
+      heldKeys.clear();
+      look.x = 0;
+      look.y = 0;
+      config.reset?.(seed);
+      config.render();
+      return seed;
+    },
+
+    /** Resume live play after seed() or pause(). The game is already running on load. */
+    start() {
+      running = true;
+      lastFrameTime = 0;
+      if (!rafHandle) rafHandle = requestAnimationFrame(loop);
+      return true;
+    },
+
+    /** Freeze the simulation — how a judge holds the game still between step() calls. */
+    pause() {
+      running = false;
+      return true;
+    },
+
+    /**
+     * Advance the simulation by hand — the judge's scripted playthrough. Independent of wall
+     * clock, so a headless comparison run is reproducible.
+     */
+    step(dtMs = fixedStepMs) {
+      const steps = Math.max(1, Math.round(dtMs / fixedStepMs));
+      for (let i = 0; i < steps; i++) stepOnce();
+      config.render();
+      return { frame, simulatedMs };
+    },
+
+    /** JSON-safe snapshot: score, phase, entity counts, whatever probes the game exposes. */
+    state() {
+      const fps = fpsSamples.length
+        ? Math.round(fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length)
+        : 0;
+      return {
+        version: 1,
+        seed,
+        frame,
+        simulatedMs,
+        running,
+        fps,
+        held: [...heldKeys],
+        error: window.__studio_error ?? null,
+        ...(config.probes ? config.probes() : {}),
+      };
+    },
+
+    /** Named viewpoints so 3D judging compares like with like. */
+    debugCamera(name) {
+      const camera = config.cameras?.[name];
+      if (!camera) return { ok: false, available: Object.keys(config.cameras ?? {}) };
+      camera();
+      config.render();
+      return { ok: true, camera: name };
+    },
+
+    cameras() {
+      return Object.keys(config.cameras ?? {});
+    },
+
+    /**
+     * Photograph the game from inside the page: re-render, then read the canvas in the same JS
+     * turn (WebGL buffers survive exactly that long). The studio prefers this over compositor
+     * capture because it works even when the app window is covered or on another Space —
+     * unattended runs must not depend on the window being visible.
+     */
+    capture() {
+      config.render();
+      const canvas = config.canvas ?? document.querySelector("canvas");
+      return canvas ? canvas.toDataURL("image/png") : null;
+    },
+
+    /**
+     * Scripted demonstrations of behaviour the generic playthrough cannot reach (walk to the
+     * bench and sit; open the door; fire the special). A demo must be deterministic, leave the
+     * game paused on its end state, and return a JSON-able result. The critic runs every demo
+     * and photographs its end frame — this is how a mechanic becomes visible to the judge.
+     */
+    demos() {
+      return Object.keys(config.demos ?? {});
+    },
+
+    demo(name) {
+      const demo = config.demos?.[name];
+      if (!demo) return { ok: false, available: Object.keys(config.demos ?? {}) };
+      running = false;
+      const result = demo();
+      config.render();
+      return { ok: true, demo: name, result: result === undefined ? null : result };
+    },
+
+    /**
+     * The critic's hands when Chromium events are not enough (paused `step()` playthroughs).
+     * `down`/`up` are key names (`KeyW`, `w`); `look` is a mouse delta in pixels.
+     */
+    injectInput(input) {
+      for (const key of input?.down ?? []) rememberKey(key, key, true);
+      for (const key of input?.up ?? []) rememberKey(key, key, false);
+      if (input?.look) {
+        look.x += Number(input.look.dx) || 0;
+        look.y += Number(input.look.dy) || 0;
+      }
+      return { keys: [...heldKeys], look: { x: look.x, y: look.y } };
+    },
+  };
+
+  window.__studio = api;
+  config.reset?.(seed);
+  config.render();
+  rafHandle = requestAnimationFrame(loop);
+  return api;
+}

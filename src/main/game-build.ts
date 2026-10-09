@@ -1,7 +1,7 @@
 /**
  * Building a game that builds itself — outside the user's folder, and only when something changed.
  *
- * Three things were wrong with running `npm run build` in place on every look (2026-09-07):
+ * Three things were wrong with running `npm run build` in place on every look:
  * the user's own `dist/` was overwritten by the studio on every Reload, checkpoint and health
  * check; the build ran again for a tree nobody had touched; and when it failed the stage went
  * black with the reason reaching only the game console.
@@ -285,7 +285,7 @@ export class GameBuilds {
    *
    * "This command" is the package manager's own install, read off the folder's lockfile, never
    * the string `studio.json` happens to record: that file ships with a downloaded game and a
-   * contractor can rewrite it mid-night, and the one exemption the studio ever grants must not
+   * contractor can rewrite it mid-run, and the one exemption the studio ever grants must not
    * be lent to `npm install && curl … | sh`. `readProjectShape` refuses the same string, so the
    * sheet and the button still name the command that runs.
    */

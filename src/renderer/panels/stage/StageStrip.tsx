@@ -241,7 +241,7 @@ export function StageStrip({
       className="titlebar-drag window-controls-end flex min-h-12 max-h-30 shrink-0 flex-wrap items-center gap-2 overflow-auto border-b border-line bg-canvas ps-3 pe-2 py-1.5"
     >
       {/* What this folder is, from its own evidence — so nobody has to guess why the stage is
-          showing a built page, and an engine export says so before a night is asked for. */}
+          showing a built page, and an engine export says so before a run is asked for. */}
       {loaded?.built ? (
         <span
           data-stage-kind={loaded.shape.kind}

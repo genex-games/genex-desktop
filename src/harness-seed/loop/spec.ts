@@ -5,7 +5,7 @@
  * files the facet owns, its ranked identity features, the cameras the judge must look
  * through, and a list of checks the harness (or a one-question judge) can evaluate. The
  * harness validates a spec before a facet starts — unknown kinds, expressions that do not
- * parse, a vision check without a camera — so the planner is asked again instead of a night
+ * parse, a vision check without a camera — so the planner is asked again instead of a run
  * being spent on a contract nobody can verify.
  *
  * The check catalogue (`library/checks.json`) is the reusable half: checks that earned their
@@ -15,10 +15,18 @@
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { dryRunChecks, parseExpr } from "./checks.ts";
+import { lintCheck } from "./check-lint.ts";
+import { notThisBuildsQuestion } from "./harness-needs.ts";
+import { DEFAULT_HUD_BUDGET, hudBudgetFor } from "./hud-budget.ts";
 import { criticFor, inputProbesFor, isGameKind, normalizeGameTraits, wantsEyeCameras } from "./kinds.ts";
 import { isRecord } from "./json.ts";
 import { hasText } from "./text.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
+import { demoOfFrame, isPassFrame } from "./pass-frames.ts";
+import { ProbeAfter } from "./throttle-bot.ts";
+// A namespace for what kinds.ts gained later: a seed upgrade keeps a kinds.ts the agent edited, and
+// a named import it lacks would stop this file loading.
+import * as kinds from "./kinds.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 
 /** The most checks one facet's board carries. */
@@ -55,6 +63,8 @@ const MAX_OWNS = 12;
 const FACET_TITLE_CHARS = 80;
 /** A board this big or bigger may not be mostly vision checks. */
 const MIN_BOARD_FOR_VISION_RULE = 4;
+/** The critic (judge.ts CRITIC_PRINCIPLES) a UI or HUD part is reviewed by: its board may be mostly vision. */
+const SCREEN_CRITIC = "screen";
 /** How many of the keys a build reports an unsatisfiable check's note names. */
 const STATE_KEYS_NAMED = 8;
 /** How many catalogue entries the planner is shown per group, and what an entry keeps of its runs and genres. */
@@ -97,6 +107,8 @@ export interface Check {
   tol?: number;
   target?: number;
   demo?: string;
+  /** A probe that reads the state a run the evidence pass makes itself left (`ProbeAfter`). */
+  after?: string;
   name?: string;
   /** [x0, y0, x1, y1] as fractions of the frame. */
   crop?: [number, number, number, number];
@@ -114,6 +126,12 @@ export interface Milestone {
   check?: Check;
   /** The director steered it in mid-run (`worker_steer move=`): it goes ahead of the rest of the ladder. */
   steered?: boolean;
+  /** The ladder's open rung (facet/growth.ts): the reviewers' best step inside the ask fills it when it is reached. */
+  open?: boolean;
+  /** Who filled an open rung (facet/rules.ts `MoveSource`): the reviewer or the critic. */
+  filledBy?: string;
+  /** Why a filled open rung is the move, as the builder's brief says it. */
+  why?: string;
 }
 
 /** What "done" means for a facet, one sentence per identity check. */
@@ -136,6 +154,11 @@ export interface FacetSpec {
   craft: string[];
   milestones: Milestone[];
   budgetShare: number;
+  /**
+   * What already works in the whole game and must stay, as the art director last named it
+   * (director/art-direction.ts): the brief shows it, and the taste judge calls losing one a regression.
+   */
+  doNotRegress?: string[];
   [field: string]: unknown;
 }
 
@@ -210,7 +233,7 @@ export const CheckOrigin = {
   Craft: "craft",
   Milestone: "milestone",
   Seed: "seed",
-  /** A director night's lead, whose workers' checks its close keeps in the catalogue. */
+  /** A director run's lead, whose workers' checks its close keeps in the catalogue. */
   Director: "director",
 } as const;
 export type CheckOrigin = (typeof CheckOrigin)[keyof typeof CheckOrigin];
@@ -267,7 +290,7 @@ const CHECK_GRAMMAR: Record<string, { shape: string; says: string; more?: string
   },
   probe: {
     shape: `{"kind":"probe","expr":"delta('player.x') != 0 || delta('player.z') != 0","needs":["player.x","player.z"]}`,
-    says: "over `__studio.state()` with dotted paths (bare, or under `state.`), early.<path>, delta(path), abs, min, max, len, has.",
+    says: "over `__studio.state()` with dotted paths (bare, or under `state.`), early.<path>, delta(path), abs, min, max, len, has; bound how much is drawn only from above.",
     more: [
       "`needs` names up to four dotted paths the check cannot be judged without: a state that",
       "lacks one reports the check unmeasured instead of failing a game that never had it.",
@@ -281,7 +304,7 @@ const CHECK_GRAMMAR: Record<string, { shape: string; says: string; more?: string
   },
   vision: {
     shape: `{"kind":"vision","camera":"camBridge","crop":[0.2,0.55,0.8,1.0],"ask":"Is the bridge's inverted silhouette recognisable in the water?"}`,
-    says: 'ONE yes/no question about ONE crop, answered from the pixels; "expect":"no" flips it. The minority of any board.',
+    says: 'ONE yes/no question about ONE crop, answered from the pixels; "expect":"no" flips it. Ask what a player can see or read, never the technique that draws it. The minority of any board.',
   },
   play: {
     shape: `{"kind":"play","ask":"Could you find the bench and sit on it?"}`,
@@ -442,7 +465,9 @@ const KIND_FIELDS: Record<CheckKind, (raw: AnyRecord, camera: string) => AnyReco
     const demo = String(raw.demo ?? "")
       .trim()
       .slice(0, CHECK_DEMO_CHARS);
-    return { expr: String(raw.expr ?? "").trim(), ...(demo ? { demo } : {}) };
+    // `after` reads a run the pass makes itself (the throttle-only bot's race); only its own words.
+    const after = (Object.values(ProbeAfter) as unknown[]).includes(raw.after) ? { after: raw.after } : {};
+    return { expr: String(raw.expr ?? "").trim(), ...(demo ? { demo } : {}), ...after };
   },
   [CheckKind.Demo]: (raw) => ({
     name: String(raw.name ?? raw.demo ?? "")
@@ -478,8 +503,8 @@ export function normalizeCheck(raw: AnyRecord | null | undefined, index = 0): Ch
  * `done`: what the work IS when it is finished, in 2–4 lines the harness can score. Each entry
  * is `{ what, check }` — a sentence a player could check, and the check that measures it — and
  * every check comes back `weight:"identity"`, the field that makes "satisfied" reachable at
- * all. The first director night wrote none: every board read identityTotal 0, no worker could
- * ever finish, no spike ever fired, and the move gate stood open all night.
+ * all. The first director run wrote none: every board read identityTotal 0, no worker could
+ * ever finish, no spike ever fired, and the move gate stood open for the whole run.
  */
 export function normalizeDone(list: unknown): Array<DoneEntry & { check: Check }> {
   if (!Array.isArray(list)) return [];
@@ -664,11 +689,17 @@ export function normalizeMilestones(list: unknown): Milestone[] {
   return out;
 }
 
-/** The demo one check depends on: a `demo` check's own name, or a probe's `demo` scope. */
-export function demoNameOf(check: { kind?: string; name?: unknown; demo?: unknown } | null | undefined): string {
+/**
+ * The demo one check depends on: a `demo` check's own name, a probe's `demo` scope, or the demo
+ * whose end frame (`demo:<name>`) a picture check looks at, so the demo cap never drops the demo a
+ * vision check on `demo:rival-battle` needs.
+ */
+export function demoNameOf(
+  check: { kind?: string; name?: unknown; demo?: unknown; camera?: unknown } | null | undefined,
+): string {
   if (check?.kind === "demo") return String(check.name ?? "");
   if (check?.kind === "probe") return String(check.demo ?? "");
-  return "";
+  return demoOfFrame(check?.camera);
 }
 
 /**
@@ -734,11 +765,20 @@ function badExpression(check: Check, where: string): string | null {
   }
 }
 
-/** Why a check cannot be used at all, or null for a sound one. */
+/** A check that measures how much the build draws instead of what a player gets (loop/check-lint.ts). */
+function measuresTheDrawing(check: Check, where: string): string | null {
+  const finding = lintCheck(check);
+  return finding ? `${where}: ${finding.message}` : null;
+}
+
+/**
+ * Why a check cannot be used at all, or null for a sound one. Validation only: a board already
+ * running is scored on the checks it was started with, whatever this says about them now.
+ */
 function checkProblem(specId: string, check: Check): string | null {
   const where = `facet ${specId} check ${check.id}`;
   if (!CHECK_KINDS.includes(check.kind)) return `${where}: unknown kind "${check.kind}" (use ${CHECK_KINDS.join("/")})`;
-  return missingField(check, where) ?? badExpression(check, where);
+  return missingField(check, where) ?? badExpression(check, where) ?? measuresTheDrawing(check, where);
 }
 
 /** Add a sentence to a check's note, after whatever it already says. */
@@ -752,8 +792,9 @@ function addNote(check: Check, sentence: string): void {
  */
 function noteUnregistered(check: Check, { cameras, demos }: ValidationContext): void {
   const camera = check.camera;
+  // A frame the pass takes itself (a demo's end, the drive's corner) is no camera to register.
   const unregisteredCamera =
-    Array.isArray(cameras) && camera && !cameras.includes(camera) && !camera.startsWith("eye:");
+    Array.isArray(cameras) && camera && !cameras.includes(camera) && !camera.startsWith("eye:") && !isPassFrame(camera);
   if (unregisteredCamera) addNote(check, `camera "${camera}" is not registered yet — register it in config.cameras`);
   const demoNamed = demoNameOf(check);
   const unregisteredDemo = Array.isArray(demos) && demoNamed && !demos.includes(demoNamed);
@@ -784,8 +825,13 @@ function validateMilestones(spec: SpecToValidate, context: ValidationContext, pr
   return milestones;
 }
 
-/** A board that is mostly vision checks cannot be measured; the problem the planner is told. */
-function visionHeavy(specId: string, kept: readonly Check[]): string | null {
+/**
+ * A board that is mostly vision checks cannot be measured; the problem the planner is told. A
+ * screen part (`critic: "screen"`, the UI or HUD) is exempt: its looks are its work, and a
+ * mechanical majority there only buys counts of what it draws.
+ */
+function visionHeavy(specId: string, kept: readonly Check[], critic: unknown = null): string | null {
+  if (critic === SCREEN_CRITIC) return null;
   const visionCount = kept.filter((c) => c.kind === CheckKind.Vision).length;
   if (kept.length < MIN_BOARD_FOR_VISION_RULE || visionCount <= kept.length / 2) return null;
   return `facet ${specId}: ${visionCount} of ${kept.length} checks are vision — make the majority scene/pixel/probe/demo`;
@@ -829,9 +875,19 @@ export function validateFacetSpec<S extends SpecToValidate>(
     kept.push(check);
   }
   if ((spec.checks ?? []).length > 0 && kept.length === 0) problems.push(`facet ${spec.id}: every check was unusable`);
-  const heavy = visionHeavy(spec.id, kept);
+  const heavy = visionHeavy(spec.id, kept, spec.critic);
   if (heavy) problems.push(heavy);
-  const { unsatisfiable, stateKeys } = dryRunChecks(kept, { state, demoStates });
+  const dryRun = dryRunChecks(kept, { state, demoStates });
+  const { stateKeys } = dryRun;
+  // A harness check over something this build does not have (a front-end, a measuring HUD) does
+  // not apply to it: no "expose it" note pushes the builder to add one (loop/harness-needs.ts).
+  const unsatisfiable = dryRun.unsatisfiable.filter(
+    (entry) =>
+      !notThisBuildsQuestion(
+        kept.find((c) => c.id === entry.id),
+        entry.missing,
+      ),
+  );
   noteUnsatisfiable(kept, unsatisfiable, stateKeys);
   const keptIds = new Set(kept.map((c) => c.id));
   const done = (spec.done ?? []).filter((d) => keptIds.has(d.id));
@@ -912,7 +968,75 @@ export const HARNESS_CHECKS: Record<string, AnyRecord & { expr?: string; note: s
     needs: ["player.x", "player.z"],
     note: "harness-owned: after the scripted W/A hold player().x or .z changed — the key path from ctx.keys to the controller works",
   },
+  // The HUD's own measurements (template hud.js generation 2): what a player notices about a HUD
+  // is how much of the view it takes and whether its pieces run into each other — never how many
+  // pieces it is drawn from. `needs` keeps an older HUD that measures nothing unmeasured, not
+  // failed. The budget is the declared kind's (loop/hud-budget.ts); withHarnessChecks fills it in.
+  "hud-coverage": {
+    kind: CheckKind.Probe,
+    weight: CheckWeight.Normal,
+    origin: CheckOrigin.Harness,
+    expr: `hud.coverage <= ${DEFAULT_HUD_BUDGET}`,
+    needs: ["hud.coverage"],
+    note: "harness-owned: the HUD covers at most its kind's share of the frame — keep the middle of the view for the game",
+  },
+  "hud-overlap": {
+    kind: CheckKind.Probe,
+    weight: CheckWeight.Normal,
+    origin: CheckOrigin.Harness,
+    expr: "len(hud.overlaps) == 0",
+    needs: ["hud.overlaps"],
+    note: "harness-owned: no two HUD items run into each other",
+  },
+  // A game with a front-end (title → start → countdown) declares `config.flow()`; the evidence
+  // pass begins it, and this asks whether that put the game into play. It reads the early sample
+  // (the state reachPlay left, before the drive): a race that ends or a player who dies during
+  // the drive still reached play. A game that reports no flow is not asked (loop/harness-needs.ts):
+  // undeclared games are not held to a menu they never had.
+  "reaches-play": {
+    kind: CheckKind.Probe,
+    weight: CheckWeight.Identity,
+    origin: CheckOrigin.Harness,
+    expr: "early.flow.playing == true",
+    needs: ["flow.playing"],
+    note: "harness-owned: after begin the game is in play (state().flow.playing) — the front-end hands the player the controls",
+  },
+  // A race a bot that only holds the throttle can win is no challenge. The evidence pass races that
+  // bot when the board carries this check (evidence.ts `raceThrottleBot`: the throttle held, the game's racing
+  // line steering, never a brake) and the probe reads the state the race left. A game that reports
+  // no `race.position` is not asked (`needs`); a race the pass did not run is unmeasured.
+  "throttle-bot-loses": {
+    kind: CheckKind.Probe,
+    weight: CheckWeight.Normal,
+    origin: CheckOrigin.Harness,
+    after: ProbeAfter.ThrottleBot,
+    expr: "race.position > 1",
+    needs: ["race.position"],
+    note: "harness-owned: a bot that only holds the throttle (steered by the game's racing line, never braking) must not win the race — report race.position (1 = leading) and race.finished in state()",
+  },
 };
+
+/** The harness checks that only hold once the game is in play: off the front-end owner's board. */
+const IN_PLAY_CHECKS: ReadonlySet<string> = new Set([
+  "reaches-play",
+  "hud-coverage",
+  "keys-move-player",
+  "look-turns-camera",
+  "throttle-bot-loses",
+]);
+
+/** The kind's throttle, from a kinds.ts that may predate `throttleFor` (an edited copy an upgrade kept). */
+function throttleOf(game: AnyRecord | null): string[] {
+  return typeof kinds.throttleFor === "function" ? kinds.throttleFor(game) : [];
+}
+
+/** The `hud-coverage` body for a HUD whose kind allows `budget` of the frame. */
+function hudCoverage(budget: number): AnyRecord {
+  return {
+    expr: `hud.coverage <= ${budget}`,
+    note: `harness-owned: the HUD covers at most ${Math.round(budget * 100)}% of the frame — keep the middle of the view for the game`,
+  };
+}
 
 /**
  * One input probe as `{ expr, note }`, from whatever `inputProbesFor` answered: a kind may
@@ -933,8 +1057,7 @@ function inputProbe(raw: unknown, fallbackId: string): { expr: string; note: str
   // `needs` is read off the expression the check actually carries, never inherited: a kind that
   // moves on x and y must not be asked for the template's x and z, and a check whose needs name
   // a path its own delta() does not can never report the early state missing (checks.ts
-  // needsNotReported) — which is how "this game has no player yet" once read as "the controls
-  // work". Only a check whose harness body declares needs gets them.
+  // needsNotReported), or "this game has no player yet" would read as "the controls work". Only a check whose harness body declares needs gets them.
   const needs = body.needs ? deltaPathsIn(expr) : [];
   return { expr, note, ...(needs.length ? { needs } : {}) };
 }
@@ -945,18 +1068,39 @@ function deltaPathsIn(expr: unknown): string[] {
   return [...new Set(found)].slice(0, MAX_DELTA_PATHS);
 }
 
+/** The harness checks a board of this game carries, by id, before the front-end owner's are left off. */
+function harnessCheckIds(game: AnyRecord | null, { owner, screen }: { owner: boolean; screen: boolean }): string[] {
+  const traits = normalizeGameTraits(game);
+  // `screen: false` — a game the user brought with its own UI (DOM menus, its own HUD) keeps
+  // it; the one-screen checks describe the template's screen, not this game's.
+  const driven = traits.keyboardMove || traits.mouseLook;
+  return [
+    ...(screen && traits.hud ? ["no-dom-ui", "single-hud", "hud-coverage", "hud-overlap"] : []),
+    ...(owner && traits.mouseLook ? ["look-turns-camera"] : []),
+    ...(owner && traits.keyboardMove ? ["keys-move-player"] : []),
+    ...(owner && driven ? ["reaches-play"] : []),
+    // A kind with a throttle (a racer, a craft) races the throttle-only bot on the entry owner's board.
+    ...(owner && throttleOf(game).length ? ["throttle-bot-loses"] : []),
+  ];
+}
+
 /**
  * The harness-owned checks a facet carries, conditional on what the plan says the game IS:
- * the screen checks on every facet of a game with a HUD (any facet can paint a second one),
- * the input checks on the facet that owns main.js and on the integration facet (they own the
- * player) when the game is mouse-looked / keyboard-moved. Existing ids are replaced by the
- * harness definition, never duplicated.
+ * the screen checks on every facet of a game with a HUD (any facet can paint a second one, or
+ * crowd the frame), the input checks on the facet that owns main.js and on the integration
+ * facet (they own the player) when the game is mouse-looked / keyboard-moved, and with them
+ * `reaches-play` — and, for a kind with a throttle, `throttle-bot-loses`. Existing ids are
+ * replaced by the harness definition, never duplicated.
  *
  * Every trait is off until something declares it (loop/kinds.ts), so a game nobody described
  * carries no harness check at all: the four checks describe the template's screen and the
  * template's controls, and a board game or a builder has neither. The two input checks read
  * the declared kind's own axes, so a top-down game is asked whether x, y or z moved and not
  * whether the first-person controller's x or z did.
+ *
+ * `keepsFrontEnd` is the worker that owns the front-end (`setup {"begin":false}`): its evidence
+ * and judges stay on the title (evidence.ts reachPlay), so the checks that only hold in play —
+ * in play, the controls move the player, the in-play HUD budget — are left off its board.
  */
 export function withHarnessChecks<S extends { checks?: Check[] }>(
   spec: S,
@@ -965,21 +1109,17 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     role = "facet",
     game = null,
     screen = true,
-  }: { ownsMain?: boolean; role?: string; game?: AnyRecord | null; screen?: boolean } = {},
+    keepsFrontEnd = false,
+  }: { ownsMain?: boolean; role?: string; game?: AnyRecord | null; screen?: boolean; keepsFrontEnd?: boolean } = {},
 ): S & { checks: Check[] } {
   const traits = normalizeGameTraits(game);
   const owner = ownsMain || role === "integration";
   const probes = inputProbesFor(game) ?? {};
-  // `screen: false` — a game the user brought with its own UI (DOM menus, its own HUD) keeps
-  // it; the one-screen checks describe the template's screen, not this game's.
-  const wanted = [
-    ...(screen && traits.hud ? ["no-dom-ui", "single-hud"] : []),
-    ...(owner && traits.mouseLook ? ["look-turns-camera"] : []),
-    ...(owner && traits.keyboardMove ? ["keys-move-player"] : []),
-  ];
+  const wanted = harnessCheckIds(game, { owner, screen }).filter((id) => !keepsFrontEnd || !IN_PLAY_CHECKS.has(id));
   const overrides: Record<string, AnyRecord> = {
     "look-turns-camera": inputProbe(probes.look, "look-turns-camera"),
     "keys-move-player": inputProbe(probes.move, "keys-move-player"),
+    "hud-coverage": hudCoverage(hudBudgetFor(traits) ?? DEFAULT_HUD_BUDGET),
   };
   const checks = (spec.checks ?? []).filter((c) => !wanted.includes(c.id));
   for (const id of wanted)
@@ -989,7 +1129,7 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
 
 /**
  * A kind's family: its critic and whether it has eyes. The catalogue is gated on this and not
- * on the kind's name, because a first-person night and a third-person night learn the same
+ * on the kind's name, because a first-person run and a third-person run learn the same
  * lessons and hiding one from the other would throw away most of what the runs know.
  */
 function kindFamily(kind: unknown): string | null {
@@ -998,7 +1138,7 @@ function kindFamily(kind: unknown): string | null {
 }
 
 /**
- * The requested state, on every board (computer use, 2026-09-07): a harness-owned probe that says the scout's
+ * The requested state, on every board: a harness-owned probe that says the scout's
  * setup landed — the map, mode or scene the brief is about is what the cameras are looking
  * at. A build judged on the wrong map used to pass every pixel check; now it fails this one.
  */
@@ -1031,12 +1171,19 @@ function metricWords(c: Check): string {
   return `metric on ${c.camera}: ${c.expr} → ${better} is better (ratchet, tol ${c.tol ?? METRIC_TOLERANCE}${target})`;
 }
 
+/** Which state a probe reads, for a brief: a demo's end, the throttle-only bot's race, or the drive's. */
+function probeScopeWords(c: Check): string {
+  if (c.demo) return ` on the state left by demo "${c.demo}"`;
+  if (c.after === ProbeAfter.ThrottleBot) return " on the state a throttle-only bot's race left";
+  return "";
+}
+
 /** What each kind of check measures, as a brief's line says it. */
 const CHECK_WORDS: Record<CheckKind, (c: Check) => string> = {
   [CheckKind.Scene]: (c) => `scene: ${c.js}`,
   [CheckKind.Pixel]: (c) => `pixel on ${c.camera}: ${c.expr}`,
   [CheckKind.Metric]: metricWords,
-  [CheckKind.Probe]: (c) => `probe${c.demo ? ` on the state left by demo "${c.demo}"` : ""}: ${c.expr}`,
+  [CheckKind.Probe]: (c) => `probe${probeScopeWords(c)}: ${c.expr}`,
   [CheckKind.Demo]: (c) =>
     `demo "${c.name}"${c.expr && c.expr !== "ok" ? ` then ${c.expr}` : " runs to its end state"}`,
   [CheckKind.Vision]: (c) =>
@@ -1138,7 +1285,7 @@ export async function loadCatalogue(workspace: string): Promise<Catalogue> {
 
 /**
  * Write the catalogue whole — a temporary file renamed over the old one, so a crash mid-write
- * leaves the last good catalogue — and never over one that could not be read (P15-F10).
+ * leaves the last good catalogue — and never over one that could not be read.
  */
 export async function saveCatalogue(
   workspace: string,
@@ -1186,7 +1333,8 @@ export function catalogueEntryEarned(entry: CatalogueEntry): boolean {
  * check declared — so the planner selects a whole group from the goal; the rest are the general
  * list. Only entries that earned it (see catalogueEntryEarned) are shown, so seed content can
  * be displaced by what the runs learned. Harness-owned checks are listed as already on the
- * board, so the planner does not re-invent them.
+ * board, so the planner does not re-invent them. An entry the lint refuses (a floor on how much
+ * the build draws, learned before the lint existed) is never offered again.
  */
 export function renderCatalogueForPlanner(
   catalogue: Pick<Catalogue, "checks"> | null | undefined,
@@ -1201,7 +1349,7 @@ export function renderCatalogueForPlanner(
     : (options ?? {});
   const wantedFamily = kindFamily(game?.kind ?? null);
   const all = Object.entries(catalogue?.checks ?? {}).filter(
-    ([id, c]) => !HARNESS_CHECKS[id] && catalogueEntryEarned(c) && forFamily(c, wantedFamily),
+    ([id, c]) => !HARNESS_CHECKS[id] && catalogueEntryEarned(c) && forFamily(c, wantedFamily) && !lintCheck(c),
   );
   const general = all
     .filter(([, c]) => groupsOf(c).length === 0)
@@ -1223,7 +1371,7 @@ export function renderCatalogueForPlanner(
 }
 
 /**
- * What a night on another sort of game learned is not automatically knowledge about this one,
+ * What a run on another sort of game learned is not automatically knowledge about this one,
  * but the kind's name is too fine a gate: an entry recorded under exactly one FAMILY is offered
  * only to that family; one recorded under two families, or under none, is general.
  */
@@ -1285,9 +1433,24 @@ function ridingLine(game: AnyRecord | null, screen: boolean): string {
   );
   if (!riding.length)
     return `No harness-owned checks ride on this game's board — declare hud, mouseLook or keyboardMove in game if it has them.`;
+  return `Already on this game's board (harness-owned, do not re-declare): ${riding.join(", ")}.${ridingWords(riding, hudBudgetFor(game))}`;
+}
+
+/** What the harness checks riding on a board ask, a sentence each, for the planner. */
+function ridingWords(riding: readonly string[], budget: number | null): string {
   const screenRides = riding.includes("no-dom-ui") || riding.includes("single-hud");
   const inputRides = riding.includes("look-turns-camera") || riding.includes("keys-move-player");
-  return `Already on this game's board (harness-owned, do not re-declare): ${riding.join(", ")}.${screenRides ? " Every visible element is drawn into the canvas — no DOM UI, one HUD." : ""}${inputRides ? " The input checks ride on the facet that owns main." : ""}`;
+  const hudRides = riding.includes("hud-coverage") && budget !== null;
+  return [
+    screenRides ? " Every visible element is drawn into the canvas — no DOM UI, one HUD." : "",
+    hudRides
+      ? ` The HUD covers at most ${Math.round((budget ?? 0) * 100)}% of the frame and its items do not overlap.`
+      : "",
+    inputRides ? " The input checks and reaches-play ride on the facet that owns main." : "",
+    riding.includes("throttle-bot-loses")
+      ? " On the facet that owns main, a bot that only holds the throttle must not win the race (throttle-bot-loses: report race.position and race.finished)."
+      : "",
+  ].join("");
 }
 
 /**
@@ -1317,7 +1480,7 @@ export function recordCatalogueOutcomes<C extends Pick<Catalogue, "checks">>(
 ): C {
   catalogue.checks ??= {};
   const { checks } = catalogue;
-  // The kind rides beside the genres so a later night knows what sort of game taught this.
+  // The kind rides beside the genres so a later run knows what sort of game taught this.
   const provenance = { runId, genres, kind: declaredKindOf(kind) };
   for (const check of spec?.checks ?? []) {
     if (!theCatalogues(check)) continue;
@@ -1340,10 +1503,11 @@ function declaredKindOf(kind: string | { kind?: string } | null): string | null 
  * check copied onto a board belongs to its recipe, which is credited and blamed by its own
  * outcome gate, and a copy trickling back into checks.json would ship two definitions of one id.
  * A planner that hand-writes a craft id still enters as its own opinion — at that point it is
- * that plan's, not the seed's.
+ * that plan's, not the seed's. A floor on how much the build draws (loop/check-lint.ts) is not
+ * counted either: a board started before the lint still scores it, but a pass there taught nothing.
  */
 const theCatalogues = (check: Check): boolean =>
-  check.origin !== CheckOrigin.Harness && check.origin !== CheckOrigin.Craft && !check.fromRecipe;
+  check.origin !== CheckOrigin.Harness && check.origin !== CheckOrigin.Craft && !check.fromRecipe && !lintCheck(check);
 
 /** The fields of a check the catalogue keeps as its definition. */
 const CATALOGUED_FIELDS = [

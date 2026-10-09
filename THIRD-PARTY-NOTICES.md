@@ -43,10 +43,10 @@ tile. `genex.svg` is Genex's own G, from the startup loader.
 text behind a Studio-written preface; `vendor.json` records each source, version and sha256, and
 `npm run genex:skills` refreshes them.
 
-- Seven platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.35.0 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+- Eight platform cards and their references, copied unchanged from
+  `@genex-ai/cli-demo` 1.36.2 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.35.0), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.2), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -355,7 +355,7 @@ The bundled palettes adapt the following MIT-licensed themes for Studio UI roles
 
 ### Tokyo Night
 
-Source: https://raw.githubusercontent.com/tokyo-night/tokyo-night-vscode-theme/master/LICENSE.txt
+Source: https://raw.githubusercontent.com/tokyo-run/tokyo-run-vscode-theme/master/LICENSE.txt
 
 The MIT License (MIT)
 

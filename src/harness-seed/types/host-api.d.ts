@@ -214,7 +214,7 @@ export type PreviewInputAction =
  * anyone looks: the scout writes it (a key that opens the map picker, the click on the map,
  * a demo that does the same), the harness applies it before judges, captures and the computer
  * tool's first frame. `verify` is a probe over `__studio.state()` that says the state landed —
- * the 2026-09-06 run judged and built the wrong map for two hours because nothing checked.
+ * without it a run can build and judge the wrong map for hours because nothing checked.
  */
 export interface PreviewSetup {
   /**
@@ -234,6 +234,13 @@ export interface PreviewSetup {
   verify?: { path: string; equals?: unknown; truthy?: boolean };
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
+  /**
+   * A game that reports a front-end (`state().flow.playing === false`) is put into play with
+   * `__studio.begin()` by default: by a studio window before the setup is replayed (the scout
+   * recorded it in play), by the evidence pass after its seed. `false` keeps its title, menu or
+   * countdown on screen for the worker that builds them; the playtester's window always does.
+   */
+  begin?: boolean;
 }
 // ↑ src/shared/preview-contract.ts
 
@@ -248,6 +255,8 @@ export interface DelegateCaptureGrant {
   entry?: string;
   setup?: PreviewSetup | null;
   label?: string;
+  /** The worker's own cameras: what a capture that names none photographs (every registered camera when absent). */
+  cameras?: string[];
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -291,7 +300,7 @@ export interface DelegateOwnership {
 
 /**
  * The director's session: the run's integration worktree it orchestrates from (`root`). A waking
- * night's lead sits in the game folder instead and leads `root`, leaving the game's changes to its
+ * run's lead sits in the game folder instead and leads `root`, leaving the game's changes to its
  * workers: the host honours its grant only with `readOnly`, for this game's own run, and hands the
  * engine `root`'s checked real path (delegation.ts `#leadRoot`).
  */
@@ -303,7 +312,7 @@ export interface DelegateDirectorGrant {
   setup?: PreviewSetup | null;
   /**
    * The lead IS its chat's own session (one session): the session it answers with becomes the
-   * chat's bookmark (`contractor`), so the chat goes on in it after the night. Honoured only for a
+   * chat's bookmark (`contractor`), so the chat goes on in it after the run. Honoured only for a
    * lead in its game's folder.
    */
   chatSession?: boolean;
@@ -326,7 +335,7 @@ export interface LiveToolSpec extends StudioToolSpec {
 export interface HarnessDelegateParams {
   coordinator?: { runId: string; messageId?: string };
   /**
-   * The chat's own session after a night it led: the run's controls it keeps (`run_status`,
+   * The chat's own session after a run it led: the run's controls it keeps (`run_status`,
    * `show_build`, `land_build`, shared/coordinator.ts `RunControl`), answered by the host for this
    * run and message as the coordinator's tools are. Honoured only for the chat's own session.
    */
@@ -334,7 +343,7 @@ export interface HarnessDelegateParams {
   /**
    * This session is its chat's current turn: the message it answers. What the person sends
    * meanwhile can reach it (`engine.steer`); honoured only for the chat's own session, and for a
-   * night's lead (a `director` session), whose turn is named by its run id instead.
+   * run's lead (a `director` session), whose turn is named by its run id instead.
    */
   chatTurn?: { messageId?: string };
   engine?: string;
@@ -364,9 +373,9 @@ export interface HarnessDelegateParams {
   images?: DelegateImage[];
   /** Edit-time ownership the engine enforces before a Write lands. */
   ownership?: DelegateOwnership;
-  /** The computer (computer use, 2026-09-07): `false` withholds the builder's hands; default on with a capture grant. */
+  /** The computer: `false` withholds the builder's hands; default on with a capture grant. */
   computer?: boolean;
-  /** The director (director, 2026-09-07): the run's orchestrating session, with the harness's run tools forwarded. */
+  /** The director: the run's orchestrating session, with the harness's run tools forwarded. */
   director?: DelegateDirectorGrant & { tools?: LiveToolSpec[] };
   candidateId?: string;
 }
@@ -704,7 +713,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code";
+export type CodingProvider = "codex" | "claude-code" | "opencode";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -730,15 +739,31 @@ export interface EngineAccount {
 }
 // ↑ src/shared/engine-descriptor.ts
 
-/** How a subscription signs in: Claude through a piped or embedded terminal plus status polling, Codex through its native login reported from the in-app console. */
-export type LoginKind = "terminal" | "console" | "none";
+/**
+ * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
+ * through its native login reported from the in-app console, OpenCode through its own `auth login`
+ * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
+ * no sign-in of its own (a local model, or OpenRouter, whose key is pasted in Settings).
+ */
+export type LoginKind = "terminal" | "console" | "cli" | "none";
 // ↑ src/shared/providers.ts
 
 /**
  * Which roles a provider can run: `presets` has the model rows and single-pick presets of
- * `shared/model-roles.ts`, `sessions` can cross roles without presets, `single` runs one model.
+ * `shared/model-roles.ts`, `sessions` can cross roles without presets, `completion` gives each
+ * job its own model without sessions (its reviewers may join a session run, its main agent may
+ * hand its jobs to one), and `single` runs one model.
  */
-export type RoleSupport = "presets" | "sessions" | "single";
+export type RoleSupport = "presets" | "sessions" | "completion" | "single";
+// ↑ src/shared/providers.ts
+
+/**
+ * Who pays for a provider's work: nobody (`local`), a plan the person already has
+ * (`subscription`, throttled server-side, never billed per call), or per token (`metered`). A
+ * choice the app makes on its own — a fallback, a first ready engine — never lands on a metered
+ * provider: only the person's explicit pick spends their credits.
+ */
+export type Billing = "local" | "subscription" | "metered";
 // ↑ src/shared/providers.ts
 
 /** What the sign-in card and the Models room say for a subscription. */
@@ -763,6 +788,7 @@ export interface ProviderInfo {
   readonly subscription: boolean;
   readonly login: LoginKind;
   readonly roles: RoleSupport;
+  readonly billing: Billing;
   /** Subscriptions only. */
   readonly signIn: SignInCopy | null;
 }
@@ -814,6 +840,8 @@ export interface StudioSettingsView {
   agentsMax?: number;
   /** may builders model in Blender (AG-930); on by default */
   blender?: boolean;
+  /** Resume builds automatically after an engine limit resets or the loop restarts; on by default. */
+  autoResume?: boolean;
 }
 // ↑ src/shared/studio-api.ts
 
@@ -1031,7 +1059,7 @@ export interface GameLibraryEntry {
  * What kind of game a folder holds, decided from the libraries and runtimes it actually loads —
  * never from the entry filename. `src/main.js` is Vite's stock layout as much as the studio's,
  * and reading it as "the template" is what served the user's own three.js game raw, with a bare
- * `three` import nothing could resolve (flautout-remix/wreckage, 2026-09-07).
+ * `three` import nothing could resolve.
  *
  * The kind says what the game *is*; `build` and `serve` say how it runs. A bundled Phaser game
  * is `phaser`, not `three-vite`.
@@ -1050,8 +1078,7 @@ export type ProjectKind =
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
  * as a native ES module. A folder the user brings — Vite, TypeScript, any bundler — keeps its
  * own entry and build; the studio runs the build and serves its output instead of the sources
- * (skate-prod, 2026-09-06: served raw, `/src/main.ts` was refused by the browser and every
- * critic judged a black frame).
+ * (served raw, `/src/main.ts` is refused by the browser and every critic judges a black frame).
  */
 export interface ProjectShape {
   /** The page the preview serves, relative to the project — inside the build output when there is a build. */
@@ -1293,11 +1320,25 @@ export interface PreviewConsoleEntry {
 }
 // ↑ src/shared/preview-contract.ts
 
+export type PreviewGone = 'killed' | 'oom' | 'crashed' | 'launch-failed' | 'abnormal-exit' | 'integrity-failure';
+// ↑ src/shared/preview-contract.ts
+
 /** What `PreviewPort.status()` and the `preview.status` RPC answer. */
 export interface PreviewPortStatus {
   project: string | null;
   url: string | null;
   crashed: boolean;
+  /**
+   * Why the renderer went away while `crashed`; null while it runs. Absent from a port that does
+   * not say (a fake, an older port), which reads as no reason given.
+   */
+  gone?: PreviewGone | null;
+  /**
+   * The view's size now, in pixels: the space of its captures. A window put at another size by
+   * `preview.viewport` reads that size until its lease is released or a computer session takes it
+   * (which puts it back at the facet size). Absent from a port that cannot say.
+   */
+  viewSize?: { width: number; height: number };
   unresponsive: boolean;
   loadError: string | null;
   consoleErrors: number | null;
@@ -1567,10 +1608,24 @@ export interface HarnessHostApi {
     params: { project: string; root?: string; entry?: string; candidateId?: string };
     result: AttachReport;
   };
-  /** v2 contract upgrade: an older `src/studio.js` gets the shipped template's copy, the old one kept beside it. */
+  /**
+   * v2 contract upgrade: an older `src/studio.js` that is a copy the studio shipped gets the template's
+   * copy, the old one kept beside it. An older copy anyone edited is left alone and answered with
+   * `edited` and the `generation` it stays at; its `src/hud.js` stays with it.
+   * `hud` is there when the game's `src/hud.js` was older than the template's: replaced (a shipped copy,
+   * kept as `backup`) or left alone (an edited copy, or one beside a kept contract, still at `generation`).
+   */
   "game.upgradeContract": {
     params: { project: string };
-    result: { upgraded: boolean; reason?: string; materialsAdded?: boolean; backup?: string | null };
+    result: {
+      upgraded: boolean;
+      reason?: string;
+      materialsAdded?: boolean;
+      backup?: string | null;
+      edited?: boolean;
+      generation?: number;
+      hud?: { generation: number; replaced: boolean; backup?: string };
+    };
   };
   "game.read": { params: { project: string; file: string; candidateId?: string }; result: string | GameImageRead };
   "game.write": {
@@ -1619,7 +1674,12 @@ export interface HarnessHostApi {
   };
   /** What the page holds outside the canvas: a DOM menu, an HTML HUD, a loader. */
   "preview.pageUi": { params: { handle?: string }; result: unknown };
-  "preview.state": { params: { handle?: string }; result: unknown };
+  /**
+   * `__studio.state()`, bounded by structure: over the studio's budget its largest lists become
+   * `{__elided, length, chars}` stubs and the root names them under `__cut`. `keep` names the
+   * dotted paths a board reads (at most 64, each up to 120 characters); they are cut last.
+   */
+  "preview.state": { params: { handle?: string; keep?: string[] }; result: unknown };
   "preview.call": { params: { method: string; arg?: unknown; handle?: string }; result: unknown };
   /** Read-only JS over the game's own graph; the answer is untrusted JSON, size-capped by the port. */
   "preview.evaluate": { params: { expression: string; handle?: string }; result: unknown };
@@ -1655,6 +1715,17 @@ export interface HarnessHostApi {
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
   "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
   "preview.release": { params: { handle: string }; result: boolean };
+  /**
+   * One leased window at another size (the art director's 1600×900 look), for that lease only:
+   * clamped to 320–1920 × 240–1200 and back at the facet size when the lease is released. Never
+   * Live, the stand-in or a window a computer session plays in, so its view never changes size:
+   * handing the lease to a session puts it back at the facet size, and the caller sizes it again
+   * afterwards (`preview.status` `viewSize` says the size it is at now).
+   */
+  "preview.viewport": {
+    params: { handle: string; width: number; height: number };
+    result: { handle: string; width: number; height: number };
+  };
   /** Pixel stats of an encoded still — the same numbers a capture yields. */
   "preview.statsOf": {
     params: { base64?: string; path?: string; handle?: string };
@@ -1769,8 +1840,8 @@ export interface RunSpec {
   /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
   mode?: "autopilot";
   /**
-   * The programmed pipeline on purpose (director, 2026-09-07): planner → base → facet loops → merge. A
-   * delegated engine's Autopilot is otherwise the director's — one session that decides the night.
+   * The programmed pipeline on purpose: planner → base → facet loops → merge. A
+   * delegated engine's Autopilot is otherwise the director's — one session that decides the run.
    */
   classic?: boolean;
   /**
@@ -1887,7 +1958,7 @@ export type DispatchAction =
   | { type: "run_stop"; runId: string }
   | { type: "autopilot_resume"; threadId: string; runId: string }
   /**
-   * The director's tools (director, 2026-09-07): a live tool call from the run's director session, hosted
+   * The director's tools: a live tool call from the run's director session, hosted
    * by the studio, forwarded to the harness that owns the workers, the judges and the merge.
    * Unlike every other dispatch this one answers with a value — the tool's result.
    */

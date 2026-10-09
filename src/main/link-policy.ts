@@ -2,9 +2,9 @@
  * Where a link clicked inside the studio window may go.
  *
  * The window is the studio's only UI, and the links in it are mostly a contractor's markdown —
- * a report that ends in "[Base handoff](/Users/…/skate-prod/NOTES.base-builder.md)". On
- * 2026-09-06 that click navigated the window itself to a file that did not exist and left the
- * whole app black. So the window never navigates: a link opens outside it (the browser, the
+ * a report that ends in "[Base handoff](/Users/…/NOTES.base-builder.md)". Followed in place, such
+ * a click navigates the window itself to a file that may not exist and leaves the whole app black.
+ * So the window never navigates: a link opens outside it (the browser, the
  * file's own app, Finder) or is refused in words, and the studio stays on screen.
  *
  * File links are allowed only inside the user's game folders — a report may point at its own
@@ -13,10 +13,12 @@
  * or media file: the text of a link hides its extension, so a contractor that wrote
  * `NOTES.command` or `Evil.app` and linked it as "handoff notes" would otherwise run it with the
  * user's full privileges, outside every sandbox (SECUI-1). Everything else is shown in Finder.
+ * A page of Genex's website goes to the browser tagged `s=desktop` (`tagGenexLink`).
  */
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tagGenexLink } from "../plugins/genex/http.ts";
 import { isInside } from "../substrate/paths.ts";
 
 export type LinkRoute =
@@ -56,7 +58,7 @@ export async function routeStudioLink(raw: string, options: { projectDirs: strin
   } catch {
     return { action: "refuse", reason: "that is not a link the studio can open" };
   }
-  if (url.protocol === "https:") return { action: "external", url: url.href };
+  if (url.protocol === "https:") return { action: "external", url: tagGenexLink(url.href) };
   if (url.protocol === "http:") return { action: "refuse", reason: "only https links open from the studio" };
   if (url.protocol !== "file:")
     return { action: "refuse", reason: `${url.protocol.replace(/:$/, "")} links do not open from the studio` };

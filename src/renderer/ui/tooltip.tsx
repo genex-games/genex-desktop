@@ -7,8 +7,7 @@ import { paddingOffNativeView } from "../native-view.ts";
 import { cn } from "./cn.ts";
 
 /**
- * SMALL AND QUICK (owner ruling 2026-08-17, round 7: "this one is huge… I want
- * a minimalist small tooltip, around 12pt, and maybe a bit faster").
+ * SMALL AND QUICK: a minimalist tooltip, around 12pt, that opens fast.
  *
  * A tooltip is the one label that is NOT part of the chat's one-size rule: it
  * is chrome about a control, not a sentence in the conversation, so it sits at

@@ -61,7 +61,7 @@ export async function applyGraphFixture(
 const WORKER_RUN = { runId: "screens-run", facetId: "jump-pad", facetTitle: "Jump pad" } as const;
 
 /**
- * A running night whose one part has a try in hand, and its builder at the screen: one frame per
+ * A running run whose one part has a try in hand, and its builder at the screen: one frame per
  * deed, the cursor moving, the window left open so its node keeps showing it.
  */
 async function workerAtWork(host: GraphFixtureHost) {

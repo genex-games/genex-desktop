@@ -34,7 +34,7 @@ const checksNeedAttention = (outcome: RunSummary): boolean => {
   return view.state === "finished" && view.delivered === "delivered" && view.verification === "attention";
 };
 
-/** A finished night whose merged build never became the game: it can still be played, or made live. */
+/** A finished run whose merged build never became the game: it can still be played, or made live. */
 function unlandedBuild(graph: RunGraphModel, final: FinalNode | null, run: RunNode) {
   if (graph.active || !final) return null;
   const head = final.integrationHead;

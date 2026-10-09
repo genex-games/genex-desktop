@@ -1,5 +1,5 @@
 /**
- * Game sound (2026-09-28): the user hears only the game on Live, and only while it is on screen,
+ * Game sound: the user hears only the game on Live, and only while it is on screen,
  * Genex is in front, no agent has the window and the switch is on. Agents' windows are never heard.
  */
 import assert from "node:assert/strict";

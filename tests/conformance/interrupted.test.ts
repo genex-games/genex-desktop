@@ -113,7 +113,7 @@ describe("every death leaves a durable trace", () => {
   it("a boot closes the turn and the run the last process died inside — exactly once", async () => {
     const userData = path.join(await tmpDir("studio-interrupted-"), "userData");
 
-    // The night before: a turn begun (durable before any model call) and a run started —
+    // The run before: a turn begun (durable before any model call) and a run started —
     // then the process dies with neither ever ended.
     const before = await makeCore(userData);
     const threadId = await before.store.createThread({ title: "crashed chat" });
@@ -304,22 +304,22 @@ it("boot finishes an interrupted Optimization adoption from what the game folder
 });
 
 /**
- * A director's night is the default overnight path, and the repair above used to miss it
+ * A director's run is the default unattended path, and the repair above used to miss it
  * entirely: the run is registered as `mode: "autopilot"` and started as `mode: "director"`, and
- * the closure gated its pause on the second value. So a night the user quit the app on was
+ * the closure gated its pause on the second value. So a run the user quit the app on was
  * closed as dead — no Resume, no head, no "play this build" — while its merges sat on
  * `refs/studio/runs/<id>/integration` with nobody told they existed.
  */
-it("a director's night the app died inside is paused with the head it reached, not buried", async () => {
+it("a director's run the app died inside is paused with the head it reached, not buried", async () => {
   const { latestRun } = await import("../../src/shared/coordinator.ts");
   const userData = path.join(await tmpDir("studio-director-interrupted-"), "userData");
-  const runId = "run_night";
+  const runId = "run_paused";
   const base = "a".repeat(40);
   const head = "b".repeat(40);
 
   const before = await makeCore(userData);
-  const threadId = await before.store.createThread({ title: "the night" });
-  // The order a real director's night writes them in.
+  const threadId = await before.store.createThread({ title: "the run" });
+  // The order a real director's run writes them in.
   await before.store.appendEvents(threadId, [
     {
       type: "custom",
@@ -346,12 +346,12 @@ it("a director's night the app died inside is paused with the head it reached, n
 
   const events = await reborn.store.listEvents(threadId);
   const finished = events.filter((e) => e.data.type === "custom" && e.data.event_type === "run_finished");
-  assert.equal(finished.length, 1, "the stranded night is closed exactly once");
+  assert.equal(finished.length, 1, "the stranded run is closed exactly once");
   const payload = (finished[0]!.data as { payload: Record<string, unknown> }).payload;
   assert.equal(payload.stoppedBecause, "interrupted by restart");
   assert.equal(payload.mode, "director", "the run keeps its own identity");
   assert.equal(payload.landed, false, "nothing was landed — and the closure says so");
-  assert.equal(payload.integrationHead, head, "the head the night reached");
+  assert.equal(payload.integrationHead, head, "the head the run reached");
   assert.equal(payload.baseCommit, base);
   assert.equal(
     payload.integrationRef,
@@ -387,14 +387,14 @@ it("a director's night the app died inside is paused with the head it reached, n
 });
 
 /**
- * The other half of the same closure: a night that merged nothing. A classic pipeline never
+ * The other half of the same closure: a run that merged nothing. A classic pipeline never
  * journals a head at all, and a director killed before its first integrate is still standing on
  * the base it forked from. Claiming `landed: false` there told the morning card "the build is
  * kept and playable" and then gave it no build to offer — a sentence with nothing to press.
  */
-it("a night that merged nothing is paused without promising a build", async () => {
+it("a run that merged nothing is paused without promising a build", async () => {
   for (const [name, director] of [
-    ["a classic night, which journals no head at all", null],
+    ["a classic run, which journals no head at all", null],
     [
       "a director killed before its first merge",
       { sessionId: "director-1", baseCommit: "c".repeat(40), integrationHead: "c".repeat(40), workers: {}, notes: [] },
@@ -447,8 +447,8 @@ it("a night that merged nothing is paused without promising a build", async () =
 
 /**
  * Wrap up is a durable ask for the run's current session. A press that lands after the run is
- * over is refused: the Stop sheet stays open when the night ends under it, and there is nothing
- * running to wrap up. A resumed night registers again and ignores asks made before it
+ * over is refused: the Stop sheet stays open when the run ends under it, and there is nothing
+ * running to wrap up. A resumed run registers again and ignores asks made before it
  * (`finishRequested`), so even a stale ask could not make it skip every builder. Both doors —
  * the sheet's IPC and the coordinator's `finish_run` — go through this one guard.
  */
@@ -456,7 +456,7 @@ it("a wrap-up asked of a build that is already over is refused, so a Resume cann
   const userData = path.join(await tmpDir("studio-wrapup-"), "userData");
   const core = await makeCore(userData);
   bootedCores.push(core);
-  const threadId = await core.store.createThread({ title: "the night" });
+  const threadId = await core.store.createThread({ title: "the run" });
   const runId = "run_wrapping";
   const asks = async (): Promise<number> =>
     (await core.store.listEvents(threadId)).filter(
@@ -474,7 +474,7 @@ it("a wrap-up asked of a build that is already over is refused, so a Resume cann
   await core.requestRunFinish(threadId, runId);
   assert.equal(await asks(), 1, "however often it is pressed, the running build is asked once");
 
-  // The night ends under the open sheet — a session limit closes it as paused, which is exactly
+  // The run ends under the open sheet — a session limit closes it as paused, which is exactly
   // the run a user resumes tomorrow.
   await core.store.appendEvents(threadId, [
     {

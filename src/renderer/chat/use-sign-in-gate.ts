@@ -15,7 +15,7 @@ import {
   needsSignIn,
 } from "../../shared/engine-descriptor.ts";
 import type { EventEnvelope } from "../../shared/event-log.ts";
-import { EngineId } from "../../shared/providers.ts";
+import { EngineId, isMetered } from "../../shared/providers.ts";
 import { modelKey, parseModelKey } from "../model-key.ts";
 import { useSubscriptionAuth } from "../subscription-auth.ts";
 import type { SignInCard } from "../ui/SignInCard.tsx";
@@ -37,12 +37,13 @@ export function subscriptionBlocksSend(
   return cannotSend(subscription);
 }
 
-/** The first ready local engine with a model that can call tools, and that model. */
+/** The first ready local engine with a model that can call tools, and that model. Never a metered one. */
 export function localToolModel(
   engines: readonly EngineDescriptor[],
 ): { engine: EngineDescriptor; model: EngineModel } | null {
   for (const engine of engines) {
-    if (engine.kind !== EngineKind.Direct || !isEngineReady(engine)) continue;
+    const local = engine.kind === EngineKind.Direct && !isMetered(engine.id);
+    if (!local || !isEngineReady(engine)) continue;
     const model = engine.models.find((candidate) => candidate.supportsTools);
     if (model) return { engine, model };
   }

@@ -11,7 +11,7 @@
  *
  * Our addition, because gauntlet-loop has no tie or regression handling: **the incumbent only
  * advances on a clear win.** A tie, a judge error, or a broken build all keep the incumbent and
- * roll the workspace back, so a night of work can never end below where it started.
+ * roll the workspace back, so a run of work can never end below where it started.
  */
 import { roleEffort, roleEngine, RoleKey } from "./model-roles.ts";
 import { buildTurn } from "./build-turn.ts";
@@ -387,7 +387,7 @@ async function buildIteration(loop: GauntletLoop, round: GauntletRound): Promise
       turn: {
         text: round.taskBrief,
         iteration: round.iteration,
-        // The requested state (computer use, 2026-09-07): the builder's window opens where the run is about.
+        // The requested state: the builder's window opens where the run is about.
         ...(run.setup ? { setup: run.setup } : {}),
       },
     });
@@ -442,7 +442,7 @@ async function lookAtChallenger(loop: GauntletLoop, round: GauntletRound): Promi
 
 /**
  * The challenger's evidence, with patience for a blind camera. A dead preview (window closed,
- * renderer gone) must cost this iteration, not the night: an uncaught throw here would skip
+ * renderer gone) must cost this iteration, not the run: an uncaught throw here would skip
  * run_finished and report.json entirely.
  */
 async function challengerEvidence(loop: GauntletLoop, round: GauntletRound): Promise<AnyRecord> {
@@ -570,7 +570,7 @@ async function judgeFailed(loop: GauntletLoop, round: GauntletRound, err: any): 
   }
   // Two dead verdicts in a row: no more may be invented, so the run ends the way a tie
   // resolves: incumbent kept, the unjudged attempt rolled back — its snapshot survives
-  // for the morning — and run_finished plus report.json still written, so the night
+  // for the morning — and run_finished plus report.json still written, so the run
   // closes honestly.
   stopWith(
     report,
@@ -615,7 +615,7 @@ async function keepOrRestore(loop: GauntletLoop, round: GauntletRound): Promise<
       scope: "game",
       reason: `run ${run.runId} iteration ${round.iteration}: challenger did not win`,
     });
-    // The restore above must surface loudly if it fails — a night that cannot roll back is
+    // The restore above must surface loudly if it fails — a run that cannot roll back is
     // broken. The reload is only the user's view of it: with the window closed it throws,
     // and the next evidence pass reloads anyway.
     try {
@@ -649,7 +649,7 @@ async function recordIteration(loop: GauntletLoop, round: GauntletRound): Promis
     winner: round.challengerWon ? Side.Challenger : Side.Incumbent,
     biggest_gap: round.verdict.biggest_gap ?? loop.biggestGap,
     reason: round.verdict.reason ?? "",
-    // Which judge said so (P14-F5): model, prompt hash, reply, usage.
+    // Which judge said so: model, prompt hash, reply, usage.
     judgeCall: round.verdict.judgeCall ?? null,
     snapshot: loop.incumbent.snapshot_id,
     attemptSnapshot: round.attemptSnapshot?.snapshot_id ?? null,
@@ -753,16 +753,16 @@ function iterationRule(round: GauntletRound): VerdictRule {
   return round.challengerWon ? VerdictRule.JudgePreferred : VerdictRule.Vetoed;
 }
 
-/** Engine health: a throttled or dead engine must not eat the night one lost turn at a time. */
+/** Engine health: a throttled or dead engine must not eat the run one lost turn at a time. */
 async function checkEngineHealth(loop: GauntletLoop, round: GauntletRound): Promise<RoundFlow> {
   const { report } = loop;
-  // ── engine health: a throttled or dead engine must not eat the night one lost turn at a
+  // ── engine health: a throttled or dead engine must not eat the run one lost turn at a
   // time ──
   if (!round.buildEngineError) {
     loop.engineFailures = 0;
     return;
   }
-  // A weekly/session usage cap outlives the night — no strikes, no backoff, honest stop.
+  // A weekly/session usage cap outlives the run — no strikes, no backoff, honest stop.
   if (round.buildEngineError.kind === EngineFailure.UsageLimit) {
     stopWith(report, StopCode.UsageLimit, `the engine is out of usage: ${round.buildFailed}`);
     return RoundFlow.Stop;

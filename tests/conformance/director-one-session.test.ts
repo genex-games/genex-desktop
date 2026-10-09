@@ -1,8 +1,8 @@
 /**
- * One session through the real core and harness (loop/director/lead-session.ts): a waking night
+ * One session through the real core and harness (loop/director/lead-session.ts): a waking run
  * launched from a chat is led by that chat's own contractor session — resumed in the game folder,
  * read-only, leading the integration worktree it reads — and the chat goes on in the same session
- * once the night closes, with its hands back and the run's controls (loop/after-night.ts); with Loop
+ * once the run closes, with its hands back and the run's controls (loop/after-loop-run.ts); with Loop
  * on it reopens a finished build — the same run, led by the same session (loop/reopen-run.ts). A
  * session that cannot be resumed is replaced by a fresh one told the brief, the chat so far and the
  * digest, and a merge conflict goes to a worker instead of the lead.
@@ -16,12 +16,12 @@ import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/
 import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { gitFile } from "../helpers/git.ts";
 
-/** No night here may hang the suite: each is over in well under a minute when it works. */
+/** No run here may hang the suite: each is over in well under a minute when it works. */
 const RIG_TIMEOUT_MS = 240_000;
 /**
- * How long the host's resume of a paused night is held back from the loop in the tests that hold
- * it: the chat's chance to take its next message, or the person's to press Stop, before the night
- * is under way again. The chat itself holds for up to after-night.ts `RESUME_RESERVED_WITHIN_MS`.
+ * How long the host's resume of a paused run is held back from the loop in the tests that hold
+ * it: the chat's chance to take its next message, or the person's to press Stop, before the run
+ * is under way again. The chat itself holds for up to after-loop-run.ts `RESUME_RESERVED_WITHIN_MS`.
  */
 const RESUME_HELD_MS = 1_500;
 const rigs: Rig[] = [];
@@ -41,7 +41,7 @@ const FRAMES = [
 
 /** The plan every scripted lead writes before its first worker, as a real one must. */
 const plan = (ids: string[]) => ({
-  summary: "Tonight: a dusk sky over the plaza.",
+  summary: "This run: a dusk sky over the plaza.",
   workers: JSON.stringify(
     ids.map((id) => ({ id, title: id, seam: `the ${id}`, owns: "src/", done: [`${id} is there`], minutes: 5 })),
   ),
@@ -65,7 +65,7 @@ const Kind = {
   Coordinator: "coordinator",
   Playtester: "playtester",
   FollowUp: "follow-up",
-  /** The chat's own session after its night: the run's controls ride on its turn. */
+  /** The chat's own session after its run: the run's controls ride on its turn. */
   After: "after",
 } as const;
 type Kind = (typeof Kind)[keyof typeof Kind];
@@ -142,8 +142,8 @@ async function gameChat(name: string, windows = 3) {
   return { rig, project, threadId };
 }
 
-/** The night the chat launched, once it closed. */
-async function nightClosed(rig: Rig, label: string) {
+/** The run the chat launched, once it closed. */
+async function loopRunClosed(rig: Rig, label: string) {
   const events = await waitForLog(rig.core, (log) => customEvents(log, "run_finished").length >= 1, 150_000, label);
   return customEvents(events, "run_finished")[0]!;
 }
@@ -199,7 +199,7 @@ const toolNames = (request: DelegateRequest): string[] => (request.liveTools ?? 
 const offeredTools = (request: DelegateRequest): string[] => (request.interviewTools ?? []).map((tool) => tool.name);
 
 /**
- * Hold the host's resume of a paused night back from the loop until `release`, as a slow journal
+ * Hold the host's resume of a paused run back from the loop until `release`, as a slow journal
  * read or a learning pass still being waited out would.
  */
 function holdResumes(rig: Rig): { release: () => void } {
@@ -223,7 +223,7 @@ async function chatBookmark(rig: Rig, threadId: string): Promise<string | undefi
 
 for (const engine of ["claude-code", "codex"]) {
   describe(`one session on ${engine}`, () => {
-    it("S1. the chat's own session leads the night it launched, read-only in the game folder, and the chat goes on in it after the close", {
+    it("S1. the chat's own session leads the run it launched, read-only in the game folder, and the chat goes on in it after the close", {
       timeout: RIG_TIMEOUT_MS,
     }, async () => {
       const { rig, project, threadId } = await gameChat(`one-session-${engine}`);
@@ -267,7 +267,7 @@ for (const engine of ["claude-code", "codex"]) {
         engine,
         autopilot: { frames: FRAMES },
       });
-      const finished = await nightClosed(rig, "the launched night's close");
+      const finished = await loopRunClosed(rig, "the launched run's close");
       assert.equal(finished.landed, true, String(finished.stoppedBecause));
 
       const chat = requests.find((r) => r.kind === Kind.Chat)!.request;
@@ -314,7 +314,7 @@ for (const engine of ["claude-code", "codex"]) {
         assert.ok(toolNames(after).includes(tool), `${tool} in ${toolNames(after).join(", ")}`);
       assert.ok(
         !(after.interviewTools ?? []).some((tool) => tool.name === "resume_run"),
-        "a finished night has nothing to resume",
+        "a finished run has nothing to resume",
       );
       assert.match(after.prompt, /why dusk\?/);
       assert.equal(results.status.run.state, "finished", JSON.stringify(results.status));
@@ -371,7 +371,7 @@ for (const engine of ["claude-code", "codex"]) {
       });
 
       await rig.core.sendUserMessage("make a dusk plaza", { thread: threadId, engine, autopilot: { frames: FRAMES } });
-      const finished = await nightClosed(rig, "the own-hands night's close");
+      const finished = await loopRunClosed(rig, "the own-hands run's close");
       assert.equal(finished.landed, true, String(finished.stoppedBecause));
       assert.ok(
         requests.some((r) => r.kind === Kind.Lead),
@@ -407,7 +407,7 @@ describe("a lead whose chat session cannot be resumed", () => {
       if (request.resume && request.resume === chatSession)
         throw new Error(`No conversation found with session ID: ${chatSession}`);
       leadTurns += 1;
-      if (leadTurns === 1) await call("finish", { summary: "nothing to build tonight", land: "no" });
+      if (leadTurns === 1) await call("finish", { summary: "nothing to build this run", land: "no" });
     });
 
     await rig.core.sendUserMessage("make a dusk plaza with a fountain", {
@@ -415,7 +415,7 @@ describe("a lead whose chat session cannot be resumed", () => {
       engine,
       autopilot: { frames: FRAMES },
     });
-    await nightClosed(rig, "the night's close");
+    await loopRunClosed(rig, "the run's close");
 
     const lead = requests.filter((r) => r.kind === Kind.Lead).map((r) => r.request);
     assert.equal(
@@ -437,7 +437,7 @@ describe("a lead whose chat session cannot be resumed", () => {
       `in order: ${JSON.stringify(at)}\n${fresh.slice(0, 2_000)}`,
     );
     // The fresh session's turn ends after the close it called: the chat's bookmark follows that
-    // turn, so wait for it rather than read the bookmark the moment the night closed.
+    // turn, so wait for it rather than read the bookmark the moment the run closed.
     const freshLead = () => requests.filter((r) => r.kind === Kind.Lead)[1]?.sessionId;
     await waitForLog(rig.core, () => Boolean(freshLead()), 15_000, "the fresh session's turn to end");
     const freshSession = freshLead();
@@ -510,7 +510,7 @@ describe("a merge conflict goes to a worker", () => {
         budgets: { wallClockMs: 15 * 60_000 },
       } as never)
       .catch(() => {});
-    const finished = await nightClosed(rig, "the conflicted night's close");
+    const finished = await loopRunClosed(rig, "the conflicted run's close");
 
     assert.equal(results.left.merged, true, JSON.stringify(results.left));
     assert.equal(results.conflict.merged, false, JSON.stringify(results.conflict));
@@ -594,7 +594,7 @@ describe("a conflict worker that leaves conflict markers", () => {
         budgets: { wallClockMs: 15 * 60_000 },
       } as never)
       .catch(() => {});
-    const finished = await nightClosed(rig, "the night whose conflict worker left markers");
+    const finished = await loopRunClosed(rig, "the run whose conflict worker left markers");
 
     assert.equal(results.conflict.resolving, "merge-right", JSON.stringify(results.conflict));
     assert.equal(results.merger?.state, "failed", JSON.stringify(results.merger));
@@ -670,7 +670,7 @@ describe("the studio's hands for a lead that writes nothing", () => {
         budgets: { wallClockMs: 15 * 60_000 },
       } as never)
       .catch(() => {});
-    const finished = await nightClosed(rig, "the night whose lead the studio lent its hands");
+    const finished = await loopRunClosed(rig, "the run whose lead the studio lent its hands");
 
     // The game folder is played from a worktree of its commit, never in place.
     assert.doesNotMatch(results.playedLive, /does not run|uncommitted/, results.playedLive);
@@ -701,11 +701,11 @@ describe("the studio's hands for a lead that writes nothing", () => {
 });
 
 describe("the same agent after the build", () => {
-  it("S6. after a finished night the chat's own session shows the build, lands it, and makes a change in the game folder itself", {
+  it("S6. after a finished run the chat's own session shows the build, lands it, and makes a change in the game folder itself", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, project, threadId } = await gameChat("after-night-hands");
+    const { rig, project, threadId } = await gameChat("after-run-hands");
     const results: Record<string, any> = {};
     let leadTurns = 0;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
@@ -754,7 +754,7 @@ describe("the same agent after the build", () => {
       engine,
       autopilot: { frames: FRAMES },
     });
-    const finished = await nightClosed(rig, "the night left beside the game folder");
+    const finished = await loopRunClosed(rig, "the run left beside the game folder");
     assert.equal(finished.landed, false, String(finished.stoppedBecause));
     const chatSession = requests.find((r) => r.kind === Kind.Chat)!.sessionId;
 
@@ -803,11 +803,11 @@ describe("the same agent after the build", () => {
     assert.equal(customEvents(log, "run_followup_requested").length, 0, "nothing handed to a builder");
   });
 
-  it("S7. after a paused night a question is answered in place, and 'continue with…' resumes the night with the same session as its lead", {
+  it("S7. after a paused run a question is answered in place, and 'continue with…' resumes the run with the same session as its lead", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
-    const { rig, threadId } = await gameChat("after-night-resume");
+    const { rig, threadId } = await gameChat("after-run-resume");
     const results: Record<string, any> = {};
     const leadPrompts: string[] = [];
     let workerStarted = false;
@@ -824,7 +824,7 @@ describe("the same agent after the build", () => {
         return;
       }
       if (kind === Kind.Worker) {
-        // Building until the user stops the night.
+        // Building until the user stops the run.
         workerStarted = true;
         await new Promise<void>((resolve) => {
           if (request.signal?.aborted) resolve();
@@ -847,30 +847,30 @@ describe("the same agent after the build", () => {
       engine,
       autopilot: { frames: FRAMES },
     });
-    await waitForLog(rig.core, () => workerStarted, 120_000, "the night's worker to start");
+    await waitForLog(rig.core, () => workerStarted, 120_000, "the run's worker to start");
     await rig.core.stopThread(threadId);
-    await waitForLog(rig.core, (log) => customEvents(log, "autopilot_paused").length >= 1, 60_000, "the paused night");
+    await waitForLog(rig.core, (log) => customEvents(log, "autopilot_paused").length >= 1, 60_000, "the paused run");
     const chatSession = requests.find((r) => r.kind === Kind.Chat)!.sessionId!;
 
     // A question alone never restarts the build.
     await answered(rig, threadId, "is the moon red yet?", engine, 2);
     assert.equal(results.status.run.state, "paused", JSON.stringify(results.status.run));
-    assert.deepEqual(results.offered, ["resume_run"], "a paused night can be resumed from the chat");
+    assert.deepEqual(results.offered, ["resume_run"], "a paused run can be resumed from the chat");
     let log = await rig.core.store.listEvents(threadId);
     assert.equal(customEvents(log, "run_registered").length, 1, "the question resumed nothing");
     assert.equal(leadPrompts.length, 1);
 
-    // An instruction to go on resumes the night; its lead is this same session again.
+    // An instruction to go on resumes the run; its lead is this same session again.
     await answered(rig, threadId, "continue with a red moon", engine, 3);
     log = await waitForLog(
       rig.core,
       (events) => customEvents(events, "run_finished").length >= 2,
       120_000,
-      "the resumed night's close",
+      "the resumed run's close",
     );
     const leads = requests.filter((r) => r.kind === Kind.Lead);
     assert.equal(leads.length, 2, requests.map((r) => r.kind).join(", "));
-    assert.equal(leads[1]!.request.resume, chatSession, "the resumed night's lead is the chat's own session");
+    assert.equal(leads[1]!.request.resume, chatSession, "the resumed run's lead is the chat's own session");
     assert.match(leadPrompts[1]!, /THE USER SAYS[\s\S]*continue with a red moon/);
     assert.ok(
       customEvents(log, "run_steering").some((e) => e.text === "continue with a red moon"),
@@ -883,7 +883,7 @@ describe("the same agent after the build", () => {
       [],
       "no coordinator session opens",
     );
-    // The night closes inside the resumed lead's `finish` call: its turn returns just after.
+    // The run closes inside the resumed lead's `finish` call: its turn returns just after.
     const whole = [Kind.Chat, Kind.Lead, Kind.After, Kind.After, Kind.Lead];
     for (let waited = 0; (histories.get(chatSession)?.length ?? 0) < whole.length && waited < 600; waited++)
       await sleep(25);
@@ -891,8 +891,8 @@ describe("the same agent after the build", () => {
   });
 });
 
-/** A paused night's lead and worker, as S7 scripts them: the worker builds until Stop, the resumed lead finishes. */
-function pausedNight(leadPrompts: string[], started: { worker: boolean }) {
+/** A paused run's lead and worker, as S7 scripts them: the worker builds until Stop, the resumed lead finishes. */
+function pausedLoopRun(leadPrompts: string[], started: { worker: boolean }) {
   return async (request: DelegateRequest, kind: Kind) => {
     const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
     if (kind === Kind.Lead) {
@@ -915,16 +915,16 @@ function pausedNight(leadPrompts: string[], started: { worker: boolean }) {
   };
 }
 
-/** Launch a night from the chat and pause it with Stop once its worker builds. */
+/** Launch a run from the chat and pause it with Stop once its worker builds. */
 async function launchAndPause(rig: Rig, threadId: string, engine: string, started: { worker: boolean }) {
   await rig.core.sendUserMessage("make a moonlit plaza", {
     thread: threadId,
     engine,
     autopilot: { frames: FRAMES },
   });
-  await waitForLog(rig.core, () => started.worker, 120_000, "the night's worker to start");
+  await waitForLog(rig.core, () => started.worker, 120_000, "the run's worker to start");
   await rig.core.stopThread(threadId);
-  await waitForLog(rig.core, (log) => customEvents(log, "autopilot_paused").length >= 1, 60_000, "the paused night");
+  await waitForLog(rig.core, (log) => customEvents(log, "autopilot_paused").length >= 1, 60_000, "the paused run");
 }
 
 /** The resume the chat's own session records, as the session's result carries it. */
@@ -938,10 +938,10 @@ function liveCall(request: DelegateRequest) {
 }
 
 /**
- * A night that builds `id` with one worker and lands it, as S1 scripts it: its lead plans (on its
- * first night) and starts the worker, then integrates and finishes once the worker is done.
+ * A run that builds `id` with one worker and lands it, as S1 scripts it: its lead plans (on its
+ * first run) and starts the worker, then integrates and finishes once the worker is done.
  */
-function landingNight(id: string, planned: boolean) {
+function landingLoopRun(id: string, planned: boolean) {
   let turns = 0;
   let finished = false;
   return async (request: DelegateRequest): Promise<void> => {
@@ -966,18 +966,18 @@ async function writePart(request: DelegateRequest, id: string): Promise<void> {
   await writeFile(path.join(request.cwd, "src", `${id}.js`), `export const ${id} = true;\n`);
 }
 
-/** The dusk plaza the chat launches with Loop on, on `engine`, once its night has closed. */
+/** The dusk plaza the chat launches with Loop on, on `engine`, once its run has closed. */
 async function launchedAndClosed(rig: Rig, threadId: string, engine: string) {
   await rig.core.sendUserMessage("make a dusk plaza", {
     thread: threadId,
     engine,
     autopilot: { hours: 1, frames: FRAMES },
   });
-  return nightClosed(rig, "the launched night's close");
+  return loopRunClosed(rig, "the launched run's close");
 }
 
-/** The log once `count` nights have closed. */
-function nightsClosed(rig: Rig, count: number, label: string) {
+/** The log once `count` runs have closed. */
+function loopRunsClosed(rig: Rig, count: number, label: string) {
   return waitForLog(rig.core, (events) => customEvents(events, "run_finished").length >= count, 150_000, label);
 }
 
@@ -990,16 +990,16 @@ const strangers = (requests: ReadonlyArray<{ kind: Kind }>): Kind[] =>
   requests.filter((r) => r.kind === Kind.Coordinator || r.kind === Kind.FollowUp).map((r) => r.kind);
 
 describe("the same agent after the build: the resume it asks for, and the session it is", () => {
-  it("S8. a message sent while the chat's own session asks to resume waits for the resumed night, never answered as after a paused night again; a reply that ended early resumes anyway, and says so", {
+  it("S8. a message sent while the chat's own session asks to resume waits for the resumed run, never answered as after a paused run again; a reply that ended early resumes anyway, and says so", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
-    const { rig, threadId } = await gameChat("after-night-resuming");
+    const { rig, threadId } = await gameChat("after-run-resuming");
     const leadPrompts: string[] = [];
     const started = { worker: false };
-    const night = pausedNight(leadPrompts, started);
+    const loopRun = pausedLoopRun(leadPrompts, started);
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
-      if (kind !== Kind.After) return night(request, kind);
+      if (kind !== Kind.After) return loopRun(request, kind);
       if (!request.prompt.includes("continue with a red moon")) return;
       // The person sends another message while this reply is still being written; it reaches the
       // reply (the host interrupts it) and waits again once the reply ends.
@@ -1033,7 +1033,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
           r.request.prompt.includes("make the moon big") &&
           (r.request.interviewTools ?? []).some((tool) => tool.name === "resume_run"),
       );
-    // Before the resumed night is under way again, the chat has every chance to take the message.
+    // Before the resumed run is under way again, the chat has every chance to take the message.
     await waitForLog(rig.core, () => answeredWhilePaused().length > 0, RESUME_HELD_MS).catch(() => null);
     release();
 
@@ -1041,12 +1041,12 @@ describe("the same agent after the build: the resume it asks for, and the sessio
       rig.core,
       (events) => customEvents(events, "run_finished").length >= 2,
       120_000,
-      "the resumed night's close",
+      "the resumed run's close",
     );
     const bigId = customEvents(log, "coordinator_message_queued").find(
       (e) => (e.action as { text?: string } | undefined)?.text === "and make the moon big",
     )?.messageId;
-    // It reaches the resumed night's lead, or is answered once that night has closed.
+    // It reaches the resumed run's lead, or is answered once that run has closed.
     log = await waitForLog(
       rig.core,
       (events) =>
@@ -1067,21 +1067,21 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     );
     const leads = requests.filter((r) => r.kind === Kind.Lead);
     assert.equal(leads.length, 2, requests.map((r) => r.kind).join(", "));
-    assert.equal(leads[1]!.request.resume, chatSession, "the resumed night's lead is the chat's own session");
+    assert.equal(leads[1]!.request.resume, chatSession, "the resumed run's lead is the chat's own session");
     assert.equal(customEvents(log, "run_registered").length, 2, "resumed once");
     assert.equal(new Set(customEvents(log, "run_registered").map((e) => e.runId)).size, 1, "never a second run");
   });
 
-  it("S9. Stop after the resuming reply, before the night is under way again: it stays paused, and the chat is told", {
+  it("S9. Stop after the resuming reply, before the run is under way again: it stays paused, and the chat is told", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
-    const { rig, threadId } = await gameChat("after-night-stopped-resume");
+    const { rig, threadId } = await gameChat("after-run-stopped-resume");
     const leadPrompts: string[] = [];
     const started = { worker: false };
-    const night = pausedNight(leadPrompts, started);
+    const loopRun = pausedLoopRun(leadPrompts, started);
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
-      if (kind !== Kind.After) return night(request, kind);
+      if (kind !== Kind.After) return loopRun(request, kind);
       if (request.prompt.includes("continue with a red moon")) return recordedResume("continue with a red moon");
     });
     await launchAndPause(rig, threadId, engine, started);
@@ -1113,29 +1113,29 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     assert.deepEqual(
       { registered: customEvents(log, "run_registered").length, told: notResumed(log) },
       { registered: 1, told: true },
-      "the night did not start again after the Stop",
+      "the run did not start again after the Stop",
     );
     assert.equal(requests.filter((r) => r.kind === Kind.Lead).length, 1, "no lead turn after the Stop");
   });
 
-  it("S7b. 'continue with…' sent with Loop on after a paused night resumes it with the time it had left: the resume alone is offered, never a reopen or a launch", {
+  it("S7b. 'continue with…' sent with Loop on after a paused run resumes it with the time it had left: the resume alone is offered, never a reopen or a launch", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
-    const { rig, threadId } = await gameChat("after-night-resume-on-loop");
+    const { rig, threadId } = await gameChat("after-run-resume-on-loop");
     const leadPrompts: string[] = [];
     const started = { worker: false };
-    const night = pausedNight(leadPrompts, started);
+    const loopRun = pausedLoopRun(leadPrompts, started);
     const offered: string[][] = [];
     sessionEngine(rig, engine, async (request, kind) => {
-      if (kind !== Kind.After) return night(request, kind);
+      if (kind !== Kind.After) return loopRun(request, kind);
       offered.push(offeredTools(request));
       if (request.prompt.includes("continue with a red moon")) return recordedResume("continue with a red moon");
     });
     await launchAndPause(rig, threadId, engine, started);
 
     await answeredOnLoop(rig, threadId, "continue with a red moon", engine, { hours: 3 }, 2);
-    const log = await nightsClosed(rig, 2, "the resumed night's close");
+    const log = await loopRunsClosed(rig, 2, "the resumed run's close");
     const registered = customEvents(log, "run_registered");
     assert.deepEqual(
       {
@@ -1155,7 +1155,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, threadId } = await gameChat("after-night-engines");
+    const { rig, threadId } = await gameChat("after-run-engines");
     let leadTurns = 0;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
@@ -1181,7 +1181,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
       engine,
       autopilot: { frames: FRAMES },
     });
-    await nightClosed(rig, "the codex night's close");
+    await loopRunClosed(rig, "the codex run's close");
     const chatSession = requests.find((r) => r.kind === Kind.Chat)!.sessionId;
 
     // No engine named: the lead's engine, its own session, with the run's controls.
@@ -1212,8 +1212,8 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, threadId } = await gameChat("after-night-engines-on-loop");
-    const first = landingNight("sky", false);
+    const { rig, threadId } = await gameChat("after-run-engines-on-loop");
+    const first = landingLoopRun("sky", false);
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead) return first(request);
       if (kind === Kind.Worker) return writePart(request, "sky");
@@ -1242,11 +1242,11 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, threadId } = await gameChat("after-night-coordinator-reopens");
-    let night = landingNight("sky", false);
+    const { rig, threadId } = await gameChat("after-run-coordinator-reopens");
+    let loopRun = landingLoopRun("sky", false);
     let part = "sky";
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
-      if (kind === Kind.Lead) return night(request);
+      if (kind === Kind.Lead) return loopRun(request);
       if (kind === Kind.Worker) return writePart(request, part);
     });
     const other = sessionEngine(rig, "claude-code", async (request, kind) => {
@@ -1255,12 +1255,12 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     await launchedAndClosed(rig, threadId, engine);
     const chatSession = requests.find((r) => r.kind === Kind.Chat)?.sessionId;
     const leadsBefore = requests.filter((r) => r.kind === Kind.Lead).length;
-    // The reopened night works to its ask (a goal commission): its lead plans for it first.
-    night = landingNight("enemies", false);
+    // The reopened run works to its ask (a goal commission): its lead plans for it first.
+    loopRun = landingLoopRun("enemies", false);
     part = "enemies";
 
     await answeredOnLoop(rig, threadId, "add enemies", "claude-code", { hours: 2 }, 2);
-    const log = await nightsClosed(rig, 2, "the reopened night's close");
+    const log = await loopRunsClosed(rig, 2, "the reopened run's close");
     const registered = customEvents(log, "run_registered");
     const reopenedLead = requests.filter((r) => r.kind === Kind.Lead)[leadsBefore];
     /** The model a registration planned on. */
@@ -1297,53 +1297,53 @@ const recordedReopen = (text: string) => ({ studioToolCalls: [{ name: "reopen_ru
 /** What the chat's own session is offered with Loop on after a finished build it led: the reopen, a start over, a question. */
 const REOPEN_OFFERED = ["reopen_run", "start_autopilot", "ask_user"];
 
-/** What S11 saw from inside its sessions: the offer, and where the reopened night stood. */
+/** What S11 saw from inside its sessions: the offer, and where the reopened run stood. */
 interface ReopenSeen {
   offered?: string[];
-  /** The game folder's HEAD when the reopened night's lead first woke: its starting point. */
+  /** The game folder's HEAD when the reopened run's lead first woke: its starting point. */
   folderHead?: string;
-  /** The reopened night's worker: the commit it started on, and the sky it found there. */
+  /** The reopened run's worker: the commit it started on, and the sky it found there. */
   workerHead?: string;
   workerSky?: string;
-  /** Every prompt the reopened night's lead was given. */
+  /** Every prompt the reopened run's lead was given. */
   reopenedPrompts: string[];
 }
 
-/** The reopened night's lead, seen: every prompt it is given, and the game folder's HEAD when it first wakes. */
+/** The reopened run's lead, seen: every prompt it is given, and the game folder's HEAD when it first wakes. */
 async function seeReopenedLead(gameDir: string, request: DelegateRequest, seen: ReopenSeen): Promise<void> {
   seen.reopenedPrompts.push(request.prompt);
-  // The reopened night took its starting point before its lead's first turn.
+  // The reopened run took its starting point before its lead's first turn.
   seen.folderHead ??= await git(gameDir, ["rev-parse", "HEAD"]);
 }
 
-/** The reopened night's worker, seen: the commit it starts on, and the sky it finds there. */
+/** The reopened run's worker, seen: the commit it starts on, and the sky it finds there. */
 async function seeReopenedWorker(request: DelegateRequest, seen: ReopenSeen): Promise<void> {
   seen.workerHead = await git(request.cwd, ["rev-parse", "HEAD"]);
   seen.workerSky = await readFile(path.join(request.cwd, "src", "sky.js"), "utf8");
 }
 
 /**
- * S11's sessions: a night that lands the sky; the chat after it, which paints the sky pink itself and
- * then records the reopen for enemies; and the night reopened, which builds them.
+ * S11's sessions: a run that lands the sky; the chat after it, which paints the sky pink itself and
+ * then records the reopen for enemies; and the run reopened, which builds them.
  */
-function reopenedNights(gameDir: string, seen: ReopenSeen) {
-  // The reopened night works to its ask (a goal commission, golden-boot-glory): its lead plans for it first.
-  const nights = [landingNight("sky", false), landingNight("enemies", false)];
-  let night = 0;
+function reopenedLoopRuns(gameDir: string, seen: ReopenSeen) {
+  // The reopened run works to its ask (a goal commission, golden-boot-glory): its lead plans for it first.
+  const loopRuns = [landingLoopRun("sky", false), landingLoopRun("enemies", false)];
+  let loopRun = 0;
   const chatAfter = async (request: DelegateRequest) => {
     if (request.prompt.includes("add enemies")) {
       seen.offered = offeredTools(request);
-      night = 1;
+      loopRun = 1;
       return recordedReopen("add enemies");
     }
     if (request.prompt.includes("make the sky pink"))
       await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'pink';\n");
   };
   return async (request: DelegateRequest, kind: Kind) => {
-    const reopened = night === 1;
+    const reopened = loopRun === 1;
     if (kind === Kind.Lead) {
       if (reopened) await seeReopenedLead(gameDir, request, seen);
-      return nights[night]?.(request);
+      return loopRuns[loopRun]?.(request);
     }
     if (kind === Kind.Worker) {
       if (reopened) await seeReopenedWorker(request, seen);
@@ -1353,7 +1353,7 @@ function reopenedNights(gameDir: string, seen: ReopenSeen) {
   };
 }
 
-/** A steer left on a run after its close, as a Stop can leave one: nobody asked the next night for it. */
+/** A steer left on a run after its close, as a Stop can leave one: nobody asked the next run for it. */
 async function leaveStaleSteer(rig: Rig, threadId: string, runId: unknown, words: string): Promise<void> {
   await rig.core.store.appendEvents(threadId, [
     { type: "custom", event_type: "run_steering", payload: { runId, text: words, at: new Date().toISOString() } },
@@ -1365,9 +1365,9 @@ describe("the same agent after the build: a finished build reopened with Loop on
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, project, threadId } = await gameChat("after-night-reopen");
+    const { rig, project, threadId } = await gameChat("after-run-reopen");
     const seen: ReopenSeen = { reopenedPrompts: [] };
-    const { requests, histories } = sessionEngine(rig, engine, reopenedNights(project.dir, seen));
+    const { requests, histories } = sessionEngine(rig, engine, reopenedLoopRuns(project.dir, seen));
     const first = await launchedAndClosed(rig, threadId, engine);
     assert.equal(first.landed, true, String(first.stoppedBecause));
     const chatSession = requests.find((r) => r.kind === Kind.Chat)?.sessionId ?? "";
@@ -1380,7 +1380,7 @@ describe("the same agent after the build: a finished build reopened with Loop on
 
     await answeredOnLoop(rig, threadId, "add enemies", engine, { hours: 2 }, 3);
     assert.deepEqual(seen.offered, REOPEN_OFFERED, "the reopen is offered first");
-    const log = await nightsClosed(rig, 2, "the reopened night's close");
+    const log = await loopRunsClosed(rig, 2, "the reopened run's close");
     const registered = customEvents(log, "run_registered");
     assert.deepEqual(
       {
@@ -1394,20 +1394,20 @@ describe("the same agent after the build: a finished build reopened with Loop on
     );
 
     const leads = requests.filter((r) => r.kind === Kind.Lead);
-    assert.equal(leads.at(-1)?.request.resume, chatSession, "the reopened night's lead is the chat's own session");
+    assert.equal(leads.at(-1)?.request.resume, chatSession, "the reopened run's lead is the chat's own session");
     const [opening = ""] = seen.reopenedPrompts;
     assert.match(opening, /THE BUILD GOES ON AT/);
     assert.match(opening, /THE USER SAYS[\s\S]*add enemies/);
     assert.ok(!seen.reopenedPrompts.some((p) => p.includes("old note")), "a steer from before the ask is not told");
     assert.equal(seen.workerHead, seen.folderHead, "the new worker forks from the game folder as it is now");
-    assert.equal(seen.workerSky, "export const sky = 'pink';\n", "with the change made after the night");
+    assert.equal(seen.workerSky, "export const sky = 'pink';\n", "with the change made after the run");
 
     const second = customEvents(log, "run_finished")[1] ?? {};
     assert.equal(second.landed, true, String(second.stoppedBecause));
     assert.deepEqual(
       Object.keys(second.workers ?? {}).sort(),
       ["enemies", "sky"],
-      "the reopened night's record keeps the finished night's workers",
+      "the reopened run's record keeps the finished run's workers",
     );
     assert.equal(await readFile(path.join(project.dir, "src", "sky.js"), "utf8"), "export const sky = 'pink';\n");
     assert.equal(await readFile(path.join(project.dir, "src", "enemies.js"), "utf8"), "export const enemies = true;\n");
@@ -1420,7 +1420,7 @@ describe("the same agent after the build: a finished build reopened with Loop on
       Kind.After,
       ...Array.from({ length: leadsAgain }, () => Kind.Lead),
     ];
-    // The night closes inside the last lead's `finish` call: its turn returns just after.
+    // The run closes inside the last lead's `finish` call: its turn returns just after.
     for (let waited = 0; (histories.get(chatSession)?.length ?? 0) < whole.length && waited < 600; waited++)
       await sleep(25);
     assert.deepEqual(
@@ -1437,8 +1437,8 @@ describe("the same agent after the build: a start over or a question with Loop o
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, threadId } = await gameChat("after-night-start-over");
-    const first = landingNight("sky", false);
+    const { rig, threadId } = await gameChat("after-run-start-over");
+    const first = landingLoopRun("sky", false);
     let offered: string[] | null = null;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead && offered) {
@@ -1455,7 +1455,7 @@ describe("the same agent after the build: a start over or a question with Loop o
 
     await answeredOnLoop(rig, threadId, "start over, a neon city", engine, { hours: 1, frames: FRAMES }, 2);
     assert.deepEqual(offered, REOPEN_OFFERED);
-    const log = await nightsClosed(rig, 2, "the new build's close");
+    const log = await loopRunsClosed(rig, 2, "the new build's close");
     const registered = customEvents(log, "run_registered");
     assert.deepEqual(
       {
@@ -1473,8 +1473,8 @@ describe("the same agent after the build: a start over or a question with Loop o
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "codex";
-    const { rig, threadId } = await gameChat("after-night-question-on-loop");
-    const first = landingNight("sky", false);
+    const { rig, threadId } = await gameChat("after-run-question-on-loop");
+    const first = landingLoopRun("sky", false);
     let offered: string[] | null = null;
     const { requests } = sessionEngine(rig, engine, async (request, kind) => {
       if (kind === Kind.Lead) return first(request);

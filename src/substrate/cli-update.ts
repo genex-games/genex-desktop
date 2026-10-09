@@ -3,9 +3,16 @@ import { runCommand } from "./engines/claude-cli.ts";
 import type { CodingProvider } from "../shared/coding-cli.ts";
 import { CliInstallProblem } from "../shared/cli-install.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
+import { EngineId } from "../shared/providers.ts";
 import type { InstallOutcome } from "./cli-installer.ts";
 
 const UPDATE_TIMEOUT_MS = 10 * MINUTE_MS;
+/** The command each CLI updates itself with. */
+const UPDATE_ARGS: Record<CodingProvider, readonly string[]> = {
+  [EngineId.ClaudeCode]: ["update"],
+  [EngineId.Codex]: ["update"],
+  [EngineId.OpenCode]: ["upgrade"],
+};
 /** Update only the selected installation; never fall back to a different installer. */
 export async function updateCodingCli(
   provider: CodingProvider,
@@ -18,7 +25,7 @@ export async function updateCodingCli(
 ): Promise<InstallOutcome> {
   const resolve = deps.resolve ?? requireCodingCli;
   const selected = await resolve(provider, executable);
-  const result = await (deps.run ?? runCommand)(selected.path, ["update"], {
+  const result = await (deps.run ?? runCommand)(selected.path, [...UPDATE_ARGS[provider]], {
     env: selected.env,
     timeoutMs: UPDATE_TIMEOUT_MS,
   });

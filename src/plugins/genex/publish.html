@@ -44,6 +44,15 @@ let running=false,timer;
 const button=(label,ariaLabel,disabled,onclick)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.ariaLabel=ariaLabel;b.disabled=!!disabled;b.onclick=onclick;controls.append(b);return b;};
 
 const listed=state=>state.status==='published';
+// The game's Genex cover: the frame the game stages as its genex-cover demo (cover.ts), never Studio's own sidebar look.
+const COVER={applied:'Set from the game\'s cover shot',outranked:'Your own pick on genex.games stays',kept_owner:'Your own pick on genex.games stays',rejected:'Genex did not use the last cover shot',invalid:'Genex could not take the last cover shot',failed:'The last cover shot was not sent; the next publish tries again',none:'No cover shot yet: Genex keeps its own',unchanged:'Genex already has this cover shot',not_hosted:'The first publish sends the cover shot',busy:'Waiting for the publish to finish'};
+function coverText(cover){
+  if(cover.sending)return 'Sending the cover shot…';
+  const last=cover.last;
+  if(!last)return cover.shot?'A cover shot is ready: the next publish sends it':'No cover shot yet: Genex keeps its own';
+  const kind=last.kind==='unchanged'?(last.settled??last.kind):last.kind;
+  return COVER[kind]??kind;
+}
 const termsPending=state=>Boolean(state.terms)&&state.terms.accepted===false;
 function gameText(state){
   if(!state.slug)return 'Not online yet';
@@ -64,6 +73,7 @@ function renderStatus(state,job){
     ui.status('Draft page',state.draftUrl??'None yet'),
     ui.status('Gallery page',listed(state)?(state.galleryUrl??'None yet'):'Not listed'),
     ui.status('Last upload',state.lastPreviewAt??'Never'));
+  if(state.cover)status.append(ui.status('Genex cover',coverText(state.cover)));
   renderNotes(state,job);
 }
 function renderNotes(state,job){

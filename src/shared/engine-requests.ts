@@ -69,6 +69,8 @@ export interface DelegateCaptureGrant {
   entry?: string;
   setup?: PreviewSetup | null;
   label?: string;
+  /** The worker's own cameras: what a capture that names none photographs (every registered camera when absent). */
+  cameras?: string[];
 }
 
 /** Playtester hands: the serializable half of the live preview tools over the build under test. */
@@ -87,7 +89,7 @@ export interface DelegatePlaytestGrant {
 
 /**
  * The director's session: the run's integration worktree it orchestrates from (`root`). A waking
- * night's lead sits in the game folder instead and leads `root`, leaving the game's changes to its
+ * run's lead sits in the game folder instead and leads `root`, leaving the game's changes to its
  * workers: the host honours its grant only with `readOnly`, for this game's own run, and hands the
  * engine `root`'s checked real path (delegation.ts `#leadRoot`).
  */
@@ -99,7 +101,7 @@ export interface DelegateDirectorGrant {
   setup?: PreviewSetup | null;
   /**
    * The lead IS its chat's own session (one session): the session it answers with becomes the
-   * chat's bookmark (`contractor`), so the chat goes on in it after the night. Honoured only for a
+   * chat's bookmark (`contractor`), so the chat goes on in it after the run. Honoured only for a
    * lead in its game's folder.
    */
   chatSession?: boolean;

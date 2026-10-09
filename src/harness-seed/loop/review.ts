@@ -9,7 +9,15 @@ import { reviewDiff } from "./judge.ts";
 import { facetNotes } from "./repo.ts";
 import { commitArg, isCommit, shellQuote } from "./shell.ts";
 import { GIT } from "./git.ts";
+import {
+  arrivedByMerge,
+  EnforcedAction,
+  isOwnershipFinding,
+  openMergeHead,
+  ReviewCategory,
+} from "./merge-ownership.ts";
 import { GIT_TIMEOUT_MS } from "./config.ts";
+import { screenOwnership } from "./screen-owner.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EngineFailure } from "./outage.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
@@ -34,6 +42,10 @@ export interface ReviewSpec {
   main?: string;
   studio?: string;
   template?: boolean;
+  /** This part owns the screen (screen-owner.ts): it alone draws on it. */
+  ownsScreen?: boolean;
+  /** The part that owns the screen, when one does; absent, nobody does and the rule is inert. */
+  screenOwner?: string;
   [field: string]: unknown;
 }
 
@@ -276,6 +288,7 @@ export function mechanicalReview(
       ...contractRemovals(review),
       ...wiringOverreach(review),
       ...ownershipBreach(review),
+      ...screenOwnership(review),
     );
   }
   return violations;
@@ -342,7 +355,7 @@ function writesEvidenceGlobal(text: string): boolean {
  * The studio's own evidence globals, on any shape of game. They are installed behind
  * accessors that ignore a write (M4.9a), so this is a second belt and not the defence: a
  * build that assigns to one is telling the studio what it drew instead of drawing it, and
- * a night that reads its own numbers back is judging nothing.
+ * a run that reads its own numbers back is judging nothing.
  */
 function evidenceWrites({ file, added }: FileReview): Violation[] {
   if (!isSourceFile(file)) return [];
@@ -428,7 +441,7 @@ function ownershipBreach({ file, spec, ownsMain, template }: FileReview): Violat
     {
       file,
       line: 0,
-      category: "ownership",
+      category: ReviewCategory.Ownership,
       what: `edited a file outside this facet's ownership (${file})`,
       fix: `keep this facet's work in ${ownedPlace(spec, template)}`,
       source: "mechanical",
@@ -597,9 +610,12 @@ function modelReviewSpec(spec: ReviewSpec, template: boolean, main: string | nul
 }
 
 /**
- * Teeth, without a blade (WP1b): a file outside ownership is reverted to the diff base when it
- * exists there, left alone when it arrived by merge, and quarantined (never deleted) when it is
- * genuinely new. `git(command)` runs a shell command in the worktree and returns its stdout.
+ * Teeth, without a blade (WP1b): a file outside ownership is left alone when its content arrived
+ * by merge (it matches an integration head), reverted to the diff base when it exists there, left
+ * alone when it is new and an integration head holds it, and quarantined (never deleted) when it
+ * is genuinely new. While a merge is still open the revert takes the merged head's copy, never the
+ * pre-merge incumbent's. Findings are chosen by their ownership category. `git(command)` runs a
+ * shell command in the worktree and returns its stdout.
  */
 export async function enforceOwnership(
   git: (command: string) => Promise<string>,
@@ -611,20 +627,24 @@ export async function enforceOwnership(
   }: {
     base: string;
     integrationHeads?: string[];
-    violations?: ReadonlyArray<{ source?: string; what?: string; file?: string }>;
+    violations?: ReadonlyArray<{ source?: string; what?: string; file?: string; category?: string }>;
     iterationId: string;
   },
 ): Promise<Array<{ file: string; action: string }>> {
   // M3: a file name is the contractor's and a head comes back from a tool; neither runs as shell.
   commitArg(base);
   const enforced: Array<{ file: string; action: string }> = [];
-  for (const v of violations.filter(
-    (x) => x.source === "mechanical" && /outside this facet's ownership/.test(x.what as string) && x.file,
-  ) as Array<{ source?: string; what: string; file: string }>) {
-    const atBase = await git(GIT.catFileExists(base, v.file)).catch(() => "no");
+  const revertTo = (await openMergeHead(git)) ?? base;
+  for (const v of violations.filter(isOwnershipFinding) as Array<{ file: string }>) {
+    // Hud-2 once reverted city-2's districts: the merge brought them, so they were not hud's edit.
+    if (await arrivedByMerge(git, { heads: integrationHeads, file: v.file })) {
+      enforced.push({ file: v.file, action: EnforcedAction.Kept });
+      continue;
+    }
+    const atBase = await git(GIT.catFileExists(revertTo, v.file)).catch(() => "no");
     if (atBase === "yes") {
-      await git(GIT.checkoutPath(base, v.file)).catch(() => {});
-      enforced.push({ file: v.file, action: "reverted" });
+      await git(GIT.checkoutPath(revertTo, v.file)).catch(() => {});
+      enforced.push({ file: v.file, action: EnforcedAction.Reverted });
       continue;
     }
     let atIntegration = "no";
@@ -632,7 +652,7 @@ export async function enforceOwnership(
       if ((await git(GIT.catFileExists(head, v.file)).catch(() => "no")) === "yes") atIntegration = "yes";
     }
     if (atIntegration === "yes") {
-      enforced.push({ file: v.file, action: "kept (arrived by merge)" });
+      enforced.push({ file: v.file, action: EnforcedAction.Kept });
       continue;
     }
     const quarantine = `.studio/quarantine/${iterationId}`;

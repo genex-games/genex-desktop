@@ -222,6 +222,7 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
       CLAUDE_CONFIG_DIR: "/claude/home",
       CODEX_HOME: "/codex/home",
       OPENAI_BASE_URL: "https://proxy.example",
+      OPENCODE_CONFIG: "/opencode/config.json",
       SSH_AUTH_SOCK: "/tmp/agent.sock",
       ...FOREIGN,
     };
@@ -248,6 +249,7 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         request: { base: "contractor", vendor: "claude", keep: ["CLAUDE_CODE_OAUTH_TOKEN"] },
         keeps: ["PATH", "HOME", "HARMLESS_FLAG", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"],
         drops: [
+          "OPENCODE_CONFIG",
           "ANTHROPIC_API_KEY",
           "ANTHROPIC_AUTH_TOKEN",
           "CODEX_HOME",
@@ -269,6 +271,7 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
         request: { base: "contractor", vendor: "codex", set: { CODEX_HOME: "/studio/codex" } },
         keeps: ["PATH", "HOME", "HARMLESS_FLAG", "CODEX_HOME", "OPENAI_BASE_URL"],
         drops: [
+          "OPENCODE_CONFIG",
           "OPENAI_API_KEY",
           "CODEX_API_KEY",
           "CODEX_ACCESS_TOKEN",
@@ -279,6 +282,30 @@ describe("SEC-2: a contractor keeps its own sign-in and nobody else's", () => {
           "GITHUB_TOKEN",
           "SSH_AUTH_SOCK",
         ],
+      },
+      {
+        // OpenCode signs in to many providers through its own store; it gets neither subscription
+        // CLI's variables, nor any metered key the shell exports.
+        name: "opencode contractor",
+        request: { base: "contractor", vendor: "opencode", set: { OPENCODE_DISABLE_AUTOUPDATE: "1" } },
+        keeps: ["PATH", "HOME", "HARMLESS_FLAG", "OPENCODE_CONFIG", "OPENCODE_DISABLE_AUTOUPDATE"],
+        drops: [
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "CLAUDE_CONFIG_DIR",
+          "CODEX_HOME",
+          "OPENAI_BASE_URL",
+          "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
+          "GENEX_TOKEN",
+          "GITHUB_TOKEN",
+          "SSH_AUTH_SOCK",
+        ],
+      },
+      {
+        name: "a tool of no vendor",
+        request: { base: "contractor", vendor: "none" },
+        keeps: ["PATH", "HOME", "HARMLESS_FLAG"],
+        drops: ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENAI_BASE_URL", "OPENCODE_CONFIG", "SSH_AUTH_SOCK"],
       },
     ];
     for (const row of rows) {
@@ -450,6 +477,38 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
     }
   });
 
+  it("the sandbox OpenCode runs in lets it reach its own sign-in home and no other (hostile table)", async () => {
+    const root = await tmpDir("child-env-own-home-");
+    const opencode = path.join(os.homedir(), ".local", "share", "opencode");
+    const secrets = path.join(root, "secrets");
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [secrets],
+      enabled: false,
+      // Only an exact credential home is exempted: a studio secret, another CLI's home, a parent of
+      // a home, the home folder and a relative path named here all stay as they were.
+      ownHome: [opencode, secrets, dotCodex, path.dirname(opencode), os.homedir(), "relative/opencode"],
+    });
+    assert.ok(!sandbox.policy.denyRead.includes(opencode), "OpenCode reads its own sign-in");
+    assert.ok(!sandbox.policy.denyWrite.includes(opencode), "and keeps its sessions there");
+    assert.ok(sandbox.policy.allowWrite.includes(opencode));
+    for (const dir of [secrets, dotCodex, dotClaude]) {
+      assert.ok(sandbox.policy.denyRead.includes(dir), `denyRead still holds ${dir}`);
+      assert.ok(sandbox.policy.denyWrite.includes(dir), `denyWrite still holds ${dir}`);
+    }
+    for (const dir of [path.dirname(opencode), os.homedir(), "relative/opencode"])
+      assert.ok(!sandbox.policy.allowWrite.includes(dir), `nothing but the exempted home is opened: ${dir}`);
+
+    const other = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch-2"),
+      secretPaths: [],
+      enabled: false,
+    });
+    assert.ok(other.policy.denyRead.includes(opencode), "every other sandbox denies OpenCode's sign-in");
+  });
+
   it("an environment pointing a login home at the whole home folder does not deny the home folder", async () => {
     const root = await tmpDir("child-env-home-");
     const sandbox = await withEnv({ CODEX_HOME: os.homedir(), CLAUDE_CONFIG_DIR: "/" }, () =>
@@ -545,25 +604,29 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
     // Absolute on this platform: `/Users/me` on macOS and Linux, `<drive>:\Users\me` on Windows.
     const at = (...parts: string[]) => path.resolve(path.sep, ...parts);
     const home = at("Users", "me");
-    assert.deepEqual(credentialHomes([], {}, home), [at("Users", "me", ".codex"), at("Users", "me", ".claude")]);
+    // Flipped (OpenCode): OpenCode's sign-in store joins the list, so no other agent reads it.
+    const defaults = [
+      at("Users", "me", ".codex"),
+      at("Users", "me", ".claude"),
+      at("Users", "me", ".local", "share", "opencode"),
+    ];
+    assert.deepEqual(credentialHomes([], {}, home), defaults);
     assert.deepEqual(
       credentialHomes(
         [at("login", "claude"), null, undefined, "relative/path", at("Users", "me", ".codex")],
-        { CODEX_HOME: at("env", "codex"), CLAUDE_CONFIG_DIR: `${at("env", "claude")}${path.sep}` },
+        {
+          CODEX_HOME: at("env", "codex"),
+          CLAUDE_CONFIG_DIR: `${at("env", "claude")}${path.sep}`,
+          XDG_DATA_HOME: at("env", "data"),
+        },
         home,
       ),
-      [
-        at("Users", "me", ".codex"),
-        at("Users", "me", ".claude"),
-        at("env", "codex"),
-        at("env", "claude"),
-        at("login", "claude"),
-      ],
+      [...defaults, at("env", "codex"), at("env", "claude"), at("env", "data", "opencode"), at("login", "claude")],
     );
     assert.deepEqual(
-      credentialHomes([at("Users"), at(), home], { CODEX_HOME: home }, home),
-      [at("Users", "me", ".codex"), at("Users", "me", ".claude")],
-      "never the home folder, its ancestors or the root",
+      credentialHomes([at("Users"), at(), home], { CODEX_HOME: home, XDG_DATA_HOME: "relative" }, home),
+      defaults,
+      "never the home folder, its ancestors, the root or a relative data folder",
     );
   });
 });

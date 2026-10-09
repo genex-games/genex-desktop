@@ -113,7 +113,7 @@ export interface Scoreboard {
   unmeasured: number;
   /**
    * The checks the plan and the harness wrote, counted apart from the questions a judge grew
-   * from its own defect list (`grownTotal`). Null on a night from before the loop split them.
+   * from its own defect list (`grownTotal`). Null on a run from before the loop split them.
    */
   plannedTotal: number | null;
   plannedPassing: number | null;
@@ -122,7 +122,7 @@ export interface Scoreboard {
   identityTotal: number | null;
   identityPassing: number | null;
   flips: string[];
-  /** `flips` minus the judge's own grown questions; null on a night from before the split. */
+  /** `flips` minus the judge's own grown questions; null on a run from before the split. */
   plannedFlips: string[] | null;
   regressions: string[];
   results: CheckResult[];
@@ -282,13 +282,13 @@ export interface RunNode {
   /** labels of the reference stills the run was given */
   referenceFrames: string[];
   /**
-   * A night the lead runs itself (`autopilot_started.director`). It has no shared-base stage
+   * A run the lead runs itself (`autopilot_started.director`). It has no shared-base stage
    * unless it built a starting point of its own, and its builders are single sessions rather
    * than rounds — so the base node and the progress line read differently.
    */
   director: boolean;
   /**
-   * The night stopped where it can be picked up again — the engine's limit, a quit, a crash
+   * The run stopped where it can be picked up again — the engine's limit, a quit, a crash
    * (`autopilot_paused`). It is not over, and no surface may call it finished.
    */
   paused: boolean;
@@ -305,9 +305,9 @@ export interface BaseNode {
   empty?: boolean;
   outages: number;
   /**
-   * There was never a shared base to build: a lead's night that started from the game as it
-   * stands. Without this the card pulses "Building the ground every part starts from…" all
-   * night, because `autopilot_base` — which only a base stage emits — never arrives.
+   * There was never a shared base to build: a lead's run that started from the game as it
+   * stands. Without this the card pulses "Building the ground every part starts from…" for the whole
+   * run, because `autopilot_base` — which only a base stage emits — never arrives.
    */
   absent: boolean;
 }
@@ -370,7 +370,7 @@ export interface IterationNode {
   startedSeq: number;
   judgedSeq: number | null;
   notes: NoteInfo[];
-  /** The round's own verdict record — null on a night from before the round wrote one. */
+  /** The round's own verdict record — null on a run from before the round wrote one. */
   verdict: VerdictRecord | null;
 }
 
@@ -396,7 +396,7 @@ export interface FinalNode {
     iterations: number | null;
     satisfied: boolean | null;
   }>;
-  /** The night's own report to the user, in its words — `reportSummary` says where it comes from. */
+  /** The run's own report to the user, in its words — `reportSummary` says where it comes from. */
   summary: string | null;
   /** Did the run's merged build reach the live game folder (null until the run closes)? */
   landed: boolean | null;
@@ -407,7 +407,7 @@ export interface FinalNode {
   /**
    * What the close made of the landing: whether a judge of that exact build preferred it
    * (`verified`), which rule landed it (`how`, a token) and the sentence the close wrote for the
-   * user (`line`). A night that landed a head no judge ever looked at must not read like one a
+   * user (`line`). A run that landed a head no judge ever looked at must not read like one a
    * judge chose, and this is the only record of the difference.
    */
   landing: { verified: boolean; how: string | null; line: string | null } | null;
@@ -540,11 +540,11 @@ export interface RunGraph {
   /**
    * The newest commit on the shared build, with the time it landed and whether anything has
    * confirmed it runs (`integration_health`; null when nobody looked). This is the build the
-   * stage can offer the user while the night is still going.
+   * stage can offer the user while the run is still going.
    */
   mergedHead: { head: string; at: string; healthy: boolean | null } | null;
   /**
-   * Every build the lead judged tonight, oldest first — its fork gates, its judge, its health
+   * Every build the lead judged this run, oldest first — its fork gates, its judge, its health
    * passes and its close. The Builds drawer shows the newest one about the build on the stage
    * instead of a sentence about the run.
    */
@@ -603,9 +603,8 @@ interface GraphDraft {
   /**
    * A part that was restarted (`director_worker.replaces`) is one part, not two. The lead names
    * the worker it is replacing; everything the replacement then does is read as the part's own,
-   * its rounds carrying on after the ones it replaced (both builders count from 1). The night of
-   * 2026-09-07 restarted all five of its parts and the Builds page drew ten, five of them red
-   * with nothing kept.
+   * its rounds carrying on after the ones it replaced (both builders count from 1), so a
+   * restarted part is never drawn twice, once red with nothing kept.
    */
   restarts: Map<string, PartRef>;
   notes: NoteInfo[];
@@ -890,7 +889,7 @@ const closedState = (state: RunState | null): state is Exclude<RunState, typeof 
   state !== null && state !== RunState.Running;
 
 /**
- * The run goes on after a close (a pause resumed, a finished night reopened): that close is not its
+ * The run goes on after a close (a pause resumed, a finished run reopened): that close is not its
  * last word, and its next close says it all again. After a finished one only new merges are offered.
  */
 function reopenAfterClose(graph: GraphDraft, closedAs: RunState): void {
@@ -1077,7 +1076,7 @@ function onFacetOutage(graph: GraphDraft, entry: RunEntry): void {
 }
 
 /**
- * A director's worker (director, 2026-09-07): a node the moment it starts, its stop reason when
+ * A director's worker: a node the moment it starts, its stop reason when
  * it ends — a single-session worker has no iterations of its own to draw.
  */
 function onDirectorWorker(graph: GraphDraft, payload: Payload): void {
@@ -1265,7 +1264,7 @@ function onDirectorVerdict(graph: GraphDraft, payload: Payload): void {
   if (verdict) graph.verdicts.push(verdict);
 }
 
-/** Did the merged build run? Only a head that did is worth offering the user mid-night. */
+/** Did the merged build run? Only a head that did is worth offering the user mid-run. */
 function onHealth(graph: GraphDraft, payload: Payload): void {
   const head = strOrNull(payload.head);
   const { mergedHead } = graph;
@@ -1484,8 +1483,8 @@ function pinNotes(graph: GraphDraft): void {
 }
 
 /**
- * What the night says it did, for the morning card. The lead's `finish` writes this for the user;
- * a night that ran out of time before it called `finish` writes none — as the first real night did
+ * What the run says it did, for the morning card. The lead's `finish` writes this for the user;
+ * a run that ran out of time before it called `finish` writes none — as the first real run did
  * — and it has no report. It used to fall back to the last note the lead had left *itself*, which
  * is how a morning card came to read "Base fixed and re-based (69f573d): crowd shader now compiles
  * under r185". The card says plainly that no report was written instead; the stills, the kept and
@@ -1497,7 +1496,7 @@ export function reportSummary(payload: { summary?: unknown }): string | null {
 }
 
 /**
- * Did the night leave a merged build of its own? This is the one fact the morning's copy and the
+ * Did the run leave a merged build of its own? This is the one fact the morning's copy and the
  * morning's buttons must agree on: "the build is kept and playable" belongs only over a card that
  * can actually open one, and a head that never moved off the starting commit holds nothing.
  */
@@ -1512,9 +1511,9 @@ export function hasMergedBuild(
  * The checks a round flipped that the part was actually planned against.
  *
  * The scoreboard's `flips` counts every check that turned green, including the ones a judge grew
- * during the night — so a round whose only gain was answering the judge's own new question read
+ * during the run — so a round whose only gain was answering the judge's own new question read
  * as "+1 · kept" on the card. The loop now sends the planned list itself; failing that, the
- * verdict record keeps planned and grown apart; failing both (a night from before either) the
+ * verdict record keeps planned and grown apart; failing both (a run from before either) the
  * whole list stands, as it always did.
  */
 export function plannedFlips(node: IterationNode): string[] {
@@ -1543,8 +1542,8 @@ export function finalNodeOf(graph: RunGraph): FinalNode | null {
 }
 
 /**
- * The last thing anybody said about the build the night stands on: the newest verdict for the
- * merged head, or — before anything merged, and on a night whose passes named no head — simply
+ * The last thing anybody said about the build the run stands on: the newest verdict for the
+ * merged head, or — before anything merged, and on a run whose passes named no head — simply
  * the newest one. The Builds drawer shows this in place of a sentence about the run as a whole.
  */
 export function headVerdict(graph: RunGraph): VerdictRecord | null {
@@ -1626,7 +1625,7 @@ export function roundStep(node: IterationNode): string {
 
 /**
  * What the run is doing next, from the record alone: the round the lead most recently started
- * and has not judged yet, named with its part. Null when no round is underway — a night between
+ * and has not judged yet, named with its part. Null when no round is underway — a run between
  * builds, or one that has ended — so the card can say the next step is not recorded rather than
  * guess one.
  */

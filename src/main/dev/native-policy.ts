@@ -20,6 +20,14 @@ const NATIVE_CHANNELS = [
   "studio:plugins.genex-publish",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
+  // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
+  "studio:opencode.signin",
+  // Opens the sign-in page a terminal printed in the person's browser.
+  "studio:terminal.open-link",
+  // Saving checks the key with OpenRouter and writes it to the OS secret store; forgetting it
+  // deletes it there. A fixture profile has no key and no network.
+  "studio:openrouter.key.save",
+  "studio:openrouter.key.clear",
   "studio:codex-login.browser",
   "studio:codex-login.retry",
   "studio:claude-login.browser",
@@ -47,9 +55,11 @@ const NATIVE_CHANNELS = [
   "studio:cli.update",
   // Delete what I shared asks the Genex API to remove this install's rows: the network.
   "studio:run-sharing.delete",
+  // Send feedback posts the report to genex.games: the network.
+  "studio:feedback.send",
   "studio:cancel-model-download",
   "studio:export",
-  // The one channel that opens the network (decision 3): "Install packages" runs the folder's own
+  // The one channel that opens the network: "Install packages" runs the folder's own
   // package manager with registry.npmjs.org allowed. A fixture profile refuses downloads.
   "studio:packages.install",
   // Set up (Windows) creates a local user account and network filters behind an administrator

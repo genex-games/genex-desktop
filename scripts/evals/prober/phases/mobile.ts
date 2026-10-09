@@ -1,8 +1,8 @@
 /**
  * THE PHONE PASS: the same URL in a separate 390x844 @3x touch context. It asks one question: does a
  * canvas still draw at phone dimensions? Not layout, not touch controls. A screenshot that never came
- * back says nothing about the game, and a page that answered 5xx says the ORIGIN failed (a live
- * serving incident once read as "no canvas at phone size"), so both are `unknown`; only a canvas
+ * back says nothing about the game, and a page that answered 5xx says the ORIGIN failed (a serving
+ * incident must not read as "no canvas at phone size"), so both are `unknown`; only a canvas
  * captured FLAT, or no canvas at all, is a fail. `l3.phone_viewport` is an L3 row: it flags for a
  * human and never gates.
  *

@@ -94,6 +94,27 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
   ],
 
   [
+    "spec: a floor on how much the build draws is refused, a budget is kept",
+    () => {
+      const spec = normalizeFacetSpec({
+        id: "hud",
+        intent: "a HUD read at a glance",
+        checks: [
+          { id: "hud-rich", kind: "probe", expr: "len(hud.items) >= 60" },
+          { id: "draw-budget", kind: "probe", expr: "__render.drawCalls <= 1000" },
+          { id: "hud-there", kind: "probe", expr: "len(state.hud.items) >= 1" },
+        ],
+      });
+      const validated = validateFacetSpec(spec);
+      check("one problem", validated.problems.length === 1 && validated.problems[0]?.includes("hud-rich") === true);
+      check(
+        "the budget and the existence check stay",
+        validated.spec.checks.map((c) => c.id).join(",") === "draw-budget,hud-there",
+      );
+    },
+  ],
+
+  [
     "spec: `done` is the contract, the prose identity list still weighs, and checks are dry-run",
     () => {
       const spec = normalizeFacetSpec({
@@ -321,9 +342,19 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
         normalizeFacetSpec({ id: "gun", intent: "a gun", checks: [{ id: "single-hud", kind: "scene", js: "true" }] }),
         { ownsMain: true, game: firstPerson },
       );
+      // A racer's main owner carries the one a first-person game cannot (the throttle-only bot's race).
+      const racer = withHarnessChecks(
+        { id: "car", checks: [] as Check[], cameras: [] },
+        { ownsMain: true, game: { kind: "racing" } },
+      );
+      const ridesOnce = (id: string, board: { checks: Check[] }) => board.checks.filter((c) => c.id === id).length;
       check(
-        "four harness checks, no duplicate",
-        Object.keys(HARNESS_CHECKS).every((id) => spec.checks.filter((c) => c.id === id).length === 1),
+        "every harness check, no duplicate",
+        Object.keys(HARNESS_CHECKS).every((id) => Math.max(ridesOnce(id, spec), ridesOnce(id, racer)) === 1),
+      );
+      check(
+        "the HUD budget is the kind's",
+        spec.checks.find((c) => c.id === "hud-coverage")?.expr === "hud.coverage <= 0.12",
       );
       check(
         "harness origin wins",
@@ -331,9 +362,9 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
           spec.checks.find((c) => c.id === "single-hud")!.origin === "harness",
       );
       check(
-        "input checks only for the main owner",
+        "input checks and reaches-play only for the main owner",
         withHarnessChecks({ id: "x", checks: [], cameras: [] }, { ownsMain: false, game: firstPerson }).checks
-          .length === 2,
+          .length === 4,
       );
       check(
         "a game that declares nothing carries no harness check",
@@ -346,7 +377,7 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
           { ownsMain: true, game: { ...firstPerson, hud: false, mouseLook: false } },
         )
           .checks.map((c) => c.id)
-          .join(",") === "keys-move-player",
+          .join(",") === "keys-move-player,reaches-play",
       );
       const grown = defectsToChecks(
         { id: "gun", checks: [], cameras: ["default", "camGun"] },

@@ -7,13 +7,16 @@ import { VerdictSource } from "../verdict.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import { FACET_POLICY, MAX_STUCK_ANSWERS } from "./policy.ts";
 import { CLIP_QUOTE } from "../text.ts";
+import { isBeyondScope } from "../scope.ts";
 import type { FacetPolicy } from "./policy.ts";
+import { growthCandidate, isUnfilledOpenRung, type GrowthCandidate } from "./growth.ts";
 
 /**
  * Where a round's move comes from (`chooseMove`'s `source`, and `facet_move.source` for the
- * ones that name a move): the director's ladder, a move still pending, the taste judge's big move
- * for the facet (`reviewer`), the liveness critic's gap, or the planner. `none` is a climbed
- * director's ladder nobody has proposed a next step for. Never rename a value.
+ * ones that name a move): the director's ladder (its open rung included, whoever filled it), a
+ * move still pending, the taste judge's big move for the facet (`reviewer`), the liveness critic's
+ * gap, or the planner. `none` is a climbed director's ladder nobody has proposed a next step for.
+ * A filled open rung keeps who filled it (`filledBy`: `reviewer` or `critic`). Never rename a value.
  */
 export const MoveSource = {
   Milestone: "milestone",
@@ -46,10 +49,9 @@ const wholeMinutes = (ms: number): number => Math.max(1, Math.round(ms / MINUTE_
 
 /**
  * A round is started only when what is left covers a whole one of this worker's own rounds,
- * with this much headroom. The clock used to be the only gate — "is there any time left?" —
- * and one night's five round-two workers all began a round they could not finish: the build
- * turn was cut mid-edit, the half-written game was judged as a partial, three of them lost,
- * and the morning counted those rounds as undone.
+ * with this much headroom. "Is there any time left?" alone starts rounds that cannot finish: the
+ * build turn is cut mid-edit, the half-written game is judged as a partial, and those rounds count
+ * as undone.
  */
 export const ITERATION_HEADROOM = 1.25;
 
@@ -73,7 +75,7 @@ export const brokenStreakWords = (limit: number): string =>
   `${countWord(limit)} unjudgeable build${limit === 1 ? "" : "s"}`;
 
 /**
- * A model review finding worded like this once read as a check being gamed. The loop now reads
+ * A model review finding worded like this reads as a check being gamed. The loop now reads
  * the reviewer's own `gaming` flag (phases/review.ts); this stays for a kept copy that imports it.
  */
 export const GAMING_FINDING =
@@ -114,10 +116,10 @@ export function pinFixRecipe<
 /**
  * Is the work done? The contract is the identity checks the facet was started on — a
  * director's `done` list, the planner's identity features, the harness's own — and nothing
- * else. Checks the judge grows during the night are on the board and steer the next
+ * else. Checks the judge grows during the run are on the board and steer the next
  * iteration, but a facet that met its contract is finished even while the judge is still
  * naming polish; the alternative (every check, judge-grown included) is a worker that can
- * never stop, which is exactly what a night of 4-of-7 boards looked like.
+ * never stop, which is exactly what a run of 4-of-7 boards looked like.
  *
  * Returns the sentence for `stoppedBecause`, or null while there is still work to do.
  */
@@ -184,7 +186,7 @@ function roundCostEstimate(buildMs: number | null, afterMs: number | null, runMs
  *
  * `finishRequested` answers with a plain `true` — the old contract, and still what the user's
  * own wrap-up signal means — or with `{ by, reason }`. The director answers with itself,
- * because a night that stopped five workers to fix one shader must not tell the owner they did
+ * because a run that stopped five workers to fix one shader must not tell the owner they did
  * it. Returns null when nobody has asked.
  */
 export function stopSignal(answer: unknown): { by: string; reason: string } | null {
@@ -243,7 +245,7 @@ const SELF_MEASURING_KINDS: readonly string[] = [
  * vision check the planner or the harness wrote is part of the contract the build was accepted
  * against. A crop question the judge grew from its own defect list is neither: it was seeded
  * "fail" by the judge that wrote it, so its first "yes" is that judge agreeing with itself. One
- * night kept a round that way — a car that had got worse, kept because one grown question about
+ * run kept a round that way — a car that had got worse, kept because one grown question about
  * its trunk answered yes while the twin question about the same trunk still failed at 0.80.
  */
 export function strongFlips(
@@ -268,6 +270,10 @@ export function strongFlips(
  * not do before, and only a named regression (the taste veto) undoes it. Everything else — no
  * flip at all, or only the judge's own notes flipping — is decided by the blind side-by-side
  * pick, which is the one judgement that looked at both builds at once.
+ *
+ * A missing move somebody asked for undoes a preferred round only when the round fixed nothing it
+ * owed: one that flipped the judge's own defect questions is kept, so its fixes are not thrown
+ * away, and its move stays owed (`moveVerdict` never climbs it).
  */
 export function acceptRound({
   spec,
@@ -282,10 +288,16 @@ export function acceptRound({
   taste?: { veto?: boolean; pick?: string | null } | null;
   moveMissing?: boolean;
 }): { accepted: boolean; strong: string[]; source: string } {
-  const strong = strongFlips(spec, board, comparison?.flips ?? []);
+  const flips = comparison?.flips ?? [];
+  const strong = strongFlips(spec, board, flips);
   const veto = taste?.veto === true;
-  const accepted = strong.length > 0 ? !veto : taste?.pick === Side.Challenger && !moveMissing;
-  return { accepted, strong, source: acceptanceSource({ veto, strong: strong.length > 0, moveMissing }) };
+  const preferred = taste?.pick === Side.Challenger;
+  // The judge's own defect questions that flipped: what the round owed and fixed.
+  const fixedOwed = flips.length > strong.length;
+  const accepted = strong.length > 0 ? !veto : preferred && (!moveMissing || fixedOwed);
+  // Only a round the judge preferred is undone by its missing move; one it did not prefer lost on taste.
+  const lostToMove = moveMissing && preferred && !accepted;
+  return { accepted, strong, source: acceptanceSource({ veto, strong: strong.length > 0, moveMissing: lostToMove }) };
 }
 
 /** Which rule a kept-or-not round was decided by, in `acceptRound`'s order: a veto, a strong flip, a missing move, taste. */
@@ -324,26 +336,46 @@ export function movesThisRound(
   return entries.length > 0 && !entries.some((e) => e.weight === CheckWeight.Identity && e.pass === false);
 }
 
+/** What `chooseMove` decides: where the move comes from, the move it names, and whether missing it can undo the round. */
+export interface MoveChoice {
+  source: MoveSource;
+  mandatory: boolean;
+  /** The ladder's next rung (`milestone`); an open rung comes filled, with `filledBy` and the step that filled it beside it. */
+  milestone?: AnyRecord;
+  /** A named move still open (`pending`). */
+  pending?: AnyRecord;
+  /** The reviewer's big move (`reviewer`, or what filled an open rung). */
+  bigMove?: AnyRecord;
+  /** The critic's principle (`critic`, or what filled an open rung): a stuck one, its biggest, or its worst grow gap. */
+  gap?: AnyRecord;
+  /** A reviewer's proposal beyond the ask (scope.ts `isBeyondScope`): the user's decision, never the move. */
+  beyond?: AnyRecord;
+}
+
 /**
  * Where this iteration's move comes from, and whether missing it can undo the round (M3.3).
- * Pure: the caller seeds the move's check, counts the attempt, pushes a new move and asks the
- * planner. `source` is "milestone" | "pending" | "reviewer" | "critic" | "planner" | "none".
+ * Pure: the caller seeds the move's check, counts the attempt, writes a filled open rung onto the
+ * ladder, pushes a new move and asks the planner. `source` is "milestone" | "pending" | "reviewer" |
+ * "critic" | "planner" | "none".
  *
- * The ladder wins over everything. When the director wrote it (`spec.moveOwner === "director"`)
- * the harness never invents a move of its own: a night once told five workers that puddles, a
- * wreck-cam and a tow truck were mandatory while the director's brief said mud, and the workers
- * lost the rounds they had spent on the brief. A rung the director steered in (`steered`) is
- * next, ahead of the rest of the ladder: the golden-goal night's lead steered past a rung its
- * worker was stuck on, was told "its next round builds it", and the steer waited behind the stuck
- * rung for good. A rung set aside after missing round after round (`setAside`) is passed over.
+ * The ladder goes first, and growth has a way into it. The lead's rungs are the round's mandate in
+ * their order, and the harness never puts a move of its own ahead of them: a harness move made
+ * mandatory over the brief costs the workers the rounds they spend on the brief. A rung the
+ * director steered in (`steered`) is next, ahead of the rest, so a steer past a rung its worker is
+ * stuck on never waits behind that rung. A rung set aside after missing round after round (`setAside`) is passed over.
  *
- * Once the director's ladder is climbed, the next step is the director's call — but a worker that
- * waits for one spends its rounds on polish, which is what that night's workers did. The taste
- * judge names the one big move it sees for the facet every round (`lastBigMove`); the worker
- * builds that as guidance, never mandatory, until the director steers a rung of its own. With
- * nobody owning the ladder the reviewer's move, the critic's gap and the planner still name one —
- * it is worth having, it is what stops polish-only nights — but it is guidance until two accepted
- * builds in a row have polished instead of moving.
+ * Every director ladder ends with an open rung (facet/growth.ts `withOpenRung`): when it is reached
+ * it is filled with the reviewers' best structural step inside the ask — a principle the critic has
+ * kept short of convincing three cards running, the taste judge's big move, the critic's biggest —
+ * and is mandatory like the lead's rungs, because it is one of them, delegated. With no step to fill
+ * it, it is passed over that round. Without it, a critic's growth never reaches a worker whose lead
+ * wrote a ladder.
+ *
+ * Past the director's ladder the next step is the director's call — but a worker that waits for one
+ * spends its rounds on polish. It builds the taste judge's big move for the facet (`lastBigMove`) as
+ * guidance, never mandatory, until the director steers a rung of its own. With nobody owning the
+ * ladder the same growth candidates and then the planner name one — it is what stops polish-only
+ * runs — and it is guidance until two accepted builds in a row have polished instead of moving.
  */
 export function chooseMove({
   spec = null,
@@ -360,48 +392,78 @@ export function chooseMove({
   milestonesDone?: Iterable<string>;
   setAside?: Iterable<string>;
   polishStreak?: number;
-  lastLiveness?: { grow?: AnyRecord[] } | null;
+  lastLiveness?: AnyRecord | null;
   lastBigMove?: AnyRecord | null;
   policy?: FacetPolicy;
-} = {}) {
-  const next = nextRung(spec?.milestones ?? [], new Set([...milestonesDone, ...setAside]));
-  if (next) return { source: MoveSource.Milestone, milestone: next, mandatory: true };
-  // Past a director's ladder only the reviewer's move is the harness's to give, and as guidance.
+} = {}): MoveChoice {
+  const ladder = spec?.milestones ?? [];
+  // What was already asked for, by its words: the moves named so far and the ladder's rungs.
+  const asked = [...moves, ...ladder];
+  // A reviewer's proposal beyond what the user asked for (scope.ts `isBeyondScope`) is never a
+  // move: it rides out as `beyond`, for the round to ask the user about, whatever the move is.
+  const fresh = freshBigMove(asked, lastBigMove);
+  const beyond: Pick<MoveChoice, "beyond"> = fresh && isBeyondScope(fresh) ? { beyond: fresh } : {};
+  const growth = growthCandidate({ asked, lastBigMove, lastLiveness });
+  const next = nextRung(ladder, new Set([...milestonesDone, ...setAside]), growth !== null);
+  if (next) return { ...rungChoice(next, growth), ...beyond };
   const directed = spec?.moveOwner === DIRECTOR_LADDER;
   const mandatory = !directed && polishStreak >= policy.polishStreakEscalate;
   const pending = [...moves].reverse().find((m) => isOpenMove(m, policy) && (!directed || isReviewers(m)));
-  if (pending) return { source: MoveSource.Pending, pending, mandatory };
-  const bigMove = freshBigMove(moves, lastBigMove);
-  if (bigMove) return { source: MoveSource.Reviewer, bigMove, mandatory };
-  if (directed) return { source: MoveSource.None, mandatory: false };
-  const gap = (lastLiveness?.grow ?? []).find((g) => !moves.some((m) => m.what === g.fix));
-  if (gap) return { source: MoveSource.Critic, gap, mandatory };
-  return { source: MoveSource.Planner, mandatory };
+  if (pending) return { source: MoveSource.Pending, pending, mandatory, ...beyond };
+  if (directed) return pastTheLadder(fresh, beyond);
+  if (growth?.bigMove) return { source: MoveSource.Reviewer, bigMove: growth.bigMove, mandatory };
+  if (growth?.gap) return { source: MoveSource.Critic, gap: growth.gap, mandatory, ...beyond };
+  return { source: MoveSource.Planner, mandatory, ...beyond };
 }
 
-/** The ladder's next rung: one the director steered in first, else the first not yet passed. */
-function nextRung(ladder: readonly AnyRecord[], passed: ReadonlySet<string>): AnyRecord | null {
-  const open = ladder.filter((m) => !passed.has(m.id));
-  return open.find((m) => m.steered === true) ?? open[0] ?? null;
+/**
+ * The ladder's next rung: one the director steered in first, else the first not yet passed. An open
+ * rung nobody has filled counts only when there is a step to fill it with; without one it is passed
+ * over this round.
+ */
+function nextRung(ladder: readonly AnyRecord[], passed: ReadonlySet<string>, canFill: boolean): AnyRecord | null {
+  const unclimbed = ladder.filter((m) => !passed.has(m.id));
+  const steered = unclimbed.find((m) => m.steered === true);
+  return steered ?? unclimbed.find((m) => canFill || !isUnfilledOpenRung(m)) ?? null;
+}
+
+/**
+ * The rung as the round's move, mandatory: as written, or an open rung filled with the reviewers'
+ * step, which rides along (`bigMove` or `gap`) so the caller can say why and keep it on the ladder.
+ */
+function rungChoice(rung: AnyRecord, growth: GrowthCandidate | null): MoveChoice {
+  if (!growth || !isUnfilledOpenRung(rung)) return { source: MoveSource.Milestone, milestone: rung, mandatory: true };
+  const filled = growth.bigMove
+    ? { ...rung, what: growth.bigMove.what, filledBy: MoveSource.Reviewer }
+    : { ...rung, what: growth.gap.fix, filledBy: MoveSource.Critic };
+  return { source: MoveSource.Milestone, milestone: filled, mandatory: true, ...growth };
+}
+
+/** Past a director's ladder only the reviewer's move is the harness's to give, and as guidance. */
+function pastTheLadder(fresh: AnyRecord | null, beyond: Pick<MoveChoice, "beyond">): MoveChoice {
+  const bigMove = fresh && !isBeyondScope(fresh) ? fresh : null;
+  if (bigMove) return { source: MoveSource.Reviewer, bigMove, mandatory: false };
+  return { source: MoveSource.None, mandatory: false, ...beyond };
 }
 
 /** Was this move the reviewer's? */
 const isReviewers = (move: AnyRecord): boolean => move.source === MoveSource.Reviewer;
 
 /**
- * The reviewer's newest proposal, when nobody has worked on it yet. One still being worked on
- * comes back as a pending move while it has attempts left: a judge that rewords its proposal
- * every round would otherwise hand the worker a new direction every round.
+ * The reviewer's newest proposal, when nobody has asked for it yet — as a move or as a rung (an open
+ * rung it filled). One still being worked on comes back as a pending move while it has attempts
+ * left: a judge that rewords its proposal every round would otherwise hand the worker a new
+ * direction every round.
  */
-function freshBigMove(moves: readonly AnyRecord[], lastBigMove: AnyRecord | null): AnyRecord | null {
+function freshBigMove(asked: readonly AnyRecord[], lastBigMove: AnyRecord | null): AnyRecord | null {
   if (!lastBigMove?.what) return null;
-  return moves.some((m) => m.what === lastBigMove.what) ? null : lastBigMove;
+  return asked.some((m) => m.what === lastBigMove.what) ? null : lastBigMove;
 }
 
 /** A move the planner, the reviewer or the critic named that is not delivered yet and still has attempts left. */
 function isOpenMove(move: AnyRecord, policy: FacetPolicy): boolean {
   const named = NAMED_MOVE_SOURCES.includes(move.source);
-  return named && !move.delivered && (move.attempts ?? 1) < policy.moveAttempts;
+  return named && !move.delivered && !isBeyondScope(move) && (move.attempts ?? 1) < policy.moveAttempts;
 }
 
 /**
@@ -409,12 +471,12 @@ function isOpenMove(move: AnyRecord, policy: FacetPolicy): boolean {
  * taste judge (a judge that did not answer gives the benefit of the doubt). `costsRound` is the
  * demotion of M3.3 — only a move somebody asked for (`mandatory`) can undo a round the judge
  * preferred; every other miss is `note`, which rides into the round's record and the director's
- * digest so the night can steer instead of the worker losing the work.
+ * digest so the run can steer instead of the worker losing the work.
  *
  * A move the judge saw already in the accepted build (`moveAlreadyPresent`) was delivered by an
  * earlier round: it is never missing, and its rung climbs whatever this round's fate. Asked
- * "visible here and absent from the other", the golden-goal night's judge answered no about a
- * restart loop both builds had, four rounds running, and each of those rounds was thrown away.
+ * "visible here and absent from the other", a judge answers no about a move both builds have,
+ * and every such round would be thrown away.
  */
 export function moveVerdict({
   move = null,
@@ -445,17 +507,24 @@ export function moveVerdict({
   const looksStructural = taste?.moveDelivered !== false && taste?.scale === ChangeScale.Structural;
   const landed = measured || taste?.moveDelivered === true || looksStructural;
   const delivered = won === null ? null : already || Boolean(won && landed);
-  return { measured, missing, costsRound, delivered, already, note: moveNote(what, { missing, costsRound, already }) };
+  const kept = won === true;
+  const note = moveNote(what, { missing, costsRound, already, kept });
+  return { measured, missing, costsRound, delivered, already, note };
 }
 
-/** The round's note about its move: already built by an earlier round, or missed without costing the round. */
+/**
+ * The round's note about its move: already built by an earlier round, missed without costing the
+ * round, or missed by a round kept for what it fixed — whose move is still owed, never climbed.
+ */
 function moveNote(
   what: string,
-  { missing, costsRound, already }: { missing: boolean; costsRound: boolean; already: boolean },
+  { missing, costsRound, already, kept }: { missing: boolean; costsRound: boolean; already: boolean; kept: boolean },
 ): string | null {
-  if (already) return `the move was already in the accepted build — its rung is climbed: ${what.slice(0, CLIP_QUOTE)}`;
-  if (missing && !costsRound)
-    return `the move was not delivered, and it did not cost the round: ${what.slice(0, CLIP_QUOTE)}`;
+  const quoted = what.slice(0, CLIP_QUOTE);
+  if (already) return `the move was already in the accepted build — its rung is climbed: ${quoted}`;
+  if (missing && !costsRound) return `the move was not delivered, and it did not cost the round: ${quoted}`;
+  if (missing && kept)
+    return `the move was not delivered; the round was kept for what it fixed, and the move stays owed: ${quoted}`;
   return null;
 }
 

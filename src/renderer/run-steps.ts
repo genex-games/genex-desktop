@@ -551,7 +551,7 @@ export interface ResultStatus {
   state: StepState;
 }
 
-/** A running night's build: none yet, one that did not start, one being tried, or one to play. */
+/** A running run's build: none yet, one that did not start, one being tried, or one to play. */
 function runningResultStatus(graph: RunGraph, summary: RunSummary | null): ResultStatus {
   if (!hasNewBuild(graph, summary)) return { word: "Nothing yet", tone: Tone.Muted, state: StepState.Waiting };
   const merged = graph.mergedHead;
@@ -563,8 +563,8 @@ function runningResultStatus(graph: RunGraph, summary: RunSummary | null): Resul
 }
 
 /**
- * The build a running night offers to play on Live — the one its result node calls ready to
- * play — or null while there is none, it is still being tried, it didn't start, or the night is over.
+ * The build a running run offers to play on Live — the one its result node calls ready to
+ * play — or null while there is none, it is still being tried, it didn't start, or the run is over.
  */
 export function readyToPlay(graph: RunGraph, summary: RunSummary | null): string | null {
   if (!graph.active || !summary?.head) return null;
@@ -759,7 +759,7 @@ function runningLine(graph: RunGraph, summary: RunSummary | null, rows: PartRow[
   return { tone: "live", strong: timed(doing, facts.time), rest };
 }
 
-/** What a running night is on, once its starting point is built. */
+/** What a running run is on, once its starting point is built. */
 function runningRest(
   graph: RunGraph,
   summary: RunSummary | null,
@@ -798,7 +798,7 @@ function failedChecks(summary: RunSummary | null): number {
   return current.filter((row) => row.status === "failed" && row.category !== "comparison").length;
 }
 
-/** Which of the night's steps reached the build, named when only one or two did not. */
+/** Which of the run's steps reached the build, named when only one or two did not. */
 function landedWords(rows: PartRow[]): string {
   const steps = rows.flatMap((row) => row.steps).filter((step) => step.state !== StepState.Waiting);
   if (!steps.length) return "";

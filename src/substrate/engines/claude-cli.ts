@@ -82,7 +82,7 @@ function statusFromJson(parsed: Record<string, unknown>, text: string): ClaudeAu
 function statusFromText(exitCode: number, text: string): ClaudeAuthStatus {
   // A `claude` old enough to reject `--json` has said nothing about the account. That is "we
   // could not ask", never "signed out": a false negative here puts a sign-in card over a working
-  // subscription and stops the night.
+  // subscription and stops the run.
   if (exitCode !== 0 && /unknown option|unknown argument|unrecognized option/i.test(text)) {
     return { loggedIn: null, detail: text };
   }

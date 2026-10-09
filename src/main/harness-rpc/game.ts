@@ -2,8 +2,15 @@
 import { workspaceContentStamp, workspaceContentStamps } from "../../substrate/workspace-content.ts";
 import path from "node:path";
 import { readFile, realpath, writeFile } from "node:fs/promises";
-import { ensureDir, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
-import { isImageFile, studioContractGeneration, type GameProject } from "../../substrate/game-workspace.ts";
+import { ensureDir, readRegularFile, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
+import {
+  hudContractGeneration,
+  isImageFile,
+  shippedHudGeneration,
+  shippedStudioGeneration,
+  studioContractGeneration,
+  type GameProject,
+} from "../../substrate/game-workspace.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
 import type { AttachReport } from "../../shared/game-project.ts";
 import {
@@ -22,6 +29,8 @@ import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/
 /** The largest image `game.read` hands back. */
 const MAX_IMAGE_READ_MB = 8;
 const MAX_IMAGE_READ_BYTES = MAX_IMAGE_READ_MB * 1024 * 1024;
+/** The largest `src/hud.js` an upgrade reads to recognise; a shipped copy is a few kilobytes. */
+const MAX_HUD_READ_BYTES = 512 * 1024;
 
 /** What the harness reads when a game call is refused. */
 const MESSAGE = {
@@ -36,6 +45,8 @@ const MESSAGE = {
   claudeFolder: (file: string) =>
     `refused: ${file} is in the game's .claude folder, Claude Code's own settings, which only the person changes`,
   gitFolder: (file: string) => `refused: ${file} is in a .git folder, whose configuration and hooks the host controls`,
+  studioOutOfReach:
+    "src/studio.js or its backup leads out of the game folder or cannot be written; it is kept as it is",
 } as const;
 
 /**
@@ -122,7 +133,7 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
         ? core.games.validateAt((await core.candidates.get(p.candidateId, p.project)).root)
         : core.games.validate(p.project),
     // The live half of the same question. `game.validate` reads the folder; this serves the
-    // page, waits for it to boot and asks what the hook got hold of — so a night stops asking
+    // page, waits for it to boot and asks what the hook got hold of — so a run stops asking
     // for the two lines from a game the studio already attached to on its own. A HOST call,
     // made by the run for the director: no MCP tool and no bridge entry, so both engines see
     // exactly the tools they saw before.
@@ -233,7 +244,41 @@ async function readImage(target: string, file: string) {
 
 async function upgradeContract(core: StudioCore, project: string): Promise<HarnessResult<"game.upgradeContract">> {
   const dir = core.games.dirFor(project);
+  const own = await isOwnShape(core, project);
+  const materialsAdded = await addCompanionFiles(core, dir);
+  await addContractPage(own, dir, core.games.templateDir);
+  const template = await readText(path.join(core.games.templateDir, "src", "studio.js"));
+  const studio = template === null ? null : await upgradeShippedStudio(core, project, dir, template);
+  // The HUD moves only beside a contract that is now current: a newer hud.js under a kept older
+  // facade would be asked to draw what that facade cannot forward.
+  const hudMoves = !own && studio?.kept !== true;
+  const hudUpgrade = hudMoves ? await upgradeShippedHud(core, project, dir) : await heldHud(core, own, dir);
+  const hud = hudUpgrade ? { hud: hudUpgrade } : {};
+  if (studio === null) return { upgraded: false, reason: "no template studio.js", ...hud };
+  return { ...studio.answer, ...(studio.answer.upgraded ? {} : { materialsAdded }), ...hud };
+}
+
+/** What became of a game's `src/studio.js`, and whether an older copy was kept as it is. */
+interface StudioUpgrade {
+  answer: HarnessResult<"game.upgradeContract">;
+  kept: boolean;
+}
+
+/**
+ * The template's contract for a game whose `src/studio.js` is older than it and byte for byte a copy
+ * the studio shipped (or missing); the old copy is kept beside it as `src/studio.v<generation>.js`.
+ * A copy anyone edited stays, answered as `edited` at its generation: the template asks the main
+ * owner to extend this file, and the game may import what they added. Nothing is written through a
+ * link that leads out of the game.
+ */
+async function upgradeShippedStudio(
+  core: StudioCore,
+  project: string,
+  dir: string,
+  template: string,
+): Promise<StudioUpgrade> {
   const target = path.join(dir, "src", "studio.js");
+  if (!(await landsInside(dir, target))) return keptStudio({ upgraded: false, reason: MESSAGE.studioOutOfReach });
   const current = await readText(target);
   // Which vintage the game holds, against which the shipped template is compared below.
   // Feature-sniffing decided this before and could not see past the file it was written
@@ -241,23 +286,53 @@ async function upgradeContract(core: StudioCore, project: string): Promise<Harne
   // so every game scaffolded before M4 answered "current" and kept its old contract while
   // the director and autopilot called this believing it brought the game up to date.
   const generation = studioContractGeneration(current);
-  const materialsAdded = await addCompanionFiles(core, dir);
-  await addContractPage(core, project, dir);
-  const template = await readText(path.join(core.games.templateDir, "src", "studio.js"));
-  if (template === null) return { upgraded: false, reason: "no template studio.js" };
   // Only a copy older than the shipped one is replaced, so a game that already holds the
   // current contract is left alone and a template that ever moves backwards writes nothing.
-  if (generation >= studioContractGeneration(template)) return { upgraded: false, materialsAdded };
-  let backup: string | null = null;
-  if (current !== null) {
-    backup = `src/studio.v${generation}.js`;
-    await writeFile(path.join(dir, backup), current);
+  if (generation >= studioContractGeneration(template)) return { answer: { upgraded: false }, kept: false };
+  if (current !== null && shippedStudioGeneration(current) === null) {
+    return keptStudio({ upgraded: false, edited: true, generation });
   }
-  await ensureDir(path.dirname(target));
-  await writeFile(target, template);
+  const backup = current === null ? null : `src/studio.v${generation}.js`;
+  if (backup !== null && !(await landsInside(dir, path.join(dir, backup)))) {
+    return keptStudio({ upgraded: false, reason: MESSAGE.studioOutOfReach });
+  }
+  try {
+    await ensureDir(path.dirname(target));
+    // The backup first: when it cannot be written, the game's contract is not touched either.
+    if (backup !== null && current !== null) await writeFileNoFollow(path.join(dir, backup), current);
+    await writeFileNoFollow(target, template);
+  } catch {
+    return keptStudio({ upgraded: false, reason: MESSAGE.studioOutOfReach });
+  }
   core.emit(UiEvent.GameChanged, { project, file: "src/studio.js" });
-  return { upgraded: true, backup };
+  return { answer: { upgraded: true, backup }, kept: false };
 }
+
+/** An older contract the upgrade left where it is. */
+function keptStudio(answer: HarnessResult<"game.upgradeContract">): StudioUpgrade {
+  return { answer, kept: true };
+}
+
+/**
+ * The HUD beside a contract the upgrade kept: reported at its generation when older than the
+ * template's, never written. Null for a game the user brought, or a HUD that is current or absent.
+ */
+async function heldHud(core: StudioCore, own: boolean, dir: string): Promise<HudUpgrade | null> {
+  if (own) return null;
+  const target = path.join(dir, "src", "hud.js");
+  if (!(await landsInside(dir, target))) return null;
+  const current = await readHud(target);
+  const template = await readText(path.join(core.games.templateDir, "src", "hud.js"));
+  if (current === null || template === null) return null;
+  const held = hudContractGeneration(current);
+  return held >= hudContractGeneration(template) ? null : { generation: held, replaced: false };
+}
+
+/** A game's `src/hud.js`, read as a regular file of bounded size; null when there is none to read. */
+const readHud = (target: string): Promise<string | null> =>
+  readRegularFile(target, MAX_HUD_READ_BYTES)
+    .then((bytes) => bytes.toString("utf8"))
+    .catch(() => null);
 
 /** Copy each companion file the game lacks from the template; true when any was added. */
 async function addCompanionFiles(core: StudioCore, dir: string): Promise<boolean> {
@@ -274,18 +349,65 @@ async function addCompanionFiles(core: StudioCore, dir: string): Promise<boolean
   return added;
 }
 
+/** Whether the game is one the user brought (its own shape), whose files the studio keeps as they are. */
+async function isOwnShape(core: StudioCore, project: string): Promise<boolean> {
+  const games = await core.games.list().catch(() => [] as GameProject[]);
+  return games.find((g) => g.name === project)?.built === true;
+}
+
 /**
  * The contract page describes the studio's own empty project — "no build step, no package
  * manager, no network". A game the user brought is none of those things, and adoption
  * deliberately keeps that page out of their folder; a run must not put it back.
  */
-async function addContractPage(core: StudioCore, project: string, dir: string): Promise<void> {
-  const games = await core.games.list().catch(() => [] as GameProject[]);
-  const own = games.find((g) => g.name === project)?.built === true;
+async function addContractPage(own: boolean, dir: string, templateDir: string): Promise<void> {
   const docsTarget = path.join(dir, "docs", "CONTRACT.md");
   if (own || (await readText(docsTarget))) return;
-  const contract = await readText(path.join(core.games.templateDir, "docs", "CONTRACT.md"));
+  const contract = await readText(path.join(templateDir, "docs", "CONTRACT.md"));
   if (contract === null) return;
   await ensureDir(path.dirname(docsTarget));
   await writeFile(docsTarget, contract);
+}
+
+/** A file inside the game folder, by where it really lands: no link on the way leads out of it. */
+async function landsInside(dir: string, file: string): Promise<boolean> {
+  const root = await realpath(dir).catch(() => null);
+  const landing = await realpathNearest(file).catch(() => null);
+  return root !== null && landing !== null && isBelow(root, landing);
+}
+
+/** What `game.upgradeContract` says about a game whose HUD was older than the template's. */
+type HudUpgrade = NonNullable<HarnessResult<"game.upgradeContract">["hud"]>;
+
+/**
+ * The template's HUD for a game whose `src/hud.js` is an older copy the studio shipped, byte for
+ * byte; the old copy is kept beside it as `src/hud.v<generation>.js`. A copy anyone edited is the
+ * main owner's work and stays, as does everything reached through a link. Answers what happened
+ * to a HUD older than the template's (replaced, or left at its generation), and null for a HUD
+ * that is current, absent or out of reach.
+ */
+async function upgradeShippedHud(core: StudioCore, project: string, dir: string): Promise<HudUpgrade | null> {
+  const target = path.join(dir, "src", "hud.js");
+  if (!(await landsInside(dir, target))) return null;
+  const current = await readHud(target);
+  const template = await readText(path.join(core.games.templateDir, "src", "hud.js"));
+  if (current === null || template === null) return null;
+  const latest = hudContractGeneration(template);
+  const held = hudContractGeneration(current);
+  if (held >= latest) return null;
+  const leftAlone = { generation: held, replaced: false };
+  const shipped = shippedHudGeneration(current);
+  if (shipped === null) return leftAlone;
+  const backupName = `src/hud.v${shipped}.js`;
+  const backup = path.join(dir, backupName);
+  if (!(await landsInside(dir, backup))) return leftAlone;
+  try {
+    // The backup first: when it cannot be written, the game's HUD is not touched either.
+    await writeFileNoFollow(backup, current);
+    await writeFileNoFollow(target, template);
+  } catch {
+    return leftAlone;
+  }
+  core.emit(UiEvent.GameChanged, { project, file: "src/hud.js" });
+  return { generation: latest, replaced: true, backup: backupName };
 }

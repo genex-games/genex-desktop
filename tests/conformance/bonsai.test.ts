@@ -1354,7 +1354,7 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
   }
 });
 
-it("a malformed tool call is a tool error the model can correct, not the end of the session (P04-F1)", async () => {
+it("a malformed tool call is a tool error the model can correct, not the end of the session", async () => {
   const server = createServer(async (req, res) => {
     let input = "";
     for await (const c of req) input += c;
@@ -1428,7 +1428,7 @@ it("a malformed tool call is a tool error the model can correct, not the end of 
   }
 });
 
-it("P04-F5. a cut-off reply's allowance is per stretch, not per session: good rounds between cuts reset it", async () => {
+it("a cut-off reply's allowance is per stretch, not per session: good rounds between cuts reset it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-repairs-"));
   let rounds = 0;
   const cut = () => ({

@@ -115,7 +115,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
         onCompact={compact.compactNow}
         compacting={compact.compacting}
         compactBusy={compactWaits}
-        // A finished or paused night is not a night in progress: leaving this true kept the
+        // A finished or paused run is not a run in progress: leaving this true kept the
         // composer saying "Building" for the rest of the chat's life, and took the hours control
         // switch away with no way back.
         coordinating={run?.state === RunState.Running}

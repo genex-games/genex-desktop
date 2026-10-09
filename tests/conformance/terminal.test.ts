@@ -4,7 +4,16 @@ import { describe, it } from "node:test";
 import { TerminalFlow } from "../../src/main/terminal-flow.ts";
 import { TerminalService, type TerminalHost } from "../../src/main/terminal-service.ts";
 import { LoginTerminalOutput } from "../../src/main/terminal-login-output.ts";
-import { TERMINAL_LIMITS, terminalSize, type TerminalEvent } from "../../src/shared/terminal.ts";
+import { LinkScanner } from "../../src/main/terminal-links.ts";
+import {
+  inDock,
+  liveSignIn,
+  TERMINAL_LIMITS,
+  TerminalKind,
+  terminalSize,
+  type TerminalEvent,
+  type TerminalSession,
+} from "../../src/shared/terminal.ts";
 import { commandShell, terminalShell } from "../../src/main/terminal-shell.ts";
 
 describe("the shell a game's terminal opens", () => {
@@ -246,6 +255,88 @@ describe("a command a chat reply offered", () => {
       hosts[2]!.emit("message", { type: "data", data: "hello\r\n" });
       hosts[2]!.emit("message", { type: "exit", code: 0 });
       assert.equal(manager.list().find((session) => session.id === shell.id)?.output, undefined);
+    } finally {
+      await manager.dispose();
+    }
+  });
+});
+
+describe("OpenCode's sign-in terminal", () => {
+  const signIn = { ...launch, args: ["auth", "login"], kind: TerminalKind.OpenCodeLogin, project: undefined };
+  it("opens in Settings, never popping up the dock, even when asked again while it runs", async () => {
+    const { manager, events } = service();
+    try {
+      const first = manager.open(signIn);
+      const again = manager.open(signIn);
+      assert.equal(again.id, first.id, "one sign-in at a time");
+      const shown = events.filter((event) => event.type === "session");
+      assert.ok(shown.length >= 2);
+      assert.ok(
+        shown.every((event) => event.type === "session" && !event.reveal),
+        "Settings shows it; the dock would close Settings",
+      );
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("is left out of the dock, and is the sign-in Settings shows while it runs", () => {
+    const session = (kind: TerminalKind, phase: TerminalSession["phase"]): TerminalSession => ({
+      id: `${kind}-${phase}`,
+      title: kind,
+      kind,
+      phase,
+    });
+    const sessions = [
+      session(TerminalKind.Shell, "running"),
+      session(TerminalKind.OpenCodeLogin, "exited"),
+      session(TerminalKind.OpenCodeLogin, "running"),
+    ];
+    assert.deepEqual(
+      sessions.filter(inDock).map((each) => each.kind),
+      [TerminalKind.Shell],
+    );
+    assert.equal(liveSignIn(sessions, TerminalKind.OpenCodeLogin)?.id, "opencode-login-running");
+    assert.equal(liveSignIn(sessions.slice(0, 2), TerminalKind.OpenCodeLogin), undefined, "a finished one is over");
+  });
+});
+
+describe("a sign-in page a terminal prints", () => {
+  it("is noticed once whole, across chunks and colors, and never changes what shows", () => {
+    const found: string[] = [];
+    const scanner = new LinkScanner((url) => found.push(url));
+    scanner.write("Go to: \u001b[36mhttps://auth.openai.com/oauth/auth");
+    assert.deepEqual(found, [], "half an address is not one");
+    scanner.write("orize?client_id=app&state=x\u001b[0m\r\n");
+    scanner.write("or http://insecure.example and https://\r\n");
+    assert.deepEqual(found, ["https://auth.openai.com/oauth/authorize?client_id=app&state=x"]);
+    const tooLong: string[] = [];
+    const endless = new LinkScanner((url) => tooLong.push(url));
+    endless.write(`https://${"a".repeat(40_000)}`);
+    endless.write(" https://example.com/next ");
+    assert.deepEqual(
+      tooLong,
+      ["https://example.com/next"],
+      "an address too long to hold is dropped, not half reported",
+    );
+  });
+
+  it("is the session's page to open, the newest one, and the session says it has one", async () => {
+    const { manager, hosts, events } = service();
+    try {
+      const session = manager.open({ ...launch, kind: TerminalKind.OpenCodeLogin, project: undefined });
+      assert.equal(manager.link(session.id), null);
+      hosts[0]!.emit("message", { type: "link", url: "https://chatgpt.com/first" });
+      hosts[0]!.emit("message", { type: "link", url: "https://auth.openai.com/oauth/authorize?x=1" });
+      hosts[0]!.emit("message", { type: "link", url: "javascript:alert(1)" });
+      assert.equal(manager.link(session.id), "https://auth.openai.com/oauth/authorize?x=1");
+      const last = events.filter((event) => event.type === "session").at(-1);
+      assert.equal(last?.type === "session" && last.session.signInPage, true);
+      assert.ok(
+        !JSON.stringify(events).includes("oauth/authorize"),
+        "the address stays in main; the page only learns there is one",
+      );
+      assert.throws(() => manager.link("no-such-session"), /closed/);
     } finally {
       await manager.dispose();
     }

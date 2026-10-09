@@ -218,9 +218,9 @@ export function recordsShape(meta: { entry?: unknown; main?: unknown; build?: un
 }
 
 /**
- * Running the recorded `install` is the one thing that opens the network (decision 3), and
+ * Running the recorded `install` is the one thing that opens the network, and
  * this file sits inside the folder the user brought — a downloaded game ships one, and any
- * contractor can rewrite it mid-night. So only a package manager's own install is taken from
+ * contractor can rewrite it mid-run. So only a package manager's own install is taken from
  * it; anything else falls back to what the lockfile actually names, and the sheet, the
  * button's label and the command that runs stay the same string.
  */
@@ -306,8 +306,8 @@ async function gameCandidate(target: string, rel: string): Promise<GameCandidate
 
 /**
  * Every game in a folder and one level under it. A user who drops their game inside a project
- * folder used to be told the folder was empty, wrapped in a template and hand-ported all night
- * (flautout-remix, 2026-09-07); the fix is to look one level down and say what is there.
+ * folder used to be told the folder was empty, wrapped in a template and hand-ported for the whole run
+ *; the fix is to look one level down and say what is there.
  *
  * A candidate is a folder with an `index.html` — the page a browser can open. Nothing is
  * written, nothing is chosen: the caller decides, and can ask.

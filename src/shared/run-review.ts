@@ -1,8 +1,8 @@
 /**
- * Rebuild a game's last unattended night from the event log.
+ * Rebuild a game's last unattended run from the event log.
  *
- * Review used to walk the merged log and take the global last run / last 24 iterations, so two
- * games in one night mashed into one page. The log already names `project` and (now) `runId` on
+ * Review reads one run, never the merged log's global last run or last iterations, so two games
+ * built close together never mash into one page. The log already names `project` and (now) `runId` on
  * every run event; this is the reconstruction the filmstrip reads.
  *
  * Lives in shared because both processes must agree on it: main replays a game's threads
@@ -38,7 +38,7 @@ export interface RunIterationView {
   incumbentShots: RunShot[];
 }
 
-export interface NightReview {
+export interface LoopRunReview {
   project: string | null;
   started: Record<string, unknown> | null;
   finished: Record<string, unknown> | null;
@@ -114,11 +114,11 @@ function custom(event: EventEnvelope): { event_type: string; payload: Record<str
   return { event_type: event.data.event_type, payload: asRecord(event.data.payload) };
 }
 
-/** How many of a night's rounds the review shows, newest first. */
+/** How many of a run's rounds the review shows, newest first. */
 const REVIEW_ROUNDS = 24;
 
 /** The runs a log holds, in the order they first appeared, and the last one started. */
-interface NightRuns {
+interface ReviewRuns {
   runs: Map<string, RunBucket>;
   order: string[];
   lastStartedId: string | null;
@@ -126,12 +126,12 @@ interface NightRuns {
 
 type RunRow = { event: EventEnvelope; payload: Record<string, unknown> };
 
-function bucketFor(nights: NightRuns, runId: string, fallbackProject: string): RunBucket {
-  let bucket = nights.runs.get(runId);
+function bucketFor(loopRuns: ReviewRuns, runId: string, fallbackProject: string): RunBucket {
+  let bucket = loopRuns.runs.get(runId);
   if (!bucket) {
     bucket = { project: fallbackProject, runId, started: null, finished: null, iterations: [] };
-    nights.runs.set(runId, bucket);
-    nights.order.push(runId);
+    loopRuns.runs.set(runId, bucket);
+    loopRuns.order.push(runId);
   }
   return bucket;
 }
@@ -141,16 +141,16 @@ function namedProject(payload: Record<string, unknown>): string | null {
   return typeof payload.project === "string" && payload.project ? payload.project : null;
 }
 
-function readStarted(nights: NightRuns, { event, payload }: RunRow): void {
+function readStarted(loopRuns: ReviewRuns, { event, payload }: RunRow): void {
   const runId = String(payload.runId ?? event.id);
-  const bucket = bucketFor(nights, runId, String(payload.project ?? ""));
+  const bucket = bucketFor(loopRuns, runId, String(payload.project ?? ""));
   bucket.started = {
     ...bucket.started,
     ...payload,
     startedAt: bucket.started?.startedAt ?? payload.startedAt ?? event.created_at,
   };
   bucket.project = namedProject(payload) ?? bucket.project;
-  nights.lastStartedId = runId;
+  loopRuns.lastStartedId = runId;
 }
 
 /** The run's length: the one it recorded, else the time since its start, else unknown. */
@@ -160,23 +160,23 @@ function runDuration(payload: Record<string, unknown>, bucket: RunBucket, finish
   return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null;
 }
 
-function readFinished(nights: NightRuns, { event, payload }: RunRow): void {
-  const runId = String(payload.runId ?? nights.lastStartedId ?? event.id);
-  const bucket = bucketFor(nights, runId, String(payload.project ?? ""));
+function readFinished(loopRuns: ReviewRuns, { event, payload }: RunRow): void {
+  const runId = String(payload.runId ?? loopRuns.lastStartedId ?? event.id);
+  const bucket = bucketFor(loopRuns, runId, String(payload.project ?? ""));
   bucket.finished = { ...payload, durationMs: runDuration(payload, bucket, event.created_at) };
   bucket.project = namedProject(payload) ?? bucket.project;
 }
 
-function readIteration(nights: NightRuns, { payload }: RunRow): void {
-  const runId = String(payload.runId ?? nights.lastStartedId ?? "");
+function readIteration(loopRuns: ReviewRuns, { payload }: RunRow): void {
+  const runId = String(payload.runId ?? loopRuns.lastStartedId ?? "");
   if (!runId) return;
-  const bucket = bucketFor(nights, runId, String(payload.project ?? ""));
+  const bucket = bucketFor(loopRuns, runId, String(payload.project ?? ""));
   const project = namedProject(payload);
   if (project && !bucket.project) bucket.project = project;
   bucket.iterations.push(normalizeIteration(payload, { runId, project: bucket.project }));
 }
 
-const NIGHT_READERS: ReadonlyMap<string, (nights: NightRuns, row: RunRow) => void> = new Map([
+const LOOP_RUN_READERS: ReadonlyMap<string, (loopRuns: ReviewRuns, row: RunRow) => void> = new Map([
   [CustomEvent.RunStarted, readStarted],
   [CustomEvent.RunFinished, readFinished],
   [CustomEvent.RunIteration, readIteration],
@@ -186,14 +186,14 @@ const NIGHT_READERS: ReadonlyMap<string, (nights: NightRuns, row: RunRow) => voi
  * The selected game's most recent run, including one still in flight (started, not finished).
  * Pass `project: null` to get an empty review — never a mashup of every game in the log.
  */
-export function lastNightForProject(events: EventEnvelope[], project: string | null): NightReview {
+export function lastLoopRunForProject(events: EventEnvelope[], project: string | null): LoopRunReview {
   if (!project) return { project: null, started: null, finished: null, iterations: [] };
-  const nights: NightRuns = { runs: new Map(), order: [], lastStartedId: null };
+  const loopRuns: ReviewRuns = { runs: new Map(), order: [], lastStartedId: null };
   for (const event of events) {
     const row = custom(event);
-    if (row) NIGHT_READERS.get(row.event_type)?.(nights, { event, payload: row.payload });
+    if (row) LOOP_RUN_READERS.get(row.event_type)?.(loopRuns, { event, payload: row.payload });
   }
-  const buckets = nights.order.map((runId) => nights.runs.get(runId));
+  const buckets = loopRuns.order.map((runId) => loopRuns.runs.get(runId));
   const bucket = buckets.findLast((candidate) => candidate?.project === project);
   if (!bucket) return { project, started: null, finished: null, iterations: [] };
   return {
@@ -275,7 +275,7 @@ export function undoneSelfChanges(events: EventEnvelope[]): Map<string, string> 
   return undone;
 }
 
-/** How a director's night landed: verified, live but unverified, or not landed. */
+/** How a director's run landed: verified, live but unverified, or not landed. */
 function directorResult(finished: Record<string, unknown>): string {
   if (asRecord(finished.landingResult).verified === true) return "preferred";
   return finished.landed === true ? "live" : "not landed";

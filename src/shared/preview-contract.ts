@@ -9,6 +9,10 @@
 export const GameClock = { Start: "start", Pause: "pause" } as const;
 export type GameClock = (typeof GameClock)[keyof typeof GameClock];
 
+/** The `__studio` verb that lets a racing game's own line (`config.steer`) steer the held keys. */
+export const GameSteer = { Assist: "assist" } as const;
+export type GameSteer = (typeof GameSteer)[keyof typeof GameSteer];
+
 /**
  * Which surface a capture photographs (M4.5/M4.9a). `canvas` is what the game draws, `page` is
  * the whole compositor frame — the DOM menu, the HTML HUD, the loader — and `auto` lets the
@@ -20,6 +24,13 @@ export const CaptureSurface = {
   Auto: "auto",
 } as const;
 export type CaptureSurface = (typeof CaptureSurface)[keyof typeof CaptureSurface];
+
+/**
+ * Which path took a picture: `page` is the page's own end-of-frame read of its canvas, which works
+ * on a covered window; `compositor` is the window's frame (Electron's `capturePage`).
+ */
+export const CaptureSource = { Page: "page", Compositor: "compositor" } as const;
+export type CaptureSource = (typeof CaptureSource)[keyof typeof CaptureSource];
 
 /** What a capture proved about the frame, plus whether the page even has a canvas to light. */
 export interface PreviewPixelStats extends PixelStats {
@@ -108,11 +119,70 @@ export interface PixelDiff {
   compared: number;
 }
 
+/**
+ * Why a game window's renderer went away (Electron's `render-process-gone`), as one typed code.
+ * `killed` and `oom` are the machine's doing (the OS reclaimed memory), not the build's; the
+ * harness keeps a copy in `loop/preview-gone.ts`. Wire values: never rename one.
+ */
+export const PreviewGone = {
+  Killed: "killed",
+  Oom: "oom",
+  Crashed: "crashed",
+  LaunchFailed: "launch-failed",
+  Abnormal: "abnormal-exit",
+  Integrity: "integrity-failure",
+} as const;
+export type PreviewGone = (typeof PreviewGone)[keyof typeof PreviewGone];
+
+/**
+ * The `source` of a line the studio itself puts on a game window's console, beside the page's own
+ * (whose `source` is the script URL). `window-gone` is the host's note that the renderer went
+ * away: the crash is read off `preview.status`, so the evidence pass never counts this line as an
+ * error the build logged. The harness keeps a copy in `loop/preview-gone.ts`. Wire values.
+ */
+export const PreviewConsoleSource = {
+  Observation: "studio:observation",
+  WindowGone: "studio:window-gone",
+} as const;
+export type PreviewConsoleSource = (typeof PreviewConsoleSource)[keyof typeof PreviewConsoleSource];
+
+/**
+ * Electron's reasons, each read as a {@link PreviewGone}. An eviction to free memory is the
+ * machine's pressure like an out-of-memory kill; a renderer that exits on its own while its page
+ * is up has still gone abnormally.
+ */
+const RENDER_GONE_REASONS: ReadonlyMap<string, PreviewGone> = new Map([
+  ["killed", PreviewGone.Killed],
+  ["oom", PreviewGone.Oom],
+  ["memory-eviction", PreviewGone.Oom],
+  ["crashed", PreviewGone.Crashed],
+  ["launch-failed", PreviewGone.LaunchFailed],
+  ["abnormal-exit", PreviewGone.Abnormal],
+  ["clean-exit", PreviewGone.Abnormal],
+  ["integrity-failure", PreviewGone.Integrity],
+]);
+
+/** Read Electron's `render-process-gone` reason; one a later Electron adds is a plain crash, never the machine's. */
+export function previewGone(reason: string): PreviewGone {
+  return RENDER_GONE_REASONS.get(reason) ?? PreviewGone.Crashed;
+}
+
 /** What `PreviewPort.status()` and the `preview.status` RPC answer. */
 export interface PreviewPortStatus {
   project: string | null;
   url: string | null;
   crashed: boolean;
+  /**
+   * Why the renderer went away while `crashed`; null while it runs. Absent from a port that does
+   * not say (a fake, an older port), which reads as no reason given.
+   */
+  gone?: PreviewGone | null;
+  /**
+   * The view's size now, in pixels: the space of its captures. A window put at another size by
+   * `preview.viewport` reads that size until its lease is released or a computer session takes it
+   * (which puts it back at the facet size). Absent from a port that cannot say.
+   */
+  viewSize?: { width: number; height: number };
   unresponsive: boolean;
   loadError: string | null;
   consoleErrors: number | null;
@@ -163,7 +233,7 @@ export type PreviewInputAction =
  * anyone looks: the scout writes it (a key that opens the map picker, the click on the map,
  * a demo that does the same), the harness applies it before judges, captures and the computer
  * tool's first frame. `verify` is a probe over `__studio.state()` that says the state landed —
- * the 2026-09-06 run judged and built the wrong map for two hours because nothing checked.
+ * without it a run can build and judge the wrong map for hours because nothing checked.
  */
 export interface PreviewSetup {
   /**
@@ -183,6 +253,47 @@ export interface PreviewSetup {
   verify?: { path: string; equals?: unknown; truthy?: boolean };
   /** One sentence for the log and the briefs: what this reaches and why. */
   note?: string;
+  /**
+   * A game that reports a front-end (`state().flow.playing === false`) is put into play with
+   * `__studio.begin()` by default: by a studio window before the setup is replayed (the scout
+   * recorded it in play), by the evidence pass after its seed. `false` keeps its title, menu or
+   * countdown on screen for the worker that builds them; the playtester's window always does.
+   */
+  begin?: boolean;
+}
+
+/** The `__studio` verb that takes a game past its title, menu and countdown into play (`config.begin`). */
+export const GameFront = { Begin: "begin" } as const;
+export type GameFront = (typeof GameFront)[keyof typeof GameFront];
+
+/**
+ * The `__studio` verbs that put a named view on screen (`src/game-template/src/studio.js`): the
+ * game's demo names, one demo run to its end state, the game's camera names and its built-in eye
+ * cameras, and one camera placed.
+ */
+export const GameView = {
+  Demos: "demos",
+  Demo: "demo",
+  Cameras: "cameras",
+  Eyes: "eyes",
+  DebugCamera: "debugCamera",
+} as const;
+export type GameView = (typeof GameView)[keyof typeof GameView];
+
+/** How a still is encoded: lossless PNG, or a high-quality JPEG when the PNG is over its byte limit. */
+export const StillMimeType = { Png: "image/png", Jpeg: "image/jpeg" } as const;
+export type StillMimeType = (typeof StillMimeType)[keyof typeof StillMimeType];
+
+/**
+ * A still's exposure, measured on a small downscale of it. Every number is 0–1: Rec.709 luma of
+ * the sRGB bytes as they are (no linearisation), its mean and standard deviation, the share of
+ * samples below a luma of 0.10, and the share above the preview's unlit threshold (8 of 255).
+ */
+export interface StillExposure {
+  lumaMean: number;
+  lumaStdDev: number;
+  nearBlackFraction: number;
+  litFraction: number;
 }
 
 /** Which signal answered: the studio's own page shim, the game's own contract, or nothing. Wire values. */

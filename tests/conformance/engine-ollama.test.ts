@@ -295,7 +295,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
   it("a server that never answers surfaces the clear connection error, not silence", async () => {
     // The production shape: a Stop signal is attached (it always is), the server accepts the
     // request and goes quiet before headers. The client's timeout must still fire and land
-    // as the actionable chat error — this is what four watchdog rewinds in one night cost.
+    // as the actionable chat error, never a silence the watchdog rewinds.
     const server = await fake({ replies: [{ stall: true }] });
     const engine = new OllamaEngine({ host: server.host, timeoutMs: 400 });
     const abort = new AbortController();
@@ -410,7 +410,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
-  it("says Ollama is not running when nothing answers, as a failure a fallback can take over (P04-F8)", async () => {
+  it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
     await server.close();
@@ -425,7 +425,7 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
-  it("says the chosen model is not installed, not that the engine failed (P04-F8)", async () => {
+  it("says the chosen model is not installed, not that the engine failed", async () => {
     // What Ollama answers for a model it does not have.
     const server = await fake({
       replies: [

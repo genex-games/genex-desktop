@@ -243,6 +243,10 @@ jobs:
     runs-on: windows-latest
     environment: ${{ needs.validate.outputs.publish == 'true' && 'release' || 'candidate' }}
     timeout-minutes: 60
+    # actions: read lets SignPath fetch the workflow artifacts it signs.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       signed: ${{ steps.winsign.outputs.signed }}
     defaults:
@@ -257,54 +261,36 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # WINDOWS SIGNING HOOK: off until a Windows code-signing certificate exists
-      # (docs/release-readiness.md). Turn it on by adding, to the release environment, either the
-      # secrets WINDOWS_CERT_PFX (the .pfx, base64) and WINDOWS_CERT_PASSWORD, or the variable
-      # WINDOWS_SIGN_PARAMS (signtool parameters, e.g. Azure Artifact Signing's /dlib and /dmdf,
-      # after installing its client here). forge.config.cjs then signs the app and Genex-Setup.exe
-      # through @electron/windows-sign (scripts/package-signing.cjs windowsSigning); with neither,
-      # this step exports nothing and the build stays unsigned.
-      - name: Windows signing certificate (off until one exists)
+      # A publishing run with the SIGNPATH_API_TOKEN secret (SignPath's CI user) has SignPath sign
+      # the app and Genex-Setup.exe with the release-signing policy (.github/actions/windows-signpath);
+      # candidates and runs without the token stay unsigned. A failed signing request fails this
+      # job, which leaves Windows out of the draft.
+      - name: Windows signing (SignPath, publishing runs only)
         id: winsign
         env:
-          WINDOWS_CERT_PFX: ${{ needs.validate.outputs.publish == 'true' && secrets.WINDOWS_CERT_PFX || '' }}
-          WINDOWS_CERT_PASSWORD: ${{ needs.validate.outputs.publish == 'true' && secrets.WINDOWS_CERT_PASSWORD || '' }}
-          WINDOWS_SIGN_PARAMS: ${{ needs.validate.outputs.publish == 'true' && vars.WINDOWS_SIGN_PARAMS || '' }}
+          SIGNPATH_API_TOKEN: ${{ needs.validate.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN || '' }}
           RELEASE_PUBLISH: ${{ needs.validate.outputs.publish }}
         run: |
-          if [ -n "$WINDOWS_SIGN_PARAMS" ]; then
-            echo "WINDOWS_SIGN_PARAMS=$WINDOWS_SIGN_PARAMS" >> "$GITHUB_ENV"
-            echo "signed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "$WINDOWS_CERT_PFX" ]; then
-            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::No Windows certificate: Windows is built and tested but left out of the draft."; fi
-            echo "No Windows certificate: building unsigned."
+          if [ -z "$SIGNPATH_API_TOKEN" ]; then
+            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::No SignPath token: Windows is built and tested but left out of the draft."; fi
+            echo "No SignPath token: building unsigned."
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          certificate="$(cygpath -w "$RUNNER_TEMP")\windows-cert.pfx"
-          printf '%s' "$WINDOWS_CERT_PFX" | base64 --decode > "$certificate"
-          echo "::add-mask::$WINDOWS_CERT_PASSWORD"
-          {
-            echo "WINDOWS_SIGN_CERTIFICATE_FILE=$certificate"
-            echo "WINDOWS_SIGN_CERTIFICATE_PASSWORD=$WINDOWS_CERT_PASSWORD"
-          } >> "$GITHUB_ENV"
           echo "signed=true" >> "$GITHUB_OUTPUT"
-      - name: Make (Squirrel installer)
+      - name: Make, signed by SignPath
+        if: steps.winsign.outputs.signed == 'true'
+        uses: ./.github/actions/windows-signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: release-signing
+      - name: Make (unsigned Squirrel installer)
+        if: steps.winsign.outputs.signed != 'true'
         run: |
           # nuget and Squirrel stage the app in temp folders (TEMP, SQUIRREL_TEMP) and refuse paths over
           # 260 characters; short ones keep the Genex CLI payload's deepest files under the limit.
           mkdir -p /d/t && export TMP='D:\t' TEMP='D:\t' SQUIRREL_TEMP='D:\t'
           npm run make -- --platform win32 --arch x64
-      - name: Verify the signatures
-        if: steps.winsign.outputs.signed == 'true'
-        shell: pwsh
-        run: |
-          foreach ($file in @("out/Genex-win32-x64/genex.exe", "out/make/squirrel.windows/x64/Genex-Setup.exe")) {
-            $signature = Get-AuthenticodeSignature $file
-            if ($signature.Status -ne "Valid") { throw "$file is not validly signed: $($signature.StatusMessage)" }
-          }
       - name: Squirrel install and uninstall
         run: node tests/e2e/run-squirrel-install.mjs
       # The hosted runner is elevated and disposable, so the one-time sandbox install needs no UAC.
@@ -329,9 +315,6 @@ jobs:
             out/make/squirrel.windows/x64/RELEASES
             out/make/PROVENANCE-*.json
           if-no-files-found: error
-      - name: Remove the certificate
-        if: always()
-        run: rm -f "$RUNNER_TEMP/windows-cert.pfx"
   publish:
     needs: [validate, regression, macos, linux, windows]
     # Waits for Windows (whose signed flag it reads) but publishes without it while it is unsigned.

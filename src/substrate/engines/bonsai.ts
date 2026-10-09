@@ -459,7 +459,7 @@ function toolCallsOf(stream: StreamState): ToolCall[] {
 /**
  * A call's arguments as JSON, or the text as sent when it is not JSON. One bad quote is the
  * model's mistake to correct (the session answers it as a tool error), not a failed completion
- * that ends the whole session after every good turn before it (P04-F1).
+ * that ends the whole session after every good turn before it.
  */
 function parsedArguments(text: string): unknown {
   try {

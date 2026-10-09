@@ -53,7 +53,7 @@ app.whenReady().then(async()=>{
  check('Add has a tooltip naming its @ shortcut',await js('[...document.querySelectorAll("[data-slot=tooltip-content]")].some(e=>e.textContent.includes("Add images and more")&&e.querySelector("kbd")?.textContent==="@")'));
  await capture('tooltip-add');await mouse({type:'mouseMove',x:0,y:0});await wait(300);
 
- // Intentionally flipped (2026-10-02): Plan mode left Mode for Add, a row that turns it on and a bulb that shows it.
+ // Intentionally flipped: Plan mode left Mode for Add, a row that turns it on and a bulb that shows it.
  const SPECIMEN='[data-composer-specimen]',BULB=SPECIMEN+' [data-plan-mode-off]',ADD_PLAN='[data-slot=popover-content][aria-label="Add"][data-open] [data-plan-mode-row]';
  check('Plan mode defaults off: no bulb',!(await element(BULB,'true')));
  await click(SPECIMEN+' [aria-label="Add images and more"]');

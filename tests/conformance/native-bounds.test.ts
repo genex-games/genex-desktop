@@ -1,9 +1,8 @@
 /**
- * The native game view follows its stage slot (2026-10-01): dragging the window's edge or the chat
+ * The native game view follows its stage slot: dragging the window's edge or the chat
  * width handle moves the slot every frame, and the game must move with it, as a browser page
  * would, rather than wait for the drag to pause. It paints over the whole page, so what floats
- * beside it keeps off it (2026-10-02: the chat's More actions tooltip was cut off where the game
- * began, 19px of it under the game).
+ * beside it keeps off it (a tooltip beside the game must never be cut off where the game begins).
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

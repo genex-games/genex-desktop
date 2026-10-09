@@ -45,7 +45,7 @@ export interface StudioSettings {
   architect: boolean;
   /**
    * Maximum concurrent workers (Settings → Harness): the most builders a run may use at once. A ceiling,
-   * not a target — the lead decides how many it starts. Eight by default; twelve is the most offered.
+   * not a target — the lead decides how many it starts. Four by default; twelve is the most offered.
    */
   buildersMax: number;
   /**
@@ -60,4 +60,10 @@ export interface StudioSettings {
    * first-run extraction preference. Plugin enablement owns subsequent changes.
    */
   blender: boolean;
+  /**
+   * Resume builds automatically (Settings → Harness, default ON): a build an engine limit paused
+   * resumes once the limit resets, and one the loop's crash paused resumes once it runs again —
+   * bounded per run, never after the user's Stop or Finish (`core/auto-resume.ts`).
+   */
+  autoResume: boolean;
 }

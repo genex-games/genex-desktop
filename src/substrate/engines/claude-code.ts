@@ -70,6 +70,7 @@ import {
   StudioTool,
   studioToolName,
 } from "./studio-tool-prompts.ts";
+import { captureArgs } from "./capture-args.ts";
 import {
   abortControllerFor,
   CHECKPOINT_NOTE_CHARS,
@@ -78,6 +79,7 @@ import {
   type DelegateEnding,
   hasCredentials,
   interruption,
+  isAccessLost,
   type PartialDelegateState,
   partialDelegateResult,
   STOPPED_BY_USER,
@@ -89,6 +91,7 @@ import { isCommandScript, spawnCommand } from "../command-launch.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { limitResetMs } from "./limit-reset.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
@@ -197,6 +200,20 @@ const SdkSystemSubtype = {
 /** The only `result` subtype that means the turn ended well. */
 const SDK_RESULT_SUCCESS = "success";
 
+/**
+ * The CLI's own code on a reply that is an API error (`SDKAssistantMessage.error`), for the codes
+ * that mean the account cannot be used until somebody acts: a stale sign-in, an organization that
+ * does not allow it, an account on hold, a billing problem.
+ */
+const SdkApiError = {
+  AuthenticationFailed: "authentication_failed",
+  OauthOrgNotAllowed: "oauth_org_not_allowed",
+  AccountOnHold: "account_on_hold",
+  BillingError: "billing_error",
+} as const;
+/** The codes a sign-in failure is read from, whatever the words beside them. */
+const SIGN_IN_ERRORS: ReadonlySet<unknown> = new Set<string>(Object.values(SdkApiError));
+
 /** Compact Now's command: Claude Code's own compaction of the resumed session (`DelegateRequest.compact`). */
 const COMPACT_COMMAND = "/compact";
 /** `/compact` runs no model turn; a CLI that did not know it may answer once, never build. */
@@ -250,6 +267,8 @@ const JUDGE_DISALLOWED_TOOLS = [
 /** What this engine says to the user: statuses, remedies and errors. */
 const MESSAGE = {
   LoginHint: "Sign in with your Claude subscription. The studio never sees your password.",
+  AccessLostHint:
+    "Sign in with a Claude account that has access, or ask your organization's admin to turn Claude Code back on.",
   InstallRemedy: "Install Claude Code, then check again.",
   SdkMissing: "the Claude Agent SDK is not installed",
   SdkRemedy: "Reinstall the app; the SDK ships with it.",
@@ -268,11 +287,11 @@ const MESSAGE = {
 } as const;
 
 /**
- * What a limit message means for the run: a weekly/monthly cap ends the night (`usage_limit`),
+ * What a limit message means for the run: a weekly/monthly cap ends the run (`usage_limit`),
  * a session/5-hour window is waitable (`rate_limit`), anything else is not a limit at all. The
  * CLI reports both only in result TEXT ("You've hit your session limit · resets 9:50pm"), never
- * in a subtype — and a director run once ended as a plain "error" because the SDK's throw was
- * classified before the text was read.
+ * in a subtype, so the text is read before the SDK's throw is classified, or a limit reads as a
+ * plain "error".
  */
 export function limitKind(
   text: string,
@@ -284,45 +303,17 @@ export function limitKind(
   return null;
 }
 
-/**
- * Milliseconds until the reset a limit message names ("resets 9:50pm", "resets 21:50", "resets
- * in 3 hours"), read against the machine's clock; null when the text names none. A clock time
- * already behind `now` is tomorrow's.
- */
-export function limitResetMs(text: string, now = Date.now()): number | null {
-  const relative = /resets? in (\d+)\s*(min|minute|hour|h|m)/i.exec(text);
-  if (relative) {
-    const n = Number(relative[1]);
-    return /^h/i.test(relative[2] ?? "") ? n * HOUR_MS : n * MINUTE_MS;
-  }
-  const clock = /resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
-  if (!clock) return null;
-  const meridiem = clock[3]?.toLowerCase();
-  const hours = twentyFourHour(Number(clock[1]), meridiem);
-  if (!meridiem && hours > 23) return null;
-  const at = new Date(now);
-  at.setHours(hours, Number(clock[2] ?? "0"), 0, 0);
-  const ms = at.getTime() - now;
-  // A clock time already behind `now` (by more than a minute of slack) is tomorrow's.
-  const untilReset = ms < -MINUTE_MS ? ms + 24 * HOUR_MS : ms;
-  return Math.max(MINUTE_MS, untilReset);
-}
-
-/** A clock hour on a 24-hour dial: "9pm" is 21, "12am" is 0, an hour with no meridiem is as written. */
-function twentyFourHour(hours: number, meridiem: string | undefined): number {
-  if (meridiem === "pm" && hours < 12) return hours + 12;
-  if (meridiem === "am" && hours === 12) return 0;
-  return hours;
-}
+/** The wait a limit message names lives beside Codex's reading of it; kept here for its callers. */
+export { limitResetMs } from "./limit-reset.ts";
 
 /**
  * The one directory every judge session runs in.
  *
  * It used to be a fresh `mkdtemp` per verdict, which cost twice. Claude Code's own system prompt
  * names its working directory, so a new directory every time guaranteed a cache miss on the very
- * prefix that never changes — the first night wrote 4.4k of cache each vision call and read back
- * none of it. And the CLI keeps a transcript directory per working directory, so one night left
- * 1353 of them (1.3 GB) under the engine home. One stable, empty directory fixes both: the
+ * prefix that never changes: every vision call wrote cache and read back none of it. And the CLI
+ * keeps a transcript directory per working directory, so a run left thousands of them (GBs) under
+ * the engine home. One stable, empty directory fixes both: the
  * prefix is identical across sessions, and there is one transcript directory to sweep.
  *
  * It stays a *fresh* session — one turn, no resume, no tools, no game folder — because that is
@@ -330,7 +321,7 @@ function twentyFourHour(hours: number, meridiem: string | undefined): number {
  */
 export const JUDGE_CWD = path.join(os.tmpdir(), "studio-judge-sessions");
 
-/** How long a judge transcript is worth keeping: long enough to debug last night, not last month. */
+/** How long a judge transcript is worth keeping: long enough to debug last run, not last month. */
 export const JUDGE_TRANSCRIPT_TTL_MS = 7 * 24 * HOUR_MS;
 
 /**
@@ -919,7 +910,7 @@ export class ClaudeCodeEngine implements Engine {
     const login = await this.resolveLogin();
     // One stable, empty directory for every verdict (JUDGE_CWD) — remade if the OS swept it.
     await mkdir(this.judgeCwd, { recursive: true });
-    const judge: JudgeState = { text: "", modelUsed: undefined, usage: { engine: this.id } };
+    const judge: JudgeState = { text: "", modelUsed: undefined, usage: { engine: this.id }, apiError: null };
     // One controller, two triggers, same shape as delegate: the caller's stop and the ceiling.
     const controller = abortControllerFor(request.signal);
     let ceilingHit = false;
@@ -949,7 +940,7 @@ export class ClaudeCodeEngine implements Engine {
       if (ceiling) clearTimeout(ceiling);
     }
 
-    // A judge that said nothing gave no verdict: a failure, not an empty string for the parser (P02-F6).
+    // A judge that said nothing gave no verdict: a failure, not an empty string for the parser.
     if (!judge.text.trim()) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.JudgeEmpty);
     return {
       message: { role: "assistant", content: judge.text },
@@ -1000,18 +991,28 @@ export class ClaudeCodeEngine implements Engine {
       if (message.subtype === SdkSystemSubtype.Init) judge.modelUsed = String(message.model ?? "") || undefined;
     }
     if (type === SdkMessage.Assistant) {
+      judge.apiError = apiErrorOf(message);
       for (const text of assistantTexts(message)) {
         judge.text += text;
         request.onDelta?.(text);
       }
     }
-    if (type !== SdkMessage.Result) return;
-    const result = message as SdkResult;
+    if (type === SdkMessage.Result) this.#judgeResult(message as SdkResult, judge);
+  }
+
+  /** The judge's result: its cost, its words when its replies had none, and the failure it reports. */
+  #judgeResult(result: SdkResult, judge: JudgeState): void {
     recordResultUsage(judge.usage, result);
     if (result.result && !judge.text.trim()) judge.text = result.result;
-    if (isFailedResult(result)) {
-      throw this.#classify(new Error(result.result || result.subtype || MESSAGE.JudgeFailed));
-    }
+    const failed = isFailedResult(result);
+    const signedOut = this.#signedOut({
+      failed,
+      errorSubtype: resultErrorSubtype(result, !failed),
+      apiError: judge.apiError,
+      text: result.result || judge.text,
+    });
+    if (signedOut) throw signedOut;
+    if (failed) throw this.#classify(new Error(result.result || result.subtype || MESSAGE.JudgeFailed));
   }
 
   /** What a judge that did not answer threw, in the order that says whose stop it was. */
@@ -1277,7 +1278,10 @@ export class ClaudeCodeEngine implements Engine {
     if (!fromAssistant) return;
     this.#observeTelemetry(stream, request.onEvent, run.sessionId);
     // A subagent's request is its own context, not the one the session's next turn starts from.
-    if (!message.parent_tool_use_id) run.contextTokens = requestTokens(message) ?? run.contextTokens;
+    if (message.parent_tool_use_id) return;
+    run.contextTokens = requestTokens(message) ?? run.contextTokens;
+    // Whether the main thread's last word was the CLI's own API error: a later reply clears it.
+    run.apiError = apiErrorOf(message);
   }
 
   /** A system message: the session's init, a compaction boundary, and a telemetry reading. */
@@ -1368,6 +1372,16 @@ export class ClaudeCodeEngine implements Engine {
 
   /** How a build whose stream ended on its own is reported, or the limit it hit thrown. */
   #finish(run: RunState, request: DelegateRequest, startedAt: number): DelegateResult {
+    const signedOut = this.#signedOut({
+      failed: !run.ok,
+      errorSubtype: run.errorSubtype,
+      apiError: run.apiError,
+      text: String(run.errorText ?? run.summary ?? ""),
+    });
+    if (signedOut) {
+      this.#authFailure = signedOut.message;
+      throw signedOut;
+    }
     if (run.ok) this.#authFailure = null;
     this.#throwIfLimited(run);
     const model = request.model ?? this.#model;
@@ -1405,7 +1419,7 @@ export class ClaudeCodeEngine implements Engine {
     const limitText = String(run.errorText ?? run.summary ?? "");
     const limit = limitKind(limitText);
     if (limit === EngineFailureKind.UsageLimit) {
-      throw new EngineError(EngineFailureKind.UsageLimit, this.id, limitText);
+      throw new EngineError(EngineFailureKind.UsageLimit, this.id, limitText, limitResetMs(limitText) ?? undefined);
     }
     const limitSubtype = /limit/i.test(run.errorSubtype ?? "");
     if (limit === EngineFailureKind.RateLimit || limitSubtype) {
@@ -1438,18 +1452,65 @@ export class ClaudeCodeEngine implements Engine {
         `Claude Code could not be started (${code}): the studio's bundled Claude Code binary is missing or the app was replaced while this window was open. Quit and reopen the studio, then try again. (${text})`,
       );
     }
-    // Weekly/monthly caps end the run; session/5-hour limits stay waitable rate limits.
+    // Weekly/monthly caps end the run; session/5-hour limits stay waitable rate limits. Either
+    // carries the reset its text names, so the host can resume the run after it.
+    const resetMs = limitResetMs(text) ?? undefined;
     if (USAGE_LIMIT_PATTERN.test(text)) {
-      return new EngineError(EngineFailureKind.UsageLimit, this.id, text);
+      return new EngineError(EngineFailureKind.UsageLimit, this.id, text, resetMs);
     }
     if (RATE_LIMIT_PATTERNS.some((re) => re.test(text))) {
-      return new EngineError(EngineFailureKind.RateLimit, this.id, text);
+      return new EngineError(EngineFailureKind.RateLimit, this.id, text, resetMs);
     }
-    if (AUTH_PATTERNS.some((re) => re.test(text))) {
-      return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${this.loginHint()}`);
-    }
+    if (isSignInText(text)) return this.#signInError(text);
     return new EngineError(EngineFailureKind.Other, this.id, text);
   }
+
+  /** A sign-in failure in the CLI's words, with what the user can do about it. */
+  #signInError(text: string): EngineError {
+    const hint = isAccessLost(text) ? MESSAGE.AccessLostHint : this.loginHint();
+    return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${hint}`);
+  }
+
+  /**
+   * A turn whose last word was the CLI's own API error saying the account cannot be used, as the
+   * sign-in failure it is, or null. The CLI reports one as a `success` result flagged `is_error`
+   * (or, by its code alone, as a plain success); read as an ordinary failed turn, a revoked account
+   * would close the run and land an unchecked build. A limit in those words stays a limit
+   * (`#throwIfLimited`).
+   */
+  #signedOut(ending: ApiErrorEnding): EngineError | null {
+    if (!endedOnApiError(ending)) return null;
+    const text = ending.text || ending.apiError || MESSAGE.JudgeFailed;
+    if (SIGN_IN_ERRORS.has(ending.apiError)) return this.#signInError(text);
+    if (limitKind(text) || !isSignInText(text)) return null;
+    return this.#signInError(text);
+  }
+}
+
+/** How a turn ended, as far as telling the CLI's own API error from the model's words goes. */
+interface ApiErrorEnding {
+  /** The result said the turn failed (`is_error`, or a failing subtype). */
+  failed: boolean;
+  /** The failure's stop reason: `StopReason.Error` when the result's own subtype was "success". */
+  errorSubtype: string | null;
+  /** The CLI's code on the main thread's last reply, when that reply was an API error. */
+  apiError: string | null;
+  text: string;
+}
+
+/**
+ * Did the turn end on the CLI's own error message rather than on the model's words: a reply that
+ * carried an API error code, or a failed result whose subtype still said "success" (the shape the
+ * CLI gives an API error the turn could not get past)?
+ */
+function endedOnApiError(ending: ApiErrorEnding): boolean {
+  if (ending.apiError !== null) return true;
+  return ending.failed && ending.errorSubtype === StopReason.Error;
+}
+
+/** Does a CLI's error text say the sign-in no longer works: stale, missing, or the access taken away? */
+function isSignInText(text: string): boolean {
+  return AUTH_PATTERNS.some((re) => re.test(text)) || isAccessLost(text);
 }
 
 // ── one delegation's state, and the stream it is read from ─────────────────────────────────
@@ -1532,6 +1593,8 @@ interface JudgeState {
   text: string;
   modelUsed: string | undefined;
   usage: Usage;
+  /** The CLI's code on its last reply, when that reply was an API error (`SdkApiError`). */
+  apiError: string | null;
 }
 
 /** Everything one delegation learns from its stream, in the order it learns it. */
@@ -1568,6 +1631,8 @@ interface RunState {
   compactSummary: string | null;
   /** Why it did not compact, as its status message said; null when it did not say. */
   compactError: string | null;
+  /** The CLI's code on the main thread's last reply, when that reply was an API error (`SdkApiError`). */
+  apiError: string | null;
 }
 
 /** A delegation that has not heard anything from its contractor yet. */
@@ -1592,6 +1657,7 @@ function newRunState(usage: Usage, cliInstallation: ClaudeInstallation): RunStat
     control: { release: () => {} },
     compactSummary: null,
     compactError: null,
+    apiError: null,
   };
 }
 
@@ -1686,6 +1752,11 @@ function resultErrorSubtype(result: SdkResult, ok: boolean): string | null {
   if (ok) return null;
   if (result.subtype && result.subtype !== SDK_RESULT_SUCCESS) return result.subtype;
   return StopReason.Error;
+}
+
+/** The CLI's code on an assistant message that is an API error, or null for an ordinary reply. */
+function apiErrorOf(message: Record<string, unknown>): string | null {
+  return typeof message.error === "string" && message.error ? message.error : null;
 }
 
 /** Did the result report a failure, by flag or by subtype? */
@@ -1890,7 +1961,7 @@ function compactSummaryText(raw: string | null): string {
  * main.js` died even with the sandbox's auto-allow on. Safe only together with the sandbox shape — allowUnsandboxedCommands:
  * false makes the CLI ignore dangerouslyDisableSandbox entirely, so the blanket allow can never
  * step outside the sandbox. One authority: no parallel permissions.allow rules. A read-only
- * session (the playtester, a waking night's lead) is never allowed its shell by a blanket rule, and
+ * session (the playtester, a waking run's lead) is never allowed its shell by a blanket rule, and
  * has none at all unless it asks in the chat's mode (`leadAsks`, `disallowedToolsFor`).
  */
 function allowedToolsFor(request: DelegateRequest, interviewTools: StudioToolSpec[]): string[] {
@@ -2051,10 +2122,13 @@ function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapt
   return tool(
     StudioTool.Capture,
     CLAUDE_CAPTURE_TOOL.description,
-    { cameras: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.cameras) },
-    async (args: { cameras?: string }) => {
+    {
+      cameras: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.cameras),
+      page: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.page),
+    },
+    async (args: { cameras?: string; page?: string }) => {
       try {
-        const text = await onCapture({ ...(args?.cameras ? { cameras: String(args.cameras) } : {}) });
+        const text = await onCapture(captureArgs(args));
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         // The tool reports failure as a result marked failed — a thrown capture must not end the build.

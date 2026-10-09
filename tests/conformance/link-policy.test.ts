@@ -1,6 +1,6 @@
 /**
- * Links inside the studio window never navigate it (2026-09-06: a contractor's
- * "[Base handoff](/…/NOTES.base-builder.md)" link turned the whole app black). A file link opens
+ * Links inside the studio window never navigate it (a contractor's
+ * "[Base handoff](/…/NOTES.base-builder.md)" link would turn the whole app black). A file link opens
  * only a real document inside a game folder; anything else is shown in Finder or refused, so a
  * contractor's link can never run what it wrote (SECUI-1).
  */
@@ -38,6 +38,16 @@ describe("studio link policy", () => {
       url: "https://example.com/x",
     });
     assert.equal((await routeStudioLink("http://example.com/x", { projectDirs })).action, "refuse");
+  });
+
+  it("opens a genex.games page tagged s=desktop, and a published game or the API as it came", async () => {
+    const projectDirs: string[] = [];
+    assert.deepEqual(await routeStudioLink("https://genex.games/world/derby#play", { projectDirs }), {
+      action: "external",
+      url: "https://genex.games/world/derby?s=desktop#play",
+    });
+    for (const url of ["https://derby.genex.technology/", "https://api.genex.games/api/credits/me"])
+      assert.deepEqual(await routeStudioLink(url, { projectDirs }), { action: "external", url }, url);
   });
 
   it("hands a document inside a game folder to its own app, never to the window", async () => {

@@ -195,7 +195,7 @@ describe("the chat's Stop, as the composer wires it", () => {
     assert.equal(stopSettled(mark, ended), true);
     assert.equal(isStopping(mark, { threadId: "chat-a", running: true, events: ended }), false);
     const paused = [...seen, event("e3", { type: "custom", event_type: "autopilot_paused", payload: {} })];
-    assert.equal(stopSettled(mark, paused), true, "a paused night has settled too");
+    assert.equal(stopSettled(mark, paused), true, "a paused run has settled too");
     assert.equal(
       stopSettled({ thread: "chat-a", after: "e3", at: 0 }, paused),
       false,

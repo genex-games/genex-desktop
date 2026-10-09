@@ -1,12 +1,12 @@
 /**
  * The run's coordinator: a read-only session of its own, in a scratch home per chat, that answers
- * the chat for a run with the coordinator's tools (run-inbox.ts `coordinatorTools`). After a night a
- * lead of the chat's own led, the chat's own session answers instead (after-night.ts); this stays
+ * the chat for a run with the coordinator's tools (run-inbox.ts `coordinatorTools`). After a run a
+ * lead of the chat's own led, the chat's own session answers instead (after-loop-run.ts); this stays
  * the fallback — the long turn, the classic pipeline, a kept older seed, a lead that was a session
  * of its own, a model without sessions — for one release (docs/harness-runtime.md). After a
  * finished build that seated a lead, when a message came with Loop on and this coordinator answers
  * in a session, its continue_build reopens that run with the Loop's time and the build's models
- * (reopen-run.ts `finishedNight`), if its parts serve it (chat-dispatch.ts `coordinatorReopens`).
+ * (reopen-run.ts `finishedLoopRun`), if its parts serve it (chat-dispatch.ts `coordinatorReopens`).
  */
 import { EngineId, plannerModel, roleEffort, RoleKey, supportsSessions } from "./model-roles.ts";
 import { coordinatorTools, conversationThrough } from "./run-inbox.ts";
@@ -39,7 +39,7 @@ const RECORD_WINDOW_SHARE = 0.5;
 /**
  * A delegated session's records as the app mirrors them into the chat (`delegated.<engine>`,
  * main/core/delegation-events.ts): what one said is an `assistant` record, and the chat's own
- * sessions — a night's lead, this coordinator — are `planner`s. Copied here as chat-session.ts
+ * sessions — a run's lead, this coordinator — are `planner`s. Copied here as chat-session.ts
  * copies the prefix: the seed cannot import the app.
  */
 const MIRRORED_PREFIX = "delegated.";
@@ -117,7 +117,7 @@ export async function runCoordinatorTurn(ctx: HarnessCtx, options: CoordinatorTu
 
 /**
  * How much of the run's record a model whose window is known can take: half its window, in
- * characters. An unknown window keeps the prompt's own ceiling (P07-F6).
+ * characters. An unknown window keeps the prompt's own ceiling.
  */
 function recordBudget(contextWindow: number | null): { budgetChars?: number } {
   return contextWindow ? { budgetChars: Math.floor(contextWindow * CHARS_PER_TOKEN * RECORD_WINDOW_SHARE) } : {};
@@ -136,7 +136,7 @@ function savedPlanOf(events: readonly HarnessEvent[], journal: AnyRecord | null)
 
 /**
  * The conversation up to this message, as `role: content` lines — with what the run's lead said in
- * the chat while its night ran (live chat), which only the mirrored records of its session hold.
+ * the chat while its run ran (live chat), which only the mirrored records of its session hold.
  */
 function recentHistory(events: readonly HarnessEvent[], messageId: string | undefined, runId: string): string {
   return historyLines(conversationThrough(events, messageId), runId)

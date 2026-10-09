@@ -1,5 +1,5 @@
 /**
- * Agent screens in the Builds graph (2026-09-28): a working node is its agent's screen. The
+ * Agent screens in the Builds graph: a working node is its agent's screen. The
  * frame says what the agent did as a code, the node words it ("Pressing Space · 3s"), the step
  * joins its screen on the run and the part, and a selected node's card steps back through the
  * window's last few frames.

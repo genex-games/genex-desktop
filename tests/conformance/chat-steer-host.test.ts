@@ -75,7 +75,7 @@ describe("engine.steer waits for the chat's session on the clock it is given", (
   });
 });
 
-describe("a night's lead takes the chat's messages, addressed by its run", () => {
+describe("a run's lead takes the chat's messages, addressed by its run", () => {
   it("a director's session answers the chat only by its own run: never by a message id, never a build worktree", () => {
     const lead = { runId: "run_1", threadId: "chat", project: "pond", root: "/scratch/run_1/integration" };
     const asked = (messageId: string, over: Record<string, unknown> = {}) =>
@@ -115,7 +115,7 @@ describe("a night's lead takes the chat's messages, addressed by its run", () =>
 describe("a restated resume_run", () => {
   it("records the run's steering once per message and text: a replayed turn adds nothing, a restated one is kept", async () => {
     const { core, api } = await lite();
-    const thread = await core.store.createThread({ title: "paused night" });
+    const thread = await core.store.createThread({ title: "paused run" });
     await core.store.appendEvents(thread, [
       custom("run_started", { runId: "r1", project: "pond", engine: "codex" }),
       custom("autopilot_paused", { runId: "r1" }),
@@ -145,7 +145,7 @@ describe("a restated resume_run", () => {
 describe("the chat is free once a run closes", () => {
   it("continue_build is taken for a finished run while its self-improvement pass still holds the run", async () => {
     const { core, api } = await lite();
-    const thread = await core.store.createThread({ title: "finished night" });
+    const thread = await core.store.createThread({ title: "finished run" });
     await core.store.appendEvents(thread, [
       custom("run_started", { runId: "r1", project: "pond", engine: "codex" }),
       custom("run_finished", { runId: "r1", project: "pond" }),
@@ -170,7 +170,7 @@ describe("the chat is free once a run closes", () => {
 describe("a contained change after a finished build (golden-boot-glory)", () => {
   it("continue_build records build: false, so the harness hands the change to one builder turn instead of reopening the build", async () => {
     const { core, api } = await lite();
-    const thread = await core.store.createThread({ title: "finished night" });
+    const thread = await core.store.createThread({ title: "finished run" });
     await core.store.appendEvents(thread, [
       custom("run_started", { runId: "r1", project: "pond", engine: "codex" }),
       custom("run_finished", { runId: "r1", project: "pond" }),

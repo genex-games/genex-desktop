@@ -168,7 +168,7 @@ describe("publishing tests the build before players get it", () => {
       assert.deepEqual(fx.seen.events, ["deploy:staging", "test", "promote", "list"], "nothing is public untested");
       assert.equal(fx.seen.deploys.length, 1, "the draft and the public version are one upload");
       assert.equal(fx.seen.listings[0]?.title, "Racing Demo");
-      assert.equal(fx.seen.listings[0]?.regenerateCover, undefined, "a first listing draws its cover anyway");
+      assert.equal(fx.seen.listings[0]?.regenerateCover, undefined, "Studio never asks Genex to paint a cover");
       assert.equal(done.title, "Racing Demo");
       assert.equal(done.status, "published");
       const copy = JSON.parse(await readFile(path.join(fx.workspace, "package.json"), "utf8"));
@@ -179,7 +179,7 @@ describe("publishing tests the build before players get it", () => {
     }
   });
 
-  it("lists a listed game again only when its name changes, and then redraws its cover", async (t) => {
+  it("lists a listed game again only when its name changes, and never asks Genex to repaint its cover", async (t) => {
     if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
     const fx = await genexFixture();
     try {
@@ -191,7 +191,11 @@ describe("publishing tests the build before players get it", () => {
       assert.equal(renamed.job?.state, "done", renamed.job?.error);
       assert.equal(fx.seen.listings.length, 2);
       assert.equal(fx.seen.listings[1]?.title, "Rain Circuit");
-      assert.equal(fx.seen.listings[1]?.regenerateCover, true, "the old name is painted on the old cover");
+      assert.equal(
+        fx.seen.listings[1]?.regenerateCover,
+        undefined,
+        "a cover is a real frame of the game with no name on it: a rename leaves it as it is",
+      );
       assert.equal(renamed.title, "Rain Circuit");
     } finally {
       await fx.close();

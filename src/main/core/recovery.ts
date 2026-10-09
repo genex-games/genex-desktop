@@ -214,7 +214,7 @@ const SNAPSHOT_FOLD: ThreadFold<EventEnvelope[]> = {
   ],
 };
 
-/** An overnight run's journal artifact (`autopilot_<runId>`), as far as the boot repair reads it. */
+/** An unattended run's journal artifact (`autopilot_<runId>`), as far as the boot repair reads it. */
 interface RunJournal {
   phase?: string;
   optimization?: OptimizationCheckpointV1;
@@ -222,8 +222,8 @@ interface RunJournal {
   director?: { integrationHead?: string; baseCommit?: string };
 }
 
-/** Where an interrupted night's merges wait, for the closure to offer (never landed yet). */
-interface NightLanding {
+/** Where an interrupted run's merges wait, for the closure to offer (never landed yet). */
+interface LoopRunLanding {
   landed: false;
   integrationHead: string;
   integrationRef: string;
@@ -249,13 +249,13 @@ function chargeInterruptedSegment(cp: OptimizationCheckpointV1, now: number): vo
 }
 
 /**
- * What the night got as far as, so the user can play it or make it live before deciding whether
+ * What the run got as far as, so the user can play it or make it live before deciding whether
  * to resume: the head is reachable on the run's ref whatever happened to the worktree. Only claim
- * a build when one exists and has moved — a classic night journals no head at all, and a director
+ * a build when one exists and has moved — a classic run journals no head at all, and a director
  * killed before its first merge is still standing on the base. Saying "not made live yet" there
  * promises a build the morning card has nothing to offer.
  */
-function nightLanding(runId: string, journal: RunJournal): NightLanding | null {
+function loopRunLanding(runId: string, journal: RunJournal): LoopRunLanding | null {
   const head = journal.director?.integrationHead ?? journal.integrationHead ?? null;
   const base = journal.director?.baseCommit;
   const moved = typeof head === "string" && head && head !== base;
@@ -439,14 +439,14 @@ export class RecoveryService {
   }
 
   /**
-   * An interrupted overnight run with a live journal is paused, not dead: the closure
+   * An interrupted unattended run with a live journal is paused, not dead: the closure
    * still lands (nothing may read as "still running"), and the paused card + journal
    * phase make the one-click Resume possible. Boot never redispatches (the doctrine
    * above holds) — resuming is the user's click.
    *
-   * The gate is the journal artifact, never the `mode` field: a director's night writes
+   * The gate is the journal artifact, never the `mode` field: a director's run writes
    * `run_registered {mode:"autopilot"}` and then `run_started {mode:"director"}`, so a
-   * mode gate paused the classic pipeline and quietly buried every director night —
+   * mode gate paused the classic pipeline and quietly buried every director run —
    * closed as "interrupted by restart" with no Resume, no head and no build card, while
    * its merges sat on a ref nobody was shown.
    */
@@ -460,7 +460,7 @@ export class RecoveryService {
       null) as RunJournal | null;
     if (journal) await this.#closeInterruptedOptimization(threadId, runId, journal, finishedAt);
     const paused = journal !== null && journal.phase !== "done";
-    const landing = paused ? await this.#pauseNight(threadId, runId, journal) : null;
+    const landing = paused ? await this.#pauseLoopRun(threadId, runId, journal) : null;
     await this.#core.store.appendEvents(threadId, [
       customEventData(CustomEvent.RunFinished, {
         runId,
@@ -477,11 +477,11 @@ export class RecoveryService {
     ]);
   }
 
-  async #pauseNight(threadId: string, runId: string, journal: RunJournal): Promise<NightLanding | null> {
+  async #pauseLoopRun(threadId: string, runId: string, journal: RunJournal): Promise<LoopRunLanding | null> {
     await this.#core.store
       .writeArtifact(threadId, journalArtifact(runId), { ...journal, phase: "paused" })
       .catch(() => {});
-    return nightLanding(runId, journal);
+    return loopRunLanding(runId, journal);
   }
 
   /** An Optimization stage the app died inside ends as interrupted, with its budget charged. */
@@ -568,7 +568,7 @@ export class RecoveryService {
    * The loop died — it crashed, or the watchdog is about to rewind it. Everything it briefed is
    * now unsupervised: a contractor keeps editing its worktree for another forty minutes with
    * nobody left to judge, commit or land the round, and the run reads as running until the next
-   * app boot (the first night's crash cost exactly that). So every delegation is aborted — none
+   * app boot. So every delegation is aborted — none
    * of them can be judged or committed without the loop, whatever the cwd — and every run that
    * was holding the Mac awake is settled here, which frees the power blocker, the quit gate and
    * the idle watch. The *cards* are not written here: a run's ending belongs to the harness's
@@ -621,7 +621,7 @@ export class RecoveryService {
     let openRuns: string[] = [];
     let target: SnapshotRecord | undefined;
     try {
-      // A rewind is the end of the loop that was supervising tonight's work, whether it died on
+      // A rewind is the end of the loop that was supervising this run's work, whether it died on
       // its own or is being restarted under it. Same duty as a crash, so: same call.
       ({ openRuns } = await this.onHarnessDied());
       target = this.#core.snapshotIndex.newestHealthy(SnapshotScope.Harness);
@@ -704,7 +704,7 @@ export class RecoveryService {
   }
 
   /**
-   * What the nights learned about each game (`library/games`, the ledger and its lessons) is
+   * What the runs learned about each game (`library/games`, the ledger and its lessons) is
    * history, not a self-change: rewinding the harness's code must not take it back. It is set
    * aside before a restore and put back after, newer files winning.
    */
@@ -762,8 +762,7 @@ export class RecoveryService {
   /**
    * A harness restore moves seed files back in time without touching the manifest, and the
    * boot-time ownership rule would then read every rewound file as an agent edit and pin it
-   * forever (this happened: four watchdog rewinds in one night, then no shipped fix could
-   * land). Re-owning is delegated to seed-upgrade.ts, which owns the manifest's semantics;
+   * forever, and after a few watchdog rewinds no shipped fix could land. Re-owning is delegated to seed-upgrade.ts, which owns the manifest's semantics;
    * a failure is logged and swallowed — bookkeeping must never abort a recovery. Public
    * because every path that rewinds the harness owes this call — the user's manual rollback
    * (main/index.ts) included, not just the watchdog and the agent's own restores.

@@ -21,8 +21,27 @@ export const PageMethod = {
   Demos: "demos",
   Demo: "demo",
   Audio: "audio",
+  /** Past the game's title, menu and countdown into play (`config.begin`), left paused. */
+  Begin: "begin",
+  /** The racing-line assist on or off (`{ steer: true }`): the game's `config.steer` steers through the player's keys. */
+  Assist: "assist",
 } as const;
 export type PageMethod = (typeof PageMethod)[keyof typeof PageMethod];
+
+/**
+ * The screens a game with a front-end reports (`state().flow.phase`), the template's `FlowPhase`
+ * word for word. The harness decides only on `flow.playing`; a phase is reported, never matched.
+ */
+export const FlowPhase = {
+  Boot: "boot",
+  Menu: "menu",
+  Intro: "intro",
+  Countdown: "countdown",
+  Playing: "playing",
+  Paused: "paused",
+  Results: "results",
+} as const;
+export type FlowPhase = (typeof FlowPhase)[keyof typeof FlowPhase];
 
 /** What `game.validate` says of a game's `src/studio.js` (`contract`): loaded, attached by the hook, or missing. */
 export const StudioContract = {

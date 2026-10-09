@@ -14,6 +14,8 @@ const ASSET_HOSTS = new Set(["assets.genex.technology", "assets.genex.games"]);
 export const ACCEPT_URL = "https://genex.games/accept";
 /** The dashboard to link when Genex names none of its own. */
 export const DEFAULT_DASHBOARD = "https://genex.games";
+/** What a website page Studio opens in the browser carries: one constant campaign tag, never an id. */
+const DESKTOP_TAG = { name: "s", value: "desktop" } as const;
 
 /** A link Studio is willing to hand to the browser: Genex's own pages only. */
 export const isGenexLink = (value: unknown): value is string => {
@@ -28,8 +30,30 @@ export const isGenexLink = (value: unknown): value is string => {
   }
 };
 
+/** A page of Genex's website (the dashboard), over https. */
+const isWebsitePage = (url: URL) => url.protocol === "https:" && DASHBOARD_HOSTS.has(url.hostname);
+
 /** A sign-in page Genex's device flow may send the user to. */
-export const isGenexAuthorizationUrl = (url: URL) => url.protocol === "https:" && DASHBOARD_HOSTS.has(url.hostname);
+export const isGenexAuthorizationUrl = (url: URL) => isWebsitePage(url);
+
+/**
+ * A link on its way to the browser, tagged `s=desktop` when it is a page of Genex's website, so
+ * the site can tell the visit came from the app. An `s` the link already has stays; its path,
+ * other parameters and hash are kept. Any other link, or one that does not parse, comes back as it came.
+ */
+export function tagGenexLink(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+  if (!isWebsitePage(url) || url.searchParams.has(DESKTOP_TAG.name)) return value;
+  // Appended to the query as written: rebuilding it through searchParams would re-encode the rest.
+  const tag = `${DESKTOP_TAG.name}=${DESKTOP_TAG.value}`;
+  url.search = url.search ? `${url.search}&${tag}` : tag;
+  return url.href;
+}
 
 /** A file Studio may download: https on one of Genex's asset hosts. */
 export const isGenexAssetUrl = (url: URL) => url.protocol === "https:" && ASSET_HOSTS.has(url.hostname);

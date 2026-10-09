@@ -18,6 +18,12 @@ import type { CodingProvider } from "../../../src/shared/coding-cli.ts";
 import { EVAL_LANE_ANSWER_TEXT, type EvalCliHomes } from "../../../src/shared/eval-lane.ts";
 import { EngineId } from "../../../src/shared/providers.ts";
 import { childEnv } from "../../../src/substrate/child-env.ts";
+import {
+  ACCOUNT_HOME_ENV_NAMES,
+  AGENT_SESSION_ENV_PREFIXES,
+  NODE_MODE_ENV_NAMES,
+  SESSION_ROUTING_ENV_NAMES,
+} from "../../studio-dev/live-env.ts";
 import { AnswerPolicy, BrowserPin } from "../vocabulary.ts";
 
 /** Grace after a case's deadline before the rail stops the lane (§5.2). */
@@ -279,20 +285,18 @@ export async function holdsAnyFile(dir: string): Promise<boolean> {
 
 // ── the child environment ─────────────────────────────────────────────────────────────────
 
-/** Variables no lane child inherits: metered keys, other logins and the operator's own homes. */
+/**
+ * Variables no lane child inherits: metered keys, other logins and the operator's own homes. The
+ * session's own variables are the ones a live studio:dev launch drops too (`studio-dev/live-env.ts`);
+ * the order is part of `laneFlagsDigest`.
+ */
 export const STRIPPED_ENV_NAMES: readonly string[] = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_AUTH_TOKEN",
-  "OPENAI_API_KEY",
-  "CODEX_API_KEY",
-  "CODEX_ACCESS_TOKEN",
-  "CLAUDE_CONFIG_DIR",
-  "CODEX_HOME",
-  "ELECTRON_RUN_AS_NODE",
+  ...SESSION_ROUTING_ENV_NAMES,
+  ...ACCOUNT_HOME_ENV_NAMES,
+  ...NODE_MODE_ENV_NAMES,
 ];
 /** Prefixes no lane child inherits: Claude Code's and the Agent SDK's switches, and every Genex variable. */
-export const STRIPPED_ENV_PREFIXES: readonly string[] = ["CLAUDE_CODE_", "CLAUDE_AGENT_", "GENEX_"];
+export const STRIPPED_ENV_PREFIXES: readonly string[] = [...AGENT_SESSION_ENV_PREFIXES, "GENEX_"];
 
 /** The parent's environment without any stripped variable. */
 export function strippedEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -310,10 +314,11 @@ export function evalHomesEnv(homes: EvalCliHomes): Record<string, string> {
 }
 
 /** The vendor the app's contractor filter (`childEnv`) knows each coding CLI by. */
-const CONTRACTOR_VENDOR = { [EngineId.ClaudeCode]: "claude", [EngineId.Codex]: "codex" } as const satisfies Record<
-  CodingProvider,
-  string
->;
+const CONTRACTOR_VENDOR = {
+  [EngineId.ClaudeCode]: "claude",
+  [EngineId.Codex]: "codex",
+  [EngineId.OpenCode]: "opencode",
+} as const satisfies Record<CodingProvider, string>;
 
 /** The marker `laneFlagsDigest` folds in for the raw lanes' credential policy, so a change to it moves the pin. */
 export const RAW_LANE_CREDENTIAL_POLICY = "credentials:contractor";

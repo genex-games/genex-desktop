@@ -1,6 +1,7 @@
 /** Folders on this Mac: picking, inspecting, adopting and opening a game, and showing its files. */
 import path from "node:path";
 import { dialog, shell, type BrowserWindow } from "electron";
+import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
@@ -29,7 +30,8 @@ export function registerProjectsIpc(
 ): void {
   handle("studio:open-url", async (payload) => {
     if (!/^https:\/\//i.test(payload.url ?? "")) throw new Error(MESSAGE.httpsOnly);
-    await shell.openExternal(payload.url);
+    // Every renderer link lands here; a genex.games page goes tagged `s=desktop`.
+    await shell.openExternal(tagGenexLink(payload.url));
     return true;
   });
   handle("studio:export", async (payload) => {

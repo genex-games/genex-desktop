@@ -12,9 +12,17 @@ import { fixtureEngines } from "../../src/main/dev/fixtures.ts";
 import { OllamaEngine } from "../../src/substrate/engines/ollama.ts";
 import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
+import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
+import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
 test("pre-init injection avoids every real engine status/models/auth probe and keeps sandbox enabled", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dev-policy-"));
-  for (const proto of [OllamaEngine.prototype, CodexEngine.prototype, ClaudeCodeEngine.prototype])
+  for (const proto of [
+    OllamaEngine.prototype,
+    CodexEngine.prototype,
+    ClaudeCodeEngine.prototype,
+    OpenCodeEngine.prototype,
+    OpenRouterEngine.prototype,
+  ])
     for (const key of ["status", "models", "probeAuth"])
       if (typeof (proto as any)[key] === "function")
         t.mock.method(proto as any, key, () => {
@@ -35,11 +43,12 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   });
   await core.start();
   assert.equal(core.host.state, "ready");
-  assert.equal((await core.engines.describe()).length, 3);
+  // Flipped (OpenCode, OpenRouter): five scripted engines, never a real one.
+  assert.equal((await core.engines.describe()).length, 5);
   assert.equal(core.sandbox.enabled, true);
   await core.updateSettings({ architect: true });
   let calls = 0;
-  for (const engine of [core.engines.get("ollama"), core.engines.get("codex"), core.engines.get("claude-code")])
+  for (const engine of core.engines.all())
     if (engine.complete)
       t.mock.method(engine as Required<typeof engine>, "complete", async () => {
         calls++;

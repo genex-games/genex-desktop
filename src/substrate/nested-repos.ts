@@ -28,7 +28,7 @@ const MESSAGE = {
 /**
  * The repositories a folder holds directly inside it: the user's own game, dropped into a
  * project folder. Git records such a folder as a pointer, not as files, which is why the studio
- * has to ask before it may version one (decision 1, 2026-09-08).
+ * has to ask before it may version one.
  */
 export async function nestedRepos(dir: string): Promise<string[]> {
   const found: string[] = [];

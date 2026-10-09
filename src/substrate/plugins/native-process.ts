@@ -27,7 +27,7 @@ const MACH_SERVICES = [
 /**
  * A GPU job (Blender's Metal renders) still gets the other mach services. A render starts an AppKit
  * session, and AppKit's RegisterApplication checks in with LaunchServices, the quarantine resolver
- * and TCC; refusing those aborts Blender before it draws (seen on a real render, 2026-09-24). What
+ * and TCC; refusing those aborts Blender before it draws. What
  * stays refused by name is what a job could use to act outside its sandbox: opening other
  * applications, the pasteboard, screen capture and the Dock.
  */

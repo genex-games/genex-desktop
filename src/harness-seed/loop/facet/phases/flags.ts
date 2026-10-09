@@ -44,8 +44,7 @@ export async function readHarnessFlags(loop: FacetLoop, round: FacetRound): Prom
  * takes it. It used to be deleted here first and offered afterwards, so an orchestrator with no
  * router (the director's workers, until M3.5) did not hand the defect over — it destroyed it,
  * and nobody ever saw the complaint again. Delivered, the artefact class is blocked from
- * re-growing here too; the village run kept a mist band on village-fabric for nine iterations
- * after this exact flag. True when the check went to the other facet.
+ * re-growing here too, so a flagged defect does not linger for iterations after it. True when the check went to the other facet.
  */
 async function rerouteFlaggedCheck(loop: FacetLoop, round: FacetRound, flag: Flag): Promise<boolean> {
   const { facet, facets, routeDefect, spec } = loop;

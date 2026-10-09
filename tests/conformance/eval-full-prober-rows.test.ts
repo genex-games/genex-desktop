@@ -242,9 +242,9 @@ function logFrames(): LoggedFrame[] {
 describe("l3.dark_phase and l3.spatially_legible", () => {
   it("measures the frames the operator named, and is unknown without a review", () => {
     const frames = logFrames();
-    const night = frames.slice(1).map((f) => f.record.file);
+    const loopRun = frames.slice(1).map((f) => f.record.file);
     const review = {
-      files: night,
+      files: loopRun,
       phase: "village at night",
       gameplayReadable: true,
       note: "paths and doors readable",

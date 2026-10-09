@@ -37,3 +37,6 @@ export function clipMarked(value: unknown, max: number): string {
   const text = String(value ?? "");
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
+
+/** Cuts at a word boundary, kept in a module of their own (a kept older text.ts still links them). */
+export { clipTailWords, clipWords } from "./word-clip.ts";

@@ -3,14 +3,14 @@
  *
  * "Weak local model produces garbage games" is a listed corner case; the honest answer is to
  * know the machine and say what it can actually run, rather than letting the user discover it
- * after a 20 GB download and a night of bad output.
+ * after a 20 GB download and a run of bad output.
  *
  * Fit rule (from the plan): model file (≈ params × 0.55–0.65 GB/B at Q4/MXFP4) + KV cache
  * (0.5–3 GB) + 1–2 GB overhead must fit in the model budget — the whole machine's RAM is never
  * available to the model.
  *
  * That budget is ⅔ of RAM elsewhere, but 0.72 on Apple Silicon, where unified memory means Metal
- * is handed far more than a discrete GPU would get. Measured on an M2 Max/32 GB (21 Aug 2026):
+ * is handed far more than a discrete GPU would get. Measured on an M2 Max/32 GB:
  * Ollama reported `gpu memory available 24.5 GiB` — 76.5% of the machine — and an 18.2 GB model
  * loaded with all 66 layers on the GPU at 18.0 GiB peak, with 22.5 GiB still free. At ⅔ the studio
  * would have told the user that its own verified default model did not fit.
@@ -236,7 +236,7 @@ export function catalogUpdated(): string {
 }
 
 /**
- * Memory a new preview window could actually take (director, 2026-09-07). `os.freemem()` on macOS is the
+ * Memory a new preview window could actually take. `os.freemem()` on macOS is the
  * free-page count alone — 1.3 GB "free" on a 32 GB machine with 8 GB inactive — so a worker
  * limit built on it refused work the machine could easily do. On Darwin the answer is
  * vm_stat's free + inactive + speculative + purgeable pages; elsewhere `os.freemem()` stands.

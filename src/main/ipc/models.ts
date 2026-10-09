@@ -12,10 +12,32 @@ import type { SubscriptionEngine } from "../login-controllers.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
+
+/** The engines whose model list Settings may ask to refresh. */
+const REFRESHABLE: ReadonlySet<string> = new Set([
+  EngineId.ClaudeCode,
+  EngineId.Codex,
+  EngineId.OpenCode,
+  EngineId.OpenRouter,
+]);
+/** The engines with no subscription sign-in: a recheck reads their models (and status) again. */
+const RECHECKED_BY_MODELS: readonly string[] = [EngineId.OpenCode, EngineId.OpenRouter];
+
+/** An engine whose API key is pasted in Settings (OpenRouter). */
+interface ApiKeyEngine {
+  saveKey(value: unknown): Promise<EngineStatus>;
+  clearKey(): Promise<EngineStatus>;
+}
+
+const isApiKeyEngine = (engine: unknown): engine is ApiKeyEngine =>
+  typeof (engine as Partial<ApiKeyEngine> | null)?.saveKey === "function" &&
+  typeof (engine as Partial<ApiKeyEngine> | null)?.clearKey === "function";
 
 /** Why a local model request from the renderer is refused. */
 const MESSAGE = {
+  unknownProvider: "Unknown coding provider",
+  noKeyEngine: "OpenRouter is unavailable",
   bonsaiUnavailable: "Bonsai runtime is unavailable",
   noModel: "Name the model to delete",
   cannotRemove: "This model cannot be deleted here",
@@ -31,10 +53,12 @@ export function registerModelsIpc(handle: IpcHandle, { core, subscription, pushU
   handle("studio:engines", async () => core.engines.describe());
   handle("studio:models.refresh", async (payload) => {
     const provider = payload?.provider;
-    if (provider !== EngineId.ClaudeCode && provider !== EngineId.Codex) throw new Error("Unknown coding provider");
+    if (typeof provider !== "string" || !REFRESHABLE.has(provider) || !core.engines.has(provider))
+      throw new Error(MESSAGE.unknownProvider);
     await core.engines.get(provider).refreshModels?.(true);
     return true;
   });
+  registerApiKeyIpc(handle, { core, pushUiEvent });
   // The composer's plan limits: every signed-in subscription, read without starting a turn.
   handle("studio:provider-usage", async () => {
     const reports = await Promise.all(
@@ -49,9 +73,15 @@ export function registerModelsIpc(handle: IpcHandle, { core, subscription, pushU
   });
   handle("studio:hardware", async () => hardwareReport());
   handle("studio:engines.recheck", async (payload) => {
-    for (const id of payload?.engine ? [payload.engine] : SUBSCRIPTION_ENGINES) {
+    const ids = payload?.engine ? [payload.engine] : [...SUBSCRIPTION_ENGINES, ...RECHECKED_BY_MODELS];
+    for (const id of ids) {
       const engine = subscription(id);
       if (engine) await engine.recheckLogin();
+      else if (RECHECKED_BY_MODELS.includes(id) && core.engines.has(id))
+        await core.engines
+          .get(id)
+          .refreshModels?.(true)
+          .catch(() => {});
     }
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: {} });
     return true;
@@ -115,5 +145,27 @@ export function registerModelsIpc(handle: IpcHandle, { core, subscription, pushU
       progressUpdates.flush();
     }
     return true;
+  });
+}
+
+/** The OpenRouter key: checked with OpenRouter, kept in the OS secret store, never sent back. */
+function registerApiKeyIpc(
+  handle: IpcHandle,
+  { core, pushUiEvent }: Pick<ModelsIpcDeps, "core" | "pushUiEvent">,
+): void {
+  const keyEngine = (): ApiKeyEngine => {
+    const engine = core.engines.has(EngineId.OpenRouter) ? core.engines.get(EngineId.OpenRouter) : null;
+    if (!isApiKeyEngine(engine)) throw new Error(MESSAGE.noKeyEngine);
+    return engine;
+  };
+  handle("studio:openrouter.key.save", async (payload) => {
+    const status = await keyEngine().saveKey(payload?.key);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenRouter } });
+    return status;
+  });
+  handle("studio:openrouter.key.clear", async () => {
+    const status = await keyEngine().clearKey();
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenRouter } });
+    return status;
   });
 }

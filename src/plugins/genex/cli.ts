@@ -20,6 +20,8 @@ const STDERR_TAIL_CHARS = 4000;
 /** How much of a failure's output reaches the job record. */
 export const ERROR_TAIL_CHARS = 3000;
 const REDACTED = "[redacted]";
+/** A CLI run's answer is its output only when it exits 0, unless the run names other codes. */
+const ANSWER_EXIT_CODES: readonly number[] = [0];
 
 const MESSAGE = {
   NoStructuredResult: "Genex returned no structured result",
@@ -86,6 +88,21 @@ export interface GenexCliRun {
   timeoutMs: number;
   parse: boolean;
   home?: string;
+  /**
+   * The exit codes whose output is the command's answer rather than a failure; `[0]` unless given.
+   * `genex cover <file>` exits 1 for a frame Genex refused, which is an answer like any other.
+   */
+  answerExitCodes?: readonly number[];
+}
+
+/** A run stopped here, by its signal or its timeout, before the CLI answered. */
+export class GenexCliStopped extends Error {
+  readonly timedOut: boolean;
+  constructor(timedOut: boolean) {
+    super(MESSAGE.LocalStop(timedOut));
+    this.name = "GenexCliStopped";
+    this.timedOut = timedOut;
+  }
 }
 
 /** The CLI's output so far, each stream kept to its tail. */
@@ -130,8 +147,9 @@ function stopOnAbortOrTimeout(child: ChildProcess, signal: AbortSignal | undefin
 /** What a finished CLI run means: its answer, or the error that explains why there is none. */
 function cliResult(run: GenexCliRun, code: number | null, output: CliOutput, timedOut: boolean): unknown {
   const redact = (text: string) => text.replaceAll(run.token, REDACTED);
-  if (run.signal?.aborted || timedOut) throw new Error(MESSAGE.LocalStop(timedOut));
-  if (code !== 0) throw new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
+  if (run.signal?.aborted || timedOut) throw new GenexCliStopped(timedOut);
+  const answered = code !== null && (run.answerExitCodes ?? ANSWER_EXIT_CODES).includes(code);
+  if (!answered) throw new Error(redact(output.err || output.out || MESSAGE.Exited(code)).slice(-ERROR_TAIL_CHARS));
   if (!run.parse) return { out: redact(output.out) };
   return parseGenexJson(output.out);
 }

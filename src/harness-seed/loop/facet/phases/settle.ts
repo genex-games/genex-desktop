@@ -13,6 +13,8 @@ import { FIX_STUCK_LOSSES } from "../policy.ts";
 import { recordDecision } from "../record.ts";
 import { ReplanSource } from "./replans.ts";
 import { CLIP_QUOTE } from "../../text.ts";
+import { FINISH_POLISH_NOTES, polishCountsInStage, polishEscalates, roundStage } from "../stage.ts";
+import { carryFixesOver } from "../carried-fixes.ts";
 
 /** The judge's biggest gaps a brief remembers, newest first. */
 const MAX_GAP_HISTORY = 4;
@@ -37,6 +39,8 @@ export async function settleMoveAndGap(loop: FacetLoop, round: FacetRound): Prom
   countGapStreak(loop, round, fixed);
   if (loop.currentFix) await settleTheFix(loop, round, loop.currentFix, fixed);
   updateDefectLedger(loop, round);
+  // An undone round's demonstrated fixes ride into every next brief until the accepted build has them.
+  loop.carriedFixes = carryFixesOver(loop.carriedFixes, { round, spec: loop.spec, board: loop.board });
   loop.loseStreak = round.won ? 0 : loop.loseStreak + 1;
 }
 
@@ -47,8 +51,10 @@ async function settleMove(loop: FacetLoop, round: FacetRound): Promise<void> {
   const move = loop.currentMove;
   const structural = round.taste?.scale === ChangeScale.Structural;
   if (!move?.what || round.challengerBroken) {
-    const landedStructure = round.won && !round.challengerBroken && structural;
-    if (landedStructure) loop.polishStreak = 0;
+    // A finishing worker's won round is polish on purpose: it clears the streak, so a later steer
+    // back to the build stage does not inherit one.
+    const landed = structural || !polishCountsInStage({ stage: roundStage(round, loop.spec) });
+    if (round.won && !round.challengerBroken && landed) loop.polishStreak = 0;
     return;
   }
   const fate = moveVerdict({ move, board: round.attemptBoard, taste: round.taste, won: round.won });
@@ -104,9 +110,15 @@ async function missRung(loop: FacetLoop, move: AnyRecord): Promise<void> {
   );
 }
 
-/** Polish, build after build, while a move stood undelivered: the next brief escalates, and says so. */
+/**
+ * Polish, build after build, while a move stood undelivered: the next brief escalates, and says so
+ * — only where it really will. A director-owned worker past its ladder gets guidance, never a
+ * mandate, and a finishing worker takes no move at all; telling either "a build without it loses"
+ * was false.
+ */
 async function warnPolishStreak(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { facet, policy } = loop;
+  if (!polishEscalates(loop.spec)) return;
   const escalates = loop.polishStreak >= policy.polishStreakEscalate;
   if (!escalates || !round.moveRecord) return;
   if (round.moveRecord.delivered) return;
@@ -200,13 +212,16 @@ async function countFixLoss(loop: FacetLoop, round: FacetRound, fix: AnyRecord, 
 
 /**
  * The judge's defects and the notes no camera can answer, in one ledger for the next brief; its
- * polish notes and its big move beside it. The critic's polish fixes no longer pad the ledger:
- * the golden-goal night's ledgers were mostly nits, and the builders spent their rounds on them.
+ * polish notes and its big move beside it. The critic's polish fixes do not pad the ledger: a
+ * ledger of nits has the builders spend their rounds on them.
  */
 function updateDefectLedger(loop: FacetLoop, round: FacetRound): void {
   if (round.verdict.defects?.length) loop.defectList = round.verdict.defects;
   if (round.taste) {
-    loop.polishList = round.taste.polish ?? [];
+    const polish = round.taste.polish ?? [];
+    // A finishing worker's polish list is its work: the judge's eight, not the build stage's three.
+    const counts = polishCountsInStage({ stage: roundStage(round, loop.spec) });
+    loop.polishList = counts ? polish : polish.slice(0, FINISH_POLISH_NOTES);
     if (round.taste.bigMove) loop.lastBigMove = round.taste.bigMove;
   }
   // A defect no camera can answer keeps its place in the ledger, with the expression that

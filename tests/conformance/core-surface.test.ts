@@ -110,6 +110,7 @@ const METHODS = [
   "start",
   "stop",
   "stopLive",
+  "stopRun",
   "stopThread",
   "threadForGame",
   "undoSelfChange",
@@ -119,7 +120,7 @@ const METHODS = [
   "withApprovedExport",
 ];
 // `planReviews` is TypeScript-`private`, which is erased: it is still reachable at run time.
-const ACCESSORS = ["assetCheckpoints", "pendingUpdateId", "planReviews", "settings"];
+const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "pendingUpdateId", "planReviews", "settings"];
 /** Own enumerable fields after `init()` (true `#private` state is not visible and not listed). */
 const FIELDS = [
   "budget",

@@ -1,10 +1,10 @@
 import { LearningSummary } from "../chat/LearningSummary.tsx";
 /**
- * The morning card — the last thing a night writes into the chat, and usually the first thing
+ * The morning card — the last thing a run writes into the chat, and usually the first thing
  * the user reads.
  *
  * What it replaced: "RUN · ended after 21 iterations — the director finished the run", under
- * thirty judge cards, over a night that had built, merged and judged a game. Everything here is
+ * thirty judge cards, over a run that had built, merged and judged a game. Everything here is
  * the answer to one of the three questions a person actually has at 8 am — what happened, what
  * does it look like now, and can I play it.
  */
@@ -55,17 +55,19 @@ export interface MorningCardProps {
   kept: number;
   undone: number;
   landed: boolean | null;
-  /** the night is paused: Resume is the card's own primary action, not a grey line under it */
+  /** the run is paused: Resume is the card's own primary action, not a grey line under it */
   paused?: boolean;
+  /** the provider failure that paused it (the close's `limit.kind`), when one did */
+  pausedOn?: string | null;
   stoppedBecause?: string | null;
-  /** the night's report to the user, when it wrote one */
+  /** the run's report to the user, when it wrote one */
   summary: string | null;
   /** the plain sentence the close wrote about landing, when it wrote one */
   landingLine?: string | null;
-  /** what the studio itself took from the night — its own ledger's one line, when it had one */
+  /** what the studio itself took from the run — its own ledger's one line, when it had one */
   learned?: string | null;
   project: string | null;
-  /** the merged build, when the night left one that is not the live game */
+  /** the merged build, when the run left one that is not the live game */
   commit: string | null;
   before: string | null;
   after: string | null;
@@ -87,6 +89,7 @@ export function MorningCard({
   undone,
   landed,
   paused = false,
+  pausedOn = null,
   stoppedBecause,
   summary,
   landingLine,
@@ -110,6 +113,7 @@ export function MorningCard({
     undone,
     landed,
     paused,
+    pausedOn,
     // The sentence and the buttons read the same fact: a build exists only if there is one to open.
     hasBuild: Boolean(project && commit),
     stoppedBecause: stoppedBecause ?? null,
@@ -130,14 +134,19 @@ export function MorningCard({
   const showBecause = !handedOff && !(outcomeHasPlayback && outcome?.landed === true);
   const showLive = (): void => {
     // A landed build is already the game folder; loading it puts the stage back on the real
-    // thing after a night in which a merged build may have been shown from a worktree.
+    // thing after a run in which a merged build may have been shown from a worktree.
     if (project) void window.studio.loadPreview(project).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
     onShowLive?.();
   };
   const button = (action: MorningAction): JSX.Element | null => {
     if (action === MorningAction.Resume) {
       return (
-        <Button key={action} title="Pick the build up where it left off" onClick={() => onResume?.()}>
+        <Button
+          key={action}
+          title="Pick the build up where it left off"
+          data-run-resume={runId ?? undefined}
+          onClick={() => onResume?.()}
+        >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>

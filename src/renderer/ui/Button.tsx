@@ -12,13 +12,10 @@ import { accentChipClass } from "./accent-chip.tsx";
  * by hand. `font-mono` carries the house -0.02em from globals.css, so a button
  * never needs its own `tracking-*` either.
  *
- * IT ALSO OWNS THE SIZE, and that claim was FALSE for a day (owner round 5,
- * 2026-08-17: "I don't see that this is a small size, as if you are deceiving
- * me" - and he was right, measured at 36px). `defaultVariants` said `sm`, but
- * the component signature also wrote `size = "default"`, and a default
- * PARAMETER wins: cva only falls back to its own default when the prop is
- * `undefined`, so every one of the 130 call sites that passes no size was
- * silently handed the 36px one. The rule is therefore structural: `size` and
+ * IT ALSO OWNS THE SIZE. A default PARAMETER in the component signature
+ * (`size = "default"`) would win over `defaultVariants`: cva only falls back
+ * to its own default when the prop is `undefined`, so every call site that
+ * passes no size would silently get the 36px one. The rule is therefore structural: `size` and
  * `variant` take their defaults from `defaultVariants` BELOW and must never
  * carry a default in the parameter list. `data-size` restates the resolved
  * value for the drift gate, which is the only reason it needs the `??`.

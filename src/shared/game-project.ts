@@ -30,7 +30,7 @@ export interface GameProject {
  * What kind of game a folder holds, decided from the libraries and runtimes it actually loads —
  * never from the entry filename. `src/main.js` is Vite's stock layout as much as the studio's,
  * and reading it as "the template" is what served the user's own three.js game raw, with a bare
- * `three` import nothing could resolve (flautout-remix/wreckage, 2026-09-07).
+ * `three` import nothing could resolve.
  *
  * The kind says what the game *is*; `build` and `serve` say how it runs. A bundled Phaser game
  * is `phaser`, not `three-vite`.
@@ -48,8 +48,7 @@ export type ProjectKind =
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
  * as a native ES module. A folder the user brings — Vite, TypeScript, any bundler — keeps its
  * own entry and build; the studio runs the build and serves its output instead of the sources
- * (skate-prod, 2026-09-06: served raw, `/src/main.ts` was refused by the browser and every
- * critic judged a black frame).
+ * (served raw, `/src/main.ts` is refused by the browser and every critic judges a black frame).
  */
 export interface ProjectShape {
   /** The page the preview serves, relative to the project — inside the build output when there is a build. */
@@ -101,7 +100,7 @@ export interface GameCandidate {
   why: string[];
 }
 
-/** What would stop a night on a candidate — read before anything is written. */
+/** What would stop a run on a candidate — read before anything is written. */
 export interface FolderPreflight {
   /** The page the preview will serve, relative to the candidate. */
   entry: string;

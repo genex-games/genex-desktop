@@ -1,7 +1,7 @@
 /**
  * THE LOOK PHASE, a measurement and not a tour: eight ~45° yaw steps with a capture at each, a short
- * forward leg, a second sweep. A bare village run once kept the player inside a 2.6 × 4.6 unit box
- * for the whole soak at uncorrelated headings, and the judge could not see a blacksmith that exists.
+ * forward leg, a second sweep. A soak alone can keep the player inside a few units of ground at
+ * uncorrelated headings, and the judge then cannot see what exists past them.
  *
  * CLOSED LOOP. The camera is read before and after every step and the achieved yaw recorded;
  * `reached` is whether any sweep turned the heading past `MIN_LOOK_YAW_DEG`. The input is synthetic

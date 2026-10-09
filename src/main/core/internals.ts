@@ -42,7 +42,7 @@ export interface ActiveDelegation {
   /**
    * Steer (`chat-steer.ts`): this session is its chat's current turn — the message it answers — so
    * what the person sends meanwhile can reach it (`engine.steer`). Only a chat's own session, or a
-   * night's lead, whose turn is its run id.
+   * run's lead, whose turn is its run id.
    */
   chatTurn?: string;
   /** Its input mid-turn, when its engine reads messages as it works (`Engine.steersMidTurn`). */
@@ -154,7 +154,7 @@ export interface PreviewState {
   readonly profileSources: Map<string, { candidateId: string; revision: Revision }>;
   /**
    * Folders the user named in chat that sit outside the project — stills to look at, not to write.
-   * Keyed by project id. Restored from thread metadata so an overnight run still sees them.
+   * Keyed by project id. Restored from thread metadata so an unattended run still sees them.
    */
   readonly readRoots: Map<string, Set<string>>;
   runPreview: RunPreview;

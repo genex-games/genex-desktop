@@ -32,7 +32,7 @@
     },
     {
       "source": "skills/threejs-craft.md (deployed, 1 Sep 2026)",
-      "note": "toneMappingExposure 0.6–0.8 for reference matches; ACES with exposure ≈0.35 and ambient ≤0.05 for dark interiors (run_mt8pg4exqnpn); change a named defect by ≥30%"
+      "note": "toneMappingExposure 0.6–0.8 for reference matches; ACES with exposure ≈0.35 and ambient ≤0.05 for dark interiors; change a named defect by ≥30%"
     },
     {
       "source": "skills/unattended-runs.md (deployed, 1 Sep 2026)",

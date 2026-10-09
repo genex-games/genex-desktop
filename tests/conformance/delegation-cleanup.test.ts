@@ -1,5 +1,5 @@
 /**
- * A delegation's cleanup runs to the end whatever one step of it throws (P05-F7): a plugin lease
+ * A delegation's cleanup runs to the end whatever one step of it throws: a plugin lease
  * whose release fails (a pending plugin update that cannot activate) used to skip the rest, so the
  * folder stayed locked and the budget counted the work as running forever.
  */
@@ -8,7 +8,7 @@ import { it } from "node:test";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
-it("a plugin lease that fails to release still frees the folder for the next delegation (P05-F7)", async () => {
+it("a plugin lease that fails to release still frees the folder for the next delegation", async () => {
   const lite = await coreLite();
   try {
     const { core } = lite;

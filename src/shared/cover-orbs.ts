@@ -2375,7 +2375,7 @@ void orbMain() {
   float peak = max(col.r, max(col.g, col.b));
   float a = clamp(peak * uP_alphaGain, 0.0, 1.0);
 
-  // the night behind: a fill so the ball is a solid sphere, not a cut-out
+  // the run behind: a fill so the ball is a solid sphere, not a cut-out
   col += uC_deep * uP_fill;
   a = max(a, uP_fill);
 

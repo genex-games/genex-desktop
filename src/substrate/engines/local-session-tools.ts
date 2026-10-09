@@ -12,6 +12,7 @@ import type { ToolCall } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { LOCAL_NOTE, LOCAL_TOOL_DESCRIPTION } from "./local-session-prompts.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
+import { captureArgs } from "./capture-args.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult, ToolDefinition } from "./types.ts";
 
 /** The local session's own tools, by the name the model calls. */
@@ -103,7 +104,13 @@ export function localToolDefinitions(request: DelegateRequest, readonly: boolean
       tool(LocalTool.WriteFile, LOCAL_TOOL_DESCRIPTION.writeFile, { path: str, content: str }, ["path", "content"]),
       tool(LocalTool.RunCommand, LOCAL_TOOL_DESCRIPTION.runCommand, { command: str }, ["command"]),
     );
-  if (request.onCapture) definitions.push(tool(LocalTool.Capture, LOCAL_TOOL_DESCRIPTION.capture, { cameras: str }));
+  if (request.onCapture)
+    definitions.push(
+      tool(LocalTool.Capture, LOCAL_TOOL_DESCRIPTION.capture, {
+        cameras: str,
+        page: { ...str, description: LOCAL_TOOL_DESCRIPTION.capturePage },
+      }),
+    );
   for (const t of request.liveTools ?? [])
     definitions.push({ name: t.name, description: t.description, parameters: t.inputSchema ?? t.parameters });
   for (const t of request.interviewTools ?? []) definitions.push(t);
@@ -306,5 +313,5 @@ async function runCommandTool(args: ToolArgs, context: ToolContext): Promise<Liv
 async function captureTool(args: ToolArgs, context: ToolContext): Promise<LiveToolResult> {
   const { onCapture } = context.request;
   if (!onCapture) throw new Error(MESSAGE.NoCapture);
-  return onCapture({ cameras: typeof args.cameras === "string" ? args.cameras : undefined });
+  return onCapture(captureArgs(args));
 }

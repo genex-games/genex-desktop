@@ -98,7 +98,7 @@ test("context policies persist by model/chat, inherit, validate bounds and refus
   assert.equal((await reopened.get("bonsai", "small", "chat")).policy.thresholdPercent, 65);
   await reopened.set("bonsai", "small", null, "chat");
   assert.equal((await reopened.get("bonsai", "small", "chat")).policy.thresholdPercent, 55);
-  // Claude Code and Codex compact at their own point (owner, 2026-10-05): no threshold of ours.
+  // Claude Code and Codex compact at their own point: no threshold of ours.
   for (const engine of ["claude-code", "codex"]) {
     await assert.rejects(
       settings.set(engine, "default", { mode: "custom", thresholdPercent: 70 }),

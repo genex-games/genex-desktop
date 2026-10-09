@@ -1,25 +1,23 @@
 /** The round on the record, and whether the facet goes on. */
 import { isMeasured } from "../../checks.ts";
+import { appliesToBuild } from "../../applies-to-build.ts";
 import { Against, againstWords, observedFrom, roundRule, VerdictPass, verdictRecord } from "../../verdict.ts";
-import { GIT, commitAll, shortSha } from "../../git.ts";
 import { StopCode, stopWith } from "../../outcomes.ts";
-import { EngineFailure } from "../../outage.ts";
 import { RunEvent } from "../../run-events.ts";
-import { MINUTE_MS } from "../../time.ts";
 import { CheckWeight } from "../../spec.ts";
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
 import { RoundFlow } from "../flow.ts";
 import { brokenStreakWords, facetIsDone, grownCheckIds, smooth } from "../rules.ts";
 import { recordDecision, unjudgedMove } from "../record.ts";
+import { FacetStage, finishDone, isFinishing, roundStage } from "../stage.ts";
 import { Side } from "../../judge.ts";
+import { MINUTE_MS } from "../../time.ts";
 
 /** The defects a round's record lists, at most. */
 const MAX_RECORD_DEFECTS = 24;
 /** Build turns the engine may fail in a row before the facet stops. */
 const ENGINE_FAILURES_TO_STOP = 3;
-/** How long a rate limit is waited out when the engine names no time. */
-const DEFAULT_RATE_LIMIT_WAIT_MS = MINUTE_MS;
 
 /** The round's record, published; what the round cost, measured. */
 export async function publishRound(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
@@ -28,8 +26,10 @@ export async function publishRound(loop: FacetLoop, round: FacetRound): Promise<
   result.board = loop.board;
 
   round.failingNow = Object.values(loop.board).filter((e) => e.pass === false);
-  round.unmeasuredNow = (Object.values(round.attemptBoard) as AnyRecord[]).filter((e) => !isMeasured(e));
-  // A check the judge grew tonight is not one the part was planned against. The verdict record
+  // Only this build's questions: a harness check it cannot answer is in no count, so in no list.
+  round.applyingNow = (Object.values(round.attemptBoard) as AnyRecord[]).filter((e) => appliesToBuild(e, spec));
+  round.unmeasuredNow = round.applyingNow.filter((e: AnyRecord) => !isMeasured(e));
+  // A check the judge grew this run is not one the part was planned against. The verdict record
   // counts the two apart, so a card can stop reading a judge's own new question as a win.
   round.grownIds = grownCheckIds(spec, round.retiredGrown);
   round.record = {
@@ -44,7 +44,7 @@ export async function publishRound(loop: FacetLoop, round: FacetRound): Promise<
     // The defect list the UI shows: failing checks (identity first) then the taste judge's.
     defects: recordDefects(round),
     reason: round.verdict.reason ?? "",
-    // Which judge said so (P14-F5): model, prompt hash, reply, usage.
+    // Which judge said so: model, prompt hash, reply, usage.
     judgeCall: round.verdict.judgeCall ?? null,
     verdictSource: round.verdictSource,
     partial: round.partialWork,
@@ -65,23 +65,30 @@ export async function publishRound(loop: FacetLoop, round: FacetRound): Promise<
     liveness: livenessRecord(round.liveness),
     spike: spikeRecord(loop, round),
     ...pictureRecord(loop, round),
-    // The same record every other judge of the night writes: what was looked at, what was
+    // The same record every other judge of the run writes: what was looked at, what was
     // measured, what the judge saw, and one sentence saying why. `verdictSource` and the
     // scoreboard stay where they are — this is the shape the screen reads, not a replacement.
     verdict: roundVerdict(loop, round),
     threadId: facetThreadId,
+    // The worker's first, long round (facet/build-block.ts): the director sizes no round from it.
+    ...(round.buildBlock ? { buildBlock: { minutes: buildMinutes(round), turns: round.blockTurns ?? 0 } } : {}),
   };
   await publishIteration(round.record);
   round.spikeText = null;
   // What this round actually cost, for the gate at the top of the next one. Measured in the
   // two halves it is spent in, and only on a round that ran all the way to a verdict — a
-  // stopped or held round says nothing about how long the work takes.
-  loop.emaBuildMs = smooth(loop.emaBuildMs, round.buildEndedAt - round.buildStartedAt);
+  // stopped or held round says nothing about how long the work takes. A build block's build is
+  // long on purpose: only its verdict half says what a round costs.
+  if (!round.buildBlock) loop.emaBuildMs = smooth(loop.emaBuildMs, round.buildEndedAt - round.buildStartedAt);
   loop.emaAfterMs = smooth(loop.emaAfterMs, Date.now() - round.buildEndedAt);
   // The round is decided and its cost is measured: the estimate the director sizes the next
   // worker from is only honest here.
   emitLoopState("scored", round.iteration);
 }
+
+/** How long the round's build ran, in whole minutes. */
+const buildMinutes = (round: FacetRound): number =>
+  Math.round((Number(round.buildEndedAt) - Number(round.buildStartedAt)) / MINUTE_MS);
 
 /** Failing checks (identity first), then the judge's own defects. */
 function recordDefects(round: FacetRound): string[] {
@@ -113,11 +120,12 @@ function scoreboardRecord(round: FacetRound): AnyRecord {
     // but it is not the part doing what it was asked, and the card must not say "+1".
     plannedFlips: flips.filter((id) => !round.grownIds.has(id)),
     regressions: round.comparison?.regressions ?? [],
-    // Which checks measured nothing, not just how many: the night ledger keeps these ids
+    // Which checks measured nothing, not just how many: the run ledger keeps these ids
     // and a check that has told nobody anything for three rounds stops being written
     // again (`rarelyMeasurable`). Without them that warning could never fire.
     unmeasuredChecks: (summary.unmeasuredChecks ?? []).map((c: AnyRecord) => c.id),
-    results: (Object.values(round.attemptBoard) as AnyRecord[]).map(({ id, kind, weight, pass, reason, gamed }) => ({
+    // The same entries the counts above are made of, so the record agrees with itself.
+    results: (round.applyingNow as AnyRecord[]).map(({ id, kind, weight, pass, reason, gamed }) => ({
       id,
       kind,
       weight,
@@ -188,7 +196,7 @@ function pictureRecord(loop: FacetLoop, round: FacetRound): AnyRecord {
   };
 }
 
-/** The round's verdict record, in the one shape every judge of the night writes. */
+/** The round's verdict record, in the one shape every judge of the run writes. */
 function roundVerdict(loop: FacetLoop, round: FacetRound) {
   const board = Object.values(round.attemptBoard) as AnyRecord[];
   const satisfied = Boolean(round.verdict.satisfied);
@@ -221,13 +229,15 @@ function roundVerdict(loop: FacetLoop, round: FacetRound) {
 export async function decideExit(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { result } = loop;
   // ── exit: the work it was given is done ──
-  round.finished = facetIsDone({
-    won: round.won,
-    broken: round.challengerBroken,
-    verdict: round.verdict,
-    summary: round.summary,
-    legacy: loop.legacy,
-  });
+  const exit = { won: round.won, broken: round.challengerBroken, summary: round.summary };
+  // A finishing worker is done when the judge preferred its polish and nothing broke: the strict
+  // `satisfied` the build stage waits for is not its contract (facet/stage.ts). Only a round that
+  // ran as a finish ends that way, and only while the worker still finishes: a build round in
+  // flight when the steer to finish landed, or a finish round whose worker a move took back to
+  // building, keeps the build stage's exit.
+  const ranAsFinish = roundStage(round, loop.spec) === FacetStage.Finish;
+  const finishing = ranAsFinish && isFinishing(loop.spec) && !loop.legacy;
+  round.finished = finishing ? finishDone(exit) : facetIsDone({ ...exit, verdict: round.verdict, legacy: loop.legacy });
   if (round.finished) {
     result.satisfied = true;
     stopWith(result, StopCode.Done, round.finished);
@@ -267,57 +277,18 @@ async function breakCircuit(loop: FacetLoop, round: FacetRound, reason: string):
   return RoundFlow.Stop;
 }
 
-/** The build turn failed in the engine: out of usage stops the facet, three in a row stops it, a rate limit is waited out. */
-async function checkEngineHealth(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { deadline, result, sleepFor } = loop;
-  const failure = round.buildEngineError;
-  if (failure.kind === EngineFailure.UsageLimit) return stopOutOfUsage(loop, round);
+/**
+ * The build turn failed in the engine, three in a row stops the facet. A lost provider (a sign-in,
+ * a limit, an outage) never reaches here: its round waits for the provider (facet/provider.ts).
+ */
+function checkEngineHealth(loop: FacetLoop, round: FacetRound): RoundFlow {
+  const { result } = loop;
   loop.engineFailures += 1;
-  if (loop.engineFailures >= ENGINE_FAILURES_TO_STOP) {
-    stopWith(
-      result,
-      StopCode.EngineExhausted,
-      `the engine failed ${loop.engineFailures} build turns in a row — last: ${round.buildFailed}`,
-    );
-    return RoundFlow.Stop;
-  }
-  if (failure.kind === EngineFailure.RateLimit) {
-    const waitMs = Math.min(failure.retryAfterMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, deadline - Date.now());
-    await sleepFor(Math.max(0, waitMs));
-  }
-}
-
-/** The builder's engine is out of usage — a cap that outlives the night: stop, and keep the half-built work. */
-async function stopOutOfUsage(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { engineId, result, worktree } = loop;
-  const failure = round.buildEngineError;
-  stopWith(result, StopCode.UsageLimit, `the engine (${engineId}) is out of usage: ${round.buildFailed}`);
-  // By kind as well as in words: a director on the other subscription reads this as the
-  // workers' limit, not its own (cross-provider roles).
-  result.limit = {
-    kind: EngineFailure.UsageLimit,
-    engine: engineId,
-    message: String(round.buildFailed ?? ""),
-    retryAfterMs: typeof failure.retryAfterMs === "number" ? failure.retryAfterMs : null,
-  };
-  if (worktree) await keepHalfBuilt(loop, round);
+  if (loop.engineFailures < ENGINE_FAILURES_TO_STOP) return;
+  stopWith(
+    result,
+    StopCode.EngineExhausted,
+    `the engine failed ${loop.engineFailures} build turns in a row — last: ${round.buildFailed}`,
+  );
   return RoundFlow.Stop;
-}
-
-/** The half-built round, committed and kept reachable; the stop reason says where. Best-effort. */
-async function keepHalfBuilt(loop: FacetLoop, round: FacetRound): Promise<void> {
-  const { ctx, facet, git, gitOptions, gitWhere, keepReachable, result } = loop;
-  try {
-    await commitAll(
-      ctx,
-      gitWhere,
-      `facet ${facet.id} iteration ${round.iteration}: half-built, engine out of usage — unjudged`,
-      { allowEmpty: true, ...gitOptions },
-    );
-    const held = await git(GIT.head);
-    await keepReachable(held);
-    result.stoppedBecause += ` (work in progress preserved as commit ${shortSha(held)})`;
-  } catch {
-    /* preservation is best-effort */
-  }
 }

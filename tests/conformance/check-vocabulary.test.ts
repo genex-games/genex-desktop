@@ -157,7 +157,7 @@ const CAUGHT: Array<{ name: string; file: string; source: string; rule: Vocabula
   {
     name: "a host method called on another receiver",
     file: SEED,
-    source: "await night.ctx.call('events.list', {});",
+    source: "await run.ctx.call('events.list', {});",
     rule: VocabularyRule.HostCall,
   },
   {

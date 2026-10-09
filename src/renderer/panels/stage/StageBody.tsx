@@ -64,7 +64,7 @@ export function ModelSetup(): JSX.Element {
 }
 
 /**
- * A night is building in its builders' own copies. Once it has a build ready to play, the one thing
+ * A run is building in its builders' own copies. Once it has a build ready to play, the one thing
  * a person waiting here wants is to press Play latest; until then, the way to watch it being made.
  */
 function BuildingGame({
@@ -98,7 +98,7 @@ function BuildingGame({
 }
 
 /**
- * The game's folder has nothing in it yet. While a night runs, this folder being empty is not the
+ * The game's folder has nothing in it yet. While a run is going, this folder being empty is not the
  * whole story: the work is happening in the builders' own copies, and the user is one click from
  * watching it — or, once a build is ready, from playing it.
  */
@@ -146,7 +146,7 @@ export function LiveLoading({ leaving }: { leaving: boolean }): JSX.Element {
 }
 
 /**
- * The person stopped the game. While a night builds, the stage is what it is for a building game
+ * The person stopped the game. While a run builds, the stage is what it is for a building game
  * (the crane, Play latest or Watch progress); otherwise it says the game is stopped, with Play.
  */
 export function StoppedGame({

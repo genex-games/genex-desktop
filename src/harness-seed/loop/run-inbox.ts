@@ -20,7 +20,7 @@ const PROGRESS_EVENT = /facet_|autopilot_|integration_|director_|optimization_up
 /**
  * Its events that are not, though they look it: a wake of the lead is the lead being told, not
  * the run moving, and with up to thirty an hour they pushed the workers' own events off the list;
- * so did a steer's hand-over, two for every chat message a night's lead takes (live chat).
+ * so did a steer's hand-over, two for every chat message a run's lead takes (live chat).
  */
 const NOT_PROGRESS: readonly string[] = [RunEvent.DirectorContinued, RunEvent.RunSteeringDelivered];
 
@@ -186,8 +186,8 @@ export function conversationThrough(events: readonly HarnessEvent[], messageId?:
     });
 }
 
-/** One steer the user sent a run: the event it came in, and its payload. */
-type Steer = AnyRecord & { id: string };
+/** One steer the user sent a run: the event it came in, its payload, and when the event was logged. */
+type Steer = AnyRecord & { id: string; loggedAt?: string | null };
 
 /** What a run's log says so far: whether this session was asked to wrap up, the steers, and who got them. */
 interface InboxFold {
@@ -198,8 +198,8 @@ interface InboxFold {
   /** Every steer handed to anybody. */
   consumed: Set<string>;
   /**
-   * The chat's messages a night's lead took (live chat) that are settled for the run: the lead heard
-   * them, or they went back to the chat, which answered them. A later night never tells them again.
+   * The chat's messages a run's lead took (live chat) that are settled for the run: the lead heard
+   * them, or they went back to the chat, which answered them. A later run never tells them again.
    */
   settledByLead: Set<string>;
 }
@@ -214,34 +214,34 @@ const deliveryKey = (steerId: string, address: string | undefined): string => `$
 /**
  * Take in one event of the run's thread, in log order. A registration opens a session of the run
  * (a resume registers again), and a wrap-up asked of an earlier session is not this one's: a
- * resumed night that inherited it would skip every builder. A hand-over, by any session, is
+ * resumed run that inherited it would skip every builder. A hand-over, by any session, is
  * durable, so a resumed session never hands a steer over twice.
  */
 function absorbInboxEvent(fold: InboxFold, event: HarnessEvent, runId: string): void {
   const d = event?.data;
   if (d?.type !== EventKind.Custom) return;
   const p = d.payload ?? {};
-  // A message a night's lead never heard went back to the chat, which answers it (live chat).
+  // A message a run's lead never heard went back to the chat, which answers it (live chat).
   if (d.event_type === RunEvent.CoordinatorMessageRequeued) settleLeadSteers(fold, p.messageId);
   if (p.runId !== runId) return;
   if (d.event_type === RunEvent.RunRegistered) fold.finishing = false;
   if (d.event_type === RunEvent.RunControl && p.action === RunControlAction.Finish) fold.finishing = true;
   // The director's own worker_steer events are steering too — but its own, not the
-  // user's (a director once asked the user to repeat "1 unread instruction" it had written).
+  // user's (a director must never ask the user to repeat an instruction it wrote itself).
   const userSteer = d.event_type === RunEvent.RunSteering && p.text?.trim() && p.source !== SteeringSource.Director;
-  if (userSteer) fold.instructions.push({ id: event.id, ...p });
+  if (userSteer) fold.instructions.push({ id: event.id, ...p, loggedAt: event.created_at ?? null });
   if (d.event_type === RunEvent.RunSteeringDelivered) absorbDelivery(fold, p);
 }
 
 /**
- * Was this handed to a night's lead (live chat)? A kept steer-delivery.ts from before live chat has
+ * Was this handed to a run's lead (live chat)? A kept steer-delivery.ts from before live chat has
  * no `Lead`, and an ordinary hand-over records no `how`: those two must not read as equal.
  */
 function toTheLead(how: unknown): boolean {
   return how !== undefined && how === SteerDelivery.Lead;
 }
 
-/** A steer handed over (to a worker, or to the build's next brief) — or a chat message a night's lead heard. */
+/** A steer handed over (to a worker, or to the build's next brief) — or a chat message a run's lead heard. */
 function absorbDelivery(fold: InboxFold, p: AnyRecord): void {
   if (toTheLead(p.how)) {
     settleLeadSteers(fold, p.sourceMessageId);
@@ -253,7 +253,7 @@ function absorbDelivery(fold: InboxFold, p: AnyRecord): void {
 }
 
 /**
- * The steers a night's lead took from this chat message so far are settled for the run (live
+ * The steers a run's lead took from this chat message so far are settled for the run (live
  * chat): heard, or back with the chat. One recorded later from the same message — the chat's own
  * `resume_run` — is new.
  */
@@ -273,7 +273,7 @@ export function finishRequested(events: readonly HarnessEvent[], runId: string):
 /**
  * Reads the run's thread from `after` (the whole log by default), so input during planning or
  * base creation survives, and so does what an earlier session of the same run handed over. A chat
- * message a night's lead heard, or that went back to the chat, is not told to a later night.
+ * message a run's lead heard, or that went back to the chat, is not told to a later run.
  */
 export function createRunInbox(
   ctx: HarnessCtx,
@@ -283,8 +283,8 @@ export function createRunInbox(
   let draining: Promise<void> | null = null;
   const fold = emptyInboxFold();
   // `<steer id>:<address>` a consuming `steering` of this inbox has answered with. `onlyNew` is
-  // once per inbox (one night), not per run: a resumed night whose director restarts in a fresh
-  // session must still hear a steer an earlier night's director was told, while the durable
+  // once per inbox (one run), not per run: a resumed run whose director restarts in a fresh
+  // session must still hear a steer an earlier run's director was told, while the durable
   // hand-over keeps it from being recorded twice.
   const told = new Set<string>();
   async function drain() {
@@ -302,7 +302,7 @@ export function createRunInbox(
   /**
    * Remember steers as delivered, then record them as handed over (stage `next brief` or `now`).
    * Remembered first, in the step that chose them: a second reader arriving while the record is
-   * written must not take them too (P09-F10). A record the log refuses forgets them again.
+   * written must not take them too. A record the log refuses forgets them again.
    */
   async function handOver(steers: Array<{ steer: Steer; address: string }>, stage: string): Promise<void> {
     const keys = steers.map(({ steer, address }) => deliveryKey(steer.id, address));
@@ -367,7 +367,7 @@ export function createRunInbox(
     /**
      * The user's steers addressed to one worker (`facetId`), and only those. `steering(undefined)`
      * — the director's own drain — keeps the unaddressed ones by design, so nothing in a
-     * director's night ever read these: they were written, acknowledged in the chat, and
+     * director's run ever read these: they were written, acknowledged in the chat, and
      * delivered to nobody. Consuming answers with the ones not handed over yet, so a caller can
      * poll it.
      */
@@ -381,6 +381,17 @@ export function createRunInbox(
         "now",
       );
       return fresh.map((i) => ({ facetId: i.facetId, text: i.text }));
+    },
+    /**
+     * The steers `steering(facetId, false)` reads, each with when its event was logged (ISO, or
+     * null when the log did not say). Time orders them against something said outside the inbox —
+     * a card the lead posted — whichever part of the log this inbox reads from.
+     */
+    async sentSteering(facetId?: string): Promise<Array<{ text: string; at: string | null }>> {
+      await drain();
+      return fold.instructions
+        .filter((i) => !i.facetId || i.facetId === facetId)
+        .map((i) => ({ text: i.text, at: i.loggedAt ?? null }));
     },
     async backlog(): Promise<string[]> {
       await drain();

@@ -1,6 +1,5 @@
 /**
- * An agent's screen as the Builds graph shows it (computer use, 2026-09-07; moved into the graph
- * 2026-09-28): the window's newest frame with the agent's cursor drawn where its mouse is, what it
+ * An agent's screen as the Builds graph shows it: the window's newest frame with the agent's cursor drawn where its mouse is, what it
  * is doing in plain words, and on a selected node's card the last few frames it sent, to step back
  * through. The cursor is the agent's, not yours: the picture is a window onto someone else's hands.
  */

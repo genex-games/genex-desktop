@@ -1,7 +1,7 @@
-import { durationCommission } from "./commission.ts";
-import { MAX_WORKERS, workerWindows } from "./budgets.ts";
+import { durationCommission, goalCommission } from "./commission.ts";
+import { workersAtOnce } from "./foundation.ts";
 /**
- * The briefs the night's sessions open with, as the model reads them: the director's own, the
+ * The briefs the run's sessions open with, as the model reads them: the director's own, the
  * wrap-up prompt, a single-session worker's and the one that makes somebody's own game
  * judgeable. Only the assembly lives here; the facts come from the caller.
  */
@@ -19,15 +19,27 @@ import { DIRECTOR_TOOLS } from "./tool-specs.ts";
 import { WAKE_BRIEF, wakeTools } from "./wake-prompts.ts";
 import { DirectorLoop } from "./wake-schedule.ts";
 import { workingGoal } from "../goal-prompts.ts";
+import { DIRECTOR_SCOPE_RULE, scopeLines } from "../scope-prompts.ts";
+import { visionBriefLines } from "../vision-prompts.ts";
+import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
-// Type-only: erased at runtime, so this module still imports no part of the night.
-import type { Worker } from "./night.ts";
+// Type-only: erased at runtime, so this module still imports no part of the run.
+import type { Worker } from "./loop-run.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a night
- * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
+ * This part serves a lead that is its chat's own session (one session): it builds in the integration
+ * worktree by its full path and keeps no memory file. A run seats one only when every part it
+ * depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
+
+/**
+ * The pool is a ceiling, not a quota: the fewest workers that cover independent files. A lead told
+ * that an idle window is time lost fills it with something nobody asked for; the wake digest's room
+ * line says where more goes (a deeper layer of an in-scope area). Short, because the brief's own
+ * words are bounded.
+ */
+const CAPACITY_RULE = "A ceiling, not a quota: start the fewest workers that cover independent files.";
 
 /** A brief's lines, with the ones a condition left empty taken out. */
 const joinLines = (lines: ReadonlyArray<string | null | undefined>): string =>
@@ -37,7 +49,7 @@ const joinLines = (lines: ReadonlyArray<string | null | undefined>): string =>
  * The brief for the one session that makes somebody's own game judgeable (M2.6). A game that
  * arrived without the studio contract answers nothing: no state, no cameras, no capture — every
  * judge reads "the build does not run", the fork gate refuses every builder, and there is no
- * "before" for `judge against=start` to compare with. The first real night spent its opening
+ * "before" for `judge against=start` to compare with. The first real run spent its opening
  * hour with the lead hand-wiring it in its own worktree because nobody had been given the job.
  *
  * It is the base builder's own-shape wiring task and nothing else (autopilot.ts
@@ -58,6 +70,7 @@ export function contractBrief({
     `You are making the game "${projectLabel}" judgeable for run ${run.runId}, in an isolated copy of it (this folder). This is your only job: nothing in this game can be looked at, checked or compared until its page loads the studio contract.`,
     ``,
     `GAME GOAL (context — not this run's work): ${workingGoal(run)}`,
+    scopeLines(run),
     ``,
     `THIS GAME HAS ITS OWN SHAPE — it is not the studio's template. Its entry is ${entryMain}${shape?.build ? `, its page is built with \`${shape.build}\`` : ""} and the studio serves ${shape?.entry ?? "index.html"}. Keep all of it: no second entry, do not replace index.html, do not rewrite the game, do not restyle or "clean up" anything.`,
     ``,
@@ -99,7 +112,8 @@ export interface DirectorBriefFacts {
   loop?: DirectorLoop;
   /**
    * A lead that is its chat's own session (one session): where it sits. It reads the lines written
-   * for a lead that writes nothing; absent, a director with its own hands in `integrationWorktree`.
+   * for a lead, which builds in the integration worktree by its full path; absent, a director whose
+   * cwd is `integrationWorktree`.
    */
   lead?: { gameFolder: string } | null;
 }
@@ -107,12 +121,11 @@ export interface DirectorBriefFacts {
 /**
  * The pool as the brief states it: how many workers may run at once (the user's Maximum
  * concurrent workers — the pool less the lead's own two windows) and the memory free, or that
- * nobody knows. The golden-goal night's brief said "8 of 8 worker windows free" of a pool whose
- * workers could use six, and the lead started three.
+ * nobody knows — never the raw window count, which overstates what workers can use.
  */
 function poolWords(capacity: AnyRecord | null): string {
   if (!capacity?.max) return "the pool size is unknown";
-  const atOnce = capacity.headless === false ? 1 : Math.min(MAX_WORKERS, workerWindows(capacity.max));
+  const atOnce = workersAtOnce(capacity);
   return `up to ${atOnce} workers at once (the user's setting; two more windows are yours), ${capacity.memory?.freeMb ?? "?"} MB memory free`;
 }
 
@@ -143,7 +156,7 @@ function requestedStateLine(setup: AnyRecord | null | undefined): string {
 }
 
 /**
- * What the night owes this game before anything else: a page that never loads the studio
+ * What the run owes this game before anything else: a page that never loads the studio
  * contract cannot be judged at all, so the studio wires it in first (M2.6) — and says so
  * here whether that worked, because the fallback is the lead doing it with its own hands.
  */
@@ -164,8 +177,19 @@ function unobservedStartLine(startObserved: boolean, startingPoint: AnyRecord | 
   return `THE START COULD NOT BE OBSERVED: the game as this run found it drew nothing a camera could see, so there is no "before" to compare with — \`judge against=start\` will say so. Judge a build on its own evidence (checks, a question) or against another build, and do not spend calls on the comparison.`;
 }
 
-/** The starting point the studio built for an empty project, or why it could not. */
+/**
+ * The foundation a run with room for a team lays itself (foundation.ts `foundationFirst`): no starting
+ * scene was built, so the lead writes the contract, the vision and crude stubs, and each part's
+ * owner builds the content.
+ */
+function foundationLine(leads: boolean): string {
+  const where = leads ? "yourself in the integration worktree by its full path" : "in your worktree";
+  return `THE FOUNDATION IS YOURS: this game is an empty project and this run has room for a team, so the studio built no starting scene — you stand on the empty template. Lay the foundation in about 12 minutes: look, then plan with contract= and vision= (the contract freezes interfaces, conventions and ranges — a circuit of 2.5–4 km, 6–12 corners — never a layout; the vision says where the world is going), then write each module's stubs as crude playable code, its cameras, demos and probes registered, ${where}, commit, and look at it: a blank world is refused at worker_start. Then start the loop workers. The real content is their owners': the world part designs the world within your ranges and toward the vision.`;
+}
+
+/** The starting point the studio built for an empty project, or why it could not — or the foundation the lead lays instead. */
 function startingPointLine(startingPoint: AnyRecord | null, leads: boolean): string {
+  if (startingPoint?.skipped) return foundationLine(leads);
   if (startingPoint?.ok)
     return `THE STARTING POINT: this game was an empty project, so the studio built the starting point you are standing on (commit ${shortSha(startingPoint.commit ?? "")}${startingPoint.empty ? " — an empty world with working cameras, no content yet" : ""}) and every worker forks from it. There is nothing to compare it with: \`judge against=start\` answers "first build". The whole run is the game itself.`;
   if (startingPoint && leads) return LEAD_BRIEF.startingPointFailed(startingPoint.error);
@@ -189,8 +213,8 @@ function userSaysWords(loop: DirectorLoop): string {
 
 /**
  * The rules that never move, with what this run already knows about its kind and its plan review.
- * A lead that writes nothing (`leads`) hands every change to a worker and keeps no memory file:
- * the journal and its digests carry the night.
+ * A lead (`leads`) does the foundations itself in the integration worktree, hands each part to a
+ * worker and keeps no memory file: the journal and its digests carry the run.
  */
 function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): string[] {
   return [
@@ -199,7 +223,9 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
     `- Then say the plan: \`plan\` — what this run is for and the parts you mean to hand out, in the user's own chat. worker_start refuses until you have called it, so the user can read the plan. Say what kind of game this is in the same call — kind= one of ${KIND_NAMES.join(", ")} — because the harness drives that kind's controls before every judgement and puts only the checks it can pass on the board; a run that declares no kind gets no HUD rule, no look check and no movement check.${run.game?.kind ? ` THIS GAME ALREADY SAYS WHAT IT IS: its studio.json declares a ${run.game.kind} game, and this run is already being judged as one — pass that kind again unless what you saw in this run says otherwise.` : ""}${planReviewWords(run, loop)}`,
     leads
       ? LEAD_BRIEF.delegate
-      : `- After the starting point, delegate with plan and worker_start: a worker per area a player can name, the UI and HUD too, on its own files. Handle foundations, integration and small repairs yourself. If capacity or shared ownership blocks delegation, note why and keep improving and playtesting.`,
+      : `- After the starting point, delegate with plan and worker_start: a worker per area the ask names, the UI and HUD too, on its own files. Handle foundations, integration and small repairs yourself. If capacity or shared ownership blocks delegation, note why and keep improving and playtesting.`,
+    // A run from before scope reads its old rules: the rule names a SCOPE its brief has not got.
+    scopeLines(run) ? `- ${DIRECTOR_SCOPE_RULE}` : "",
     `- First playable: prioritize a small complete playable loop and integrate its healthy revision before broad atmosphere or asset polish. Continue judging normally; a preview is not acceptance or landing.`,
     `- Asset truth: run_status.assets lists generated originals and current workspace copies. Read it before answering asset questions. Preserve delivered local files; integrate checkpoints them through the host. Never move them to /tmp or swap in remote URLs: assets live in the game folder. State generated-but-unused assets and procedural fallbacks explicitly in completion reports.`,
     `- Completion reporting: distinguish delivered changes from passed, failed and unverified checks. The Studio outcome card counts integrations separately from evaluated attempts; never call all requested features verified merely because the structural board passed.`,
@@ -210,6 +236,19 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
       : `- Keep .studio/DIRECTOR.md in your worktree current: what you saw, decided, verified and gave up on. Your conversation may be compacted and the run may be paused and resumed; the studio keeps that file for you and writes it back into the next session's worktree, so it is the one memory that survives both. Keep it under ${MAX_DIRECTOR_MEMORY} characters — past that the studio keeps its head and its tail and drops the middle.`,
     `- note the turns of the run as you take them; finish with an honest summary before the deadline.`,
   ];
+}
+
+/**
+ * When the run is done, as the TIME line says it: a timed build spends its duration; any other
+ * finishes once verified and skips optional polish — and a goal commission, whose first finish the
+ * art director turns back with its defects (art-direction.ts `shipFinishGate`), hears that those
+ * defects are not that polish.
+ */
+function completionWords(run: Run): string {
+  if (durationCommission(run)) return "The selected duration is working time; finish in wrap-up.";
+  const words =
+    "Finish once required outcomes are verified; time is a ceiling. Report blockers instead of optional polish.";
+  return goalCommission(run) ? `${words} ${SHIP_DEFECTS_NOT_POLISH}` : words;
 }
 
 /**
@@ -242,13 +281,14 @@ export function directorBrief({
     openingLine(run, leads),
     ``,
     `GAME GOAL: ${workingGoal(run)}`,
+    scopeLines(run),
     referenceLine(run),
     shapeLine(ownShape, shape),
     requestedStateLine(run.setup),
     ``,
-    `TIME: ${minutes(finalDeadline - Date.now())} minutes in all. Your session ends at ${new Date(softDeadline).toISOString().slice(11, 16)} UTC (${minutes(softDeadline - Date.now())} minutes from now); the last ${minutes(finalDeadline - softDeadline)} minutes are reserved for wrapping up. ${durationCommission(run) ? "The selected duration is working time; finish in wrap-up." : "Finish once required outcomes are verified; time is a ceiling. Report blockers instead of optional polish."}`,
+    `TIME: ${minutes(finalDeadline - Date.now())} minutes in all. Your session ends at ${new Date(softDeadline).toISOString().slice(11, 16)} UTC (${minutes(softDeadline - Date.now())} minutes from now); the last ${minutes(finalDeadline - softDeadline)} minutes are reserved for wrapping up. ${completionWords(run)}`,
     whereLine({ gameFolder: lead?.gameFolder ?? null, integrationWorktree, baseCommit }),
-    `CAPACITY: ${pool}. A ceiling, not a quota: an idle window while an area waits is time lost.`,
+    `CAPACITY: ${pool}. ${CAPACITY_RULE}`,
     nestedLine(nestedRepos, leads),
     contractLine(contract, shape, leads),
     unobservedStartLine(startObserved, startingPoint),
@@ -257,7 +297,7 @@ export function directorBrief({
       ? LEAD_BRIEF.baseMustRun
       : `THE BASE MUST RUN: worker_start looks at the commit a worker forks from before it starts anyone, whatever it forked from (a console error there costs every worker its first iteration); a refusal names the problems — fix them in your worktree, commit, and start again. An integration head that fails its health pass cannot land: fix it, or judge it (a passing judge counts).`,
     ``,
-    // What earlier nights on this exact game already paid for (loop/ledger.ts). The studio keeps
+    // What earlier runs on this exact game already paid for (loop/ledger.ts). The studio keeps
     // its own ledger of outcomes per game; these are the patterns it found in them.
     lastTimeBlock(gameLessons),
     // Three lines, not five (M4.8b). Every tool below arrives with its own description and
@@ -296,10 +336,9 @@ function whereLine({
 }
 
 /**
- * Which world this night is in is a question the worktree answers, not the brief: with the
+ * Which world this run is in is a question the worktree answers, not the brief: with the
  * user's consent the studio versions a nested repository inside every fork of the game
- * (M2.5), and a lead told otherwise hand-ports 85k lines it already has under version
- * control — the 2026-09-07 night, again.
+ * (M2.5), and a lead told otherwise hand-ports code it already has under version control.
  */
 function nestedLine(nestedRepos: readonly string[], leads: boolean): string {
   if (!nestedRepos.length) return "";
@@ -383,6 +422,8 @@ export function singleWorkerBrief({
     `You are a BUILDER for run ${run.runId} on the game "${run.project}", working in an isolated copy of the game (this folder). The run's director wrote your brief; build exactly that, then stop.`,
     ``,
     `GAME GOAL (context): ${workingGoal(run)}`,
+    scopeLines(run),
+    visionBriefLines(run),
     ``,
     `YOUR BRIEF FROM THE DIRECTOR — ${worker.title}:`,
     worker.brief,
@@ -400,7 +441,7 @@ export function singleWorkerBrief({
   ]);
 }
 
-/** What a resumed session is told about the night it picks up. */
+/** What a resumed session is told about the run it picks up. */
 export interface ResumeFacts {
   runId: string;
   forkCommit: string | null;
@@ -411,7 +452,7 @@ export interface ResumeFacts {
   priorDirector: AnyRecord;
   /** Did last session's `.studio/DIRECTOR.md` come back into this worktree? */
   memoryRestored: boolean;
-  /** A lead that is its chat's own session keeps no memory file: the journal carries the night. */
+  /** A lead that is its chat's own session keeps no memory file: the journal carries the run. */
   leads?: boolean;
 }
 
@@ -457,5 +498,5 @@ export function limitResumePrompt(waitedMinutes: number): string {
 
 /** What the director's session is told when its turn ended with working time left in a timed build. */
 export function continuationPrompt(minutesLeft: number): string {
-  return `The timed build still has ${minutesLeft} working minutes. Your previous turn ended, but the build is still running. Call run_status and read pending user instructions. Plan and start a worker for the most valuable unfinished feature or verification gap; inspect, integrate and show progress. Continue improving within the original goal. Do not finish or wait out the clock.`;
+  return `The timed build still has ${minutesLeft} working minutes. Your previous turn ended, but the build is still running. Call run_status and read pending user instructions. Plan and start a worker for the most valuable unfinished in-scope feature or a deeper layer of one, or a verification gap; inspect, integrate and show progress. Continue improving within the original goal. Do not finish or wait out the clock.`;
 }

@@ -473,12 +473,12 @@ describe("steered session: an engine without input mid-turn is interrupted and r
     await q.send("and ducks"); // joins the first prompt
     prepared.resolve();
     await started.promise;
-    await q.send("make it night"); // interrupts that leg before it read anything
+    await q.send("make it run"); // interrupts that leg before it read anything
     await until(() => seen.length === 3);
-    assert.equal(calls[1], withSteers(withSteers("PROMPT", ["and ducks"]), ["make it night"]));
+    assert.equal(calls[1], withSteers(withSteers("PROMPT", ["and ducks"]), ["make it run"]));
     assert.deepEqual(
       seen,
-      ["build a pond", "and ducks", "make it night"],
+      ["build a pond", "and ducks", "make it run"],
       "neither was read: both get turns of their own, in order",
     );
     q.queue.stop();
@@ -498,7 +498,7 @@ describe("steered session: an engine without input mid-turn is interrupted and r
             // The interrupt for the first message lands; a second is sent while the leg winds down.
             q.onInterrupt(() => {
               q.onInterrupt(() => {});
-              void q.send("and night").then(() => cut.resolve());
+              void q.send("and run").then(() => cut.resolve());
             });
             started.resolve();
             await cut.promise;
@@ -513,14 +513,14 @@ describe("steered session: an engine without input mid-turn is interrupted and r
     await q.send("and ducks");
     await until(() => q.state("build a pond")?.state === "handled");
     assert.equal(calls.length, 2);
-    assert.equal(calls[1], steeredTurnPrompt(["and ducks", "and night"]));
+    assert.equal(calls[1], steeredTurnPrompt(["and ducks", "and run"]));
     const textOf = (messageId: string) =>
       q.events.find(
         (r) => r.data.event_type === "coordinator_message_queued" && r.data.payload.messageId === messageId,
       )!.data.payload.action.text;
     assert.deepEqual(
       custom(q.events, "coordinator_message_delivered").map((e) => textOf(payloadOf(e).messageId)),
-      ["and ducks", "and night"],
+      ["and ducks", "and run"],
     );
     q.queue.stop();
   });
@@ -682,18 +682,18 @@ describe("steer through the host and the harness process", () => {
           return stopped("codex-thread", 3);
         }
         assert.equal(request.resume, "codex-thread");
-        assert.equal(request.prompt.split("\n\n")[0], steeredTurnPrompt(["Make it night"]).split("\n\n")[0]);
-        assert.match(request.prompt, /> Make it night/);
+        assert.equal(request.prompt.split("\n\n")[0], steeredTurnPrompt(["Make it run"]).split("\n\n")[0]);
+        assert.match(request.prompt, /> Make it run/);
         return ok("Night falls on the pond.", "codex-thread");
       },
     });
     await rig.core.sendUserMessage("Build a pond", { thread, engine: "codex" });
     await started.promise;
-    await rig.core.sendUserMessage("Make it night", { thread, engine: "codex" });
+    await rig.core.sendUserMessage("Make it run", { thread, engine: "codex" });
     const events = (await waitForLog(rig.core, handledCount(thread, 1), 15000)).filter((e) => e.thread_id === thread);
     assert.equal(calls.length, 2);
-    const night = byText(events, "Make it night");
-    assert.equal(night.state, "delivered");
+    const loopRun = byText(events, "Make it run");
+    assert.equal(loopRun.state, "delivered");
     assert.deepEqual(
       custom(events, "coordinator_message_delivered").map((e) => payloadOf(e).how),
       ["interrupt"],
@@ -944,11 +944,11 @@ describe("steer through the host and the harness process", () => {
           event_type: "coordinator_message_delivered",
           payload: { messageId: "ducks", into: "pond", how: "interrupt" },
         },
-        { type: "messages", messages: [{ role: "user", content: "Make it night" }] },
+        { type: "messages", messages: [{ role: "user", content: "Make it run" }] },
         {
           type: "custom",
           event_type: "coordinator_message_queued",
-          payload: { messageId: "night", action: action("night", "Make it night") },
+          payload: { messageId: "night", action: action("night", "Make it run") },
         },
         { type: "custom", event_type: "coordinator_message_steering", payload: { messageId: "night", into: "pond" } },
       ],
@@ -961,7 +961,7 @@ describe("steer through the host and the harness process", () => {
     assert.equal(prompts.length, 2, "the cut-short turn once, the unread message once");
     assert.match(prompts[0]!, /LATEST USER MESSAGE:\nBuild a pond/);
     assert.match(prompts[0]!, /address it too:\n> And ducks/, "the message it had read rides with it");
-    assert.match(prompts[1]!, /LATEST USER MESSAGE:\nMake it night/);
+    assert.match(prompts[1]!, /LATEST USER MESSAGE:\nMake it run/);
     const events = await rig.core.store.listEvents(thread);
     assert.deepEqual(
       ["pond", "ducks", "night"].map((id) => messageQueueState(events as never).messages.get(id)!.state),

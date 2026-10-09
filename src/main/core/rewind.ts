@@ -50,7 +50,7 @@ const CHAT_CHECKPOINT_WAIT_MS = 30 * SECOND_MS;
 const REWIND_NOTICE_TIMEOUT_MS = 3 * SECOND_MS;
 /**
  * How long a rewind waits for the build it stopped to close (its workers settle, its close is
- * written). A stopped build lands nothing, so this is its workers winding down, never the night.
+ * written). A stopped build lands nothing, so this is its workers winding down, never the run.
  */
 const REWIND_BUILD_STOP_WAIT_MS = 2 * MINUTE_MS;
 /** How often the rewind looks again while that build closes. */

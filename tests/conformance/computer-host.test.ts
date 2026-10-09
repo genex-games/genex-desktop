@@ -1,8 +1,8 @@
 /**
- * The computer tool's host (computer use, 2026-09-07) through the real core over the fake preview: a builder's
+ * The computer tool's host through the real core over the fake preview: a builder's
  * delegation carries `computer` beside `capture`; both load the workspace through the served
- * entry (a game with its own build is built first — the skate-prod night lost every worker
- * frame to `src/main.ts` served as text); the window stays loaded between actions; every
+ * entry (a game with its own build is built first, or every worker frame shows `src/main.ts`
+ * served as text); the window stays loaded between actions; every
  * action updates the coalesced agent screen; the playtester gets the same tool.
  */
 import assert from "node:assert/strict";
@@ -11,6 +11,10 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
+import type { PreviewSetup } from "../../src/shared/preview-contract.ts";
+import { PreviewService } from "../../src/main/core/previews.ts";
+import { unservedPreviews, type CoreInternals } from "../../src/main/core/internals.ts";
+import type { StudioCore } from "../../src/main/studio-core.ts";
 import { READY_PROBE, awaitReady, readySnapshot, type ReadySnapshot } from "../../src/substrate/preview-ready.ts";
 import { customEvents, makeFakePreview, startRig, type Rig } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -91,7 +95,7 @@ function booting(extra: Record<string, unknown> = {}): Record<string, unknown> {
 
 /**
  * A port with scripted answers and an injected clock: `awaitReady` is pure over a PreviewPort,
- * so a night's worth of waiting costs a test nothing.
+ * so a run's worth of waiting costs a test nothing.
  */
 function scriptedPort(answers: Array<unknown>, options: { loadError?: string | null; crashed?: boolean } = {}) {
   let clock = 0;
@@ -581,8 +585,34 @@ describe("the computer tool's host", () => {
     (rig.preview as { pageUi?: unknown }).pageUi = probe;
   });
 
-  // Flipped (2026-09-28): with every pooled window leased, the director's session used to fall
-  // back to the live view — the person's own window, for the whole night — and say so on the
+  it("hands preview.state's keep paths to the window only after validating them, and ignores a hostile keep", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
+    const before = Object.getOwnPropertyNames(Object.prototype).sort();
+    const cases: Array<[unknown, { keep?: readonly string[] } | undefined]> = [
+      [{}, undefined],
+      [undefined, undefined],
+      [{ keep: ["race.cars", "player.x"] }, { keep: ["race.cars", "player.x"] }],
+      [{ keep: "race.cars" }, undefined],
+      [{ keep: [1, null, {}, ["race"]] }, undefined],
+      [{ keep: ["__proto__.polluted", "a.constructor", "prototype", "race.cars"] }, { keep: ["race.cars"] }],
+      [
+        { keep: Array.from({ length: 10_000 }, (_, i) => `p${i}`) },
+        { keep: Array.from({ length: 64 }, (_, i) => `p${i}`) },
+      ],
+    ];
+    for (const [params, handed] of cases) {
+      rig.preview.stateOpts.length = 0;
+      assert.deepEqual(await api["preview.state"]!(params), rig.preview.next, JSON.stringify(params)?.slice(0, 80));
+      assert.deepEqual(rig.preview.stateOpts, [handed], JSON.stringify(params)?.slice(0, 80));
+    }
+    assert.deepEqual(Object.getOwnPropertyNames(Object.prototype).sort(), before);
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+  });
+
+  // Flipped: with every pooled window leased, the director's session used to fall
+  // back to the live view — the person's own window, for the whole run — and say so on the
   // run's thread. Live is the person's alone now: the session gets a window past the pool's
   // ceiling for its own length, and there is no borrow to announce.
   it("never lends the director's session the window the user is watching, even with the pool full", async () => {
@@ -846,5 +876,131 @@ describe("what a load waits for", () => {
       escaped,
       /your build failed to load: the page left game:\/\/stray-boot for http:\/\/localhost:5173, which the studio does not serve/,
     );
+  });
+});
+
+describe("a game with a front-end, as builders and the computer tool first see it", () => {
+  /**
+   * A page with a title → race front-end, the calls it was asked, the waits it cost and the paths
+   * each state read asked to keep. An input that lands in play picks the map (`picked`); one that
+   * lands on the menu does nothing, as the scout's recorded clicks would.
+   */
+  function frontEndPort(
+    options: { flow?: boolean; playing?: boolean; begin?: boolean; reaches?: boolean; state?: () => unknown } = {},
+  ) {
+    const { flow = true, begin = true, reaches = true } = options;
+    let playing = options.playing ?? false;
+    let picked = false;
+    const calls: string[] = [];
+    const slept: number[] = [];
+    const kept: unknown[] = [];
+    const port = {
+      async studioState(read?: { keep?: readonly string[] }) {
+        kept.push(read?.keep ?? null);
+        if (options.state) return options.state();
+        return flow
+          ? { version: 2, flow: { phase: playing ? "playing" : "menu", playing }, picked }
+          : { version: 2, picked };
+      },
+      async studioCall(method: string) {
+        calls.push(method);
+        if (method !== "begin") return { ok: true };
+        if (!begin) return { ok: false, reason: "this page declares no begin()" };
+        if (reaches) playing = true;
+        return { ok: true };
+      },
+      async input() {
+        calls.push("input");
+        if (playing || !flow) picked = true;
+        return { ok: true, applied: 0, width: 960, height: 600 };
+      },
+      pointer: () => ({ x: 480, y: 300 }),
+      viewSize: () => ({ width: 960, height: 600 }),
+      consoleEntries: () => [],
+    } as unknown as PreviewPort;
+    const service = new PreviewService(
+      { emit: () => {} } as unknown as StudioCore,
+      unservedPreviews() as CoreInternals,
+    );
+    const apply = (setup: PreviewSetup | null) =>
+      service.applySetup(port, setup, {
+        sleep: async (ms: number) => {
+          slept.push(ms);
+        },
+      });
+    return { apply, calls, slept, kept, port, service };
+  }
+
+  it("begins a game that reports it is not in play, even with no setup at all, and keeps it running", async () => {
+    const page = frontEndPort();
+    assert.equal(await page.apply(null), null);
+    assert.deepEqual(page.calls, ["start", "begin", "start"], "begin() leaves the game paused; the window runs it");
+    assert.deepEqual(page.slept, [], "play came at once: nothing waited");
+  });
+
+  it("never begins for the worker that owns the front-end, a game already in play, or one with no flow", async () => {
+    const cases: Array<[string, ReturnType<typeof frontEndPort>, PreviewSetup | null]> = [
+      ["begin:false", frontEndPort(), { begin: false }],
+      ["in play", frontEndPort({ playing: true }), null],
+      ["no flow", frontEndPort({ flow: false }), null],
+    ];
+    for (const [label, page, setup] of cases) {
+      await page.apply(setup);
+      assert.ok(!page.calls.includes("begin"), `${label}: ${page.calls.join(",")}`);
+      assert.deepEqual(page.slept, [], `${label}: a begin-only setup replays nothing to settle after`);
+    }
+  });
+
+  it("says so when begin() does not reach play, and when the game has no begin() to call", async () => {
+    const stuck = frontEndPort({ reaches: false });
+    assert.match(String(await stuck.apply(null)), /did not reach play/);
+    assert.ok(stuck.slept.length > 0, "the countdown was given its time, on the injected clock");
+    const none = frontEndPort({ begin: false });
+    assert.match(String(await none.apply(null)), /no __studio\.begin\(\)/);
+  });
+
+  it("replays a setup in play, from where begin() left the game, the way the scout recorded it", async () => {
+    const page = frontEndPort();
+    const setup: PreviewSetup = { actions: [{ type: "tap", keys: ["m"] }], verify: { path: "picked", truthy: true } };
+    assert.equal(await page.apply(setup), null, "the map the scout picked in play is picked again");
+    assert.deepEqual(page.calls, ["start", "begin", "start", "input"]);
+  });
+
+  it("never begins for the playtester, whose grant says nothing of begin: it meets the real menu", async () => {
+    const { computerTools } = await import("../../src/main/core/computer-tools.ts");
+    for (const [role, begins] of [
+      ["playtester", false],
+      ["builder", true],
+    ] as const) {
+      const page = frontEndPort();
+      const previews = {
+        loadServed: async () => ({ problem: null, note: null }),
+        applySetup: (port: PreviewPort, setup: PreviewSetup | null, options: Record<string, unknown> = {}) =>
+          page.service.applySetup(port, setup, { ...options, sleep: async () => {} }),
+        openScreen: () => {},
+        frame: async () => {},
+      };
+      const sessionPort = { get: async () => page.port, handle: () => null, loaded: null };
+      const tools = computerTools(
+        previews as never,
+        { project: "apex", role } as never,
+        "/nonexistent/build",
+        await tmpDir("front-end-role-"),
+        sessionPort as never,
+      );
+      await tools.onLiveTool("computer", { action: "key", text: "d" });
+      assert.equal(page.calls.includes("begin"), begins, `${role}: ${page.calls.join(",")}`);
+    }
+  });
+
+  it("keeps the verified path when it reads the state, and calls a cut one unmeasured, not unreached", async () => {
+    const cut = () => ({
+      maps: { __elided: "object", length: 900, chars: 60_000 },
+      __cut: { chars: 90_000, paths: ["maps"] },
+    });
+    const page = frontEndPort({ state: cut });
+    const note = await page.apply({ verify: { path: "maps.activeId", equals: "macba" } });
+    assert.equal(note, null, String(note));
+    assert.deepEqual(page.kept.at(-1), ["maps.activeId"]);
   });
 });

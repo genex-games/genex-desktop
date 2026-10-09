@@ -1,6 +1,6 @@
 /**
  * What a run was commissioned to do: reach its verified outcomes (a goal commission) or spend its
- * hours (a duration commission). Every part of the night that decides whether to keep working
+ * hours (a duration commission). Every part of the run that decides whether to keep working
  * asks here. A module no earlier harness had, so no part the agent kept can shadow these names.
  */
 import { CompletionPolicy } from "../completion-policy.ts";

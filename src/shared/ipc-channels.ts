@@ -66,6 +66,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:settings": "settings",
   "studio:settings.set": "setSettings",
   "studio:diagnostics": "diagnostics",
+  "studio:feedback.send": "sendFeedback",
   "studio:licenses": "licenses",
   "studio:run-sharing.status": "runSharingStatus",
   "studio:run-sharing.set": "setRunSharing",
@@ -118,6 +119,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:claude-login.code": "claudeLoginCode",
   "studio:claude-login.browser": "claudeLoginOpenBrowser",
   "studio:claude-login.cancel": "claudeLoginCancel",
+  "studio:opencode.signin": "openCodeSignIn",
+  "studio:openrouter.key.save": "openRouterKeySave",
+  "studio:openrouter.key.clear": "openRouterKeyClear",
   "studio:terminal.list": "terminalList",
   "studio:terminal.accessibility": "terminalAccessibility",
   "studio:terminal.open": "terminalOpen",
@@ -128,6 +132,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:terminal.ack": "terminalAcknowledge",
   "studio:terminal.stop": "terminalStop",
   "studio:terminal.remove": "terminalRemove",
+  "studio:terminal.open-link": "terminalOpenLink",
   "studio:codex-login.state": "codexLoginState",
   "studio:codex-login.cancel": "codexLoginCancel",
   "studio:codex-login.dismiss": "codexLoginDismiss",
@@ -244,6 +249,7 @@ export interface StudioInvokePayloads {
   "studio:settings": undefined;
   "studio:settings.set": Arg<"setSettings", 0>;
   "studio:diagnostics": undefined;
+  "studio:feedback.send": Arg<"sendFeedback", 0>;
   "studio:licenses": undefined;
   "studio:run-sharing.status": undefined;
   "studio:run-sharing.set": { on: Arg<"setRunSharing", 0> };
@@ -297,6 +303,9 @@ export interface StudioInvokePayloads {
   "studio:claude-login.code": { code: string };
   "studio:claude-login.browser": undefined;
   "studio:claude-login.cancel": undefined;
+  "studio:opencode.signin": undefined;
+  "studio:openrouter.key.save": { key: string };
+  "studio:openrouter.key.clear": undefined;
   "studio:terminal.list": undefined;
   "studio:terminal.accessibility": undefined;
   "studio:terminal.open": { project: string };
@@ -307,6 +316,7 @@ export interface StudioInvokePayloads {
   "studio:terminal.ack": { id: string; count: number };
   "studio:terminal.stop": { id: string };
   "studio:terminal.remove": { id: string };
+  "studio:terminal.open-link": { id: string };
   "studio:codex-login.state": undefined;
   "studio:codex-login.cancel": undefined;
   "studio:codex-login.dismiss": undefined;

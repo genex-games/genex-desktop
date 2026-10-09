@@ -1,5 +1,5 @@
 /**
- * Every dialog the app shell opens — the open-folder sheet, Settings, search, and a
+ * Every dialog the app shell opens — the open-folder sheet, Settings, search, Send feedback, and a
  * game's rename, delete and cover — with their open state in one local reducer. Dialogs are UI,
  * not studio state: they live here, not in a store. App opens them through `useAppDialogs()`.
  */
@@ -16,9 +16,12 @@ import { openedWords, type OpenChoice } from "../../shared/shape-words.ts";
 import { useEngines, useLibrary, useThreads } from "../state/hooks.ts";
 import { rootLabelChanged } from "../state/library.ts";
 import { type Studio, studio } from "../state/studio.ts";
-import { notifyProblem } from "../state/toasts.ts";
+import { notifyProblem, ToastTone } from "../state/toasts.ts";
+import type { FeedbackAbout } from "../feedback-about.ts";
+import { FEEDBACK_WORDS } from "../words.ts";
 import type { FolderInspection, GameProject } from "../types.ts";
 import { GameCoverDialog } from "./GameCoverDialog.tsx";
+import { FeedbackDialog } from "./FeedbackDialog.tsx";
 import { DeleteGameDialog, RenameGameDialog } from "./GameDialogs.tsx";
 import { GameSearchDialog } from "./GameSearchDialog.tsx";
 import { OpenGameSheet } from "./OpenGameSheet.tsx";
@@ -34,10 +37,13 @@ export interface DialogsState {
   picked: FolderInspection | null;
   /** The sheet's answer is being carried out. */
   opening: boolean;
+  /** Send feedback is open, from this screen and chat. */
+  feedback: FeedbackAbout | null;
 }
 
 export type DialogAction =
-  | { type: "search" | "close-search" | "close-settings" | "close-game" }
+  | { type: "search" | "close-search" | "close-settings" | "close-game" | "close-feedback" }
+  | { type: "feedback"; about: FeedbackAbout }
   | { type: "settings"; section?: SettingsSection }
   | { type: "section"; section: SettingsSection }
   | { type: "game"; kind: "rename" | "delete" | "cover"; game: GameProject }
@@ -53,6 +59,7 @@ export const initialDialogs: DialogsState = {
   game: null,
   picked: null,
   opening: false,
+  feedback: null,
 };
 
 export function dialogsReducer(state: DialogsState, action: DialogAction): DialogsState {
@@ -81,6 +88,10 @@ export function dialogsReducer(state: DialogsState, action: DialogAction): Dialo
       return { ...state, opening: action.opening };
     case "opened":
       return { ...state, picked: null };
+    case "feedback":
+      return { ...state, feedback: action.about };
+    case "close-feedback":
+      return { ...state, feedback: null };
   }
 }
 
@@ -208,6 +219,13 @@ export function AppDialogs({
           game={dialogGame.game}
           onSave={(patch) => app.saveGame(dialogGame.game.name, patch)}
           onDismiss={() => dispatch({ type: "close-game" })}
+        />
+      )}
+      {state.feedback && (
+        <FeedbackDialog
+          about={state.feedback}
+          onSent={() => app.notify(FEEDBACK_WORDS.sent, ToastTone.Ok)}
+          onDismiss={() => dispatch({ type: "close-feedback" })}
         />
       )}
       {state.picked ? (

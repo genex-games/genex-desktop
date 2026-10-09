@@ -29,19 +29,19 @@ import {
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { ModelPreferences, ReferenceFrame } from "../types/host-api.d.ts";
 import type { SteerHandle } from "./message-queue.ts";
-import type { AfterNight } from "./after-night.ts";
+import type { AfterLoopRun } from "./after-loop-run.ts";
 
 /**
- * This runner passes the chat's turn the night its own session answers after (`afterNight`) on the
- * engine and model it names, and returns the resume that turn records (after-night.ts).
- * chat-dispatch.ts asks before it sends the chat there (`servesAfterNight`): a kept copy from before
+ * This runner passes the chat's turn the run its own session answers after (`afterLoopRun`) on the
+ * engine and model it names, and returns the resume that turn records (after-loop-run.ts).
+ * chat-dispatch.ts asks before it sends the chat there (`servesAfterLoopRun`): a kept copy from before
  * may do neither.
  */
-export const SERVES_AFTER_NIGHT = true;
+export const SERVES_AFTER_LOOP_RUN = true;
 
 /**
- * This runner keeps the chat's own session after its night on the model it answers on, also when a
- * Loop came with the message (`turnModel`): the night it reopens then seats that same session
+ * This runner keeps the chat's own session after its run on the model it answers on, also when a
+ * Loop came with the message (`turnModel`): the run it reopens then seats that same session
  * (reopen-run.ts). chat-dispatch.ts asks before it offers the reopen (`servesReopen`): a kept copy
  * from before would move the session to the commission's planner.
  */
@@ -78,8 +78,8 @@ export interface TurnOptions {
   candidateId?: string;
   /** The queue's door into this turn for what the person sends while it works (chat-steer.ts). */
   steer?: SteerHandle;
-  /** The night this chat's own session led is over: it answers with the run's controls (after-night.ts). */
-  afterNight?: AfterNight;
+  /** The run this chat's own session led is over: it answers with the run's controls (after-loop-run.ts). */
+  afterLoopRun?: AfterLoopRun;
   [option: string]: unknown;
 }
 
@@ -174,12 +174,12 @@ function plannerModel(commission: AnyRecord, engine: string, model: string | und
 
 /**
  * The model the turn runs on. A commissioning chat decides and scopes a build: the planner. The chat's
- * own session after its night stays on the model it answers on (after-night.ts `AfterNight.model`, or
- * the message's): the swap would move the session to another model, and the night it reopens would
+ * own session after its run stays on the model it answers on (after-loop-run.ts `AfterLoopRun.model`, or
+ * the message's): the swap would move the session to another model, and the run it reopens would
  * seat a lead of its own (director/lead-session.ts `continuesChat`).
  */
 function turnModel(options: TurnOptions, commission: AnyRecord | null, engine: string): string | undefined {
-  if (!commission || options.afterNight) return options.model;
+  if (!commission || options.afterLoopRun) return options.model;
   return plannerModel(commission, engine, options.model);
 }
 

@@ -50,7 +50,15 @@ needs a protected `release` environment with these secrets:
 | `APPLE_TEAM_ID` | The 10-character team id in the certificate's name |
 | `APPLE_API_KEY` | The App Store Connect API key's `.p8` contents (role Developer), for notarization |
 | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | That key's id and issuer id |
-| `WINDOWS_CERT_PFX`, `WINDOWS_CERT_PASSWORD` | Windows signing certificate, base64 `.pfx`, and password; alternatively `WINDOWS_SIGN_PARAMS` for a provisioned signing service |
+
+Windows is signed by the [SignPath Foundation](https://signpath.org) through
+[`.github/actions/windows-signpath`](../.github/actions/windows-signpath/action.yml): the
+packaged app's `genex.exe` and `.node` add-ons, then the `Genex-Setup.exe` made from them (the
+SignPath project `genex-desktop`'s artifact configurations `app` and `installer`). The repository
+secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs use the
+`release-signing` policy, which accepts only builds from this repository's GitHub workflows; a
+Package dispatch with `only: win32` and `test_sign` uses `test-signing`, SignPath's self-signed
+test certificate, to check the wiring.
 
 The owner controls signing secrets, the protected release environment, tags and publication.
 Require product checks and approval on the actual release repository, including fork workflow

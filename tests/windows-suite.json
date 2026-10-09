@@ -93,6 +93,7 @@
   "tests/conformance/genex-cli-env.test.ts",
   "tests/conformance/genex-creator-mcp.test.ts",
   "tests/conformance/genex-delivery.test.ts",
+  "tests/conformance/genex-link-tag.test.ts",
   "tests/conformance/genex-outcomes.test.ts",
   "tests/conformance/genex-plugin-cli.test.ts",
   "tests/conformance/genex-publish-settle.test.ts",

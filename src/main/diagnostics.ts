@@ -56,7 +56,7 @@ function engineLine({ label, status, account }: EngineSummary): string {
   return parts.join("; ");
 }
 
-/** What the harness is waiting on the host for: a call that has run for minutes is where a night stalls. */
+/** What the harness is waiting on the host for: a call that has run for minutes is where a run stalls. */
 function harnessCallLines(calls: Array<{ method: string; ageMs: number }>): string[] {
   const lines = calls.map((call) => `  ${call.method} for ${Math.round(call.ageMs / SECOND_MS)} s`);
   return ["Harness calls in flight", ...(lines.length ? lines : ["  none"]), ""];

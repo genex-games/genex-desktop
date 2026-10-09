@@ -1561,6 +1561,9 @@ export class PluginRegistry {
     if (!p.manifest.actions.some((a) => a.name === name)) throw new Error(MESSAGE.UnknownAction);
     const account = accountActionsOf(p.manifest);
     await this.#beforeAccountAction(id, p, name, account);
+    const opensCredentials = name === account.unlock || name === account.connect;
+    // A refusal left by an earlier attempt, such as the restore at startup, is not this action's.
+    if (opensCredentials) this.#accounts.get(id)?.takeRefusal();
     const installsRuntime = p.manifest.nativeRuntimes?.some((r) => r.install?.action === name);
     try {
       const answer = await this.#process(id).call(
@@ -1575,7 +1578,13 @@ export class PluginRegistry {
       const statusAnswer = name === account.status && answer && typeof answer === "object";
       return statusAnswer ? { ...answer, accountConnecting: this.#connecting.has(id) } : answer;
     } catch (error) {
-      if (name === account.unlock || name === account.connect) this.#lockAccount(id);
+      if (opensCredentials) {
+        // A backend wraps whatever the host answered in its own generic error; a locked secret
+        // store's reason (no keyring to start) is the one worth showing.
+        const refusal = this.#accounts.get(id)?.takeRefusal();
+        this.#lockAccount(id);
+        if (refusal) throw refusal;
+      }
       throw error;
     } finally {
       await this.#settleAccountAction(id, name, account);

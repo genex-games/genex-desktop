@@ -42,7 +42,7 @@ import {
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
-import { credentialHomes } from "./credential-homes.ts";
+import { credentialHomes, sandboxedCliHomes } from "./credential-homes.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
 import {
@@ -137,6 +137,13 @@ export interface SandboxOptions {
    * judge rubrics live here (R4: the critic's yardstick is not the agent's to bend).
    */
   denyWrite?: string[];
+  /**
+   * The sign-in home of the one CLI that runs inside this sandbox (OpenCode keeps its sign-ins and
+   * sessions there). Only such a home exactly (`sandboxedCliHomes`) is exempted: it is left out of
+   * the credential denies and made writable for this sandbox alone, while every other sandbox still
+   * denies it and a secret path or another CLI's home named here stays denied.
+   */
+  ownHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
   /** Extra always-readable roots (vendored toolchain, app resources). */
@@ -372,6 +379,18 @@ export function claudeFolderDenyWrites(
   return [...new Set(games.map((game) => path.join(game, CLAUDE_FOLDER_GLOB)))];
 }
 
+/**
+ * The named homes a sandbox may exempt: exactly the sign-in home of a CLI that runs inside the
+ * studio's sandbox, never a secret path, another CLI's home, a parent folder or a relative path.
+ */
+function ownCredentialHomes(named: readonly string[], secretPaths: readonly string[]): string[] {
+  const homes = sandboxedCliHomes();
+  return named
+    .filter((dir) => path.isAbsolute(dir))
+    .map((dir) => path.resolve(dir))
+    .filter((dir) => homes.includes(dir) && !secretPaths.includes(dir));
+}
+
 export class ProcessSandbox {
   readonly policy: SandboxPolicy;
   readonly enabled: boolean;
@@ -400,13 +419,15 @@ export class ProcessSandbox {
     await mkdir(options.scratchDir, { recursive: true });
     // Windows: the long path, since srt-win and Git Credential Manager trip over 8.3 short names.
     const scratchDir = longPath(options.scratchDir, platform);
+    const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
+    const notOwn = (dir: string) => !own.includes(dir);
     const policy: SandboxPolicy = {
       allowedDomains: [],
       allowLocalBinding: true,
-      allowWrite: [...options.writableRoots, scratchDir],
+      allowWrite: [...options.writableRoots, scratchDir, ...own],
       allowRead: options.readableRoots ?? [],
-      denyRead: [...baseDenyRead(os.homedir(), platform), ...options.secretPaths],
-      denyWrite: [...credentialHomes(), ...options.secretPaths, ...(options.denyWrite ?? [])],
+      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
+      denyWrite: [...credentialHomes().filter(notOwn), ...options.secretPaths, ...(options.denyWrite ?? [])],
     };
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;

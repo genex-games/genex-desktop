@@ -27,7 +27,11 @@ exports work with no enabled plugins.
   `mcpServers requires apiVersion 2`, `tools[].confirmation requires apiVersion 2`) rather than silently ignored, so a package cannot
   claim API 1 and still ship API 2 behaviour.
 - API 3 adds `native-runtime`, `nativeRuntimes`, `nativeJobs`, `assetLimits`, host-memory credential-session access, file skills and (bundled Genex only) `tools[].host`. Lower-version manifests cannot claim those declarations.
-- Plugin tool parameters stay scalar (`string` / `number` / `boolean` properties). External MCP tools retain their full nested schemas.
+- API 3's `observe` also takes an optional `still` (additive; no manifest field or capability of
+  its own). A host older than the option ignores it and answers an ordinary observation, so a
+  caller checks the answer for `still`, then `stillProblem`, and handles neither (the SDK types the
+  answer as `PluginStillAnswer | PluginStillIgnored`).
+- Plugin tool parameters are scalar (`string` / `number` / `boolean` properties); API 3 also accepts `type: "object"`, optionally with `acceptJsonString` for a migrated scalar (`toolParameter` in `src/substrate/plugins/manifest.ts`; see the plugin guide's structured arguments). External MCP tools retain their full nested schemas.
 
 ## Package and distribution
 
@@ -417,7 +421,22 @@ Available services are capability checked and scoped to the calling plugin:
 - `jobs.read` / `jobs.write`: durable provider references, not a credit ledger.
 - `events.emit`: sanitized progress to Studio, with host-bound project/thread attribution. A
   payload of kind `toolbar` is a toolbar status update (see above).
-- `observe`: current game loading/capture/audio evidence for authorized local files.
+- `observe`: current game loading/capture/audio evidence for authorized local files. With
+  `still` (API 3, additive) it photographs one named view instead: `{ project, root, files: [],
+  still: { demo | camera, width, height, maxBytes? } }` loads the bound game on a hidden window of
+  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play, runs the
+  `config.demos` entry to its end state or places the camera (one the page lists in `cameras()` or
+  `eyes()`, or `default`; any other name is never called), and reads the canvas. The answer is `{ still: { image, mimeType, width, height, source,
+  view, stats, preview } }`: a PNG, or the first JPEG at quality 95, 90 or 85 that fits `maxBytes`
+  (64 KiB–16 MiB, default 8 MiB), never larger than asked; `stats` holds `lumaMean`, `lumaStdDev`,
+  `nearBlackFraction` (luma below 0.10) and `litFraction`, each 0–1 on a small downscale; `preview`
+  is a JPEG at most 1280 px. Otherwise it is `{ stillProblem: { code, reason?, available? } }` with
+  `unavailable`, `load_failed`, `view_unknown` (with the names the game has, at most 32),
+  `view_failed`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  still never borrows Live: a build with no hidden window answers `unavailable`. Every field is
+  checked before anything runs, and the window is given back however the still ends; once its
+  budget gives a still up, nothing reaches that window again, and a closed preview refuses every
+  later call rather than build a new view (`core/view-still.ts`).
 - `export.stage` (capability `export`, API 2): Studio writes the public export of the bound game
   under the plugin's own storage (`publish/<project>/dist`) and returns the export result; it
   needs a project binding and is `Export unavailable` in sessions without the host export. The
@@ -819,6 +838,16 @@ unchanged. Verify installed, disabled and removed Genex in the packaged applicat
 assets remain ordinary files. A fixture `assets.deliver` must leave an `asset_delivered` event in
 the project's log and a card on the Assets tab; no paid generation is needed for either. Use
 fixture accounts and existing assets, with no additional paid generation.
+
+`genex-cover.test.ts` pins the Genex cover the same way, with a fake `observe` and the cover routes
+on the fixture API: `genex__cover` shoots only the `genex-cover` demo into the plugin's storage
+(the game folder locked, never read) and answers its preview; a publish sends the frame only after
+its upload is recorded (a draft's page check may still be running), sends nothing for unchanged
+bytes or over the owner's own cover, stays done with a warning when the commit is refused, limited,
+failed or silent or the shot cannot be kept, skips the shot without enough of its invocation left,
+never sends from a listed game's draft (listed from the dashboard too), sends the bytes it records
+however shots interleave, and is stopped by the next publish; `genex__cover-set` waits for consent
+and sends nothing without a hosted project; a bad project name reaches no host and writes nothing.
 
 `plugin-marketplace.test.ts` drives `PluginMarketplace` with an injected `fetchImpl` and never
 touches the network: index validation, spec parsing, the 6 h cache with its stale-plus-error path,

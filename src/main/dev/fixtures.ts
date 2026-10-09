@@ -13,7 +13,7 @@ import type { StudioCore } from "../studio-core.ts";
 import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
-import { hasLandedNight, seedFirstNight, seedLandedNight } from "./fixture-history.ts";
+import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
   appendSuggestion,
   FIXTURE_MODEL,
@@ -108,18 +108,18 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
  */
 async function writeFixtureGame(game: FixtureGame): Promise<void> {
   await fs.writeFile(path.join(game.project.dir, "index.html"), FIXTURE_PAGE);
-  if (HISTORY_FIXTURES.has(game.id)) await seedFirstNight(game.core, game.project.name, game.threadId);
+  if (HISTORY_FIXTURES.has(game.id)) await seedFirstLoopRun(game.core, game.project.name, game.threadId);
 }
 
 /**
- * A lead's night that landed its build. It is seeded per night, not per project: a profile made
- * before this night existed is reused (and restarted) as often as it is made, and must still
+ * A lead's run that landed its build. It is seeded per run, not per project: a profile made
+ * before this run existed is reused (and restarted) as often as it is made, and must still
  * show the card.
  */
 async function seedHistory(game: FixtureGame): Promise<void> {
   if (!HISTORY_FIXTURES.has(game.id)) return;
-  if (await hasLandedNight(game.core, game.threadId)) return;
-  await seedLandedNight(game.core, game.project.name, game.threadId);
+  if (await hasLandedLoopRun(game.core, game.threadId)) return;
+  await seedLandedLoopRun(game.core, game.project.name, game.threadId);
 }
 
 /** The seed of each fixture that has one of its own. */
@@ -138,7 +138,7 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {
   const seeded = (await game.core.store.listEvents(game.threadId)).some(
-    (e) => e.data.type === EventKind.Custom && (e.data.payload as { runId?: string })?.runId === "fixture-graph-night",
+    (e) => e.data.type === EventKind.Custom && (e.data.payload as { runId?: string })?.runId === "fixture-graph-run",
   );
   if (!seeded) await seedBuildGraph(game.core, game.project.name, game.threadId);
 }

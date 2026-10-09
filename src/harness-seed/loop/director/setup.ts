@@ -1,46 +1,50 @@
 /**
- * The night's first steps, before the director's session opens: making somebody's own game
+ * The run's first steps, before the director's session opens: making somebody's own game
  * judgeable (`installContract`) and building the starting point of a game with nothing in it
- * (`buildStartingPoint`) — and before both, `prepareNight`, which builds the night itself.
+ * (`buildStartingPoint`) — and before both, `prepareLoopRun`, which builds the run itself.
  */
 
 import { DEFAULT_WALL_CLOCK_MS, MIN_DELEGATE_TIMEOUT_MS, PAGE_SEED } from "../config.ts";
 import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
+import { keptContractWords } from "../contract-kept.ts";
 import { HostMethod } from "../host-methods.ts";
 import { AttachedContract, StudioContract } from "../page-contract.ts";
 import { readDeclaredGame } from "../kinds.ts";
 import { appendLedger, ledgerFromEvents, loadGameLessons, readLedger } from "../ledger.ts";
 import { writeWorktreeFile } from "../library.ts";
 import { roleEffort, roleEngine, RoleKey } from "../model-roles.ts";
-import { engineLimitOf, isEngineLimit } from "../outage.ts";
+import { engineLimitOf } from "../outage.ts";
+import { isProviderLoss, noteProviderLoss } from "../provider-loss.ts";
 import { baseBrief } from "../prompts-build.ts";
 import { runRef } from "../repo.ts";
 import { EventKind, JournalPhase, RunEvent, RunMode } from "../run-events.ts";
 import { createRunInbox } from "../run-inbox.ts";
 import { isCommit } from "../shell.ts";
 import { MINUTE_MS } from "../time.ts";
-import { bindNight, BuildTarget, WindowLease } from "./night.ts";
+import { bindLoopRun, BuildTarget, WindowLease } from "./loop-run.ts";
 import path from "node:path";
 import { preparationBudgetMs } from "./budgets.ts";
+import { foundationFirst } from "./foundation.ts";
 import { contractBrief, preparationBudgetNote } from "./briefs.ts";
-import { nightClock, restoreNight } from "./journal.ts";
+import { loopRunClock, restoreLoopRun } from "./journal.ts";
 import { clampDirectorMemory } from "./memory.ts";
 import { outcomesAwaitPlan, reopenCommits, reopenMarkOf } from "./reopen.ts";
 import { startingHeads } from "./rules.ts";
+import { noteHudUpgrade } from "../held-hud.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
 import type { ProjectShape, ReferenceFrame } from "../../types/host-api.d.ts";
 import type { Evidence } from "../evidence.ts";
 import type { LedgerRecord } from "../ledger.ts";
-import type { Night, NightData, NightShape, NightState } from "./night.ts";
+import type { LoopRun, LoopRunData, LoopRunShape, LoopRunState } from "./loop-run.ts";
 
 /**
- * This part serves a lead that is its chat's own session and writes nothing (one session): a night
+ * This part serves a lead that is its chat's own session and writes nothing (one session): a run
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
 
-/** A wiring job is minutes of work, not a stage of the night: it never takes more than this. */
+/** A wiring job is minutes of work, not a stage of the run: it never takes more than this. */
 const CONTRACT_SESSION_MAX_MS = 20 * MINUTE_MS;
 /** The shape a game has when the studio made it: the template's page and entry, no build step. */
 const TEMPLATE_SHAPE = { entry: "index.html", main: "src/main.js", build: null };
@@ -48,14 +52,14 @@ const TEMPLATE_SHAPE = { entry: "index.html", main: "src/main.js", build: null }
 const GameShapeKind = { OwnScript: "own-script", StudioTemplate: "studio-template" } as const;
 
 /**
- * What a night learns from the session before it: its journal and the director's memory file — the
+ * What a run learns from the session before it: its journal and the director's memory file — the
  * file only for a director with its own worktree (`keepsMemory`): a lead that is its chat's own
- * session reads the night from the journal alone, and an older night's file is left where it is.
+ * session reads the run from the journal alone, and an older run's file is left where it is.
  */
-async function readPriorNight(ctx: HarnessCtx, threadId: string, run: Run, resume: boolean, keepsMemory: boolean) {
-  // A journal that is not there reads as null; one the host cannot read throws, and the night
-  // stops on it. Read as "no journal", it restarted the night with a full budget, a fresh plan
-  // and none of its heads (P09-F4).
+async function readPriorLoopRun(ctx: HarnessCtx, threadId: string, run: Run, resume: boolean, keepsMemory: boolean) {
+  // A journal that is not there reads as null; one the host cannot read throws, and the run
+  // stops on it. Read as "no journal", it restarted the run with a full budget, a fresh plan
+  // and none of its heads.
   const priorJournal = resume
     ? await ctx.call(HostMethod.ArtifactRead, { threadId, artifactId: `autopilot_${run.runId}` })
     : null;
@@ -73,10 +77,10 @@ async function readPriorNight(ctx: HarnessCtx, threadId: string, run: Run, resum
 /**
  * What kind of game this is and whose shape it has, on the run record before anything is
  * judged (M4.4): the judges, the briefs and the artefact-class filter all read them from there.
- * A resumed night restores the kind its first session declared; a fresh night reads back what
- * an earlier night wrote into the game's own studio.json, which is the durable declaration
- * across nights. Without it the director wrote that block and nothing ever read it: a second
- * night on a declared board game drove mouse-look and WASD before every judgement, and no board
+ * A resumed run restores the kind its first session declared; a fresh run reads back what
+ * an earlier run wrote into the game's own studio.json, which is the durable declaration
+ * across runs. Without it the director wrote that block and nothing ever read it: a second
+ * run on a declared board game drove mouse-look and WASD before every judgement, and no board
  * carried a HUD, look or movement check.
  */
 async function declareRunGame(ctx: HarnessCtx, run: Run, ownShape: boolean, priorJournal: AnyRecord | null) {
@@ -90,15 +94,15 @@ async function declareRunGame(ctx: HarnessCtx, run: Run, ownShape: boolean, prio
 }
 
 /**
- * What earlier nights on this exact game cost (loop/ledger.ts). Loaded once: the brief carries
+ * What earlier runs on this exact game cost (loop/ledger.ts). Loaded once: the brief carries
  * the top five, every worker's BRIEF.md carries the same five (through `run.gameLessons`), and
  * the records behind them are what warns a dry run about a check nobody has ever been able to
  * read. A game with no ledger yet simply gets nothing.
  *
- * A game whose earlier nights ran before this ledger existed has none of them written down, and
+ * A game whose earlier runs ran before this ledger existed has none of them written down, and
  * would pay for every one of their lessons again. Its own thread still holds them, so the first
- * night here reads that log back into the same records (`ledgerFromEvents`) before it asks what
- * this game has taught. Once only — after this the file is not empty — and never fatal: a night
+ * run here reads that log back into the same records (`ledgerFromEvents`) before it asks what
+ * this game has taught. Once only — after this the file is not empty — and never fatal: a run
  * that cannot read its own past still runs, it just starts blank.
  */
 async function loadPriorLedger(ctx: HarnessCtx, threadId: string, run: Run, gameKind: string) {
@@ -115,9 +119,9 @@ async function loadPriorLedger(ctx: HarnessCtx, threadId: string, run: Run, game
 }
 
 /**
- * The record a resumed or reopened night's earlier session closed with (its last `run_finished`),
- * or null: the night goes on with it rather than writing over it (golden-boot-glory: a reopen's
- * report kept none of the thirteen workers and 31 rounds of the night it continued).
+ * The record a resumed or reopened run's earlier session closed with (its last `run_finished`),
+ * or null: the run goes on with it rather than writing over it (golden-boot-glory: a reopen's
+ * report kept none of the thirteen workers and 31 rounds of the run it continued).
  */
 async function earlierReport(ctx: HarnessCtx, threadId: string, runId: string): Promise<AnyRecord | null> {
   const events = await ctx.call(HostMethod.EventsList, { threadId }).catch(() => []);
@@ -131,11 +135,11 @@ async function earlierReport(ctx: HarnessCtx, threadId: string, runId: string): 
 const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? [...value] : []);
 
 /**
- * The report a night leaves behind, as it starts: a resumed or reopened night's carries its earlier
+ * The report a run leaves behind, as it starts: a resumed or reopened run's carries its earlier
  * sessions' workers, rounds, verdicts and notes, and how many rounds they kept (`earlier`), so the
  * close adds to the record and the learning pass knows what is new.
  */
-export function nightReport(run: Run, earlier: AnyRecord | null = null): AnyRecord {
+export function loopRunReport(run: Run, earlier: AnyRecord | null = null): AnyRecord {
   const report = freshReport(run);
   if (!earlier) return report;
   const iterations = listOf(earlier.iterations);
@@ -150,7 +154,7 @@ export function nightReport(run: Run, earlier: AnyRecord | null = null): AnyReco
   };
 }
 
-/** A night's report with nothing in it yet. */
+/** A run's report with nothing in it yet. */
 function freshReport(run: Run): AnyRecord {
   return {
     runId: run.runId,
@@ -162,7 +166,7 @@ function freshReport(run: Run): AnyRecord {
     workers: {},
     iterations: [],
     notes: [],
-    /** One record per build this night judged — the fork gate, the judge, the health pass, the close. */
+    /** One record per build this run judged — the fork gate, the judge, the health pass, the close. */
     verdicts: [],
     victory: false,
     stoppedBecause: "",
@@ -171,7 +175,7 @@ function freshReport(run: Run): AnyRecord {
   };
 }
 
-/** The night's first cards on its thread: the run started, as a director's. */
+/** The run's first cards on its thread: the run started, as a director's. */
 async function announceRunStart(
   ctx: HarnessCtx,
   threadId: string,
@@ -230,8 +234,8 @@ async function announceRunStart(
 }
 
 /** The game, ready: scaffolded if new, on the current contract, loaded in the studio window. Answers its folder. */
-async function readyTheGame(night: Night): Promise<string> {
-  const { ctx, decision, run } = night;
+async function readyTheGame(loopRun: LoopRun): Promise<string> {
+  const { ctx, decision, note, run } = loopRun;
   await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project });
   const upgraded = await ctx.call(HostMethod.GameUpgradeContract, { project: run.project }).catch(() => null);
   if (upgraded?.upgraded)
@@ -239,6 +243,15 @@ async function readyTheGame(night: Night): Promise<string> {
       `upgraded src/studio.js to the v2 contract (the previous copy is kept as ${upgraded.backup})`,
       "updated the game's connection to the studio so this build's work can be checked",
     );
+  // An edited older HUD stays and is said so; its generation rides on the run into every brief.
+  const hud = noteHudUpgrade(run, upgraded);
+  if (hud) await decision(hud.decision, hud.plain);
+  // An edited contract stays as it is: the lead hears which HUD calls its facade may lack.
+  const kept = keptContractWords(upgraded);
+  if (kept) {
+    await decision(kept.record, kept.plain);
+    note(kept.record);
+  }
   await ctx.call(HostMethod.PreviewLoad, { project: run.project }).catch(() => {});
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
   const projectDir = games.find((g: AnyRecord) => g.name === run.project)?.dir ?? null;
@@ -250,10 +263,10 @@ async function readyTheGame(night: Night): Promise<string> {
  * The start as the harness first sees it. It may simply be the empty scaffold — the one build
  * whose blank frames are honest. Only the harness's own base pass may say so (gauntlet grants
  * the exemption to `scaffold` at iterationId "base", and a conformance test keeps that lock
- * double), so it is asked that way before deciding this night cannot see where it starts.
+ * double), so it is asked that way before deciding this run cannot see where it starts.
  */
-async function observeStart(night: Night): Promise<Evidence | null> {
-  const { ctx, lookAtStart, run } = night;
+async function observeStart(loopRun: LoopRun): Promise<Evidence | null> {
+  const { ctx, lookAtStart, run } = loopRun;
   const seen = await lookAtStart(undefined);
   if (seen) return seen;
   const asBase = await gatherEvidence(ctx, {
@@ -272,31 +285,31 @@ async function observeStart(night: Night): Promise<Evidence | null> {
 /**
  * The director's memory. Its brief tells it to keep `.studio/DIRECTOR.md` current and a resumed
  * session is told to read that file — but `.studio/` never reaches a commit (the brief writer
- * ignores it), and the worktree it lives in is removed at the close. A night that paused on a
+ * ignores it), and the worktree it lives in is removed at the close. A run that paused on a
  * session limit was resumed into a worktree created a moment before and sent to read a file
  * that no longer existed. So the studio keeps the copy: a run artifact for the record, and a
  * thread artifact the next session restores from (`keepMemory`).
  */
-async function restoreMemory(night: Night, integrationWorktree: string, priorMemory: AnyRecord | null) {
-  night.memoryKept = null;
+async function restoreMemory(loopRun: LoopRun, integrationWorktree: string, priorMemory: AnyRecord | null) {
+  loopRun.memoryKept = null;
   if (!priorMemory) return;
   const restored = clampDirectorMemory(priorMemory.text);
   await writeWorktreeFile(integrationWorktree, "DIRECTOR.md", restored).catch(() => {});
-  night.memoryKept = restored;
+  loopRun.memoryKept = restored;
 }
 
-/** What prepareNight puts on the night once the integration worktree is open (the rest is there already). */
-type NightKnown = Omit<
-  NightData,
+/** What prepareLoopRun puts on the run once the integration worktree is open (the rest is there already). */
+type LoopRunKnown = Omit<
+  LoopRunData,
   "ctx" | "threadId" | "run" | "resume" | "integrationRef" | "memoryKept" | "priorWorkers"
 >;
 
-/** Everything `nightState` and `nightJournal` are made of. */
-interface NightFacts {
+/** Everything `loopRunState` and `loopRunJournal` are made of. */
+interface LoopRunFacts {
   run: Run;
   threadId: string;
   projectDir: string;
-  shape: NightShape;
+  shape: LoopRunShape;
   ownShape: boolean;
   baseCommit: string | null;
   forkCommit: string | null;
@@ -308,8 +321,8 @@ interface NightFacts {
   finalDeadline: number;
 }
 
-/** The night's `state`: the workers, the heads, the log — everything that changes all night. */
-function nightState(facts: NightFacts): NightState {
+/** The run's `state`: the workers, the heads, the log — everything that changes for the whole run. */
+function loopRunState(facts: LoopRunFacts): LoopRunState {
   const { run, threadId, projectDir, shape, ownShape, baseCommit, forkCommit, integrationWorktree } = facts;
   const { fromScratch, startEvidence, priorJournal, softDeadline, finalDeadline } = facts;
   return {
@@ -330,7 +343,7 @@ function nightState(facts: NightFacts): NightState {
     evidenceByHead: new Map(),
     /** The run's own starting points (`startingHeads`): the scaffold, and the base stage's commit. */
     baseHeads: new Set(startingHeads({ fromScratch, forkCommit, priorJournal })),
-    /** Did the night begin on an empty scaffold — nothing to judge against, nothing to fork from. */
+    /** Did the run begin on an empty scaffold — nothing to judge against, nothing to fork from. */
     fromScratch,
     /** Every console error the run's starting build already logged: nobody in this run is to blame for them. */
     startConsole: startEvidence?.consoleBaseline ?? [],
@@ -350,8 +363,8 @@ function nightState(facts: NightFacts): NightState {
     workerLimit: null,
     workers: new Map(),
     /**
-     * The night's plan (M3.8) — the one the user reads, and the one `worker_start` is held to.
-     * A resumed night keeps the plan its first session wrote; the review window is not reopened.
+     * The run's plan (M3.8) — the one the user reads, and the one `worker_start` is held to.
+     * A resumed run keeps the plan its first session wrote; the review window is not reopened.
      */
     plan: priorJournal?.director?.plan ?? null,
     /** When the user's window to answer the plan closes, while one is open. */
@@ -378,7 +391,7 @@ function nightState(facts: NightFacts): NightState {
 }
 
 /** The journal a resume replays: the run, its plan, its starting point and the director's own record. */
-function nightJournal(facts: NightFacts): AnyRecord {
+function loopRunJournal(facts: LoopRunFacts): AnyRecord {
   const { run, baseCommit, forkCommit, priorJournal } = facts;
   return {
     runId: run.runId,
@@ -388,7 +401,7 @@ function nightJournal(facts: NightFacts): AnyRecord {
     plan: { facets: [], assumptions: [], scout: null, setup: run.setup ?? null },
     facets: {},
     base: priorJournal?.base ?? null,
-    /** The "make it judgeable" step (M2.6): { commit, ok, error }. A resumed night keeps its own. */
+    /** The "make it judgeable" step (M2.6): { commit, ok, error }. A resumed run keeps its own. */
     contract: priorJournal?.contract ?? null,
     director: {
       sessionId: priorJournal?.director?.sessionId ?? null,
@@ -401,35 +414,35 @@ function nightJournal(facts: NightFacts): AnyRecord {
   };
 }
 
-/** The counters and the ledger chain every night starts with (see `note`, `remember`, `handler`). */
-function nightCounters(): Pick<NightData, "logSeq" | "waitSeq" | "tonight" | "ledgerWrites" | "toolCalls"> {
+/** The counters and the ledger chain every run starts with (see `note`, `remember`, `handler`). */
+function loopRunCounters(): Pick<LoopRunData, "logSeq" | "waitSeq" | "runLedger" | "ledgerWrites" | "toolCalls"> {
   return {
     /**
-     * The night's log, which the waker and the director's own `wait` read back (`note`) and the
+     * The run's log, which the waker and the director's own `wait` read back (`note`) and the
      * journal keeps the newest of. Every entry carries a sequence number of its own because the
      * log is capped: a `wait` that remembered where it started as an INDEX into the array went
      * blind the moment the cap began shifting entries off the front — `slice(from)` answered
-     * nothing for the rest of the night, so no worker event and no user instruction ever woke a
+     * nothing for the rest of the run, so no worker event and no user instruction ever woke a
      * wait again.
      */
     logSeq: 0,
     waitSeq: 0,
     /**
      * The game's ledger (loop/ledger.ts) — not `state.ledger`, which is this run's own list of
-     * defects nobody owns. Every outcome the night produces — a judged round, a stopped round, a
+     * defects nobody owns. Every outcome the run produces — a judged round, a stopped round, a
      * builder the fork gate refused, the close itself — is appended to the game's own file in
-     * the studio's state as it happens (`remember`), so a night killed by a quit still teaches
+     * the studio's state as it happens (`remember`), so a run killed by a quit still teaches
      * the next one. Writes are chained rather than fired in parallel: five workers finishing a
      * round in the same second must land as five lines, in order.
      */
-    tonight: [],
+    runLedger: [],
     ledgerWrites: Promise.resolve(),
     /** Tool calls the session has made: a continuation that makes none is not progress. */
     toolCalls: 0,
   };
 }
 
-/** The game as the night finds it: its shape, its kind, and whether it can be judged at all. */
+/** The game as the run finds it: its shape, its kind, and whether it can be judged at all. */
 async function gameAtStart(ctx: HarnessCtx, run: Run) {
   const descriptor =
     (await ctx.call(HostMethod.GameList, {}).catch(() => [])).find((g) => g.name === run.project) ?? null;
@@ -445,8 +458,8 @@ async function gameAtStart(ctx: HarnessCtx, run: Run) {
  * Can this game be judged at all? A page that never loads the studio contract has no state(),
  * no cameras and no capture: every judge answers "the build does not run", the fork gate refuses
  * every builder, and `judge against=start` has no "before". launchFromIntake already asked the
- * folder (`run.readiness`); a night started any other way — the run IPC, a resume — asks here.
- * The answer is a job, not a refusal: `installContract` is the night's first step, in the run's
+ * folder (`run.readiness`); a run started any other way — the run IPC, a resume — asks here.
+ * The answer is a job, not a refusal: `installContract` is the run's first step, in the run's
  * own worktree, never in the folder the user sees.
  */
 async function contractIsMissing(ctx: HarnessCtx, run: Run, ownShape: boolean): Promise<boolean> {
@@ -456,9 +469,9 @@ async function contractIsMissing(ctx: HarnessCtx, run: Run, ownShape: boolean): 
 }
 
 /**
- * Where the night stands in the game's history: the starting point the user had (a snapshot of
+ * Where the run stands in the game's history: the starting point the user had (a snapshot of
  * the folder) and, on a resume, where this session picks the branch up. They are the same commit
- * on a first session and must not be on a resume: a resumed night that called its fork point
+ * on a first session and must not be on a resume: a resumed run that called its fork point
  * "the base" found "nothing beyond the starting point" at the close and hid eight merges from
  * the user. A finished build reopened starts from the folder as it is now (director/reopen.ts).
  */
@@ -480,33 +493,33 @@ async function startingCommits(ctx: HarnessCtx, run: Run, priorJournal: AnyRecor
 }
 
 /**
- * The integration worktree, forked from where the night stands. Worktrees are detached: removing
- * one leaves its commits unreferenced. A ref in the game's repo keeps the night's integration
- * reachable whatever happens to the worktree (a run once lost 122 files of merged work to
- * teardown because nothing pointed at the head).
+ * The integration worktree, forked from where the run stands. Worktrees are detached: removing
+ * one leaves its commits unreferenced. A ref in the game's repo keeps the run's integration
+ * reachable whatever happens to the worktree: with nothing pointing at the head, teardown would
+ * lose the merged work.
  */
-async function openIntegration(night: Night, forkCommit: string | null): Promise<string> {
-  const { ctx, protectHead, run } = night;
+async function openIntegration(loopRun: LoopRun, forkCommit: string | null): Promise<string> {
+  const { ctx, protectHead, run } = loopRun;
   const wt = await ctx.call(HostMethod.SnapshotWorktree, {
     project: run.project,
     ...(forkCommit ? { commit: forkCommit } : {}),
     name: BuildTarget.Integration,
     runId: run.runId,
   });
-  night.integrationRef = runRef(run.runId, BuildTarget.Integration);
+  loopRun.integrationRef = runRef(run.runId, BuildTarget.Integration);
   await protectHead(forkCommit);
   return wt.path;
 }
 
 /**
- * Everything a night knows before its first tool call, as one object: the run and its clock, the
+ * Everything a run knows before its first tool call, as one object: the run and its clock, the
  * game's shape and ledger, the starting point and the integration worktree forked from it, the
- * report, `state` and the journal. Every function of the night is put on it (`bindNight`) before
- * the first of them runs, so the setup below calls them the way the rest of the night does.
+ * report, `state` and the journal. Every function of the run is put on it (`bindLoopRun`) before
+ * the first of them runs, so the setup below calls them the way the rest of the run does.
  *
- * `modules` are the director's module namespaces (`bindNight`).
+ * `modules` are the director's module namespaces (`bindLoopRun`).
  */
-export async function prepareNight(
+export async function prepareLoopRun(
   ctx: HarnessCtx,
   {
     threadId,
@@ -516,19 +529,19 @@ export async function prepareNight(
     liveChat = false,
   }: { threadId: string; run: Run; resume?: boolean; oneSession?: boolean; liveChat?: boolean },
   modules: ReadonlyArray<Record<string, unknown>>,
-): Promise<Night> {
-  const night = bindNight({ ctx, threadId, run, resume }, modules);
-  const { lookAtStart, saveJournal, rememberEvidence } = night;
+): Promise<LoopRun> {
+  const loopRun = bindLoopRun({ ctx, threadId, run, resume }, modules);
+  const { lookAtStart, saveJournal, rememberEvidence } = loopRun;
   const inbox = ctx.runInbox ?? createRunInbox(ctx, { threadId, runId: run.runId });
 
   ctx.setStatus(`run ${run.runId} · director`);
 
   // A lead that is its chat's own session (`oneSession`, lead-session.ts) keeps no memory file.
-  const prior = await readPriorNight(ctx, threadId, run, resume, !oneSession);
+  const prior = await readPriorLoopRun(ctx, threadId, run, resume, !oneSession);
   const { priorJournal, priorMemory, memoryRestored } = prior;
-  // A Resume goes on with the working time the night had left: the budget is the night's, not
+  // A Resume goes on with the working time the run had left: the budget is the run's, not
   // each session's, and time spent paused does not count.
-  const clock = nightClock({
+  const clock = loopRunClock({
     saved: resume ? priorJournal?.director?.clock : null,
     now: Date.now(),
     totalMs: run.budgets?.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,
@@ -541,28 +554,28 @@ export async function prepareNight(
   const priorLedger = await loadPriorLedger(ctx, threadId, run, gameKind);
   const gameLessons = await loadGameLessons(ctx.workspace, run.project).catch(() => []);
   run.gameLessons = gameLessons;
-  const report = nightReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
   await announceRunStart(ctx, threadId, run, { resume, liveChat }, capacity);
 
   // A game that came with its own shape is photographed BEFORE the studio touches it: the
   // scaffold and the contract upgrade below write the studio's own files into the folder, and
-  // a "start" gathered after them is a picture of the template, not of the night's before.
+  // a "start" gathered after them is a picture of the template, not of the run's before.
   // (A game on the studio template has nothing to lose that way, and pays no second pass.)
   let startEvidence = ownShape ? await lookAtStart("iter_000_before") : null;
-  const projectDir = await readyTheGame(night);
+  const projectDir = await readyTheGame(loopRun);
   const { liveHead, baseCommit, forkCommit } = await startingCommits(ctx, run, priorJournal);
-  if (!startEvidence) startEvidence = await observeStart(night);
-  // A night from scratch: the game is still the empty scaffold. Nothing can be judged against
+  if (!startEvidence) startEvidence = await observeStart(loopRun);
+  // A run from scratch: the game is still the empty scaffold. Nothing can be judged against
   // it, no worker may fork from it, and the first thing this run owes the user is a starting
   // point (the base stage below). An own-shape game is never this: it has a game already.
   const fromScratch = !ownShape && startEvidence?.emptyScene === true;
-  const integrationWorktree = await openIntegration(night, forkCommit);
+  const integrationWorktree = await openIntegration(loopRun, forkCommit);
   const memoryFile = path.join(integrationWorktree, ".studio", "DIRECTOR.md");
-  await restoreMemory(night, integrationWorktree, memoryRestored ? priorMemory : null);
+  await restoreMemory(loopRun, integrationWorktree, memoryRestored ? priorMemory : null);
   // The user's game may carry its own git repositories (a nested repo is a bare pointer in the
   // studio's history and empty in a worktree until the studio copies it in).
   const nestedRepos = forkCommit ? await gitlinks(ctx, { project: run.project }, forkCommit) : [];
-  const facts: NightFacts = {
+  const facts: LoopRunFacts = {
     run,
     threadId,
     projectDir,
@@ -577,7 +590,7 @@ export async function prepareNight(
     softDeadline,
     finalDeadline,
   };
-  Object.assign(night, {
+  Object.assign(loopRun, {
     inbox,
     started,
     finalDeadline,
@@ -599,27 +612,27 @@ export async function prepareNight(
     integrationWorktree,
     memoryFile,
     nestedRepos,
-    state: nightState(facts),
-    journal: nightJournal(facts),
+    state: loopRunState(facts),
+    journal: loopRunJournal(facts),
     /** The start as this session first saw it, before a contract or a base stage replaced it on `state`. */
     startEvidence,
     /** This studio has windows of its own to lend; without them the live view is the only one there is. */
     pooledWindows: capacity?.headless !== false,
-    ...nightCounters(),
-  } satisfies NightKnown);
-  // What the journal kept of the night before the pause, read back before this night writes a line.
-  restoreNight(night);
-  outcomesAwaitPlan(night);
+    ...loopRunCounters(),
+  } satisfies LoopRunKnown);
+  // What the journal kept of the run before the pause, read back before this run writes a line.
+  restoreLoopRun(loopRun);
+  outcomesAwaitPlan(loopRun);
   await saveJournal();
   // The starting point was observed before the worktree existed; it is the live folder's state,
-  // which on a resume is still the commit the night began on.
+  // which on a resume is still the commit the run began on.
   rememberEvidence(liveHead, startEvidence);
-  return night;
+  return loopRun;
 }
 
 /** One look at the live game folder, as the run's "before". Null unless it can be observed. */
-export async function lookAtStart(night: Night, labelPrefix?: string) {
-  const { ctx, run } = night;
+export async function lookAtStart(loopRun: LoopRun, labelPrefix?: string) {
+  const { ctx, run } = loopRun;
   try {
     await ctx.call(HostMethod.PreviewLoad, { project: run.project });
     const evidence = await gatherEvidence(ctx, {
@@ -637,7 +650,7 @@ export async function lookAtStart(night: Night, labelPrefix?: string) {
   }
 }
 
-// ── the sessions that prepare the night ──
+// ── the sessions that prepare the run ──
 
 /** What one preparation session is: its brief, its clock, and how its frames and failure are named. */
 interface PreparationSession {
@@ -650,14 +663,14 @@ interface PreparationSession {
 
 /**
  * One builder session in the run's own integration worktree — never the folder the user sees.
- * A session that dies of the engine's limit leaves the limit on the night, for the close to
+ * A session that dies of the engine's limit leaves the limit on the run, for the close to
  * weigh. Answers whether it finished and, if not, why.
  */
 async function prepareInWorktree(
-  night: Night,
+  loopRun: LoopRun,
   session: PreparationSession,
 ): Promise<{ ok: boolean; error: string | null }> {
-  const { ctx, integrationWorktree, run, state, threadId } = night;
+  const { ctx, integrationWorktree, run, state, threadId } = loopRun;
   try {
     const delegation = await ctx.call(HostMethod.EngineDelegate, {
       engine: roleEngine(run, RoleKey.Builder),
@@ -681,32 +694,36 @@ async function prepareInWorktree(
     const ok = delegation.ok === true;
     return { ok, error: ok ? null : delegation.errorText || delegation.stopReason || session.unfinished };
   } catch (err: any) {
-    if (isEngineLimit(err?.kind)) state.limit = engineLimitOf(err);
+    // A provider lost while the start was prepared pauses the run like the lead's own would.
+    if (isProviderLoss(err?.kind)) {
+      state.limit = engineLimitOf(err);
+      noteProviderLoss(run.runId, roleEngine(run, RoleKey.Builder), err);
+    }
     return { ok: false, error: String(err?.message ?? err) };
   }
 }
 
 /** What the session left uncommitted in the integration worktree ("" when nothing). */
-function worktreeChanges(night: Night, label: string): Promise<string> {
-  const { ctx, integrationWorktree } = night;
+function worktreeChanges(loopRun: LoopRun, label: string): Promise<string> {
+  const { ctx, integrationWorktree } = loopRun;
   return gitAt(ctx, integrationWorktree, GIT.status, { label }).catch(() => "");
 }
 
 /** The session's work, committed: answers the new head. */
-async function commitPreparation(night: Night, message: string, labels: { commit: string; head: string }) {
-  const { ctx, integrationWorktree } = night;
+async function commitPreparation(loopRun: LoopRun, message: string, labels: { commit: string; head: string }) {
+  const { ctx, integrationWorktree } = loopRun;
   await commitAll(ctx, integrationWorktree, message, { label: labels.commit });
   return headOf(ctx, integrationWorktree, { label: labels.head });
 }
 
 /**
- * A committed preparation becomes the night's start: what workers fork from, what "start" means
+ * A committed preparation becomes the run's start: what workers fork from, what "start" means
  * to a judge, the console it is forgiven (the user's own game already logs what it logs; nobody
  * in this run introduced those), and the head the ref protects. A base stage's commit is one of
  * the run's own starting points as well.
  */
-async function adoptAsStart(night: Night, commit: string, evidence: Evidence, { base }: { base: boolean }) {
-  const { errorsLogged, journal, protectHead, rememberEvidence, state } = night;
+async function adoptAsStart(loopRun: LoopRun, commit: string, evidence: Evidence, { base }: { base: boolean }) {
+  const { errorsLogged, journal, protectHead, rememberEvidence, state } = loopRun;
   state.integrationHead = commit;
   if (base) state.baseHeads.add(commit);
   state.healthByHead.set(commit, true);
@@ -723,8 +740,8 @@ async function adoptAsStart(night: Night, commit: string, evidence: Evidence, { 
  * lead is told to do it by hand instead, and a worktree with somebody's abandoned edits would
  * fail every gate silently.
  */
-async function resetUnfinished(night: Night, commit: string | null, changed: string, label: string) {
-  const { ctx, integrationWorktree } = night;
+async function resetUnfinished(loopRun: LoopRun, commit: string | null, changed: string, label: string) {
+  const { ctx, integrationWorktree } = loopRun;
   if (commit || !changed) return;
   await resetClean(ctx, integrationWorktree, "HEAD", { label }).catch(() => {});
 }
@@ -736,8 +753,8 @@ async function resetUnfinished(night: Night, commit: string | null, changed: str
  * needs no wiring session at all — and a page that does need one is only wired once the same
  * call says so.
  */
-export async function pageAttaches(night: Night) {
-  const { ctx, run } = night;
+export async function pageAttaches(loopRun: LoopRun) {
+  const { ctx, run } = loopRun;
   const report = await ctx.call(HostMethod.GameAttached, { project: run.project }).catch(() => null);
   return report?.ok === true && report.contract !== AttachedContract.None;
 }
@@ -754,9 +771,9 @@ function contractFailure(changed: string, evidence: Evidence | null, attachedNow
     : "the page still does not load the contract";
 }
 
-/** The wiring's outcome, said twice: in the night's log, and on a decision card. */
-async function sayContract(night: Night, commit: string | null, error: string | null) {
-  const { decision, note, shape } = night;
+/** The wiring's outcome, said twice: in the run's log, and on a decision card. */
+async function sayContract(loopRun: LoopRun, commit: string | null, error: string | null) {
+  const { decision, note, shape } = loopRun;
   note(
     commit
       ? `the studio contract is wired and committed (${shortSha(commit)}) — this is the run's "before"`
@@ -773,11 +790,11 @@ async function sayContract(night: Night, commit: string | null, error: string | 
 }
 
 /**
- * The first step of a night on a game the user brought that never loads the studio contract
+ * The first step of a run on a game the user brought that never loads the studio contract
  * (M2.6). Without it the run is blind: `window.__studio` is missing, so every evidence pass
  * reports a build that does not run, the fork gate refuses every builder, and `judge
  * against=start` can only answer "the other build could not be observed" — which is what the
- * first real night on somebody's own game actually did, while its lead spent the opening hour
+ * first real run on somebody's own game actually did, while its lead spent the opening hour
  * hand-wiring the contract itself.
  *
  * One session, with the base builder's own-shape wording (`contractBrief`), in the run's own
@@ -786,12 +803,12 @@ async function sayContract(night: Night, commit: string | null, error: string | 
  * page really does install the contract. Then one commit, and that commit becomes the run's
  * "before": from here `judge against=start` compares two builds that can both be looked at.
  */
-export async function installContract(night: Night) {
-  const { ctx, decision, journal, note, pageAttaches, patientEvidence, run, saveJournal, shape, shotsOf } = night;
-  const { softDeadline, withLease, writeVerdict, integrationWorktree } = night;
+export async function installContract(loopRun: LoopRun) {
+  const { ctx, decision, journal, note, pageAttaches, patientEvidence, run, saveJournal, shape, shotsOf } = loopRun;
+  const { softDeadline, withLease, writeVerdict, integrationWorktree } = loopRun;
   ctx.setStatus(`run ${run.runId} · making the game judgeable`);
   // The sources said nothing installs the contract. If the running page says otherwise, the
-  // night keeps its hour: nothing is wired, nothing is committed, and the brief says so.
+  // run keeps its hour: nothing is wired, nothing is committed, and the brief says so.
   if (await pageAttaches()) {
     journal.contract = { commit: null, ok: true, attached: true, error: null };
     note("the studio attaches to this game's page on its own — no wiring session was needed");
@@ -802,15 +819,15 @@ export async function installContract(night: Night) {
     `this game's page never loads the studio contract: wiring it into ${shape?.main ?? "the entry"} in the integration worktree before anything is planned`,
     "your game doesn't have the studio's connection yet, so the studio is adding it before anything else",
   );
-  const session = await prepareInWorktree(night, {
+  const session = await prepareInWorktree(loopRun, {
     prompt: contractBrief({ run, projectLabel: run.project, shape }),
-    // A wiring job is minutes of work, not a stage of the night: it never eats the session.
+    // A wiring job is minutes of work, not a stage of the run: it never eats the session.
     timeoutMs: Math.max(MIN_DELEGATE_TIMEOUT_MS, Math.min(CONTRACT_SESSION_MAX_MS, softDeadline - Date.now())),
     facetId: "contract",
     label: "the studio contract",
     unfinished: "the session did not finish",
   });
-  const changed = await worktreeChanges(night, `director:${run.runId}:contract`);
+  const changed = await worktreeChanges(loopRun, `director:${run.runId}:contract`);
   // The proof is the game answering, not the session saying it wired it: an evidence pass
   // drives window.__studio, so it cannot pass on a page that never installed it. No scaffold
   // exemption — this is somebody's real game, and it drew something before the studio arrived.
@@ -826,15 +843,15 @@ export async function installContract(night: Night) {
   let commit = null;
   let error = session.error;
   if (evidence?.ok) {
-    commit = await commitPreparation(night, "studio: install contract", {
+    commit = await commitPreparation(loopRun, "studio: install contract", {
       commit: `director:${run.runId}:contract-commit`,
       head: `director:${run.runId}:contract-head`,
     });
     // The run's "before" is the game the user brought plus the studio's connection, and
-    // nothing else — the fairest comparison a night on somebody's own game can have.
-    await adoptAsStart(night, commit, evidence, { base: false });
+    // nothing else — the fairest comparison a run on somebody's own game can have.
+    await adoptAsStart(loopRun, commit, evidence, { base: false });
   } else if (session.ok) error = contractFailure(changed, evidence, attachedNow);
-  await resetUnfinished(night, commit, changed, `director:${run.runId}:contract-reset`);
+  await resetUnfinished(loopRun, commit, changed, `director:${run.runId}:contract-reset`);
   journal.contract = { commit, ok: Boolean(commit), error: commit ? null : error };
   await saveJournal();
   await writeVerdict("director/contract/verdict.json", {
@@ -846,7 +863,7 @@ export async function installContract(night: Night) {
     consoleErrors: evidence?.consoleErrors ?? [],
     shots: shotsOf(evidence),
   });
-  await sayContract(night, commit, error);
+  await sayContract(loopRun, commit, error);
   ctx.setStatus(`run ${run.runId} · director`);
   return journal.contract;
 }
@@ -854,8 +871,8 @@ export async function installContract(night: Night) {
 // ── the starting point ──
 
 /** The base session's brief: the builder's own base brief, held to the preparation budget. */
-function startingPointPrompt(night: Night, budget: number): string {
-  const { ownShape, run, shape } = night;
+function startingPointPrompt(loopRun: LoopRun, budget: number): string {
+  const { ownShape, run, shape } = loopRun;
   const brief = baseBrief({
     run,
     plan: { facets: [], integrationNotes: "" },
@@ -873,9 +890,9 @@ function startingPointFailure(changed: string, evidence: Evidence | null): strin
   return (evidence?.problems ?? []).join("; ") || "the starting point did not load";
 }
 
-/** The base stage's outcome: on the thread, in the night's log, and on a decision card. */
-async function sayStartingPoint(night: Night, commit: string | null, error: string | null) {
-  const { appendRun, decision, journal, note } = night;
+/** The base stage's outcome: on the thread, in the run's log, and on a decision card. */
+async function sayStartingPoint(loopRun: LoopRun, commit: string | null, error: string | null) {
+  const { appendRun, decision, journal, note } = loopRun;
   await appendRun(RunEvent.AutopilotBase, {
     ok: journal.base.ok,
     commit,
@@ -898,33 +915,53 @@ async function sayStartingPoint(night: Night, commit: string | null, error: stri
 }
 
 /**
+ * A run whose lead lays the foundation itself (foundation.ts `foundationFirst`) gets no starting scene:
+ * the lead stands on the empty template, writes the module contract, the vision and crude playable
+ * stubs in its first minutes, and every owner builds its content from there (briefs.ts
+ * `startingPointLine` says so). Kept on the journal, so a Resume does not build one either; the
+ * close and the fork gate read the empty template as the run's start, as they always did.
+ */
+async function skipStartingPoint(loopRun: LoopRun) {
+  const { decision, journal, saveJournal } = loopRun;
+  journal.base = { commit: null, ok: false, skipped: true, empty: true, error: null };
+  await saveJournal();
+  await decision(
+    "this game is an empty project and the run has room for a team: no starting scene — the lead lays the foundation itself (the module contract, the vision and crude playable stubs), and each part's owner builds its content",
+    "this game is empty, so the lead lays the foundation first and the builders fill it in",
+  );
+  return journal.base;
+}
+
+/**
  * A new game is an empty scaffold: no camera can photograph it, the fork gate refuses every
  * worker forked from it, and every judge answers "renders effectively black". The classic
- * pipeline always built a shared base before the facets forked; a director's night gets the
+ * pipeline always built a shared base before the facets forked; a director's run gets the
  * same stage — one builder session in the run's own integration worktree, one look allowed to
  * accept blank pixels, one commit — so its first worker forks from something that runs and
- * its first judge has something to look at. (The first director night spent twelve minutes
+ * its first judge has something to look at. (The first director run spent twelve minutes
  * with the director writing the world by hand, unjudged, because no worker could start.)
  */
-export async function buildStartingPoint(night: Night) {
-  const { appendRun, consoleInheritedBy, ctx, decision, journal, patientEvidence, run, saveJournal } = night;
-  const { shotsOf, softDeadline, withLease, writeVerdict, integrationWorktree } = night;
-  const budget = preparationBudgetMs(softDeadline - Date.now());
+export async function buildStartingPoint(loopRun: LoopRun) {
+  const { appendRun, consoleInheritedBy, ctx, decision, journal, patientEvidence, run, saveJournal } = loopRun;
+  const { shotsOf, softDeadline, withLease, writeVerdict, integrationWorktree } = loopRun;
+  const remainingMs = softDeadline - Date.now();
+  const budget = preparationBudgetMs(remainingMs);
   if (!budget) return null; // The lead uses the remaining time directly.
+  if (foundationFirst({ remainingMs, capacity: loopRun.capacity })) return skipStartingPoint(loopRun);
   await appendRun(RunEvent.AutopilotBaseStarted, {});
   ctx.setStatus(`run ${run.runId} · building the starting point`);
   await decision(
     "this game is an empty project: building the starting point every worker forks from, before the director's session opens",
     "this game is empty, so the studio is building the starting point first",
   );
-  const session = await prepareInWorktree(night, {
-    prompt: startingPointPrompt(night, budget),
+  const session = await prepareInWorktree(loopRun, {
+    prompt: startingPointPrompt(loopRun, budget),
     timeoutMs: budget,
     facetId: "base",
     label: "the starting point",
     unfinished: "the base session did not finish",
   });
-  const changed = await worktreeChanges(night, `director:${run.runId}:base`);
+  const changed = await worktreeChanges(loopRun, `director:${run.runId}:base`);
   // The base's own look: the one pass allowed to accept blank pixels — an empty world with
   // working cameras IS a starting point — and never allowed to accept one that does not load.
   const evidence =
@@ -945,17 +982,17 @@ export async function buildStartingPoint(night: Night) {
   let commit = null;
   let error = session.error;
   if (evidence?.ok) {
-    commit = await commitPreparation(night, `director ${run.runId}: the starting point`, {
+    commit = await commitPreparation(loopRun, `director ${run.runId}: the starting point`, {
       commit: `director:${run.runId}:base-commit`,
       head: `director:${run.runId}:base-head`,
     });
-    // The night starts here now: this is what workers fork from and what "start" means.
-    await adoptAsStart(night, commit, evidence, { base: true });
+    // The run starts here now: this is what workers fork from and what "start" means.
+    await adoptAsStart(loopRun, commit, evidence, { base: true });
   } else if (session.ok) error = startingPointFailure(changed, evidence);
   // A session that timed out mid-file used to leave its edits in the worktree while the brief
   // said the director stood on the empty scaffold, and then `integrate` and `playtest` both
   // refused it for uncommitted work.
-  await resetUnfinished(night, commit, changed, `director:${run.runId}:base-reset`);
+  await resetUnfinished(loopRun, commit, changed, `director:${run.runId}:base-reset`);
   journal.base = { commit, ok: Boolean(commit), empty: evidence?.emptyScene === true, error: commit ? null : error };
   await saveJournal();
   await writeVerdict("director/base/verdict.json", {
@@ -968,7 +1005,7 @@ export async function buildStartingPoint(night: Night) {
     consoleErrors: evidence?.consoleErrors ?? [],
     shots: shotsOf(evidence),
   });
-  await sayStartingPoint(night, commit, error);
+  await sayStartingPoint(loopRun, commit, error);
   ctx.setStatus(`run ${run.runId} · director`);
   return journal.base;
 }
