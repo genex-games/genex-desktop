@@ -1,10 +1,11 @@
 /**
  * The Unreal lead's runner calling the Unreal plugin's tools for its game, as its own steps (never
- * an agent's call: the host runs the tools a plugin keeps for the harness only then). A read runs
- * whatever the run's chat is doing; a write (a save, a shot, a play, an editor's end or reopening,
- * a module or the helper) is part of the runner's checkpoint, which Plan mode holds back while the
- * run's chat plans, as it holds a chat's own save. A held write throws, so whatever it was part of
- * is not done. A module of its own: a seed upgrade keeps an older `lead-journal.ts` the agent
+ * an agent's call: the host runs the tools a plugin keeps for the harness only then): the C++
+ * module's own flow, the one the runner still calls by name (every other editor step is the
+ * plugin's own at Genex's moments, `../hooks.ts`). A read runs whatever the run's chat is doing; a
+ * write (adding the module) is part of the runner's checkpoint, which Plan mode holds back while
+ * the run's chat plans, as it holds a chat's own save. A held write throws, so whatever it was part
+ * of is not done. A module of its own: a seed upgrade keeps an older `lead-journal.ts` the agent
  * edited, and the runner's parts import these names from here.
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
@@ -14,11 +15,13 @@ import type { Lead } from "./lead-journal.ts";
 
 /**
  * Why a plugin call answered without running (its answer, never an error, carries it as
- * `blocker`): the chat is in Plan mode. A copy of the app's `PluginCallBlocker`
- * (`shared/plugins.ts`), held equal by `seed-contracts.test.ts`. Never rename a value.
+ * `blocker`): the chat is in Plan mode, or a lock the tool needs was not given in time. A copy of
+ * the app's `PluginCallBlocker` (`shared/plugins.ts`), held equal by `seed-contracts.test.ts`.
+ * Never rename a value.
  */
 export const PluginCallBlocker = {
   PlanMode: "plan_mode",
+  Lock: "lock",
 } as const;
 export type PluginCallBlocker = (typeof PluginCallBlocker)[keyof typeof PluginCallBlocker];
 
@@ -64,5 +67,12 @@ export async function unrealWrite(lead: StepLead, name: string, args: AnyRecord 
   });
   if (isPlainRecord(answer) && answer.blocker === PluginCallBlocker.PlanMode)
     throw Object.assign(new Error(MESSAGE.InPlan), { blocker: PluginCallBlocker.PlanMode });
+  // A write that never ran is no write: whatever it was part of is not done. The error carries
+  // Genex's hold (the lock refusal's code) and the lock's label, so the person's line is worded
+  // from them, never from the message, which is written for agents.
+  if (isPlainRecord(answer) && answer.blocker === PluginCallBlocker.Lock) {
+    const held = { blocker: PluginCallBlocker.Lock, hold: answer.reason, label: answer.lock };
+    throw Object.assign(new Error(String(answer.message ?? "")), held);
+  }
   return answer;
 }

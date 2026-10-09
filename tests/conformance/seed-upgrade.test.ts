@@ -31,7 +31,7 @@ import {
 import { atomicWriteJson, pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
-import { closeBeforeCleanup, tmpDir } from "../helpers/tmp.ts";
+import { closeBeforeCleanup, removeTree, tmpDir } from "../helpers/tmp.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { studioActivity } from "../../src/shared/studio-activity.ts";
@@ -1128,21 +1128,21 @@ describe("seed upgrade across the harness step flag", () => {
   const TURN = "loop/delegated-turn.ts";
   const JOURNAL = "loop/unreal/lead-journal.ts";
 
-  /** A workspace whose chat turn the agent edited: `older` keeps sending harness steps like an agent's call. */
+  /** A workspace whose chat turn the agent edited: `older` still saves its game's editor itself, without Genex's checkpoint. */
   async function keptTurn(older: boolean) {
     const root = await tmpDir("seed-step-");
     const ws = path.join(root, "workspace");
     const manifest = path.join(root, "manifest.json");
     await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
     const copy = await readFile(path.join(ws, TURN), "utf8");
-    // The older shape: a harness step sent like an agent's call.
-    const kept = older ? copy.replaceAll("step: true", "harness: true") : copy;
+    // The older shape: the turn's end save is its own, not Genex's checkpoint.
+    const kept = older ? copy.replaceAll("endOfTurnCheckpoint(", "saveUnrealTurn(") : copy;
     await writeFile(path.join(ws, TURN), `${kept}\n// the agent's own change\n`);
     const backupDir = path.join(root, "backup");
     return applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest, backupDir });
   }
 
-  it("a kept chat turn that calls plugins.invoke without step: true is reported and noted for the agent; one that sends it is not", async () => {
+  it("a kept chat turn that ends without Genex's checkpoint is reported and noted for the agent; one that takes it is not", async () => {
     const outdated = await keptTurn(true);
     assert.ok(outdated.kept.includes(TURN), "the chat turn is the agent's");
     assert.deepEqual(outdated.outdatedCalls, [TURN]);
@@ -1154,8 +1154,8 @@ describe("seed upgrade across the harness step flag", () => {
     assert.equal(memory["user taste"], "warm palettes", "the agent's own memory is left alone");
     const note = memory[`${SEED_CALL_MEMORY_PREFIX}${TURN}`];
     assert.equal(typeof note, "string");
-    assert.match(note as string, /step: true/);
-    assert.match(note as string, /checkpoint: true/);
+    assert.match(note as string, /endOfTurnCheckpoint/);
+    assert.match(note as string, /hooksOn/);
     assert.ok((note as string).length <= 300, "one memory value stays within the memory policy's limit");
     assert.deepEqual(
       seedCallMemory(memory, []),
@@ -1453,6 +1453,40 @@ describe("seed upgrade across the harness step flag", () => {
     }
   });
 
+  it("a kept director part or run start from before Genex's moments is reported once and noted", async () => {
+    const root = await tmpDir("seed-step-moments-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    // The older shapes: a run that announces none of the game's moments, and a start that never reads them.
+    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
+      ["loop/director.ts", "HookEvent.RunPrepare", /HookEvent\.RunPrepare/],
+      ["loop/director/setup.ts", "hookEvents: game?.hookEvents", /hookEvents/],
+      ["loop/director/wake.ts", "HookEvent.TurnStart", /HookEvent\.TurnStart/],
+      ["loop/director/tools.ts", "HookEvent.Finish", /HookEvent\.Finish/],
+      ["loop/director/workers.ts", "workerStartHooks(", /workerStartHooks/],
+    ];
+    for (const [file, marker] of older) {
+      const copy = await readFile(path.join(ws, file), "utf8");
+      assert.ok(copy.includes(marker), `${file} has ${marker}`);
+      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
+    }
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    const files = older.map(([file]) => file);
+    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
+    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
+    for (const [file, , named] of older) {
+      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
+      assert.match(note, named, file);
+      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
+    }
+  });
+
   it("a kept wake rules file without the job kind still loads the harness, and a job's end it has no kind for still wakes the lead soon", async () => {
     const root = await tmpDir("seed-job-kind-");
     const ws = path.join(root, "workspace");
@@ -1559,11 +1593,16 @@ describe("seed upgrade across the harness step flag", () => {
     const move = report.moved.find((m) => m.from === JOURNAL);
     assert.equal(move?.to, "loop/unreal/lead-steps.ts");
     assert.deepEqual(move?.names, ["unrealTool"]);
-    for (const caller of ["loop/unreal/save-point.ts", "loop/unreal/restore.ts", "loop/unreal/lead.ts"])
-      assert.ok(move?.callers.includes(caller), caller);
+    // The runner's own plugin calls are the C++ module's now: every other editor step is a plugin's, at
+    // Genex's moments. `editor-life.ts` is the shim older kept copies still import, called by nothing.
+    assert.deepEqual([...(move?.callers ?? [])].sort(), [
+      "loop/unreal/editor-life.ts",
+      "loop/unreal/lead-between.ts",
+      "loop/unreal/lead.ts",
+    ]);
   });
 
-  it("the boot writes an outdated call into the agent's memory, and takes it back once the copy sends the step", async () => {
+  it("the boot writes an outdated call into the agent's memory, and takes it back once the copy takes Genex's checkpoint", async () => {
     const resources = await makeResources();
     const userData = path.join(await tmpDir("seed-call-boot-"), "userData");
     const boot = async () => {
@@ -1584,10 +1623,13 @@ describe("seed upgrade across the harness step flag", () => {
     const first = await boot();
     const turn = path.join(first.layout.harnessWs, TURN);
     const shippedTurn = await readFile(turn, "utf8");
-    await writeFile(turn, `${shippedTurn.replaceAll("step: true", "harness: true")}\n// the agent's own change\n`);
+    await writeFile(
+      turn,
+      `${shippedTurn.replaceAll("endOfTurnCheckpoint(", "saveUnrealTurn(")}\n// the agent's own change\n`,
+    );
 
     const second = await boot();
-    assert.match(String((await memoryOf(second))[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]), /step: true/);
+    assert.match(String((await memoryOf(second))[`${SEED_CALL_MEMORY_PREFIX}${TURN}`]), /endOfTurnCheckpoint/);
 
     // The agent carries the new call into its copy.
     await writeFile(turn, `${shippedTurn}\n// the agent's own change, on the new shape\n`);
@@ -2433,6 +2475,92 @@ describe("seed upgrade across the worker model", () => {
       }
     }
     assert.deepEqual(unlinked, []);
+  });
+});
+
+/**
+ * Genex's moments changed parts of the harness (the chat turn, its brief and offer, the director's
+ * start, wake, tools and builders, the worker pool, the Unreal lead's modules) and gave them a module
+ * to import (`loop/hooks.ts`). Any of those parts may be one the agent edited and a seed upgrade keeps
+ * at the older vintage: each new name comes from a module of its own, so a current part beside one
+ * older copy still links, through the loop, every local turn's prompt and the Unreal lead.
+ */
+describe("seed upgrade across Genex's moments", () => {
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-hooks.json", import.meta.url)), "utf8"),
+  ) as { modules: Record<string, string[]>; imports: Record<string, Record<string, string[]>> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+
+  /** A kept module of that vintage: its imports as they were (an alias kept), and every name it exported then. */
+  function keptModule(rel: string): string {
+    const imports = vintage.imports[rel] ?? {};
+    const locals = Object.values(imports)
+      .flat()
+      .map((spec) => spec.split(" as ").at(-1) ?? spec);
+    return [
+      ...Object.entries(imports).map(([from, specs]) => `import { ${specs.join(", ")} } from "${from}";`),
+      `const used = [${locals.join(", ")}];`,
+      ...(vintage.modules[rel] ?? []).map((name) =>
+        locals.includes(name) ? `export { ${name} };` : `export const ${name} = () => used.length;`,
+      ),
+      "// the agent's own change",
+    ].join("\n");
+  }
+
+  it("any one of the parts it changed, kept from before with its imports as they were, still loads the harness", async () => {
+    const unlinked: string[] = [];
+    for (const rel of Object.keys(vintage.modules)) {
+      const root = await tmpDir("seed-moments-");
+      const ws = path.join(root, "workspace");
+      const manifest = path.join(root, "manifest.json");
+      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+      await writeFile(path.join(ws, rel), `${keptModule(rel)}\n`);
+      const report = await applySeed({
+        seedDir: shipped,
+        workspaceDir: ws,
+        manifestFile: manifest,
+        backupDir: path.join(root, "backup"),
+      });
+      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
+      for (const entry of ["loop/main.ts", "loop/prompt.ts", "loop/unreal/lead.ts"]) {
+        if (entry === rel) continue;
+        try {
+          await import(pathToFileURL(path.join(ws, entry)).href);
+        } catch (err) {
+          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
+        }
+      }
+      await removeTree(root);
+    }
+    assert.deepEqual(unlinked, []);
+  });
+
+  it("a kept host-method table without the moments' and locks' methods is reported once and noted for the agent", async () => {
+    const root = await tmpDir("seed-moments-methods-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    const file = "loop/host-methods.ts";
+    const copy = await readFile(path.join(ws, file), "utf8");
+    const newer = ["LocksHold", "LocksRelease", "CheckpointTake", "HooksFire"];
+    const older = copy
+      .split("\n")
+      .filter((line) => !newer.some((name) => line.trim().startsWith(`${name}:`)))
+      .join("\n");
+    assert.notEqual(older, copy, "the shipped table has the newer methods");
+    await writeFile(path.join(ws, file), `${older}\n// the agent's own change\n`);
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    assert.deepEqual(report.outdatedCalls ?? [], [file], "reported once");
+    const note = String(seedCallMemory({}, report.outdatedCalls ?? [])[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
+    assert.match(note, /HooksFire/);
+    assert.match(note, /copy the shipped file/i);
+    assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
+    await removeTree(root);
   });
 });
 

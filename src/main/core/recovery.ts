@@ -584,6 +584,9 @@ export class RecoveryService {
     this.#core.plugins?.abortCalls(CallCutOff.HarnessEnded);
     for (const controller of this.#x.activeConnectorCalls.keys())
       controller.abort(new PluginCallCutOff(CallCutOff.HarnessEnded));
+    // Its workers writing in place let go below (`releaseHarnessLeases`); its calls waiting for a
+    // lock leave the line as their aborts reach them. The host's own holds (a restore, the
+    // person's Rewind) end with their own work, which goes on in main.
     this.#x.consent.cancel({}, "stop");
     this.#x.permissions.cancel({}, ToolPermissionBy.Stop);
     for (const release of this.#x.pluginTurnLeases.values()) await release();
@@ -607,11 +610,13 @@ export class RecoveryService {
   }
 
   /**
-   * Give back every preview window the ending harness boot borrowed over RPC — its own `finally`
-   * blocks will never run. Windows the host holds for a delegation or a build carry no owner and
-   * are left to their own release.
+   * Give back every preview window the ending harness boot borrowed over RPC, and the locks it held
+   * for its workers writing in place — its own `finally` blocks will never run. Windows the host
+   * holds for a delegation or a build carry no owner and are left to their own release.
    */
   async releaseHarnessLeases(): Promise<void> {
+    // Its workers writing in place are gone with it, a planned restart's as much as a crash's.
+    this.#x.locks.releaseHarnessHolds();
     const owner = `harness:${this.#x.harnessBoot++}`;
     const released = (await this.#x.previewPool?.releaseOwnedBy(owner).catch(() => [] as string[])) ?? [];
     for (const handle of released) this.#x.profileSources.delete(handle);

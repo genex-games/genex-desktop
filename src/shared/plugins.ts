@@ -1,5 +1,6 @@
 import type { GameEngine } from "./game-engine.ts";
 import type { RuntimeInstallPhase } from "./model-install.ts";
+import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
 import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 
@@ -154,6 +155,8 @@ export type PluginToolAudience = (typeof PluginToolAudience)[keyof typeof Plugin
  */
 export const PluginCallBlocker = {
   PlanMode: "plan_mode",
+  /** A lock the call needs was not given in time: the person kept using it, or another holder did. */
+  Lock: "lock",
 } as const;
 export type PluginCallBlocker = (typeof PluginCallBlocker)[keyof typeof PluginCallBlocker];
 /**
@@ -168,8 +171,9 @@ export const CallCutOff = {
 } as const;
 export type CallCutOff = (typeof CallCutOff)[keyof typeof CallCutOff];
 /**
- * A tool as the manifest declares it. `host`, `audience`, `facts` and `makes` never reach an agent:
- * the tool list the registry serves is plain `PluginTool`, which the harness seed is generated from.
+ * A tool as the manifest declares it. `host`, `audience`, `facts`, `makes`, `needs` and `ready`
+ * never reach an agent: the tool list the registry serves is plain `PluginTool`, which the harness
+ * seed is generated from.
  */
 export interface PluginManifestTool extends PluginTool {
   /** Bundled Genex only: Studio runs this tool itself rather than the backend. */
@@ -180,6 +184,10 @@ export interface PluginManifestTool extends PluginTool {
   facts?: string[];
   /** API 3, agent tools only: the facts the tool makes in the game's folder (a new project of a kind, a port). */
   makes?: string[];
+  /** API 3: the plugin's locks (`locks[].id`) a call of this tool holds while it runs. */
+  needs?: string[];
+  /** API 3, agent tools with `makes` only: the harness tool that answers whether what it makes is ready to make. */
+  ready?: string;
 }
 /** Whether agents are handed a manifest tool: every one but those only the harness calls. */
 export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean =>
@@ -225,13 +233,20 @@ export function skillScope(skill: Pick<PluginSkill, "engines" | "facts">): strin
 }
 /**
  * A tool a plugin offers that makes a kind of project (its manifest's `makes`), as a session's
- * snapshot lists it: the plugin's id and name, the tool's agent name `<plugin>__<tool>`, and the facts.
+ * snapshot lists it: the plugin's id and name, the tool's agent name `<plugin>__<tool>`, and the
+ * facts. `asksReady` says the tool declares a `ready` harness tool (a plugin's new-game tool, the
+ * one its engine card offers). For a game with no kind yet, the host fills `ready` and `note` from
+ * that tool (whether one can be made here now, and the words the engine card offers it with); both
+ * are absent when it declares none or its answer didn't come.
  */
 export interface PluginKindOffer {
   plugin: string;
   name: string;
   tool: string;
   makes: string[];
+  asksReady?: boolean;
+  ready?: boolean;
+  note?: string;
 }
 /** What of one plugin reaches a game's session: its agent tools, its skills and whether its skill reader does. */
 export interface PluginReach {
@@ -366,6 +381,8 @@ export interface PluginMcpServer {
   description: string;
   /** API 3: the facts of the games whose sessions get this connector; every game when absent. Never started for another. */
   facts?: string[];
+  /** API 3: the plugin's locks (`locks[].id`) a call of this connector's tools holds while it runs. */
+  needs?: string[];
 }
 /**
  * API 3: a kind of worker a plugin declares (`shared/workers.ts`). `tools` names the plugin's own
@@ -380,7 +397,8 @@ export interface PluginWorkerType {
 }
 /**
  * API 3: a folder outside the game the plugin's engine programs write to (`~/` or an absolute
- * path), and why. Turning the plugin on approves it as a write root for workers.
+ * path), and why. Turning the plugin on approves it as a write root for workers and jobs; the
+ * plugin's page and its suggestion card name it first.
  */
 export interface PluginFolder {
   path: string;
@@ -437,6 +455,10 @@ export interface PluginManifest {
   workerTypes?: PluginWorkerType[];
   /** API 3: folders outside the game its engine programs write to: workers' write roots. */
   folders?: PluginFolder[];
+  /** API 3: what one holder at a time may use (an editor), each giving way to the person (`shared/plugin-hooks.ts`). */
+  locks?: PluginLock[];
+  /** API 3: the plugin's harness tools Genex runs at its moments (`shared/plugin-hooks.ts`). */
+  hooks?: PluginHook[];
   /** Host-managed account flow. Status may finish a pending browser authorization. */
   account?: { connect: string; unlock: string; disconnect: string; status: string; cancel?: string };
   /**
@@ -751,6 +773,8 @@ export interface PluginBinding {
   project: string;
   directory: string;
   threadId?: string;
+  /** Set when Genex runs the tool at one of its moments: which, and for what. */
+  hook?: HookContext;
 }
 export interface PluginCatalogEntry {
   manifest: PluginManifest;

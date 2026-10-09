@@ -48,6 +48,8 @@ it("records one actionable parent card and resolves the original worker exactly 
     cutOffCalls: new Map(),
     planning: async () => false,
     bypassing: async () => false,
+    locks: core.locks,
+    hooks: core.hooks,
   });
   const binding = { project: "chess", directory: "/unused", threadId: child };
   attribution.set(binding, { runId: "run-c", facetId: "online" });
@@ -180,6 +182,8 @@ for (const answer of ["stop", "decline", "timeout"] as const) {
       cutOffCalls: new Map(),
       planning: async () => false,
       bypassing: async () => false,
+      locks: core.locks,
+      hooks: core.hooks,
     });
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const pending = service.requestConsent(

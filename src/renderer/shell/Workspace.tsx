@@ -6,7 +6,7 @@ import { ChatResizeHandle } from "../panels/ChatResizeHandle.tsx";
 import { TerminalDock } from "../panels/TerminalDock.tsx";
 import { StageView } from "../stage.ts";
 import { useEngines, useLibrary, useThreads, useThreadsView } from "../state/hooks.ts";
-import { activeThread as activeThreadOf, threadMeta } from "../state/threads.ts";
+import { activeThread as activeThreadOf, personFirstLabel, threadMeta } from "../state/threads.ts";
 import { notifyProblem } from "../state/toasts.ts";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { HomeLayer, useCoveredByHome } from "./HomeScreen.tsx";
@@ -59,6 +59,7 @@ function WorkspaceChat({ app, chrome, navigation, views, chat }: WorkspaceProps)
   const { activeThreadId, activeThread, status: threadStatus } = useThreadsView();
   const engines = useEngines((s) => s.list);
   const activeStatus = (activeThreadId && threadStatus[activeThreadId]) || null;
+  const personFirst = useThreads((s) => personFirstLabel(s, s.activeThreadId));
   const games = useLibrary((s) => s.games);
   const notify = app.notify;
   const saveGameTitle = useCallback(
@@ -83,6 +84,7 @@ function WorkspaceChat({ app, chrome, navigation, views, chat }: WorkspaceProps)
       activeThread={activeThread}
       status={activeStatus?.status ?? ""}
       busySince={activeStatus?.since ?? null}
+      personFirst={personFirst}
       firstAsk={chat.firstAsk}
       onRename={app.renameThread}
       onRenameGame={saveGameTitle}

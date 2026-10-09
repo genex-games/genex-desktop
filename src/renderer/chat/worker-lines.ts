@@ -2,7 +2,8 @@
  * A worker's one line in the chat, read from its records (`worker_started`, `worker_finished` with
  * its end, then the lead's verdict) that may be old or partial: a field of the wrong type is left
  * out, and a record that names no worker or no task draws nothing. How a worker stands in the game
- * (`isolation`) never reaches the line; the engine it works in picks "in Unreal".
+ * (`isolation`) never reaches the line; where it works in place (the label of the lock it holds,
+ * else an older record's engine) picks "in Unreal".
  */
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import {
@@ -20,8 +21,10 @@ import { GAME_ENGINE_WORDS, WORKER_LINE_WORDS } from "../words.ts";
 /** What a worker's records said so far, and the line they make. */
 export interface WorkerLine {
   title: string;
-  /** the engine it works in, when not the web's */
+  /** the engine it works in, when not the web's (older records) */
   in: GameEngine | null;
+  /** the app it works in place in, by the label of the lock it holds; wins over `in` */
+  where: string | null;
   summary: string | null;
   ended: WorkerEnd | null;
   /** why it stopped short, as its end record's code: the record's own text is for the lead, never shown */
@@ -79,6 +82,7 @@ function lineText(line: WorkerSaid): string {
   if (line.ended === WorkerEnd.Failed) return WORKER_LINE_WORDS.didntFinish(line.title, line.because);
   if (line.ended === WorkerEnd.Stopped) return WORKER_LINE_WORDS.stopped(line.title);
   if (endedWell(line)) return WORKER_LINE_WORDS.done(said);
+  if (line.where) return WORKER_LINE_WORDS.workingIn(line.title, line.where);
   if (line.in) return WORKER_LINE_WORDS.workingIn(line.title, GAME_ENGINE_WORDS[line.in]);
   return WORKER_LINE_WORDS.working(line.title);
 }
@@ -93,6 +97,7 @@ export function workerStartLine(payload: Partial<WorkerStartedPayload>): WorkerL
   const line = {
     title,
     in: engineOf(payload.in),
+    where: textOf(payload.where),
     summary: null,
     ended: null,
     because: null,
@@ -113,6 +118,7 @@ export function workerEndLine(payload: Partial<WorkerFinishedPayload>, previous?
   const line = {
     title,
     in: previous?.in ?? null,
+    where: previous?.where ?? null,
     summary: textOf(payload.summary) ?? previous?.summary ?? null,
     ended: endOf(payload.state) ?? previous?.ended ?? null,
     because: stopCodeOf(payload.stopCode) ?? previous?.because ?? null,

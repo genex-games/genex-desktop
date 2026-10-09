@@ -287,9 +287,16 @@ export interface SeedCallChange {
  * run's ends again after a restart. Kept builders or chat turns that write no worker records leave
  * those workers off Builds and the chat; a kept run start without `workerRecords` draws its Loop as a
  * tree only from its first worker; a kept tool list never tells the lead the person reads its note.
+ * A kept chat turn from before Genex's moments never takes Genex's checkpoint at its end and never
+ * announces its turn to the game's plugins; kept director parts never announce the run's start, end,
+ * turns, finish or builders, and a kept run start never reads the moments the game's plugins hook.
+ * A kept host-method table without the moments' and locks' methods turns them all off.
  */
 export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
-  { file: "loop/delegated-turn.ts", marker: "step: true" },
+  // A chat turn's own end save is Genex's checkpoint now (`checkpoint.take`), and its moments are
+  // announced only when the game's plugins hook them (`hooksOn`): it calls no plugin tool by name.
+  { file: "loop/delegated-turn.ts", marker: "endOfTurnCheckpoint(" },
+  { file: "loop/delegated-turn.ts", marker: "hooksOn(" },
   { file: "loop/delegated-turn.ts", marker: "HostMethod.PluginsTools, { project }" },
   { file: "tools/index.ts", marker: "HostMethod.PluginsTools, { project" },
   { file: "loop/chat-dispatch.ts", marker: "kind: ProjectStarter.Web" },
@@ -344,6 +351,19 @@ export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
   // the start), and the lead is told the person reads its note on a worker.
   { file: "loop/director/setup.ts", marker: "workerRecords: true" },
   { file: "loop/director/tool-specs.ts", marker: "Why, for the person" },
+  // A director's run announces Genex's moments to the game's plugins: its start and end, each of
+  // the lead's turns, its finish and each builder's start and end, read from the game it set up.
+  { file: "loop/director.ts", marker: "HookEvent.RunPrepare" },
+  { file: "loop/director/setup.ts", marker: "hookEvents: game?.hookEvents" },
+  { file: "loop/director/wake.ts", marker: "HookEvent.TurnStart" },
+  { file: "loop/director/tools.ts", marker: "HookEvent.Finish" },
+  { file: "loop/director/workers.ts", marker: "workerStartHooks(" },
+  // The generated host-method table names the moments' and locks' methods: without them every
+  // moment answers empty, every save point is refused and an in-place worker holds no lock.
+  { file: "loop/host-methods.ts", marker: 'LocksHold: "locks.hold"' },
+  { file: "loop/host-methods.ts", marker: 'LocksRelease: "locks.release"' },
+  { file: "loop/host-methods.ts", marker: 'CheckpointTake: "checkpoint.take"' },
+  { file: "loop/host-methods.ts", marker: 'HooksFire: "hooks.fire"' },
 ];
 
 interface SeedManifest {
@@ -470,7 +490,12 @@ async function deletedBeforeMigration(
  * left behind would no longer type-check against the seed (`cpp.ts`, `live-contract.ts`). Two of
  * its files stay as shims, because files the agent may have kept import from them:
  * `loop/unreal/live.ts` (a kept `run-dispatch.ts`'s `runUnrealLive`, the lead now) and
- * `loop/unreal/live-journal.ts` (a kept `restore.ts`'s `unrealTool`, in `SEED_MOVES`).
+ * `loop/unreal/live-journal.ts` (a kept `restore.ts`'s `unrealTool`, in `SEED_MOVES`). So do the
+ * lead's own reading of whether Unreal is there (`editor-life.ts`) and a chat's own waits and reads
+ * of Unreal (`editor-wait.ts`, `editor-wait-prompts.ts`, `editor-activity.ts`): no current module
+ * calls them since Genex's `health`, checkpoint and kinds' readiness took them over, but kept copies
+ * of `delegated-turn.ts`, `unreal-prompts.ts`, `lead-turn.ts`, `restore.ts` and `save-point.ts`
+ * still import them, so they stay until the Unreal runner's last by-name calls go.
  *
  * The JavaScript modules the TypeScript seed replaced (`loop/*.mjs` → `loop/*.ts`) are not listed
  * here: retiring an agent-edited `x.mjs` would keep it for ever beside an `x.ts` that is the one

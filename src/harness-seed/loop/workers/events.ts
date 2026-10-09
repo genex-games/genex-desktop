@@ -21,6 +21,7 @@ import {
   type WorkerStopCode,
   type WorkerVerdict,
 } from "./contract.ts";
+import { WORKER_WHERE_CHARS } from "./where.ts";
 
 /** Where a worker's records go: its chat, and its run or the chat turn (with the request) that started it. */
 export interface WorkerEventScope {
@@ -42,6 +43,8 @@ export interface WorkerStart {
   type?: string | null;
   /** The engine it works in, when it works in place in the game folder of one. */
   in?: GameEngine;
+  /** The app it works in place in, by the label of the plugin lock it holds ("Unreal"). */
+  where?: string;
 }
 
 /** A worker's end (`state`), or the lead's verdict on it (`verdict`, with no `state`). */
@@ -114,6 +117,7 @@ export function workerStartedPayload(scope: WorkerEventScope, worker: WorkerStar
     ...(worker.type ? { type: worker.type } : {}),
     task: clip(worker.task, WORKER_TASK_CHARS),
     ...(worker.in ? { in: worker.in } : {}),
+    ...(hasText(worker.where) ? { where: clip(worker.where.trim(), WORKER_WHERE_CHARS) } : {}),
     ...(turn ? { turn } : {}),
     ...ask,
     at: new Date(at).toISOString(),

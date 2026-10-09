@@ -332,6 +332,8 @@ async function siteAndEditorSkills(): Promise<PluginRegistry> {
 const servedTool = (name: string, description: string) => ({ name, description, parameters: {} });
 /** The Unreal plugin's tool that makes a game's Unreal project: served only while the plugin is on. */
 const NEW_GAME_TOOL = servedTool(UNREAL_NEW_GAME_TOOL, "Make the game's Unreal project.");
+/** The Unreal plugin's kind, as the host lists it while the plugin is on. */
+const UNREAL_KIND = { plugin: "unreal", name: "Unreal Editor", tool: UNREAL_NEW_GAME_TOOL, makes: ["unreal-project"] };
 
 /** The names of the tools a delegated request lists, read structurally (a list may be absent). */
 const namesOf = (tools: unknown) => (tools as Array<{ name: string }> | undefined)?.map((tool) => tool.name) ?? [];
@@ -342,10 +344,19 @@ const namesOf = (tools: unknown) => (tools as Array<{ name: string }> | undefine
  * once (a black canvas); nothing else is real. Answers what the builder was handed and what the
  * turn's end did.
  */
-async function chatTurn(project: string, text: string, options: { tools?: unknown[]; build?: () => Promise<void> }) {
+async function chatTurn(
+  project: string,
+  text: string,
+  options: { tools?: unknown[]; kinds?: unknown[]; build?: () => Promise<void> },
+) {
   const host = liteHost(lite, {
     [HostMethod.EventsMessages]: () => [{ role: "user", content: text }],
-    [HostMethod.PluginsTools]: () => ({ tools: options.tools ?? [], guidance: "", revision: 1 }),
+    [HostMethod.PluginsTools]: () => ({
+      tools: options.tools ?? [],
+      guidance: "",
+      revision: 1,
+      kinds: options.kinds ?? [],
+    }),
     [HostMethod.EngineDescribe]: () => [],
     [HostMethod.EngineDelegate]: async () => {
       await options.build?.();
@@ -630,6 +641,10 @@ const entriesOf = (manifest: object, key: string): Array<Record<string, unknown>
 const toolOf = (manifest: object, name: string): Record<string, unknown> | undefined =>
   entriesOf(manifest, "tools").find((tool) => tool.name === name);
 
+/** One of a manifest's MCP servers, by its id. */
+const serverOf = (manifest: object, id: string): Record<string, unknown> | undefined =>
+  entriesOf(manifest, "mcpServers").find((server) => server.id === id);
+
 /** A game's facts as a lead's tools are scoped by them: an id and the folder it was found at. */
 type FactScope = Array<{ id: string; path: string }>;
 
@@ -705,22 +720,23 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
 describe("a new Unreal game, plugin on: the editor under its lock, workers in copies, the Unreal card", () => {
   it("a first message on a new game asks web or Unreal when the plugin is on", async () => {
     const game = await lite.core.createGame("Lantern Keep");
-    const { bridged } = await chatTurn(game.name, "make a castle exploration game", { tools: [NEW_GAME_TOOL] });
+    const { bridged } = await chatTurn(game.name, "make a castle exploration game", {
+      tools: [NEW_GAME_TOOL],
+      kinds: [UNREAL_KIND],
+    });
     assert.ok(bridged.includes("ask_user"), `the question card is bridged in (bridged: ${JSON.stringify(bridged)})`);
   });
 
-  it("the plugin declares the editor lock, which gives way to the person, and its editor tools need it", {
-    todo: "phase 7: the plugin declares the editor lock, its personFirst is editor-activity, and its editor tools need it",
-  }, () => {
+  it("the plugin declares the editor lock, which gives way to the person, and its editor tools need it", () => {
     const editor = entriesOf(UNREAL_MANIFEST, "locks").find((lock) => lock.id === "editor");
     assert.ok(editor, `an editor lock (locks: ${JSON.stringify(sectionOf(UNREAL_MANIFEST, "locks"))})`);
     assert.equal(editor.personFirst, "editor-activity", "the lock gives way while the person uses the editor");
-    assert.deepEqual(toolOf(UNREAL_MANIFEST, "find-nodes")?.needs, ["editor"]);
+    assert.deepEqual(serverOf(UNREAL_MANIFEST, "editor")?.needs, ["editor"], "the agents' editor connector");
+    assert.deepEqual(toolOf(UNREAL_MANIFEST, "save-all")?.needs, ["editor"], "Genex's own editor steps");
+    assert.equal(toolOf(UNREAL_MANIFEST, "find-nodes")?.needs, undefined, "a lookup without Unreal needs nothing");
   });
 
-  it("the plugin's hooks cover the editor's moments, and the end leaves the editor open", {
-    todo: "phase 7: the plugin's hooks cover run.prepare, checkpoint.before and .after, restore.after, health and crash, and no run.end hook ends the editor",
-  }, () => {
+  it("the plugin's hooks cover the editor's moments, and the end leaves the editor open", () => {
     const hooks = entriesOf(UNREAL_MANIFEST, "hooks");
     const moments = hooks.map((hook) => hook.on);
     const wanted = ["run.prepare", "checkpoint.before", "checkpoint.after", "restore.after", "health", "crash"];
@@ -1226,7 +1242,7 @@ describe("an Unreal game with a web site: two facts, two views", () => {
     const lines = buildContractorBrief({ ask: ASK, engine: CLAUDE, facts }).split("\n");
     const web = lines.filter((line) => line.includes("window.__studio"));
     assert.ok(web.length > 0 && web.every((line) => line.startsWith("For the web game in `site/`: ")));
-    const unreal = lines.filter((line) => line.includes("unreal-editor__list_toolsets"));
+    const unreal = lines.filter((line) => line.includes("the Unreal editor connector's tools"));
     assert.ok(unreal.length > 0 && unreal.every((line) => !line.startsWith("For the ")));
   });
   it.todo("phase 8: two observers, and Live switches between the Unreal card and the site's preview");
@@ -1262,9 +1278,9 @@ describe("a Genex plugin for an engine Genex lacks: written, loaded by the perso
   /** Each part of the manifest a later phase keeps, read the same way from the file and from what Genex kept. */
   const KEPT: Array<{ part: string; todo?: string; read: (manifest: object) => unknown }> = [
     { part: "detect", read: (m) => sectionOf(m, "detect") },
-    { part: "locks", todo: "phase 7: the manifest keeps locks", read: (m) => sectionOf(m, "locks") },
+    { part: "locks", read: (m) => sectionOf(m, "locks") },
     { part: "folders", read: (m) => sectionOf(m, "folders") },
-    { part: "hooks", todo: "phase 7: the manifest keeps hooks", read: (m) => sectionOf(m, "hooks") },
+    { part: "hooks", read: (m) => sectionOf(m, "hooks") },
     { part: "observers", todo: "phase 8: the manifest keeps observers", read: (m) => sectionOf(m, "observers") },
     { part: "workspace", read: (m) => sectionOf(m, "workspace") },
     { part: "assets", read: (m) => sectionOf(m, "assets") },
@@ -1272,7 +1288,6 @@ describe("a Genex plugin for an engine Genex lacks: written, loaded by the perso
     { part: "scaffolds", todo: "phase 10: the manifest keeps scaffolds", read: (m) => sectionOf(m, "scaffolds") },
     {
       part: "tools[].needs",
-      todo: "phase 7: the manifest keeps a tool's needs",
       read: (m) => toolOf(m, "build")?.needs,
     },
     {

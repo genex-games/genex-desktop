@@ -4,8 +4,13 @@
  * makes projects with (`engine-status`), so the question is honest; and after a turn that made the
  * game's Unreal project while Unreal still opens it, waiting for its editor to answer
  * (`wait-editor`), so the chat goes on by itself instead of ending on a promise nobody keeps.
- * Plugin: `src/plugins/unreal/editor-wait.ts`; tests/conformance/seed-contracts.test.ts holds the
- * names and wire values below to the plugin's.
+ * Plugin: `src/plugins/unreal/editor-wait.ts`. The names and wire values below are the plugin's as
+ * they were when a module last called this; nothing holds them to the plugin's now.
+ *
+ * No current module calls this: a chat waits on Genex's `health` moment, and the engine
+ * card reads each kind's readiness from its plugin (`kinds[].ready`). It stays because older copies
+ * of `delegated-turn.ts`, `unreal-prompts.ts`, `project-prompts.ts` and `chat-session.ts` an agent
+ * kept import it.
  */
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
 

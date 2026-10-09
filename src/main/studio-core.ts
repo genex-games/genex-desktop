@@ -33,7 +33,7 @@ import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
-import { type ExportReview, type PluginBinding, PluginCapability } from "../shared/plugins.ts";
+import { type ExportReview, type PluginBinding, PluginCapability, PluginToolAudience } from "../shared/plugins.ts";
 import type { EngineLinkUndo } from "../shared/game-engine.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
@@ -131,6 +131,8 @@ import {
 import { layoutFor, type StudioLayout } from "./core/layout.ts";
 import { createPlanReviews } from "./core/plan-drafts.ts";
 import { CONSENT_TIMEOUT_MS, PluginToolService } from "./core/plugin-tools.ts";
+import { LockService, type LockServiceOptions } from "./core/plugin-locks.ts";
+import { HookService } from "./core/plugin-hooks.ts";
 import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { availableMemory } from "../substrate/hardware.ts";
@@ -159,6 +161,7 @@ import { pluginsRpc } from "./harness-rpc/plugins.ts";
 import { previewRpc } from "./harness-rpc/preview.ts";
 import { runsRpc } from "./harness-rpc/runs.ts";
 import { snapshotRpc } from "./harness-rpc/snapshot.ts";
+import { hooksRpc } from "./harness-rpc/hooks.ts";
 import { studioRpc } from "./harness-rpc/studio.ts";
 import type { PlanReviewController } from "./plan-review.ts";
 import { PluginConsent } from "./plugin-consent.ts";
@@ -336,6 +339,8 @@ export interface StudioCoreOptions {
   consentTimeoutMs?: number;
   /** How long a build's lead's permission card waits for the person (default 5 minutes); a test seam. */
   leadAskTimeoutMs?: number;
+  /** The locks' clock, their wait and an agent's call's wait (default ten minutes); a test seam. */
+  locks?: Pick<LockServiceOptions, "agentWaitMs" | "now" | "sleep">;
   /**
    * Other Genex profiles' data, given by the app at start (the normal profile's folder, the
    * repository's development profiles): on every worker's never-touch list beside this profile's own.
@@ -443,6 +448,10 @@ export class StudioCore {
   readonly #history: HistorySpaceService;
   /** Questions an agent's plugin tool is waiting on the user for (`plugin_consent` cards in the chat). */
   readonly #consent: PluginConsent;
+  /** The locks plugin tools and connectors wait their turn for, the person first. */
+  readonly locks: LockService;
+  /** Genex's moments: checkpoints, restores and the rest, and the plugin steps each runs. */
+  readonly hooks: HookService;
   /** Claude Code permissions in game chats: modes, the Allow / Deny cards, saved grants. */
   readonly #permissions: ChatPermissionService;
   /** The same port the registry reads, kept so a plugin server's `secret:<name>` can be resolved. */
@@ -482,6 +491,7 @@ export class StudioCore {
     this.options = options;
     this.contextPreferences = new ContextPreferences(path.join(options.paths.userData, "context-settings.json"));
     this.#consent = new PluginConsent({ timeoutMs: options.consentTimeoutMs ?? CONSENT_TIMEOUT_MS });
+    this.locks = this.#createLocks();
     this.layout = layoutFor(options.paths.userData);
     this.appLook = options.appLook ?? unsupportedAppLook();
     this.screenAccess = options.screenAccess ?? null;
@@ -498,6 +508,8 @@ export class StudioCore {
       factRules: () => this.plugins?.detectRules() ?? [],
       // Likewise: until the registry exists only Genex's own table places ignore rules.
       workspaceSections: () => this.plugins?.workspaceSections() ?? [],
+      // Likewise: until the registry exists no plugin hooks a moment.
+      hookEvents: (game) => this.plugins?.hookEvents(game) ?? [],
     });
     // Every save point and rescue snapshot of a game follows the rules for what it holds then,
     // and a restore never cleans away what those rules ignore.
@@ -523,6 +535,7 @@ export class StudioCore {
     this.improvements = new ImprovementJournal(path.join(options.paths.userData, "improvements"));
     this.#connections = new ConnectionService(this, (threadId) => this.#threadBusy(threadId));
     this.#x = this.#createInternals();
+    this.hooks = new HookService(this, this.#x);
     this.#previews = new PreviewService(this, this.#x);
     this.#delegation = new DelegationService(this, this.#x);
     this.#recovery = new RecoveryService(this, this.#x);
@@ -537,6 +550,20 @@ export class StudioCore {
     this.#rewind = new ChatRewindService(this, this.#x);
     this.#history = new HistorySpaceService(this, this.#x);
     this.#permissions = new ChatPermissionService(this);
+  }
+
+  /**
+   * The lock table: a lock's `personFirst` tool is asked straight through the registry as the
+   * harness's own step (never through a call that holds locks itself), and a wait on the person is
+   * told to the chat.
+   */
+  #createLocks(): LockService {
+    return new LockService({
+      ...this.options.locks,
+      probe: (plugin, lock, binding, signal) =>
+        this.plugins.tool(`${plugin}__${lock.personFirst}`, {}, binding, signal, PluginToolAudience.Harness),
+      onPersonFirst: (notice) => this.emit(UiEvent.PersonFirst, notice),
+    });
   }
 
   #createAutoResume(): AutoResumeService {
@@ -617,6 +644,12 @@ export class StudioCore {
       },
       get pluginTools() {
         return core.#pluginTools;
+      },
+      get locks() {
+        return core.locks;
+      },
+      get hooks() {
+        return core.hooks;
       },
       get conversation() {
         return core.#conversation;
@@ -1921,6 +1954,7 @@ export class StudioCore {
       ...eventsRpc(this, this.#x),
       ...optimizationRpc(this, this.#x),
       ...snapshotRpc(this, this.#x),
+      ...hooksRpc(this, this.#x),
       ...pluginsRpc(this, this.#x),
       ...runsRpc(this, this.#x),
       ...jobsRpc(this, this.#x),

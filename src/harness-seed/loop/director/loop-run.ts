@@ -28,6 +28,7 @@ import {
   writeRunArtifact,
 } from "../run-events.ts";
 import type { FactRef } from "../folder-facts.ts";
+import type { HookedGame } from "../hooks.ts";
 import { isCommit } from "../shell.ts";
 import { isTruncatedState, statePathsNamedByChecks } from "../state-shape.ts";
 import { verdictRecord } from "../verdict.ts";
@@ -283,6 +284,11 @@ export interface LoopRunData {
   shape: LoopRunShape;
   /** What the game's folder holds once it is ready (`game.list`'s `facts`); absent on a run a kept older setup.ts made. */
   gameFacts?: FactRef[];
+  /**
+   * The game as far as Genex's moments go (`game.list`'s `hookEvents`): the run announces a moment
+   * only when the game's plugins hook it. Absent on a run a kept older setup.ts made: it announces none.
+   */
+  game?: HookedGame;
   capacity: HarnessResult<"preview.capacity"> | null;
   contractMissing: boolean;
   gameKind: string;

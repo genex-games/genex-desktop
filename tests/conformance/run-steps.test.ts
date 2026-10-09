@@ -681,6 +681,7 @@ describe("why a worker stopped short, on its card", () => {
     type: null,
     isolation: null,
     in: null,
+    where: null,
     task: "Port the car",
     summary: null,
     turn: null,
@@ -707,6 +708,28 @@ describe("why a worker stopped short, on its card", () => {
       ["still working", worker(null), null],
     ];
     for (const [name, info, expected] of cases) assert.equal(workerStopWords(info), expected, name);
+  });
+
+  it("a worker in place says where it works by the lock it holds, before the engine an older record names", () => {
+    const rows: Array<[string, Record<string, unknown>, string]> = [
+      ["where alone", { where: "Unreal" }, "Working in Unreal"],
+      ["where wins over in", { where: "Toy editor", in: "unreal" }, "Working in Toy editor"],
+      ["an older record's in", { in: "unreal" }, "Working in Unreal"],
+      ["a where that is no text", { where: 7, in: "unreal" }, "Working in Unreal"],
+      ["an empty where", { where: "  " }, "Working"],
+      ["neither", {}, "Working"],
+    ];
+    for (const [name, extra, expected] of rows) {
+      const title = "Build the track";
+      const graph = buildRunGraph([
+        event("run_started", { goal: "a track" }),
+        event("worker_started", { workerId: "pool.w1", title, isolation: "lock", task: title, ...extra }),
+      ]);
+      assert.ok(graph, name);
+      const step = partRows(graph, null)[0]?.steps.find((each) => each.worker);
+      assert.ok(step, name);
+      assert.equal(stepWord(step, graph.active), expected, name);
+    }
   });
 
   it("a failed builder's card never says the harness's own reason, whether or not its end has a code", () => {

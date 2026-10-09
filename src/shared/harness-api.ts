@@ -46,6 +46,13 @@ import type { McpLiveTool } from "./mcp.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
 import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
+import {
+  type CheckpointAnswer,
+  type HookEvent,
+  type HookReport,
+  isHookLabel,
+  isSeedFiredHookEvent,
+} from "./plugin-hooks.ts";
 import type { PluginKindOffer, PluginTool } from "./plugins.ts";
 import type {
   BuildObservation,
@@ -64,7 +71,7 @@ import type { PluginsFindAnswer, PluginsSuggestAnswer, StartHeldInPlan } from ".
 import type { ReferenceFrame } from "./protocol.ts";
 import type { HardwareReport, StudioSettingsView } from "./studio-api.ts";
 import type { StudioActivityItem } from "./studio-activity.ts";
-import type { WorkerGrant, WorkerType } from "./workers.ts";
+import { isWorkerId, isWorkerTitle, type WorkerGrant, type WorkerType } from "./workers.ts";
 
 /** Budget class of a completion or delegation; anything but `improvement` is user work. */
 export const WorkClass = {
@@ -306,6 +313,9 @@ export interface HarnessHostApi {
       reason?: string;
       /** Narrows the restore below what the record captured, e.g. game-only from a "both" snapshot. */
       scope?: HarnessSnapshotScope;
+      /** The chat and run the restore answers to: while that chat plans, the game's restore steps wait. */
+      threadId?: string;
+      runId?: string;
     };
     result: boolean;
   };
@@ -375,6 +385,55 @@ export interface HarnessHostApi {
   "mcp.invoke": {
     params: { project: string; threadId?: string; name: string; args?: Record<string, unknown> };
     result: LiveToolResult;
+  };
+  /**
+   * A worker writing in place starts: it takes Genex's one writer in place in the game folder,
+   * across every pool of the game, and the per-game locks of the plugins that are on that the
+   * game's tools need, until `locks.release`. `labels` names the apps those locks guard. Never
+   * waits: a lock another worker holds answers `busy`, in words naming who, and nothing is taken.
+   * A worker is known by the run that started it, else its chat, and its id.
+   */
+  "locks.hold": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string; title: string } };
+    result: { held: true; labels: string[] } | { busy: string };
+  };
+  /**
+   * A checkpoint of the game folder: the enabled plugins' `checkpoint.before` steps, a snapshot
+   * named for `label`, then their `checkpoint.after` steps, under their locks. `onlyIfUnsaved`
+   * skips it when the locks' probes say nothing is unsaved, or one can't tell. Held while the chat
+   * plans.
+   */
+  "checkpoint.take": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      label: string;
+      onlyIfUnsaved?: boolean;
+    };
+    result: CheckpointAnswer;
+  };
+  /**
+   * One of Genex's moments the harness announces (`SEED_FIRED_HOOK_EVENTS`): the enabled plugins'
+   * steps for it run in order and their answers come back. A restore announced here is a restart:
+   * no file changes.
+   */
+  "hooks.fire": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      on: HookEvent;
+      turn?: string | null;
+      label?: string | null;
+      worker?: { id: string; title: string; type?: string | null } | null;
+    };
+    result: HookReport;
+  };
+  /** A worker writing in place ended: every lock it holds in the game is let go; another's are untouched. */
+  "locks.release": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string } };
+    result: boolean;
   };
 
   // — sandboxed execution —
@@ -652,6 +711,14 @@ export type HarnessResult<K extends HarnessHostMethod> = HarnessHostApi[K]["resu
 export type HarnessHostHandlers = { [K in HarnessHostMethod]: (params: HarnessParams<K>) => Promise<HarnessResult<K>> };
 
 /**
+ * The names the host refuses a host call with, before any handler runs: a method it doesn't serve
+ * (an older Genex, to the harness) or params of the wrong shape. The harness tells them apart by
+ * name, never by message (its copy is held equal by `seed-contracts.test.ts`): never rename one.
+ */
+export const HostRefusal = { UnknownMethod: "UnknownMethod", InvalidParams: "InvalidParams" } as const;
+export type HostRefusal = (typeof HostRefusal)[keyof typeof HostRefusal];
+
+/**
  * Every host method, as call sites write it: `ctx.call(HostMethod.EventsList, { threadId })`. The
  * values are the wire names the harness sends: never rename one. `scripts/gen-harness-types.ts`
  * copies this object into the seed (`harness-seed/loop/host-methods.ts`).
@@ -695,6 +762,10 @@ export const HostMethod = {
   PluginsInvoke: "plugins.invoke",
   McpTools: "mcp.tools",
   McpInvoke: "mcp.invoke",
+  LocksHold: "locks.hold",
+  LocksRelease: "locks.release",
+  CheckpointTake: "checkpoint.take",
+  HooksFire: "hooks.fire",
   RunExec: "run.exec",
   EngineDescribe: "engine.describe",
   StudioContext: "studio.context",
@@ -773,6 +844,12 @@ void hostMethodsAreListed;
 const text = z.string();
 const optionalText = z.string().nullish();
 const project = z.string();
+/** A worker a lock is held for or a moment names, by its id (or kind): `isWorkerId`. */
+const workerId = z.custom<string>(isWorkerId);
+/** A worker's title a person could read: `isWorkerTitle`. */
+const workerTitle = z.custom<string>(isWorkerTitle);
+/** A moment's label: one line of at most 120 characters. */
+const hookLabel = z.custom<string>(isHookLabel);
 
 /**
  * Engine control on a worktree (`engine.abort`, `engine.interrupt`) is deliberately absent: its
@@ -787,7 +864,7 @@ export const HARNESS_PARAM_SCHEMAS = {
   "optimization.promote": z.object({ candidateId: text, resultArtifact: text }),
   "optimization.reconcile": z.object({ project }),
   "snapshot.create": z.object({ project: optionalText }),
-  "snapshot.restore": z.object({ project: optionalText }),
+  "snapshot.restore": z.object({ project: optionalText, threadId: optionalText, runId: optionalText }),
   "snapshot.diff": z.object({ workspace: optionalText }),
   "snapshot.worktree": z.object({ project, commit: optionalText, name: text, runId: optionalText }),
   "snapshot.removeWorktree": z.object({ project, path: text }),
@@ -801,6 +878,35 @@ export const HARNESS_PARAM_SCHEMAS = {
   "plugins.preflightMultiplayer": z.object({ project, threadId: optionalText }),
   "mcp.tools": z.object({ project: optionalText }).nullish(),
   "mcp.invoke": z.object({ project }),
+  "locks.hold": z.object({
+    project,
+    threadId: text,
+    runId: optionalText,
+    holder: z.object({ id: workerId, title: workerTitle }),
+  }),
+  "locks.release": z.object({ project, threadId: text, runId: optionalText, holder: z.object({ id: workerId }) }),
+  "checkpoint.take": z.object({
+    project,
+    threadId: optionalText,
+    runId: optionalText,
+    label: hookLabel,
+    onlyIfUnsaved: z.boolean().nullish(),
+  }),
+  "hooks.fire": z.object({
+    project,
+    threadId: optionalText,
+    runId: optionalText,
+    on: z.custom<HookEvent>(isSeedFiredHookEvent),
+    turn: hookLabel.nullish(),
+    label: hookLabel.nullish(),
+    worker: z
+      .object({
+        id: workerId,
+        title: workerTitle,
+        type: workerId.nullish(),
+      })
+      .nullish(),
+  }),
   "run.exec": z.object({ cwd: optionalText, project: optionalText }),
   "engine.delegate": z.object({
     project,

@@ -36,7 +36,8 @@ through the JS API imports `@typescript/typescript6`.
 - `fake-ollama.ts`, `scripted-claude.ts`, `scripted-codex.ts`: scripted engines, no network.
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-lead-host.ts`: a fake host for the Unreal Loop's lead (its scripted turns calling the
-  run tools, the editor's answers, the clock);
+  run tools, the editor's answers, the clock), whose moments run on `unreal-moment-bus.ts`, a fake
+  of Genex's hook bus that plans each moment from a plugin manifest;
   `unreal-editor-stand-in.ts`: the editor the Unreal plugin's queue talks to.
 - `project-fixtures.ts`: the synthetic project folders in `fixtures/projects/` (`copyProject`
   copies one into a test's folder and adds the files its engine writes while it runs), reads of a

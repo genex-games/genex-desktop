@@ -5,7 +5,7 @@
  * key a graph of those records is drawn under.
  */
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { firstSentence } from "../../src/harness-seed/loop/workers/events.ts";
@@ -25,12 +25,14 @@ import {
 import {
   chatPool,
   delegation,
+  fakeLocks,
   finish,
   gameRepo,
   type Host,
   leadCommits,
   PROJECT,
   poolHost,
+  shell,
   start,
   TURN,
 } from "../helpers/worker-pool-host.ts";
@@ -201,6 +203,7 @@ describe("a worker's verdict and the end of its turn", { timeout: TEST_TIMEOUT_M
     const host = poolHost(repo);
     const pool = await chatPool(host, repo);
     const tuned = await start(pool, { title: "Tune the jump", task: "Tune it.", isolation: "lock" });
+    await writeFile(path.join(repo, "jump.js"), "export const jump = 2;\n");
     await finish(host, pool, tuned, { ok: true, sessionId: "s1", summary: "Tuned the jump." });
     const broke = await start(pool, { title: "Tune the brakes", task: "Tune them.", isolation: "lock" });
     await finish(host, pool, broke, { ok: false, errorText: "the session ended early" });
@@ -211,6 +214,41 @@ describe("a worker's verdict and the end of its turn", { timeout: TEST_TIMEOUT_M
     assert.equal(endOf(tuned).delivered, undefined, "and there is nothing to hand back");
     assert.equal(endOf(broke).inGame, undefined, "a worker that did not finish is not counted");
     assert.equal(endOf(reader).inGame, undefined, "a reader writes nothing");
+  });
+
+  it("an in-place worker that finished counts as in the game only when the game folder changed while it worked", async () => {
+    const rows: Array<[string, (repo: string) => Promise<void>, true | undefined]> = [
+      ["it changed the folder", (repo) => writeFile(path.join(repo, "jump.js"), "export const jump = 2;\n"), true],
+      ["it changed a file the game tracks", (repo) => writeFile(path.join(repo, "a.txt"), "tuned\n"), true],
+      ["done but unchanged", async () => {}, undefined],
+      ["git can't say", (repo) => rm(path.join(repo, ".git"), { recursive: true, force: true }), undefined],
+    ];
+    for (const [label, work, inGame] of rows) {
+      const repo = await gameRepo();
+      const host = poolHost(repo);
+      const pool = await chatPool(host, repo);
+      const id = await start(pool, { title: "Tune the jump", task: "Tune it.", isolation: "lock" });
+      await work(repo);
+      await finish(host, pool, id, { ok: true, sessionId: "s1", summary: "Tuned the jump." });
+      const end = recordsOf(host, poolWorkerId(id))[1]?.payload ?? {};
+      assert.equal(end.state, WorkerEnd.Done, label);
+      assert.equal(end.inGame, inGame, label);
+    }
+  });
+
+  it("the folder's fingerprint leaves the game's own staged work as it was", async () => {
+    const repo = await gameRepo();
+    await writeFile(path.join(repo, "b.txt"), "staged by the person\n");
+    await shell("git add b.txt", repo);
+    await writeFile(path.join(repo, "a.txt"), "not staged\n");
+    const before = (await shell("git status --porcelain", repo)).stdout;
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const id = await start(pool, { title: "Tune", task: "Tune it.", isolation: "lock" });
+    await finish(host, pool, id, { ok: true, sessionId: "s1", summary: "Tuned." });
+    assert.equal((await shell("git status --porcelain", repo)).stdout, before, "the index is untouched");
+    const leftovers = (await readdir(path.join(repo, ".git"))).filter((name) => name.startsWith("genex-"));
+    assert.deepEqual(leftovers, [], "no throwaway index is left behind");
   });
 
   it("records workers stopped by the turn's end as stopped, and a worker waiting for the person as nothing", async () => {
@@ -317,22 +355,24 @@ describe("why a worker stopped short, as a code the app words itself", { timeout
 });
 
 describe("where a worker works, and a log that cannot be written", { timeout: TEST_TIMEOUT_MS }, () => {
-  it("says a worker in the game folder of an Unreal project works in Unreal", async () => {
+  it("an in-place worker under a plugin's lock says where it works; one without, nothing", async () => {
     const repo = await gameRepo();
-    const unreal = poolHost(repo);
+    const unreal = poolHost(repo, { locks: fakeLocks(["Unreal"]) });
     const pool = await chatPool(unreal, repo, { facts: UNREAL_FACTS });
     const inPlace = await start(pool, { title: "Build the track", task: "Lay the track.", isolation: "lock" });
     const reader = await start(pool, { title: "Study", task: "Read.", isolation: "read" });
     const copy = await start(pool, { title: "Port the car", task: "Port it.", isolation: "copy" });
-    const inOf = (host: Host, id: string) => recordsOf(host, poolWorkerId(id))[0]?.payload.in;
-    assert.equal(inOf(unreal, inPlace), "unreal");
-    assert.equal(inOf(unreal, reader), undefined, "a reader");
-    assert.equal(inOf(unreal, copy), undefined, "a copy");
+    const startOf = (host: Host, id: string) => recordsOf(host, poolWorkerId(id))[0]?.payload ?? {};
+    assert.equal(startOf(unreal, inPlace).where, "Unreal", "the label of the lock it holds");
+    assert.equal(startOf(unreal, inPlace).in, undefined, "no engine read from the facts");
+    assert.equal(startOf(unreal, reader).where, undefined, "a reader");
+    assert.equal(startOf(unreal, copy).where, undefined, "a copy");
     const webRepo = await gameRepo();
     const web = poolHost(webRepo);
     const webPool = await chatPool(web, webRepo);
     const webInPlace = await start(webPool, { title: "Tune", task: "Tune it.", isolation: "lock" });
-    assert.equal(inOf(web, webInPlace), undefined, "a web game");
+    assert.equal(startOf(web, webInPlace).where, undefined, "no plugin lock: nothing");
+    assert.equal(startOf(web, webInPlace).in, undefined);
     for (const [host, each] of [
       [unreal, pool],
       [web, webPool],

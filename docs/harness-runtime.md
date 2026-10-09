@@ -161,10 +161,11 @@ live chat's, one session's, the after-run chat's, the reopen's and goal-directed
 vintages are `seed-exports-pre-wake.json`, `seed-exports-pre-journal.json`,
 `seed-exports-pre-live.json`, `seed-exports-pre-one-session.json`,
 `seed-exports-pre-after-loop-run.json`, `seed-exports-pre-reopen.json`,
-`seed-exports-pre-goals.json`, the Unreal lead's `seed-exports-pre-lead.json` and the open harness's
-`seed-exports-pre-open-harness.json`; the goals' and the lead's are kept
-one module at a time, the lead's with each module's own imports as they were, so a retired module a
-kept caller still imports stays as a shim: `loop/unreal/live.ts`, `live-journal.ts`). Where a kept older
+`seed-exports-pre-goals.json`, the Unreal lead's `seed-exports-pre-lead.json`, the open harness's
+`seed-exports-pre-open-harness.json` and Genex's moments' `seed-exports-pre-hooks.json`; the goals',
+the lead's and the moments' are kept one module at a time, the lead's and the moments' with each
+module's own imports as they were, so a retired module a kept caller still imports stays as a shim:
+`loop/unreal/live.ts`, `live-journal.ts`, `editor-life.ts`, `editor-wait.ts`, `editor-wait-prompts.ts`, `editor-activity.ts`). Where a kept older
 part would contradict a newer one, the loop asks before it relies on it: a waking run seats its
 chat's session as its lead only when every part that lead depends on exports
 `SERVES_LEAD` (`director.ts` `seatsLead`), and otherwise a director with its own hands leads, as
@@ -393,7 +394,8 @@ report the path.
 
 What a rollback may assume of a game folder. `snapshot.restore` on a game commits a rescue
 snapshot first and may refuse with a typed `code` (`branch-changed`, `history-changed`,
-`operation-in-progress`, `rescue-failed`), leaving the folder as it is; a loop must treat that as
+`operation-in-progress`, `rescue-failed`, or `hook_blocked` when a plugin's `restore.before` step
+blocked it), leaving the folder as it is; a loop must treat that as
 "stop or pause", never retry around it with raw git, and never report a rollback that was refused
 (autopilot's `rollBackGame` sets `report.rolledBack`). A loop snapshots its attempt before rolling
 back and skips the rollback when that snapshot fails (the live spike does). Model or judge text
@@ -404,6 +406,42 @@ or one into a folder with something staged or a merge of its own under way (whic
 merge's abort would undo, so it is not tried), is refused as `uncommitted-changes` and names them
 without blaming anyone; a conflict with commits there, or a hook or lock that refuses the merge,
 stays `could-not-land` with git's words.
+
+Genex's moments. Every restore of a game folder (`snapshot.restore` naming the game, and the
+person's file Rewind) runs the enabled plugins' `restore.before` and `restore.after` steps around
+it (`main/core/plugin-hooks.ts`); a `snapshot.restore` that names its chat and run (`threadId?`,
+`runId?`) waits for that chat's plan. `checkpoint.take {project, threadId?, runId?, label,
+onlyIfUnsaved?}` is a checkpoint: the `checkpoint.before` steps, a game snapshot named
+`checkpoint: <label>`, then the `checkpoint.after` steps, answering `{snapshot, notes, images}`,
+`{blocked}` or `{skipped: nothing_unsaved | cant_tell, reason}`. `hooks.fire {project, threadId?,
+runId?, on, turn?, label?, worker?}` runs one moment the harness announces and answers the
+`HookReport` (`blocked`, `pending`, `notes`, `images`, `ran`); the checkpoint and tool moments are
+the host's own and refused there, and a `restore.*` it announces is a restart in which no file
+changes. The run's or the chat's Stop (`engine.abort`) ends these three calls while they wait or run
+their steps. A game no plugin hooks (`GameProject.hookEvents` absent) has no steps: both answer as if
+nothing ran. The seed asks for them through `loop/hooks.ts` (`fireHooks`, `takeCheckpoint`,
+`waitReady`), which makes no call for a moment the game's descriptor doesn't list and sends labels
+and turns on one line within `HOOK_LABEL_CHARS`; a kept `loop/host-methods.ts` without their
+methods is in `SEED_CALL_CHANGES`. The Unreal
+lead's save points and autosaves are checkpoints, its rewinds restores, its rebuilds and crash
+recoveries the restore and crash moments followed by `health` until it is quiet, and it fires
+`run.prepare`, `run.end` and the turn moments; it names no plugin step. A chat's own turn fires
+`turn.start` (a block ends it before any engine works) and `turn.end`, ends with
+`endOfTurnCheckpoint` (`checkpoint.take` only if unsaved) and, after a turn that linked the game to
+an engine project or switched its link, waits on `health` (`waitReady`, up to `READY_WAIT_MS`); any
+other kind change goes on at once. Genex's own hold of that checkpoint or of `turn.start` is said
+in the person's words (`hold`), and Plan mode says nothing; so is Genex's hold of a run's start,
+its lead's turns, the Unreal lead's close, restores and C++ (`loop/director/held-words.ts`,
+`loop/unreal/hold-words.ts`). A host call of the moments that fails holds a blocking moment back
+with why (an older host's `UnknownMethod` is no moments at all), unless the chat's or the run's
+Stop ended it: that run ends as stopped, never as held. A crash moment Genex held back rolls
+nothing back (the run halts). A `locks.hold` that fails starts no writer in place. Workers fire `worker.start` before their
+start record (a block starts nothing; a worker refused after it still gets `worker.end`) and
+`worker.end` after their end record, in the pool, the
+director's builders and the Unreal lead's typed workers; the director fires `run.prepare` (a block
+closes the run before its first turn), `run.end`, each wake turn's `turn.*` and the lead's own
+`finish` (a block is the tool's answer; the run goes on). Every one waits on `hooksOn`, so a web
+game's run and chat make no new call. See [Hooks](plugins.md#hooks-genexs-moments).
 
 One seam per worker. In a game the user brought, a worker is given a path, a folder or a glob to
 own (`*` and `?` stop at a slash, `**` crosses them; a glob must be quoted in the tool call), and
@@ -572,7 +610,10 @@ delegated engine carries a worker's seat.
   game folder, read-only, with web search only when `research` is `yes`. A writer in a copy
   (`copy`) works in a copy made by `snapshot.worktree` after a game snapshot, under the copy
   rules and size cap above; a refused copy is answered by its code, pointing at `lock` or a
-  reader. The one writer in place (`lock`) works in the game folder, one at a time per game. A
+  reader. The one writer in place (`lock`) works in the game folder, one at a time per game across
+  the chat's and its runs' pools: `locks.hold` takes the host's in-place lock and the game's
+  plugin locks (answering their labels, written as the start record's `where`), never waiting, and
+  `locks.release` at its end or the pool's close lets them go (an older host keeps one per pool). A
   `type` names a kind of worker a plugin that is on declares (`plugins.workerTypes`); it gives
   that kind's tools (`toolAllow`) and its isolation.
 - Every worker's delegation carries the `worker` grant (`{id, title, turn, research}`), which the
@@ -587,8 +628,11 @@ delegated engine carries a worker's seat.
 - `worker_mark used` merges a copy's commit into the game folder with the director's merge
   (`mergeNoFf`, conflicts listed and the merge aborted). Conflicts, and the lead's uncommitted
   files the work also changes, go back to the lead with their names; `rejected` drops the copy.
-  A verdict stands once given, and a writer in place that finished is in the game already, so it
-  is never marked rejected: the chat and the graph never call work in the game unused.
+  A verdict stands once given, and a writer in place that finished and changed the game folder is
+  in the game already (`WorkerRecord.changedGame`, from a fingerprint of the folder's working tree
+  at its start and end through a throwaway index, `workers/game-change.ts`; the end record's
+  `inGame`), so it is never marked rejected: the chat and the graph never call work in the game
+  unused. The fingerprint sees the folder, not who wrote it.
   Work that changes Claude Code's own folder (`.claude` at any depth, in any case,
   `workers/claude-folder.ts`) is never merged, as no build lands it in a game.
 

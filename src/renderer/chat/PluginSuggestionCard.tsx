@@ -9,7 +9,7 @@ import { usePlugins } from "../state/hooks.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { PLUGIN_SUGGESTION_WORDS } from "../words.ts";
-import { SuggestionState, suggestionShown, suggestionState } from "./plugin-suggestion.ts";
+import { SuggestionState, suggestionFolders, suggestionShown, suggestionState } from "./plugin-suggestion.ts";
 
 /** The card's one button, or the word On once the plugin is on. */
 function SuggestionButton({ pluginId, onNotice }: { pluginId: string; onNotice: Notify }): JSX.Element {
@@ -46,6 +46,7 @@ export function PluginSuggestionCard({
   // Two string reads: a selector answering a new object each time would never settle.
   const name = usePlugins((s) => suggestionShown(s.list, suggestion).name);
   const description = usePlugins((s) => suggestionShown(s.list, suggestion).description);
+  const folders = usePlugins((s) => suggestionFolders(s.list, suggestion.pluginId));
   const titleId = `plugin-suggestion-${entry.id}`;
   return (
     <section data-plugin-suggestion={suggestion.pluginId} aria-labelledby={titleId} className="chat-question">
@@ -55,6 +56,7 @@ export function PluginSuggestionCard({
         </h3>
         {suggestion.reason ? <p className="mt-0.5 text-chat text-ink-2">{suggestion.reason}</p> : null}
         {description ? <p className="mt-0.5 text-chat-sub text-ink-3">{description}</p> : null}
+        {folders ? <p className="mt-0.5 text-chat-sub text-ink-3">{folders}</p> : null}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <span className="text-chat-sub text-ink-3">{PLUGIN_SUGGESTION_WORDS.onlyYou}</span>
           <SuggestionButton pluginId={suggestion.pluginId} onNotice={onNotice} />

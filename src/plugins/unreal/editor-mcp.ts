@@ -19,7 +19,10 @@
  * Unreal writes a crash there, the call answers at once with Unreal's own text for what failed,
  * instead of waiting out a call no crashed editor will answer. The Genex editor helper's Loop
  * toolset is Genex's own (its editor queue applies, plays and saves through it): an agent's call
- * or description that names it, however spelled, is refused before any editor is reached.
+ * or description that names it, however spelled, is refused before any editor is reached. While a
+ * play the agent started runs, the bridge keeps a marker beside it (`agent-play.ts`), so the
+ * editor lock tells the agent's play from the person's: an agent's `StartPIE` the editor took sets
+ * it, and its `StopPIE`, the editor crashing under a call and the bridge closing clear it.
  */
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -28,6 +31,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { type AgentPlayMarker, NO_AGENT_PLAY } from "./agent-play.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CONNECTOR_OUTCOME_META } from "../../shared/mcp.ts";
 import {
@@ -599,13 +603,26 @@ type Bridge = {
   watchCrash: CrashWatcher;
   starts: StartWait;
   keeper: ThrottleKeeper;
+  agentPlay: AgentPlayMarker;
 };
 
 /** A watch that never sees a crash, for a call whose log can't be watched: the call itself is never held up. */
 const UNWATCHED: CrashWatch = { crashed: new Promise<never>(() => {}), stop: async () => {} };
 
-/** What one forwarded call needs besides its session: the project, the throttle, the clock and its time. */
-type Forwarding = { project: EditorProject; keeper: ThrottleKeeper; clock: CaptureClock; timeoutMs: number };
+/** What one forwarded call needs besides its session: the project, the throttle, the agent's play, the clock and its time. */
+type Forwarding = {
+  project: EditorProject;
+  keeper: ThrottleKeeper;
+  agentPlay: AgentPlayMarker;
+  clock: CaptureClock;
+  timeoutMs: number;
+};
+
+/** Marks the agent's own play once the editor took its start, and clears the mark once it took its stop. */
+async function markPlay(marker: AgentPlayMarker, step: PlayStep | undefined, failed: boolean): Promise<void> {
+  if (failed || step === undefined) return;
+  await (step === PlayStep.Start ? marker.started() : marker.stopped());
+}
 
 /** The pictures a capture tool's answer promised (see editor-captures.ts); nothing for any other call. */
 async function capturedParts(
@@ -641,6 +658,7 @@ async function forward(session: EditorSession, params: CallParams, how: Forwardi
   }
   try {
     await how.keeper.after(session, step, Boolean(result.isError));
+    await markPlay(how.agentPlay, step, Boolean(result.isError));
     const content = Array.isArray(result.content) ? (result.content as Part[]) : [];
     const captured = result.isError ? [] : await capturedParts(params, content, how.project, how.clock, signal);
     const named = [...liftImages(content), ...captured, { type: "text", text: MESSAGE.Answered(how.project.name) }];
@@ -683,7 +701,7 @@ async function callEditor(bridge: Bridge, params: CallParams, signal: AbortSigna
   const { session, project } = reached;
   const timeoutMs = CALL_TIMEOUT_MS - (bridge.starts.now() - began);
   const watch = await bridge.watchCrash(project).catch(() => UNWATCHED);
-  const how = { project, keeper: bridge.keeper, clock: bridge.starts, timeoutMs };
+  const how = { project, keeper: bridge.keeper, agentPlay: bridge.agentPlay, clock: bridge.starts, timeoutMs };
   const answered = forward(session, params, how, signal).then((result) => ({ result }));
   const crashed = watch.crashed.then((crash: EditorCrash) => ({ crash }));
   const first = await Promise.race([answered, crashed]).finally(() => watch.stop());
@@ -692,6 +710,7 @@ async function callEditor(bridge: Bridge, params: CallParams, signal: AbortSigna
     return first.result;
   }
   bridge.keeper.forget(session);
+  await bridge.agentPlay.stopped();
   await session.abandon();
   return errorResult(MESSAGE.Crashed(first.crash.detail), true);
 }
@@ -728,16 +747,18 @@ function namesLoopToolset(args: Record<string, unknown>): boolean {
 /**
  * The bridge's MCP server: Epic's meta-tools listed by Studio, each call forwarded to the editor it
  * finds while `watchCrash` watches that editor for a crash; a chosen editor that `starts` says
- * Genex is starting is waited for (without one, nothing is ever starting).
+ * Genex is starting is waited for (without one, nothing is ever starting). `agentPlay` marks the
+ * agent's own play (without one, nothing is marked).
  */
 export function createEditorMcp(
   findProjects: FindProjects,
   fetchImpl: typeof fetch = fetch,
   watchCrash: CrashWatcher = logCrashWatcher(),
   starts: StartWait = NOTHING_STARTS,
+  agentPlay: AgentPlayMarker = NO_AGENT_PLAY,
 ) {
   const keeper = throttleKeeper();
-  const bridge: Bridge = { findProjects, fetchImpl, watchCrash, starts, keeper };
+  const bridge: Bridge = { findProjects, fetchImpl, watchCrash, starts, keeper, agentPlay };
   const server = new Server({ name: "unreal-editor", version: BRIDGE_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
@@ -749,6 +770,7 @@ export function createEditorMcp(
   });
   const close = async () => {
     await giveBackOnClose(fetchImpl, keeper);
+    await agentPlay.stopped();
     await server.close();
   };
   return { server, close };

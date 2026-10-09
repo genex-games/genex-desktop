@@ -81,18 +81,29 @@ export function parseProjectBlueprints(raw: unknown): BlueprintDecl[] {
   return raw.blueprints.slice(0, MAX_BLUEPRINTS).flatMap((blueprint) => declOf(blueprint) ?? []);
 }
 
-/** The template Blueprints of the project whose `.uproject` is `projectFile`; [] without a usable file. */
-export async function readProjectBlueprints(projectFile: string | undefined): Promise<BlueprintDecl[]> {
-  if (!projectFile) return [];
+/** The project file the editor exported for the project whose `.uproject` is `projectFile`, parsed; undefined without a usable one. */
+async function readProjectExport(projectFile: string | undefined): Promise<unknown> {
+  if (!projectFile) return undefined;
   try {
     const file = path.join(path.dirname(projectFile), PROJECT_EXPORT);
     const expected = path.join(await realpath(path.dirname(projectFile)), PROJECT_EXPORT);
     const info = await lstat(file);
     const inside = (await realpath(file)) === expected;
-    if (!inside || !info.isFile() || info.size > MAX_PROJECT_BYTES) return [];
-    return parseProjectBlueprints(JSON.parse(await readFile(file, "utf8")));
+    if (!inside || !info.isFile() || info.size > MAX_PROJECT_BYTES) return undefined;
+    return JSON.parse(await readFile(file, "utf8"));
   } catch {
-    // No project file yet, or one that isn't JSON: the gate checks against the parts alone.
-    return [];
+    // No project file yet, or one that isn't JSON.
+    return undefined;
   }
+}
+
+/** The template Blueprints of the project whose `.uproject` is `projectFile`; [] without a usable file (the gate checks against the parts alone). */
+export async function readProjectBlueprints(projectFile: string | undefined): Promise<BlueprintDecl[]> {
+  return parseProjectBlueprints(await readProjectExport(projectFile));
+}
+
+/** Whether the editor exported the template's facts for the project: its project file lists Blueprints. */
+export async function projectExported(projectFile: string | undefined): Promise<boolean> {
+  const raw = await readProjectExport(projectFile);
+  return isRecord(raw) && Array.isArray(raw.blueprints);
 }

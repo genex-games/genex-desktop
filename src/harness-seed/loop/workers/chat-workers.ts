@@ -6,6 +6,7 @@
  */
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
 import type { FactRef, FolderHolds } from "../folder-facts.ts";
+import type { HookedGame } from "../hooks.ts";
 import { isDelegated, modelOn, RoleKey, roleEngine, withRoles } from "../model-roles.ts";
 import { POOL_WORDS } from "./prompts.ts";
 import { openPool, type WorkerPool } from "./pool.ts";
@@ -32,6 +33,8 @@ export interface ChatWorkersSeat {
   folderLabel: string;
   facts: readonly FactRef[];
   holds?: FolderHolds | null;
+  /** The game as far as Genex's moments go: its workers' starts and ends are announced when its plugins hook them. */
+  game?: HookedGame;
 }
 
 /** The workers' engine and model: the message's Workers role when it carries roles, else the chat's. */
@@ -61,6 +64,7 @@ export async function openChatWorkers(
     ...workersEngine(seat),
     ...(seat.effort ? { effort: seat.effort } : {}),
     gameDir,
+    ...(seat.game ? { game: seat.game } : {}),
     leadFolder: { project },
     identity: { folderLabel, facts, holds: holds ?? null },
     clock,

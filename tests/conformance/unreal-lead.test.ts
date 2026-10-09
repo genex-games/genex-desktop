@@ -4,21 +4,20 @@
  * resumed turn after turn until the run's time is up; the lead's own save points (refused while the
  * game plays, with the new log errors and the hero shots' tone numbers); rewinds, rebuilds and
  * crash restores cold and between turns; a paused run resuming from its journal; a fresh session
- * handed the run when the old one is lost; the cost read from per-turn deltas; and only the plugin's
- * harness tools called.
+ * handed the run when the old one is lost; the cost read from per-turn deltas; and every editor
+ * step run by the plugin at Genex's moments, with only the C++ module's tools called by name.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { leadLineOf } from "../../src/harness-seed/loop/director/lead-line.ts";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { chooseRunner } from "../../src/harness-seed/loop/run-dispatch.ts";
 import { RunnerKind } from "../../src/harness-seed/loop/studio-state.ts";
 import { LEAD_JOURNAL_KIND, type LeadJournal, LeadTool } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { runUnrealLead } from "../../src/harness-seed/loop/unreal/lead.ts";
-import { UnrealLivePluginTool, UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
-import { PROJECT_FACTS_FILE } from "../../src/harness-seed/loop/unreal/project-facts.ts";
-import { LeadPluginTool } from "../../src/harness-seed/loop/unreal/save-point.ts";
+import { UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
 import {
   BROKEN_SOURCE,
   buildsAndSaves,
@@ -27,7 +26,6 @@ import {
   type LeadHost,
   leadHost,
   RUN,
-  TEMPLATE,
   textOf,
   type Turn,
 } from "../helpers/unreal-lead-host.ts";
@@ -180,7 +178,7 @@ describe("the lead's save points", () => {
     await run(host, { run: shortRun(20) });
     const answer = answers[0] ?? "";
     assert.match(answer, /Saved 'Stair pass' \(snapshot snap-1\)/);
-    assert.match(answer, /1 new errors[^\n]*a pin has no connection/);
+    assert.match(answer, /1 new error[^\n]*a pin has no connection/);
     assert.match(answer, /GX_Shot_Ant: black point p2 0\.03, white p98 0\.92, contrast std 0\.22/);
     // A lead that guesses its own time winds down early; the answer says how long the run goes on.
     assert.match(answer, /About \d+ minutes are left: keep building/);
@@ -226,20 +224,10 @@ describe("the lead's save points", () => {
     };
     const host = leadHost({ turns: [unsure] });
     await run(host, { run: shortRun(20) });
-    assert.match(answers[0] ?? "", /can't tell whether the game is playing/);
+    // The editor lock gives way to a person Genex can't rule out: it waited, then refused.
+    assert.match(answers[0] ?? "", /could not tell whether the person is using Unreal/);
     assert.equal(savesDuring, 0, "the editor's work was not saved");
     assert.ok(!host.snapshotReasons().includes("Stair"));
-  });
-
-  it("captures the player start's view from a play-check when the plugin has no hero shots", async () => {
-    const host = leadHost({ turns: [buildsAndSaves] });
-    host.heroCameras = null;
-    await run(host, { run: shortRun(20) });
-    assert.ok(calledTimes(host, "unreal__play-check") >= 1);
-    assert.deepEqual(
-      journalOf(host).savePoints[0]?.thumbnails.map((t) => t.camera),
-      ["spawn"],
-    );
   });
 
   it("makes no snapshot when the editor's save leaves work unsaved", async () => {
@@ -303,12 +291,53 @@ describe("between the lead's turns", () => {
   });
 
   it("never saves the editor's work, between turns or at the close, while it can't say whether a play session runs", async () => {
-    const host = leadHost({ turns: [buildsOnly, buildsOnly] });
-    host.editor.dirty = null;
+    const unsure: Turn = ({ host, n }) => {
+      host.work(`turn-${n}`);
+      host.editor.dirty = null;
+      return undefined;
+    };
+    const host = leadHost({ turns: [unsure, buildsOnly] });
     await run(host, { run: shortRun(25) });
     assert.equal(calledTimes(host, "unreal__save-all"), 0, "a save would end a play session the owner may be in");
     assert.ok(!host.snapshotReasons().includes("Autosave"), host.snapshotReasons().join(", "));
-    assert.match(host.prompts()[1] ?? "", /Genex couldn't save it: [^\n]*can't tell whether the game is playing/);
+    assert.match(
+      host.prompts()[1] ?? "",
+      /Genex couldn't save it: [^\n]*couldn't tell whether Unreal held unsaved work/,
+    );
+  });
+
+  it("a run whose Unreal can't say what the person does waits for them, then doesn't start, saying Genex couldn't tell", async () => {
+    const host = leadHost({ turns: [buildsOnly, buildsOnly] });
+    host.editor.dirty = null;
+    const report = await run(host, { run: shortRun(25) });
+    assert.equal(leadTurns(host).length, 0, "the run waited for the person, then did not start");
+    assert.equal(report.executionStatus, "paused");
+    assert.match(String(report.stoppedBecause), /couldn't tell whether you were using Unreal[^\n]*didn't start/);
+    assert.doesNotMatch(String(report.stoppedBecause), /waited for you to finish|the person|Try again later/i);
+    assert.equal(calledTimes(host, "unreal__save-all"), 0, "a save would end a play session the owner may be in");
+  });
+
+  it("the close's save Genex held because it couldn't tell what the person does says so, never that they used Unreal", async () => {
+    const lastTurn: Turn = ({ host, n }) => {
+      host.work(`turn-${n}`);
+      // The autosave after the turn reads the editor three times (what is unsaved, whether the
+      // person plays, its save); the close's first read sees unsaved work, then the editor stops
+      // answering whether anyone plays.
+      let reads = 0;
+      host.answers.set("unreal__editor-activity", () => {
+        reads += 1;
+        if (reads > 4) throw new Error("Unknown tool: editor-activity");
+        return { pie: false, dirty: 2 };
+      });
+      return undefined;
+    };
+    const host = leadHost({ turns: [lastTurn] });
+    await run(host, { run: shortRun(12) });
+    const told = host.appended("autopilot_decision").map((p) => String(p.plain ?? p.text));
+    const close = told.find((line) => /last work as the Loop ended/.test(line));
+    assert.ok(close, told.join(" | "));
+    assert.match(close, /couldn't tell whether you were using Unreal/);
+    assert.doesNotMatch(close, /: you were using Unreal|the person|Try again later/i);
   });
 
   it("goes back to a save point the lead asked to rewind to, cold, when its turn ends", async () => {
@@ -392,7 +421,10 @@ describe("between the lead's turns", () => {
     const host = leadHost({ turns: [buildsAndSaves, rewinds, buildsOnly] });
     await run(host, { run: shortRun(40) });
     assert.equal(calledTimes(host, "unreal__end-editor"), 0, "Unreal is left open");
-    assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "and the folder as it is");
+    // The seed asks Genex for the restore; the restore's before steps (the failed save) refuse it
+    // before any file changes.
+    assert.equal(host.rec.paramsOf("snapshot.restore").length, 1, "the rewind was asked once");
+    assert.ok(!host.trail().includes("snapshot.restore"), "and the folder as it is");
     assert.match(host.prompts()[2] ?? "", /couldn't go back to 'Turn 1'/);
   });
 });
@@ -436,6 +468,54 @@ describe("Unreal crashing under the lead", () => {
     assert.equal(leadTurns(host).length, 1, "no turn after it");
   });
 
+  it("a crash Genex held back (the chat plans) halts with Plan's words, asking no reopen again", async () => {
+    const crashes: Turn = async ({ host }) => {
+      host.planning = true;
+      host.editor.answering = false;
+      await host.until(() => journalOf(host)?.crashes?.length > 0);
+      return undefined;
+    };
+    const host = leadHost({ turns: [crashes] });
+    const report = await run(host, { run: shortRun(40) });
+    assert.equal(report.executionStatus, "paused");
+    assert.match(String(report.stoppedBecause), /Plan mode/);
+    assert.doesNotMatch(String(report.stoppedBecause), /couldn't be reopened/);
+    const fired = host.rec.paramsOf("hooks.fire").map((p) => String(p.on));
+    assert.deepEqual(
+      fired.filter((on) => on === "crash"),
+      ["crash"],
+      `held once, never asked again at once: ${fired.join(", ")}`,
+    );
+    assert.equal(calledTimes(host, "unreal__reopen-editor"), 0, "nothing reopened");
+  });
+
+  it("a crash Genex held back for another holder rolls nothing back: no restore, and the run halts saying why", async () => {
+    const crashes: Turn = async ({ host }) => {
+      host.work("a stair");
+      host.editor.answering = false;
+      await host.until(() => journalOf(host)?.crashes?.length > 0);
+      return undefined;
+    };
+    const host = leadHost({ turns: [buildsAndSaves, crashes] });
+    const passOn = host.rec.ctx.call;
+    const otherAtWork = {
+      plugin: "@genex",
+      tool: "",
+      reason: '"Bake" is working in Unreal now.',
+      hold: "busy",
+      label: "Unreal",
+    };
+    host.rec.ctx.call = (method: string, params?: Record<string, unknown>) =>
+      method === "hooks.fire" && params?.on === HookEvent.Crash
+        ? Promise.resolve({ blocked: otherAtWork, pending: null, notes: [], images: [], ran: [] })
+        : passOn(method, params);
+    const report = await run(host, { run: shortRun(40) });
+    assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "the work since the save point stays");
+    assert.equal(report.executionStatus, "paused");
+    assert.match(String(report.stoppedBecause), /Something else was working in Unreal, so nothing was changed/);
+    assert.doesNotMatch(String(report.stoppedBecause), /went back to|the person|ask them|Try again later/i);
+  });
+
   it("never ends a busy Unreal for a rebuild: it waits, and leaves one that stays busy open with its work, halting with why", async () => {
     const busy: Turn = async ({ tool, host }) => {
       host.work("a long build script");
@@ -448,7 +528,12 @@ describe("Unreal crashing under the lead", () => {
     const report = await run(host, { run: shortRun(60) });
     assert.equal(calledTimes(host, "unreal__end-editor"), 0, "never ended unsaved");
     assert.equal(report.executionStatus, "paused");
-    assert.match(String(report.stoppedBecause), /stayed busy[^\n]*left Unreal open/);
+    // A busy editor can't say whether the person is in it: the editor lock waited, then refused the
+    // restart, and the person reads that Genex couldn't tell, in words for them, never the words
+    // written for agents, and never that they were using it.
+    assert.match(String(report.stoppedBecause), /couldn't tell whether you were using Unreal[^\n]*Resume the Loop/);
+    assert.doesNotMatch(String(report.stoppedBecause), /waited for you to finish/);
+    assert.doesNotMatch(String(report.stoppedBecause), /the person|ask them|Try again later/i);
   });
 
   it("takes one missed answer from a busy Unreal for no crash", async () => {
@@ -463,6 +548,140 @@ describe("Unreal crashing under the lead", () => {
     await run(host, { run: shortRun(20) });
     assert.equal(calledTimes(host, "unreal__reopen-editor"), 0);
     assert.ok(!host.steered().some((s) => /crashed/.test(s)));
+  });
+});
+
+describe("the lead at Genex's moments", () => {
+  it("a run whose start step blocks closes before any turn, with the plugin's reason", async () => {
+    const host = leadHost();
+    host.stepAnswers.set("unreal__open-for-run", () => ({ block: "The workshop's licence ran out." }));
+    const report = await run(host, { run: shortRun(20) });
+    assert.equal(report.executionStatus, "paused");
+    assert.match(String(report.stoppedBecause), /The workshop's licence ran out\. Then start the Loop again\./);
+    assert.equal(leadTurns(host).length, 0, "no turn");
+    const fired = host.rec.paramsOf("hooks.fire").map((p) => p.on);
+    assert.equal(fired[0], "run.prepare");
+  });
+
+  it("a Stop while the run's start steps work ends the run as the user's stop, never as a hold", async () => {
+    const host = leadHost();
+    host.rec.handle("hooks.fire", (params) => {
+      if (params.on !== HookEvent.RunPrepare) return { blocked: null, pending: null, notes: [], images: [], ran: [] };
+      // The person's Stop: the stop flag lands first, then Genex ends the moment under way.
+      host.rec.cancel();
+      throw new Error("Stopped.");
+    });
+    const report = await run(host, { run: shortRun(20) });
+    assert.equal(report.executionStatus, "cancelled");
+    assert.equal(report.endReason, "stopped");
+    assert.doesNotMatch(String(report.stoppedBecause), /couldn't ask|plugins|start the Loop again/i);
+    assert.equal(leadTurns(host).length, 0, "no turn");
+  });
+
+  it("a Stop while a rewind's restore waits ends the run as the user's stop, never as a halt", async () => {
+    const rewinds: Turn = async ({ tool }) => {
+      await tool(LeadTool.Rewind, { label: "Turn 1" });
+      return undefined;
+    };
+    const host = leadHost({ turns: [buildsAndSaves, rewinds] });
+    host.rec.handle("snapshot.restore", () => {
+      // Stopped once the restore's before steps had closed Unreal.
+      host.editor.answering = false;
+      host.rec.cancel();
+      throw new Error("Stopped.");
+    });
+    const report = await run(host, { run: shortRun(40) });
+    assert.equal(report.executionStatus, "cancelled");
+    assert.equal(report.endReason, "stopped");
+  });
+
+  it("a turn a plugin holds back at its start never runs, and the lead hears why in its next digest", async () => {
+    const quiet: Turn = async ({ host }) => {
+      host.work("a stair");
+      return undefined;
+    };
+    const base = leadHost().manifest;
+    const manifest = { ...base, hooks: [...(base.hooks ?? []), { on: HookEvent.TurnStart, tool: "turn-gate" }] };
+    const host = leadHost({ turns: [quiet, quiet], manifest });
+    let starts = 0;
+    host.stepAnswers.set("unreal__turn-gate", () => {
+      starts += 1;
+      return starts === 2 ? { block: "The bench is being oiled" } : {};
+    });
+    await run(host, { run: shortRun(40) });
+    assert.ok(starts >= 3, `three turn starts at least, ${starts}`);
+    const turns = leadTurns(host);
+    assert.equal(turns.length, starts - 1, "the held turn never reached an engine");
+    assert.match(String(turns[1]?.prompt), /Genex didn't start your last turn: The bench is being oiled\./);
+  });
+
+  it("a turn start that keeps being held never ends the run as idle: the lead waits between tries, then halts with why", async () => {
+    const base = leadHost().manifest;
+    const manifest = { ...base, hooks: [...(base.hooks ?? []), { on: HookEvent.TurnStart, tool: "turn-gate" }] };
+    const host = leadHost({ manifest });
+    let starts = 0;
+    host.stepAnswers.set("unreal__turn-gate", () => {
+      starts += 1;
+      return { block: "The bench is being oiled" };
+    });
+    const startedAt = host.now();
+    const report = await run(host, { run: shortRun(120) });
+    assert.equal(leadTurns(host).length, 0, "no held turn reached an engine");
+    assert.equal(report.executionStatus, "paused", "a hold is no idle lead");
+    assert.notEqual(report.endReason, "idle");
+    assert.match(String(report.stoppedBecause), /The bench is being oiled/);
+    assert.doesNotMatch(String(report.stoppedBecause), /nothing more to build/);
+    assert.ok(starts > 3, `it asked more than three times, ${starts}`);
+    assert.ok(host.now() - startedAt >= (starts - 1) * MINUTE, "it waited between tries");
+  });
+
+  it("a run's start Genex held for the person playing in Unreal halts in words for the person", async () => {
+    const host = leadHost();
+    Object.assign(host.editor, { playing: true, personPlays: true });
+    const report = await run(host, { run: shortRun(20) });
+    assert.equal(leadTurns(host).length, 0);
+    assert.match(String(report.stoppedBecause), /waited for you to finish in Unreal[^\n]*start the Loop again/i);
+    assert.doesNotMatch(String(report.stoppedBecause), /the person|ask them|Try again later/i);
+  });
+
+  it("the close's save Genex held for the person playing in Unreal is told in words for the person", async () => {
+    const plays: Turn = async ({ host }) => {
+      host.work("a stair");
+      Object.assign(host.editor, { playing: true, personPlays: true });
+      return undefined;
+    };
+    const host = leadHost({ turns: [plays] });
+    await run(host, { run: shortRun(12) });
+    const told = host.appended("autopilot_decision").map((p) => String(p.plain ?? p.text));
+    const close = told.find((line) => /last work as the Loop ended/.test(line));
+    assert.ok(close, told.join(" | "));
+    assert.match(close, /you were using Unreal/);
+    assert.doesNotMatch(close, /the person|ask them|Try again later/i);
+  });
+
+  it("a crash is a health block: Genex runs the crash steps and waits until health is quiet", async () => {
+    const crashes: Turn = async ({ host }) => {
+      host.work("the second stair");
+      host.editor.answering = false;
+      await host.until(() => host.steered().some((said) => /crashed/.test(said)));
+      return undefined;
+    };
+    const host = leadHost({ turns: [buildsAndSaves, crashes] });
+    await run(host, { run: shortRun(40) });
+    const fired = host.rec.paramsOf("hooks.fire").map((p) => String(p.on));
+    const blocked = fired.indexOf("crash");
+    assert.ok(blocked > 0 && fired[blocked - 1] === "health", fired.join(", "));
+    assert.equal(fired[blocked + 1], "health", "then health until it is quiet");
+    const trail = host.trail();
+    const reopened = trail.indexOf("tool:unreal__reopen-editor");
+    assert.ok(reopened > 0, "the crash step reopened Unreal");
+    assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "nothing restored");
+    assert.deepEqual(
+      journalOf(host).crashes.map((c) => [c.reopened, c.restoredTo]),
+      [[true, null]],
+    );
+    for (const params of host.rec.paramsOf("hooks.fire"))
+      assert.deepEqual([params.threadId, params.runId], ["t1", RUN.runId], "the run's moments name its chat and run");
   });
 });
 
@@ -670,7 +889,7 @@ describe("the lead's calls against the Unreal plugin", () => {
     tools: Array<{ name: string; audience?: string }>;
   };
 
-  it("calls only the plugin's harness tools", async () => {
+  it("calls only cpp-status and add-cpp-module by name, and every moment through Genex", async () => {
     const crashes: Turn = async ({ host }) => {
       host.work("stair");
       host.editor.answering = false;
@@ -679,25 +898,29 @@ describe("the lead's calls against the Unreal plugin", () => {
     };
     const host = leadHost({ turns: [buildsAndSaves, crashes] });
     host.editor.helper = "outdated";
-    host.heroCameras = null;
     await run(host, { run: shortRun(40) });
     const harnessTools = new Set(
       manifest.tools.filter((t) => t.audience === "harness").map((t) => `unreal__${t.name}`),
     );
+    const byName = new Set(host.rec.paramsOf("plugins.invoke").map((p) => String(p.name)));
+    assert.deepEqual([...byName], [UnrealLoopTool.CppStatus]);
     for (const name of new Set(host.tools()))
       assert.ok(harnessTools.has(name), `${name} is a harness tool of the plugin`);
-    for (const name of Object.values(LeadPluginTool)) assert.ok(harnessTools.has(name), `the plugin has ${name}`);
     for (const name of [
+      "unreal__open-for-run",
       "unreal__save-all",
       "unreal__log-errors",
-      "unreal__end-editor",
+      "unreal__hero-shots",
       "unreal__reopen-editor",
-      "unreal__update-helper",
+      "unreal__editor-state",
     ])
-      assert.ok(host.tools().includes(name), `the run calls ${name}`);
+      assert.ok(host.tools().includes(name), `the plugin's ${name} ran at one of Genex's moments`);
+    const fired = new Set(host.rec.paramsOf("hooks.fire").map((p) => String(p.on)));
+    assert.deepEqual([...fired].sort(), ["crash", "health", "run.prepare"]);
+    assert.ok(host.rec.paramsOf("checkpoint.take").length > 0, "save points are Genex's checkpoints");
   });
 
-  it("sends every write as part of its checkpoint, which Plan mode holds back, and every read as a plain step", async () => {
+  it("sends adding the C++ module as part of its checkpoint, which Plan mode holds back, and every read as a plain step", async () => {
     const asksForCpp: Turn = async ({ tool, host }) => {
       host.work("stair");
       // A journaled call from before the rename: its `kind` and `brief` are still read.
@@ -705,64 +928,70 @@ describe("the lead's calls against the Unreal plugin", () => {
       return undefined;
     };
     const host = leadHost({ turns: [buildsAndSaves, asksForCpp] });
-    host.editor.helper = "outdated";
-    host.heroCameras = null;
-    // A project whose template facts were never exported, and C++ that compiles with no module yet.
-    let exported = false;
-    host.rec.handle("run.exec", (params) => {
-      const command = String(params.command);
-      if (command.includes("unreal/Source")) return { code: 0, stdout: `${host.level.source}\n`, stderr: "" };
-      const facts = command.includes(PROJECT_FACTS_FILE) && exported;
-      return { code: 0, stdout: facts ? JSON.stringify(TEMPLATE) : "", stderr: "" };
-    });
-    host.answers.set(UnrealLoopTool.ExportReference, () => {
-      exported = true;
-      return { engine: "5.8", nodes: 1, stored: true };
-    });
     const status = { canCompile: true, xcode: "ok", platform: "darwin", module: null, adding: { state: "idle" } };
     host.answers.set(UnrealLoopTool.CppStatus, () => status);
     host.answers.set(UnrealLoopTool.AddCppModule, () => ({ already: true, module: "TowerClimb" }));
     await run(host, { run: shortRun(40) });
     const invokes = host.rec.paramsOf("plugins.invoke");
     const flags = (name: string) => invokes.filter((p) => p.name === name).map((p) => p.checkpoint);
-    const writes = [
-      UnrealLivePluginTool.SaveAll,
-      LeadPluginTool.HeroShots,
-      UnrealLivePluginTool.PlayCheck,
-      UnrealLivePluginTool.EndEditor,
-      UnrealLoopTool.ReopenEditor,
-      UnrealLivePluginTool.UpdateHelper,
-      UnrealLoopTool.ExportReference,
-      UnrealLoopTool.AddCppModule,
-    ];
-    for (const name of writes) {
-      assert.ok(flags(name).length > 0, `the run calls ${name}`);
-      assert.ok(
-        flags(name).every((flag) => flag === true),
-        `${name} is part of the checkpoint`,
-      );
-    }
-    for (const name of [UnrealLoopTool.EditorState, UnrealLivePluginTool.LogErrors, UnrealLoopTool.CppStatus]) {
-      assert.ok(flags(name).length > 0, `the run calls ${name}`);
-      assert.ok(
-        flags(name).every((flag) => flag === undefined),
-        `${name} reads`,
-      );
-    }
+    assert.ok(flags(UnrealLoopTool.AddCppModule).length > 0, "the run adds the module");
+    assert.ok(
+      flags(UnrealLoopTool.AddCppModule).every((flag) => flag === true),
+      "as part of its checkpoint",
+    );
+    assert.ok(flags(UnrealLoopTool.CppStatus).length > 0, "the run reads the C++ status");
+    assert.ok(
+      flags(UnrealLoopTool.CppStatus).every((flag) => flag === undefined),
+      "as a plain step",
+    );
+    assert.deepEqual(
+      [...new Set(invokes.map((p) => String(p.name)))].sort(),
+      [UnrealLoopTool.AddCppModule, UnrealLoopTool.CppStatus].sort(),
+      "no other plugin tool by name",
+    );
   });
 
-  it("updates an older helper once the closed editor's process has exited, not as soon as it stops answering", async () => {
-    // A run once stopped at "Quit Unreal Editor first": the update came while Unreal was still exiting.
+  it("updates an older helper at the run's start once the closed editor's process has exited, not as soon as it stops answering", async () => {
     const host = leadHost();
     host.editor.helper = "outdated";
     host.editor.exitLag = 3;
     await run(host, { run: shortRun(20) });
     assert.equal(host.editor.helper, "current", "the helper was updated");
-    const trail = host.trail();
-    const ended = trail.indexOf("tool:unreal__end-editor");
-    const updated = trail.indexOf("tool:unreal__update-helper");
-    const waits = trail.slice(ended, updated).filter((step) => step === "tool:unreal__editor-state").length;
-    assert.ok(waits >= 3, `editor-state read ${waits} times between the close and the update`);
+    assert.equal(host.editor.exitLag, 0, "its process was asked about until it was gone");
+  });
+
+  it("adds no C++ module the editor lock held back: no module snapshot, and why is said", async () => {
+    const asksForCpp: Turn = async ({ tool, host }) => {
+      host.work("stair");
+      await tool(LeadTool.WorkerStart, { kind: "cpp", title: "Hit stop", brief: "A hit-stop component." });
+      return undefined;
+    };
+    const host = leadHost({ turns: [buildsAndSaves, asksForCpp] });
+    const status = { canCompile: true, xcode: "ok", platform: "darwin", module: null, adding: { state: "idle" } };
+    host.answers.set(UnrealLoopTool.CppStatus, () => status);
+    const held =
+      "The person is using Unreal, and this waited for them to finish. Try again later, or ask them in the chat.";
+    host.answers.set(UnrealLoopTool.AddCppModule, () => ({
+      consent: "declined",
+      blocker: "lock",
+      lock: "Unreal",
+      reason: "person_first",
+      message: held,
+    }));
+    await run(host, { run: shortRun(40) });
+    assert.ok(calledTimes(host, UnrealLoopTool.AddCppModule) > 0, "the run asked to add it");
+    assert.ok(
+      !host.snapshotReasons().some((reason) => /C\+\+ module/i.test(reason)),
+      host.snapshotReasons().join(", "),
+    );
+    const decisions = host.rec
+      .paramsOf("events.append")
+      .flatMap((p) => (Array.isArray(p.events) ? p.events : [p]))
+      .map((event) => JSON.stringify(event));
+    const said = decisions.find((line) => /C\+\+ couldn't be added/.test(line));
+    assert.ok(said, "the run says C++ wasn't added, and why");
+    assert.match(said, /while you were using Unreal/, "Genex's hold, in the person's words");
+    assert.doesNotMatch(said, /the person|ask them|Try again later/i);
   });
 
   it("a job that ends mid-turn is steered to the lead, and one it missed is in the next digest", async () => {

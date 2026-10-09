@@ -240,8 +240,8 @@ export interface DelegateRequest {
   onEvent?: (event: DelegateEvent) => void;
   /**
    * The checkpoint made real: when set, the studio's `checkpoint` tool reports its note as before
-   * and then answers what this answers (an Unreal game's editor work saved and its folder
-   * snapshotted, `main/core/unreal-checkpoint.ts`). Absent, the tool only shows the note.
+   * and then answers what this answers (Genex's checkpoint of the game folder, its plugins' steps
+   * around the snapshot, `main/core/plugin-hooks.ts`). Absent, the tool only shows the note.
    */
   onCheckpoint?: (note: string) => Promise<string>;
   /**

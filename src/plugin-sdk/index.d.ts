@@ -398,6 +398,56 @@ export interface PluginHost {
 }
 
 /**
+ * API 3: one of Genex's moments a manifest `hooks` entry names. Your handler runs at it as a
+ * harness tool, in plugin order and then declaration order.
+ */
+export type PluginHookEvent =
+  | "run.prepare"
+  | "run.end"
+  | "turn.start"
+  | "turn.end"
+  | "checkpoint.before"
+  | "checkpoint.after"
+  | "restore.before"
+  | "restore.after"
+  | "worker.start"
+  | "worker.end"
+  | "tool.before"
+  | "tool.after"
+  | "health"
+  | "crash"
+  | "finish";
+
+/**
+ * API 3: what a handler is told about the moment it runs at. `args` is only a digest of your own
+ * tool's arguments at `tool.before`/`tool.after`, never the arguments themselves.
+ */
+export interface PluginHookContext {
+  on: PluginHookEvent;
+  runId?: string;
+  turn?: string;
+  label?: string;
+  worker?: { id: string; title: string; type?: string };
+  tool?: string;
+  args?: string;
+  /** The person asked for this moment themselves (their own Rewind): nothing waits for them. */
+  forPerson?: boolean;
+}
+
+/**
+ * API 3: what a handler answers. `block` stops a moment that can be stopped, with a reason;
+ * `note` adds a line to the record; `pending` says it is not ready yet, and Genex asks again;
+ * `images` hands back base64 PNG pictures. Anything else is ignored: a handler never rewrites
+ * arguments and never gives instructions.
+ */
+export interface PluginHookAnswer {
+  block?: string;
+  note?: string;
+  pending?: string;
+  images?: Array<{ name: string; data: string; measures?: Record<string, number> }>;
+}
+
+/**
  * One invocation's binding. Never store it: concurrent calls can belong to different games and
  * different workers.
  */
@@ -407,6 +457,8 @@ export interface PluginContext {
   /** The bound game's worktree. */
   directory?: string;
   threadId?: string;
+  /** Set when Genex runs this tool at one of its moments; answer a `PluginHookAnswer`. */
+  hook?: PluginHookContext;
   /** Aborted when the user stops the turn. Local waiting ends; remote work may continue. */
   signal: AbortSignal;
   callId: number;

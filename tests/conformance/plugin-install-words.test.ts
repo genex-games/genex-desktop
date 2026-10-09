@@ -164,3 +164,19 @@ test("a reviewed action asks the plugin's own question, in its own words, under 
     assert.deepEqual(unreviewed.buttons, ["Cancel", "Approve"], JSON.stringify(review));
   }
 });
+
+test("names the folders outside the games a plugin's programs will write in, each with why, marking new ones on an update", () => {
+  const log = { path: "~/Library/Application Support/Toy/Logs", why: "The toy engine writes its log here" };
+  const cache = { path: "/private/tmp/toy-cache", why: "Shaders it compiles" };
+  const manifest: PluginManifest = { ...example, apiVersion: 3, folders: [log, cache] };
+  const first = installDetail({ manifest });
+  for (const part of [log.path, log.why, cache.path, cache.why]) assert.ok(first.includes(part), part);
+  assert.match(first, /write in 2 folders outside your games/);
+  assert.doesNotMatch(first, /\(new\)/, "a first install marks nothing");
+
+  const update = installDetail({ manifest, before: { ...manifest, folders: [log] } });
+  assert.ok(update.includes(`${cache.path} (new)`), update);
+  assert.ok(!update.includes(`${log.path} (new)`), update);
+
+  assert.doesNotMatch(installDetail({ manifest: example }), /folders outside/, "nothing for a plugin without folders");
+});

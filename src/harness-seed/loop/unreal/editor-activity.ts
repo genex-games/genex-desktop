@@ -4,6 +4,10 @@
  * work asks first, because the plugin's `save-all` ends a play session the person may be in, so a
  * reader takes "can't say" as "don't save". A chat turn's end save (`delegated-turn.ts`) and the
  * Unreal lead's save points (`save-point.ts`) read it here alike; it loads nothing of the Unreal Loop.
+ *
+ * No current module calls this: the editor lock's probe answers Genex what the editor
+ * is doing. It stays because older copies of `delegated-turn.ts` and `save-point.ts` an agent kept
+ * import it.
  */
 import { isPlainRecord } from "../json.ts";
 

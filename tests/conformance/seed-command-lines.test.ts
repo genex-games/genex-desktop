@@ -18,17 +18,27 @@ import ts from "@typescript/typescript6";
 const seedRoot = path.resolve("src/harness-seed");
 /**
  * Where git command lines may be written. Flipped: the worker pool owns its one read-only command
- * (`changedSince`, its hash checked by `shell.ts`), because a shipped `git.ts` may gain no key another
- * module reads: an in-app agent's kept older copy would lack it.
+ * (`changedSince`, its hash checked by `shell.ts`) and the game folder's fingerprint, written through
+ * a throwaway index (`game-change.ts`), because a shipped `git.ts` may gain no key another module
+ * reads: an in-app agent's kept older copy would lack it.
  */
-const OWNERS = new Set(["loop/git.ts", "loop/repo.ts", "loop/shell.ts", "loop/workers/pool-merge.ts"]);
+const OWNERS = new Set([
+  "loop/git.ts",
+  "loop/repo.ts",
+  "loop/shell.ts",
+  "loop/workers/pool-merge.ts",
+  "loop/workers/game-change.ts",
+]);
 /** A git subcommand (or the global options the harness puts before one). */
-const SUBCOMMAND = String.raw`(?:-c\s|--no-optional-locks\b|\$\{|(?:add|am|apply|bisect|blame|branch|cat-file|checkout|cherry-pick|clean|clone|commit|config|diff|fetch|for-each-ref|init|log|ls-files|ls-tree|merge|merge-base|merge-file|mv|pull|push|rebase|reset|restore|rev-list|rev-parse|revert|rm|show|show-ref|stash|status|switch|tag|update-index|update-ref|worktree)\b)`;
+const SUBCOMMAND = String.raw`(?:-c\s|--no-optional-locks\b|\$\{|(?:add|am|apply|bisect|blame|branch|cat-file|checkout|cherry-pick|clean|clone|commit|config|diff|fetch|for-each-ref|init|log|ls-files|ls-tree|merge|merge-base|merge-file|mv|pull|push|rebase|reset|restore|rev-list|rev-parse|revert|rm|show|show-ref|stash|status|switch|tag|update-index|update-ref|worktree|write-tree)\b)`;
 /**
- * A command line: `git <subcommand>` at the start of a literal chunk or after `&&`, `||`, `;` or
- * `|` — or a chunk that ends on `git ` right before a template's interpolation (`git ${AS} …`).
+ * A command line: `git <subcommand>` at the start of a literal chunk, after `&&`, `||`, `;`, `|`,
+ * `{` or a command substitution's `$(`, and after environment assignments (`GIT_INDEX_FILE=… git`)
+ * — or a chunk that ends on `git ` right before a template's interpolation (`git ${AS} …`).
  */
-const COMMAND = new RegExp(String.raw`(?:^|&&|\|\||[;|])\s*git(?:\s+${SUBCOMMAND}|\s*$)`);
+const COMMAND = new RegExp(
+  String.raw`(?:^|&&|\|\||[;|{]|\$\()\s*(?:[A-Z_][A-Z0-9_]*=\S+\s+)*git(?:\s+${SUBCOMMAND}|\s*$)`,
+);
 
 const seedModules = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -89,6 +99,9 @@ describe("git command lines in the harness seed", () => {
       'run(`T=x && mkdir -p "$T" && git show ${a}`)',
       "run(`printf x | base64 -d > f && git add -- f`)",
       'run("git add -A && (git diff --cached --quiet || git commit)")',
+      'run(`i="$(git rev-parse --git-path ${name})"`)',
+      'run(`cp a b; GIT_INDEX_FILE="$i" git write-tree`)',
+      "run(`x && { git add -A; }`)",
     ]) {
       assert.equal(strayCommands(module(line)).length, 1, line);
     }

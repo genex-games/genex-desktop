@@ -339,6 +339,7 @@ describe("workers on the graph", () => {
       type: "researcher",
       isolation: WorkerIsolation.Read,
       in: null,
+      where: null,
       task: "Check the physics, then report",
       summary: "The physics holds up.",
       turn: null,
@@ -352,7 +353,7 @@ describe("workers on the graph", () => {
     assert.equal(partRows(graph)[1]?.steps[0]?.state, StepState.Building);
   });
 
-  it("says which engine a worker works in, and nothing for one that names none", () => {
+  it("says which engine or app a worker works in, and nothing for one that names none", () => {
     const graph = buildRunGraph([
       ...runOpened(),
       started(runScope, poolWorkerId("w1"), "Build the track", {
@@ -360,9 +361,13 @@ describe("workers on the graph", () => {
         in: GameEngine.Unreal,
       }),
       started(runScope, poolWorkerId("w2"), "Tune the lights", { in: "a toaster" }),
+      started(runScope, poolWorkerId("w3"), "Lay the road", { isolation: WorkerIsolation.Lock, where: " Unreal " }),
+      started(runScope, poolWorkerId("w4"), "Paint the sky", { isolation: WorkerIsolation.Lock, where: 7 }),
     ]);
     assert.equal(partOf(graph, poolWorkerId("w1"))?.worker?.in, GameEngine.Unreal);
     assert.equal(partOf(graph, poolWorkerId("w2"))?.worker?.in, null);
+    assert.equal(partOf(graph, poolWorkerId("w3"))?.worker?.where, "Unreal", "the lock it holds names where");
+    assert.equal(partOf(graph, poolWorkerId("w4"))?.worker?.where, null, "a where that is no text");
   });
 });
 

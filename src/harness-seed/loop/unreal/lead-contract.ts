@@ -278,8 +278,9 @@ export type SavePointShot = { camera: string; path: string; tone: ShotTone | nul
 
 /**
  * One save point: its label, its snapshot, when, what it holds, its thumbnails, the milestone it is
- * a round of and its round number there, whether the harness made it (an autosave) and the Unreal
- * log errors new since the save point before.
+ * a round of and its round number there, whether the harness made it (an autosave), and what the
+ * plugins' steps at its checkpoint noted (`notes`, the log's new errors among them). An older save
+ * point kept the Unreal log errors new since the one before (`logErrors`) instead.
  */
 export type SavePoint = {
   label: string;
@@ -290,7 +291,8 @@ export type SavePoint = {
   milestoneId: string;
   round: number;
   auto: boolean;
-  logErrors: string[];
+  notes?: string[];
+  logErrors?: string[];
 };
 
 /** The most defects one critic answer carries. */

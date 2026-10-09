@@ -1572,6 +1572,7 @@ export const PLUGIN_SUGGESTION_WORDS = {
   install: "Install…",
   on: "On",
   onlyYou: "Only you turn a Genex plugin on. It runs with your access to this Mac.",
+  folders: (paths: string) => `Turning it on lets its programs write in: ${paths}`,
 } as const;
 
 /**
@@ -1726,6 +1727,11 @@ function asSentence(text: string): string {
   const capital = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   return /[.!?…]$/.test(capital) ? capital : `${capital}.`;
 }
+
+/** The chat's working line while the agent's work waits for the person to finish in an app a plugin guards. */
+export const PERSON_FIRST_WORDS = {
+  waiting: (label: string) => `Waiting for you to finish in ${label}`,
+} as const;
 
 /**
  * A worker's one line in the chat (`chat/worker-lines.ts`): its task while it works, then what it
@@ -2928,6 +2934,9 @@ export const PLUGINS_WORDS = {
     from: (version: string, source: string) => `${version} · ${source}`,
     can: "Can",
     nothing: "Nothing beyond its own tools",
+    /** The folders outside your games its programs write to, each with why. */
+    folders: "Folders",
+    folder: (path: string, why: string) => `${path} — ${why}`,
     scan: "Code scan",
     trusted: "This plugin runs trusted code on your Mac.",
   },

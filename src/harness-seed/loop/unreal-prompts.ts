@@ -9,94 +9,85 @@ import type { PluginKindOffer } from "../types/host-api.d.ts";
 import { ProjectTool } from "./folder-facts.ts";
 import { askUser } from "./interview-question.ts";
 import { toolCall } from "./model-roles.ts";
-import { EngineReadiness, type UnrealOnComputer } from "./unreal/editor-wait.ts";
 
-/** The Unreal Editor connector's tools, as the studio names them (the Unreal plugin's `unreal-editor` server). */
-const UnrealTool = {
-  ListToolsets: "unreal-editor__list_toolsets",
-  DescribeToolset: "unreal-editor__describe_toolset",
-  CallTool: "unreal-editor__call_tool",
-} as const;
+/** The Unreal editor connector's tools, as the Unreal plugin's skill describes them: briefs name the connector, not its tools. */
+const UNREAL_CONNECTOR = "the Unreal editor connector's tools, as the Unreal plugin's skill describes";
 
 /**
  * The Unreal plugin's tool that makes a game's Unreal project inside its folder, as the host serves
- * it (`<plugin>__<tool>`). It is in the host's tool list exactly while the plugin is on, which is
- * how a brief knows to offer Unreal at all. The plugin declares it (`src/plugins/unreal/plugin.json`).
+ * it (`<plugin>__<tool>`). Kept for an older copy of a module that imports it: no current module
+ * offers Unreal by this name, since every kind on offer comes from the host's `kinds`.
  */
 export const UNREAL_NEW_GAME_TOOL = "unreal__new-game";
 
-/** The Unreal plugin's tool that links this game to an Unreal project the person already has. */
-const UNREAL_USE_PROJECT_TOOL = "unreal__use-project";
-
-/** Whether the host's plugin tools offer a new Unreal game: the Unreal plugin is on. */
+/**
+ * Whether the host's plugin tools offer a new Unreal game. Kept for an older copy of a module that
+ * imports it (a chat turn kept from before); no current module calls it.
+ */
 export function offersUnrealGame(tools: ReadonlyArray<{ name?: unknown }> | null | undefined): boolean {
   return Array.isArray(tools) && tools.some((tool) => tool?.name === UNREAL_NEW_GAME_TOOL);
 }
 
-/** What to do when the user picks Unreal before Genex can make its project: never new-game, the Unreal button instead. */
-const toUnrealButton = (newGame: string, how: string) =>
-  `If the user picks it, don't call ${newGame}, which would refuse: tell them to press the Unreal button above the game, which shows how to ${how} and notices when it's installed, and to send a message once it is.`;
+/** How strongly a kind is the one its plugin's card offers: its readiness answered, then a tool that asks it, then any. */
+function offerRank(kind: PluginKindOffer): number {
+  if (kind.ready !== undefined) return 2;
+  return kind.asksReady === true ? 1 : 0;
+}
 
 /**
- * How the engine question offers Unreal, by what this computer has (`unreal/editor-wait.ts`
- * `unrealOnComputer`): ready to make a project with; only a newer or only an older Unreal than the
- * 5.8 Genex makes projects with; or none at all. Unless it is ready, the option says what it needs
- * and the user is pointed to the Unreal button instead of new-game, which would refuse.
+ * The kinds the question card offers, one per plugin: the one whose plugin answered its readiness
+ * or, when the answer was late, whose tool asks it (its new-game tool), else the plugin's first.
  */
-function unrealOffer(newGame: string, unreal: UnrealOnComputer | null | undefined): string {
-  const option = `"Unreal Engine: plays in the Unreal editor on this computer"`;
-  const beside = (version: string) =>
-    `offer it as "Unreal Engine 5.8" with the description "Needs 5.8 installed beside your ${version}, about 45 GB".`;
-  if (unreal?.engine === EngineReadiness.None)
-    return `Unreal Engine isn't installed on this computer yet, so offer it as "Unreal Engine" with the description "Plays in Epic's free editor on this computer; needs a 45 GB install first". ${toUnrealButton(newGame, "get Unreal 5.8 free from Epic")}`;
-  const version = unreal?.version ?? "";
-  if (unreal?.engine === EngineReadiness.NewerOnly)
-    return `This computer has Unreal ${version}, and Genex makes new Unreal projects with 5.8 only, so ${beside(version)} ${toUnrealButton(newGame, `install 5.8 beside ${version} in the Epic Games Launcher`)}`;
-  if (unreal?.engine === EngineReadiness.OlderOnly)
-    return `This computer has Unreal ${version}, older than the 5.8 Genex makes Unreal games with, so ${beside(version)} ${toUnrealButton(newGame, "get 5.8 free from Epic")}`;
-  return `Offer ${option}; when the answer (or the request) is Unreal Engine, call ${newGame} with a template and a name: it makes the game's Unreal project in this folder, links this game to it and opens it in Unreal; then build the game there through the Unreal tools, never as a web page.`;
-}
-
-/** The engine plugins the kinds on offer come from, one offer each, the Unreal plugin's not among them. */
-function otherKinds(kinds: readonly PluginKindOffer[]): PluginKindOffer[] {
-  const unreal = kinds.find((kind) => kind.tool === UNREAL_NEW_GAME_TOOL)?.plugin;
-  const seen = new Set<string>();
-  return kinds.filter((kind) => {
-    if (kind.plugin === unreal || seen.has(kind.plugin)) return false;
-    seen.add(kind.plugin);
-    return true;
-  });
+function offeredKinds(kinds: readonly PluginKindOffer[]): PluginKindOffer[] {
+  const byPlugin = new Map<string, PluginKindOffer>();
+  for (const kind of kinds) {
+    const known = byPlugin.get(kind.plugin);
+    if (!known || offerRank(kind) > offerRank(known)) byPlugin.set(kind.plugin, kind);
+  }
+  return [...byPlugin.values()];
 }
 
 /**
- * The first rule of a new game's brief while an engine plugin is on: which kind it builds is the
+ * How the card offers one kind: by its plugin's own words when it gave a readiness note, else by
+ * its kind tool; a kind its plugin says isn't ready yet is never made: the person finishes its setup
+ * from the plugin's button first (one rule for every plugin).
+ */
+function kindLine(engine: string | undefined, kind: PluginKindOffer): string {
+  const tool = toolCall(engine, kind.tool);
+  const made = `When the answer (or the request) is ${kind.name}, call ${tool}: it makes the game's ${kind.name} project in this folder; then build it with that plugin's tools.`;
+  const note = typeof kind.note === "string" && kind.note.trim() ? kind.note.trim() : null;
+  if (kind.ready === false)
+    return [
+      note,
+      `If the user picks ${kind.name}, don't call ${tool}: tell them to finish its setup from the ${kind.name} button above the game and send a message once it's done.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  if (!note) return made;
+  // The plugin's words name its tool as the host serves it; this session may spell it otherwise.
+  return tool === kind.tool ? note : `${note} In this session, call ${kind.tool} as ${tool}.`;
+}
+
+/**
+ * The first rule of a new game's brief while engine plugins offer kinds: which kind it builds is the
  * user's one question before the first build, unless the ask already names it. The web answer starts
- * Genex's web starter (`start_web_game`); Unreal goes through the plugin's new-game tool, which makes
- * the project inside the game folder and links it; another engine plugin through its own kind tool.
- * `unreal` says what this computer has (none known: offered as installed); `kinds` are the kind
- * tools on offer (absent: the Unreal plugin's alone).
+ * Genex's web starter (`start_web_game`); each kind on offer (`kinds`, from the host, each with its
+ * plugin's readiness) through its own kind tool, as its line says. No kind on offer: no question
+ * (an empty rule). `_unreal` is read no more: kept so an older caller's call still fits.
  */
 export function engineChoiceRule(
   engine: string | undefined,
-  unreal?: UnrealOnComputer | null,
+  _unreal?: unknown,
   kinds?: readonly PluginKindOffer[] | null,
 ): string {
+  const offered = offeredKinds(kinds ?? []);
+  if (offered.length === 0) return "";
   const ask = toolCall(engine, askUser.name);
-  const newGame = toolCall(engine, UNREAL_NEW_GAME_TOOL);
+  const names = offered.map((kind) => `"${kind.name}"`);
   const web = `When it is the web, call ${toolCall(engine, ProjectTool.StartWebGame)} first, then build it here on its starter as the rules below say.`;
-  const others = otherKinds(kinds ?? []);
-  if (others.length === 0)
-    return `FIRST, THE ENGINE: the user has the Unreal Editor plugin on, so this new game can be built for the web, here, or in Unreal Engine. Unless the request already names one, ask the user that one question with ${ask} before you build anything, with the options "Web: plays right here in Genex" and Unreal Engine, and end your reply. ${unrealOffer(newGame, unreal)} ${web}`;
-  const unrealOn = !kinds || kinds.some((kind) => kind.tool === UNREAL_NEW_GAME_TOOL);
-  const names = [...(unrealOn ? ["Unreal Engine"] : []), ...others.map((kind) => `"${kind.name}"`)];
-  const makers = others.map(
-    (kind) =>
-      `When the answer (or the request) is ${kind.name}, call ${toolCall(engine, kind.tool)}: it makes the game's ${kind.name} project in this folder; then build it with that plugin's tools.`,
-  );
   return [
-    `FIRST, THE ENGINE: the user has engine plugins on, so this new game can be built for the web, here, or with ${names.join(" or ")}. Unless the request already names one, ask the user that one question with ${ask} before you build anything, with the options "Web: plays right here in Genex" and ${names.join(", ")}, and end your reply.`,
-    ...(unrealOn ? [unrealOffer(newGame, unreal)] : []),
-    ...makers,
+    `FIRST, THE ENGINE: the user has engine plugins on, so this new game can be built for the web, here, or with ${names.join(" or ")}. Unless the request already names one, ask the user that one question with ${ask} before you build anything, with the options "Web: plays right here in Genex" and ${names.join(", ")} (each worded as its line below says), and end your reply.`,
+    ...offered.map((kind) => kindLine(engine, kind)),
     web,
   ].join(" ");
 }
@@ -110,28 +101,25 @@ function projectWords(project: string | null | undefined, found?: string): strin
 
 /**
  * The rules that describe an Unreal game, in place of the web template's: where it is built,
- * where its changes land, how Blueprint text is written, and the bridges never to build. Its
- * tools are spelled the way `engine` calls them. A session that also writes files of its own in the
+ * where its changes land, how Blueprint text is written, and the bridges never to build. It names
+ * no tool, so `_engine` (kept for its callers) changes nothing. A session that also writes files of its own in the
  * game folder (the Unreal Loop's lead: ART.md, build scripts, deliveries) is told `ownFiles`, and
  * never that the folder holds only notes. A project found in the folder but not linked (`found`, the
- * folder it was found in) is not built through the Unreal tools at all: until the plugin's use-project
- * links it (once the person has set it up), those tools work on the project chosen in the Unreal
- * panel, which can be another game's (`unlinkedUnrealRules`).
+ * folder it was found in) is not built through the Unreal tools at all: until the plugin links it
+ * (once the person has set it up; its skill names the tool), those tools work on the project chosen
+ * in the Unreal panel, which can be another game's (`unlinkedUnrealRules`).
  */
 export function unrealRules(
-  engine: string | undefined,
+  _engine: string | undefined,
   project: string | null | undefined,
   { ownFiles = false, found }: { ownFiles?: boolean; found?: string } = {},
 ): string[] {
-  const list = toolCall(engine, UnrealTool.ListToolsets);
-  const describe = toolCall(engine, UnrealTool.DescribeToolset);
-  const call = toolCall(engine, UnrealTool.CallTool);
   const notes = ownFiles
     ? "Keep NOTES.md in this game folder current with what you built in Unreal and why."
     : "This Genex game folder holds only the game's notes: keep NOTES.md in it current with what you built in Unreal and why.";
-  if (!project && found !== undefined) return unlinkedUnrealRules(engine, found, notes);
+  if (!project && found !== undefined) return unlinkedUnrealRules(found, notes);
   return [
-    `This game is built in Unreal Engine, in the user's open Unreal Editor, through the Unreal tools: find a toolset with ${list}, read its tools and input schemas with ${describe}, then run them with ${call}.`,
+    `This game is built in Unreal Engine, in the user's open Unreal Editor, through ${UNREAL_CONNECTOR}: find a toolset, read its tools and input schemas, then run them.`,
     `Your changes land in the Unreal project ${projectWords(project, found)}. ${notes}`,
     "Before you write Blueprint text, look up every node it uses through the Unreal tools — its exact name and pins — and never write a node from memory.",
     "Never build file watchers, polling scripts or exec bridges between this folder and Unreal: the Unreal tools are the way in.",
@@ -139,16 +127,14 @@ export function unrealRules(
 }
 
 /**
- * The rules of an Unreal project in the folder that is not linked to the game: until the plugin's
- * use-project links it, the Unreal tools work on the project chosen in the Unreal panel (which can be
- * another game's), so none of them is called before; the work goes on with the project's files.
+ * The rules of an Unreal project in the folder that is not linked to the game: until the plugin
+ * links it, the Unreal tools work on the project chosen in the Unreal panel (which can be another
+ * game's), so none of them is called before; the work goes on with the project's files. The
+ * harness names no plugin tool here: the plugin's skill says which one links it.
  */
-function unlinkedUnrealRules(engine: string | undefined, found: string, notes: string): string[] {
-  const tools = [UnrealTool.ListToolsets, UnrealTool.DescribeToolset, UnrealTool.CallTool]
-    .map((tool) => toolCall(engine, tool))
-    .join(", ");
+function unlinkedUnrealRules(found: string, notes: string): string[] {
   return [
-    `This folder holds an Unreal Engine project ${projectWords(null, found)} that is not linked to this game yet. Until it is, the Unreal tools (${tools}) work on the project chosen in Genex's Unreal panel, which can be another game's: never call them before ${toolCall(engine, UNREAL_USE_PROJECT_TOOL)} links this folder's project, once the person has set it up from the Unreal button. Until then, work with the project's files.`,
+    `This folder holds an Unreal Engine project ${projectWords(null, found)} that is not linked to this game yet. Until it is, the Unreal tools (${UNREAL_CONNECTOR}) work on the project chosen in Genex's Unreal panel, which can be another game's: never call them before this folder's project is linked to this game, once the person has set it up from the Unreal button (the Unreal plugin's skill names the tool that links it). Until then, work with the project's files.`,
     notes,
     "Never build file watchers, polling scripts or exec bridges between this folder and Unreal: the Unreal tools are the way in once the project is linked.",
   ];

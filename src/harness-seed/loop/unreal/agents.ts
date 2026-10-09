@@ -64,6 +64,7 @@ import {
 } from "./lead-contract.ts";
 import { folderLabelOf } from "../workers/identity.ts";
 import { agentMarked, agentNode, agentPart } from "./lead-graph.ts";
+import { runScope, workerEndHooks, workerStartHooks } from "../hooks.ts";
 import { type Lead, milestoneNow, oneGitWrite, SNAPSHOT_SCOPE, saveLead, why } from "./lead-journal.ts";
 
 /** A sub-agent's turns at most: its first, and the ones it is woken for when it ended with nothing delivered. */
@@ -255,6 +256,9 @@ function newAgent(lead: Lead, ask: Ask & { inputs: string[] }, lastFound: number
   };
 }
 
+/** A typed worker as Genex's moments name it: its part on the graph, title and kind. */
+const agentMoment = (agent: AgentRecord) => ({ id: agentPart(agent.id), title: agent.title, type: agent.kind });
+
 /** Starts a typed worker from `worker_start`'s arguments, in the background; answers its id, or why none started. */
 export async function startAgent(lead: Lead, args: AnyRecord): Promise<string> {
   const ask = askOf(lead, args);
@@ -265,7 +269,14 @@ export async function startAgent(lead: Lead, args: AnyRecord): Promise<string> {
   const lastFound = await lastInGame(lead, ask.kind);
   const agent = newAgent(lead, { ...ask, inputs: read.inputs }, lastFound);
   const tools = toolsFor(lead, ask.kind);
+  // Taken at once, before any wait: a start in flight beside it numbers apart and counts.
   lead.journal.agents.push(agent);
+  // A plugin of the game may hold the worker back: nothing of it is written.
+  const held = await workerStartHooks(lead.ctx, lead.game, runScope(lead), agentMoment(agent));
+  if (held) {
+    lead.journal.agents.splice(lead.journal.agents.indexOf(agent), 1);
+    return AGENT_WORDS.Refused(held);
+  }
   await agentNode(lead, agent);
   await saveLead(lead);
   const work = runAgent(lead, agent, tools)
@@ -490,6 +501,7 @@ async function ended(
   agent.error = error;
   agent.endedAt = lead.clock.now();
   await agentNode(lead, agent, stopCode);
+  await workerEndHooks(lead.ctx, lead.game, runScope(lead), agentMoment(agent));
   await removeCopy(lead, agent);
   await saveLead(lead);
 }

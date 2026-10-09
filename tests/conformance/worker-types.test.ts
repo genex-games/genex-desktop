@@ -66,6 +66,8 @@ async function unrealRegistry() {
     m.id = UNREAL.id;
     m.apiVersion = 3;
     m.tools = UNREAL.tools;
+    // Its editor steps need its lock, so the lock comes with them.
+    m.locks = UNREAL.locks;
     m.skills = [];
     m.workerTypes = UNREAL.workerTypes;
   });

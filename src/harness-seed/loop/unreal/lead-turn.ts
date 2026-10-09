@@ -4,15 +4,18 @@
  * opens with the brief, every later one with a digest. While a turn runs, the harness watches it:
  * the owner's words are steered at once, a finished sub-agent's news and a job of the run that
  * ended too (one no steer reached rides the next digest), a save is asked for after
- * `SAVE_STEER_MS` of unsaved work, a crashed Unreal is reopened in place and the lead told what may
- * be lost, the wrap-up is asked for near the end, and the owner's finish ends the turn. A lost or
- * full session hands the run to a fresh one; a rate limit is waited out, a usage cap pauses the run.
+ * `SAVE_STEER_MS` of work since the last save point, a crash (Genex's health check blocked) is
+ * recovered and the lead told what may be lost, the wrap-up is asked for near the end, and the
+ * owner's finish ends the turn. Genex's turn moments run around each turn (`turn.start` may stop
+ * it). A lost or full session hands the run to a fresh one; a rate limit is waited out, a usage cap
+ * pauses the run.
  */
-import type { DelegateResult } from "../../types/host-api.d.ts";
+import type { DelegateResult, HookReport } from "../../types/host-api.d.ts";
 import { isResumeFailure } from "../chat-session.ts";
 import { MIN_DELEGATE_TIMEOUT_MS } from "../config.ts";
 import type { LeadLine } from "../director/lead-line.ts";
 import { bookmarkLead, freshChat } from "../director/lead-session.ts";
+import { fireHooks, HookEvent, runScope } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
 import { jobEndLine } from "../jobs/prompts.ts";
 import { type JobEnd, jobEnds } from "../jobs/watch.ts";
@@ -25,15 +28,13 @@ import { agentNews, creditCapOf } from "./agents.ts";
 import { LeadEndReason } from "./lead-contract.ts";
 import { tellUser } from "./lead-graph.ts";
 import { gameText, type Lead, type LeadTurn, requiredNow, saveLead, why } from "./lead-journal.ts";
-import { digestPrompt, HANDOVER_WHY, handoverWords, leadBrief, STEER } from "./lead-prompts.ts";
+import { CARRIED, digestPrompt, HANDOVER_WHY, handoverWords, leadBrief, STEER } from "./lead-prompts.ts";
 import { LEAD_TOOLS, runStatusText } from "./lead-tools.ts";
-import { EditorLife, editorLife } from "./editor-life.ts";
-import { editorActivity } from "./save-point.ts";
 import type { TemplateKind } from "./template-kind.ts";
 
 /** One turn of the lead, at most. */
 export const TURN_MS = 45 * MINUTE_MS;
-/** With the editor dirty this long after the last save point, the lead is steered to look, then save. */
+/** This long after the last save point, the lead is steered to look, then save. */
 export const SAVE_STEER_MS = 15 * MINUTE_MS;
 /** The wrap-up steer comes this long before the run's working deadline. */
 export const WRAP_UP_MS = 12 * MINUTE_MS;
@@ -235,14 +236,12 @@ export function unsavedSince(lead: LeadRun): number {
   return Math.max(lead.journal.savePoints.at(-1)?.at ?? 0, lead.workingSince);
 }
 
-/** Every `SAVE_STEER_MS` of work without a save point while the editor is dirty: look, then save. */
+/** Every `SAVE_STEER_MS` of work without a save point: look, then save. */
 async function saveWatch(lead: LeadRun, turn: LeadTurn): Promise<void> {
   const since = unsavedSince(lead);
   const elapsed = lead.clock.now() - since;
   const key = `save-${since}-${Math.floor(elapsed / SAVE_STEER_MS)}`;
   if (elapsed < SAVE_STEER_MS || turn.steered.has(key) || lead.saving) return;
-  // Only an editor known to hold unsaved work: one that can't say would refuse the save anyway.
-  if (!((await editorActivity(lead))?.dirty ?? 0)) return;
   await steer(lead, turn, key, STEER.SaveNow(leadEngine(lead).engine, minutes(elapsed)));
 }
 
@@ -277,13 +276,15 @@ async function endWatch(lead: LeadRun): Promise<void> {
 }
 
 /**
- * Unreal went away under the turn: reopened in place (or restored), and the lead told what may be
- * lost. Only on the plugin's word that no editor process of the game runs: an editor that answers
- * nothing while its process runs is busy (the lead's own long script, an import, a save), and one
- * the plugin can't tell about is left to the next turn's start.
+ * Unreal went away under the turn: recovered (reopened in place, or restored), and the lead told
+ * what may be lost. Only when Genex's health check is blocked: a step that is pending (an editor
+ * that is busy with the lead's own long script, an import, a save, or one that is reopening) is no
+ * crash, and one the plugin can't tell about is pending too.
  */
 async function crashWatch(lead: LeadRun, recover: (lead: LeadRun) => Promise<string | null>): Promise<void> {
-  if (lead.recovering || lead.saving || (await editorLife(lead)) !== EditorLife.Gone) return;
+  if (lead.recovering || lead.saving) return;
+  const health = await fireHooks(lead.ctx, lead.game, HookEvent.Health, runScope(lead));
+  if (!health.blocked || lead.recovering) return;
   if (lead.turn) lead.turn.crashed = true;
   const said = await recover(lead);
   if (said) await steerOrCarry(lead, `crash-${lead.journal.crashes.length}`, said);
@@ -493,18 +494,42 @@ async function firstWords(lead: LeadRun): Promise<string> {
   return said.length ? STEER.OwnerWords(said.join("\n")) : "";
 }
 
-/** One turn of the lead, asked again after a handover or a limit waited out. */
-export async function leadTurn(lead: LeadRun, recover: (lead: LeadRun) => Promise<string | null>): Promise<void> {
-  lead.journal.turns += 1;
-  lead.failure = null;
-  const body = lead.journal.turns === 1 ? await firstWords(lead) : await digestOf(lead);
-  await saveLead(lead);
+/** One delegation of the turn, asked again after a handover or a limit waited out. */
+async function delegateWithRetries(lead: LeadRun, body: string, recover: (lead: LeadRun) => Promise<string | null>) {
   for (let tries = 0; tries <= MAX_HANDOVERS + MAX_LIMIT_WAITS; tries += 1) {
     const brief = lead.journal.briefed ? "" : await briefFor(lead);
     const end = await delegateTurn(lead, [brief, body].filter(Boolean).join("\n\n"), recover);
     if ("result" in end) return keepSession(lead, end.result);
     if (!(await afterFailure(lead, end.error, tries))) return;
   }
+}
+
+/** What held a lead's turn back at its start: the step's reason, and Genex's own hold when it was Genex's. */
+export type TurnHeld = NonNullable<HookReport["blocked"]>;
+
+/**
+ * One turn of the lead, between Genex's turn moments: a step that blocks the turn's start keeps it
+ * from running (the next digest says why) and is answered, so the run can wait before it asks
+ * again; null once the turn ran. The end's notes are the plugins' own.
+ */
+export async function leadTurn(
+  lead: LeadRun,
+  recover: (lead: LeadRun) => Promise<string | null>,
+): Promise<TurnHeld | null> {
+  lead.failure = null;
+  const scope = { ...runScope(lead), turn: String(lead.journal.turns + 1) };
+  const opened = await fireHooks(lead.ctx, lead.game, HookEvent.TurnStart, scope);
+  if (opened.blocked) {
+    lead.journal.digest.carried.push(CARRIED.TurnHeld(opened.blocked.reason));
+    await saveLead(lead);
+    return opened.blocked;
+  }
+  lead.journal.turns += 1;
+  const body = lead.journal.turns === 1 ? await firstWords(lead) : await digestOf(lead);
+  await saveLead(lead);
+  await delegateWithRetries(lead, body, recover);
+  await fireHooks(lead.ctx, lead.game, HookEvent.TurnEnd, scope);
+  return null;
 }
 
 /** How a run ends on something that threw: stopped by the user when it was, else failed with why. */

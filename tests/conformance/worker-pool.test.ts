@@ -137,6 +137,7 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     await finish(host, pool, copied, { ok: true, sessionId: "s1", summary: "added" });
     assert.match(await pool.call(WorkerTool.Mark, { id: copied, verdict: "used" }), /Merged w1/);
     const inPlace = await start(pool, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
+    await writeFile(path.join(repo, "jump.js"), "export const jump = 2;\n");
     await finish(host, pool, inPlace, { ok: true, sessionId: "s2", summary: "tuned" });
     const verdicts = () =>
       host.appended.filter((row) => row.type === CustomEvent.WorkerFinished && row.payload.verdict !== undefined);
@@ -157,20 +158,80 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     assert.equal(await readFile(path.join(repo, "enemy.js"), "utf8"), "export const enemy = 1;\n");
   });
 
-  it("one writer in place at a time", async () => {
+  it("a writer in place that finished without changing the game folder may be rejected", async () => {
     const repo = await gameRepo();
     const host = poolHost(repo);
     const pool = await chatPool(host, repo);
+    const idle = await start(pool, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
+    await finish(host, pool, idle, { ok: true, sessionId: "s1", summary: "nothing needed tuning" });
+    assert.match(
+      await pool.call(WorkerTool.Mark, { id: idle, verdict: "rejected", note: "Not needed" }),
+      /Marked w1 rejected/,
+    );
+    const verdicts = host.appended.filter(
+      (row) => row.type === CustomEvent.WorkerFinished && row.payload.verdict !== undefined,
+    );
+    assert.deepEqual(
+      verdicts.map((row) => [row.payload.workerId, row.payload.verdict]),
+      [[poolWorkerId(idle), WorkerVerdict.Rejected]],
+    );
+  });
+
+  it("one writer in place at a time, across every pool of the game", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const runPool = await chatPool(host, repo, { runId: "run-1" });
     const writer = await start(pool, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
     assert.equal(delegation(host, writer).cwd, undefined, "it writes in the game folder");
     assert.equal(delegation(host, writer).readOnly, undefined);
+    assert.deepEqual(host.recorder.paramsOf(HostMethod.LocksHold)[0], {
+      project: PROJECT,
+      threadId: THREAD,
+      holder: { id: writer, title: "Tune" },
+    });
+    for (const each of [pool, runPool]) {
+      const answer = await each.call(WorkerTool.Start, { title: "More", task: "x", isolation: "lock" });
+      assert.match(
+        answer,
+        /^Not started: "Tune" is working in the game folder now/,
+        "the host's words name the writer",
+      );
+    }
+    assert.equal(runPool.state.records.length, 0, "a refused start leaves no record");
+    await start(pool, { title: "Read", task: "x", isolation: "read" });
+    await finish(host, pool, writer);
+    assert.equal(host.locks?.held.size, 0, "its end lets the game folder go");
+    const next = await start(runPool, { title: "Next", task: "x", isolation: "lock" });
+    await runPool.close();
+    assert.equal(host.locks?.held.size, 0, "so does its pool's close");
+    assert.ok(host.locks?.releases.includes(`run-1:${next}`));
+  });
+
+  it("a host that keeps no writer in place still lets one writer per pool work there", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo, { locks: false });
+    const pool = await chatPool(host, repo);
+    const writer = await start(pool, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
     assert.match(
       await pool.call(WorkerTool.Start, { title: "More", task: "x", isolation: "lock" }),
       /w1 is writing in place/,
     );
-    await start(pool, { title: "Read", task: "x", isolation: "read" });
     await finish(host, pool, writer);
     await start(pool, { title: "Next", task: "x", isolation: "lock" });
+  });
+
+  it("a host that refuses the game folder's hold for another reason starts no writer in place, saying why", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo, { locks: false });
+    host.recorder.handle(HostMethod.LocksHold, () => {
+      throw Object.assign(new Error("No such game: harbor"), { name: "InvalidParams" });
+    });
+    const pool = await chatPool(host, repo);
+    const answer = await pool.call(WorkerTool.Start, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
+    assert.match(answer, /^Not started: .*No such game: harbor/);
+    assert.deepEqual(pool.state.records, [], "a refused start leaves no record");
+    assert.deepEqual(host.sessions, [], "no session starts");
   });
 
   it("at most eight at once, and the ninth is told why", async () => {

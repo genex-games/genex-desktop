@@ -8,9 +8,8 @@ names is a link: game Markdown and images open beside it, others in their app (p
 only shown). Empty chat is blank. Only the prompt bar writes and sends; a pasted image
 adds the picture, not its file name.
 
-The chat's work shows a short status and elapsed time; waiting is static. A running build
-is one card (time used of its hours, what happens now, Builds), not chat work, nothing under it. No duplicate Stop
-controls or narration.
+Chat work shows a short status and elapsed time; waiting is static. A running build is one card
+(time used, what happens now, Builds) with nothing under it. No duplicate Stop or narration.
 
 Neighboring tools group under **Worked on N steps** (or **Worked in Unreal**);
 failures stay visible. Play views and assets sit under the work
@@ -23,17 +22,17 @@ The [design specification](../agent/design.md#chat-reading-and-activity) owns ex
 
 ## Questions and plans
 
-Replies get current plugin, account, MCP and template facts each turn; asking about plugins
+Replies get current plugin, account, MCP and template facts; asking about plugins
 never resumes a build. A reply may start workers in the chat's mode (Plan holds writers), stopping
-with the reply; each is one line, opening its work on Builds. Agents may look at app windows, never
+with it; each is one line opening its work on Builds. Agents may look at app windows, never
 clicking, in any mode; background work is one line with Stop, until Genex quits.
 
 - An `ask_user` question opens the question panel: options and a typed-answer row; Send answer
   confirms a choice. Chat about this puts it aside for the composer; any reply settles it.
   Progress is never a question; an unsaid game, look or engine before a build is: a game with no
   kind asks which engine (its plugin on) until picked.
-- Permission requests need an explicit answer and stay pinned above the composer. Worker plugin questions appear in the owning run’s conversation,
-  cancelled with their worker. Plugins ask Approve or Decline; Claude asks **Allow**, the grant it offers
+- Permission requests need an explicit answer, pinned above the composer; a worker's plugin
+  questions appear in its run's conversation, cancelled with it. Plugins ask Approve or Decline; Claude asks **Allow**, the grant it offers
   (**Always allow …**) or **Deny**, or takes words instead; a plan leaving Plan is approved
   into a mode. Stop, the turn's end or a restart withdraws one.
 - A game reply's one-line `bash` block offers **Run** and **Copy**; output shows below and
@@ -46,22 +45,22 @@ clicking, in any mode; background work is one line with Stop, until Genex quits.
 
 A sent message shows at once: idle, as the next bubble, **Sending** until saved.
 While the chat works it joins that turn, **Sending…** until the agent reads it, then sits where
-it was read. During a build its lead takes and answers it at once.
+read. During a build its lead takes and answers it at once.
 Otherwise (a picture, another model) it waits **Queued**, removable. During work a
 sendable draft shows Send, else Stop; Stopping shows until it ends, and Stop works
 again after five seconds. Stop hands over to
 the oldest queued message; the stopped build then shows only its result, else Stopped once, with
 Resume. A message cut off by a quit is retried once, then left to resend.
 
-**Rewind** sits beside every sent bubble unless the chat answers; a running
-build stops first. That message and all after it leave the
-chat and model context (the log keeps them); a fresh session answers next; it
-returns to the composer with its pictures and waiting follow-ups. **Restore game files** returns
-the folder to before that message, off at first if files changed outside the
-chat; otherwise one line says why only the conversation rewinds. Files too large to save stay,
-named in the dialog and the chat. Outside Unreal projects' changes stay.
+**Rewind** sits beside every sent bubble unless the chat answers; a running build stops first.
+That message and later ones leave chat and model context (the log keeps them); a fresh session
+answers next; it returns to the composer with pictures and follow-ups. **Restore game
+files** returns the folder to before it, off at first if files changed outside the chat (else one
+line says why only the conversation rewinds). Files too large to save stay, named in dialog and chat.
+Outside Unreal projects' changes stay. In an Unreal game, Unreal is saved and closed for it, then
+reopened; if it can't be, files stay and the chat says why.
 
-History is paged; reading older messages stops following live output.
+History is paged; reading older messages stops following output.
 
 ## Where to work
 

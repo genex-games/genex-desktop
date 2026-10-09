@@ -8,10 +8,10 @@
 
 /**
  * The Unreal plugin's Loop tools, by their agent names (the plugin's `LoopToolName`): the lead's run
- * calls `export-reference`, `cpp-status`, `add-cpp-module`, `reopen-editor` and `editor-state`, a
- * fallback save point reads `part-result`, and a C++ sub-agent checks its code with `check-part`.
- * The other part tools have no caller in the seed; the list mirrors the plugin's whole, as
- * `seed-contracts.test.ts` holds it.
+ * calls `cpp-status` and `add-cpp-module` (the C++ module's own flow), and a C++ sub-agent checks
+ * its code with `check-part`. Every other moment's editor work is the plugin's own step at Genex's
+ * moments (`../hooks.ts`); the other names stay for an older copy of `restore.ts` an agent kept,
+ * which imports them, and the list mirrors the plugin's whole, as `seed-contracts.test.ts` holds it.
  */
 export const UnrealLoopTool = {
   CheckPart: "unreal__check-part",
@@ -33,7 +33,11 @@ export type UnrealLoopTool = (typeof UnrealLoopTool)[keyof typeof UnrealLoopTool
 export const PartRunEnd = { Done: "done", Failed: "failed" } as const;
 export type PartRunEnd = (typeof PartRunEnd)[keyof typeof PartRunEnd];
 
-/** The Unreal plugin's harness tools for a run in the open editor, by their agent names (the plugin's `LiveLoopToolName`). */
+/**
+ * The Unreal plugin's harness tools for a run in the open editor, by their agent names (the
+ * plugin's `LiveLoopToolName`). No current module calls them by name (they run as the plugin's
+ * steps at Genex's moments); they stay for an older copy of `restore.ts` an agent kept.
+ */
 export const UnrealLivePluginTool = {
   PlayCheck: "unreal__play-check",
   SaveAll: "unreal__save-all",

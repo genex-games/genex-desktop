@@ -146,6 +146,10 @@ and the Plugins page — no polling is needed for a change to show.
 | `assets` | 3 | `{facts?, folders, formats?}`: where the assets of a folder holding the plugin's facts live (1–8 folders inside the fact's folder or `.`, up to 32 lowercase extensions without the dot) |
 | `workerTypes[]` | 3 | Up to 16 `{id, description, tools, isolation}`: the kinds of worker a lead may start while the plugin is on; see [Worker types](#worker-types) |
 | `folders[]` | 3 | Up to 8 `{path, why}`: folders outside the game the plugin's engine programs write to, workers' write roots; see [Folders](#folders) |
+| `locks[]` | 3 | Up to 8 `{id, label, per, personFirst?}`: what one holder at a time may use, giving way to the person; see [Locks](#locks-the-person-comes-first) |
+| `tools[].needs`, `mcpServers[].needs` | 3 | 1–4 of the manifest's lock ids a call of the tool, or of the connector's tools, holds while it runs; see [Locks](#locks-the-person-comes-first) |
+| `hooks[]` | 3 | Up to 32 `{on, tool, facts?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
+| `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
 
 ### Icons
@@ -510,19 +514,18 @@ sub-agents check their folder as a part); `run-part`, `rollback-part`, `reload-l
 `blueprint-guide` and `find-nodes` have no caller in the seed now. The harness's tools
 (`run-part`, `part-result`, `rollback-part`, `reload-level`, `export-reference`, `cpp-status`,
 `add-cpp-module`, `reopen-editor`, `editor-state`, `play-check`, `save-all`, `log-errors`,
-`end-editor`, `update-helper`, `editor-activity`, `hero-shots`, `wait-editor`, `engine-status`) are
+`end-editor`, `update-helper`, `editor-activity`, `hero-shots`, `open-for-run`, `wait-editor`,
+`engine-status`) are
 `"audience": "harness"`: no chat, builder or plan sees them, the harness calls them through
 `plugins.invoke` as its own steps (`step: true`), and they write no `plugin_tool` records. An agent
 that names one on any path is refused (`Unknown tool`) before anything runs, and the registry runs
 one only for the harness (`PluginRegistry.tool`'s `caller`). A step runs while the chat is in Plan
-mode unless it writes or is part of a chat's checkpoint (`checkpoint: true`: the chat turn's
-`editor-activity` and `save-all`; the Unreal Loop runner's `save-all`, `hero-shots`, `play-check`,
-`end-editor`, `reopen-editor`, `export-reference`, `add-cpp-module` and `update-helper`), which waits.
+mode unless it writes (`checkpoint: true`: the Unreal Loop runner's `add-cpp-module`), which waits.
 A held write answers the runner the Plan answer (`blocker: "plan_mode"`, `PluginCallBlocker`), which
-`loop/unreal/lead-steps.ts` turns into a refusal: a save point or an autosave in a planning chat
-saves nothing and takes no snapshot, and the lead is told the chat is in Plan mode. A harness
-workspace that kept an agent-edited copy of `loop/delegated-turn.ts` from before `step` existed has
-the chat's Unreal steps refused as unknown until its copy sends `step: true`; the seed upgrade
+`loop/unreal/lead-steps.ts` turns into a refusal. The seed calls no other Unreal tool by name: a
+chat turn's end save is Genex's checkpoint and its wait after a kind change Genex's `health`
+([a game's engine](#a-games-engine)). A harness workspace that kept an agent-edited copy of
+`loop/delegated-turn.ts` from before the chat's checkpoint still saves by name; the seed upgrade
 reports such a copy and notes it in the agent's memory ([harness runtime](harness-runtime.md)). The
 runner makes its calls from `lead-steps.ts`, new with `step`, so a kept older `lead-journal.ts` is
 reported as a move instead. The queue takes one part at a time,
@@ -585,15 +588,47 @@ and crash reporter as the reopen job does, saving nothing, and is refused while 
 answers `{ended}` only once the game's Unreal no longer answers, asked again for up to 15 s (past the
 setup's 10 s memory of a good answer, so a `reopen-editor` right after never reads a closed editor as
 open), and throws when it still does. `update-helper` runs setup's `updateHelper` only while the game's Unreal doesn't answer.
-`editor-activity` answers `{pie, dirty}`: whether a play session runs and how many packages are
-unsaved (the helper's `editor_activity` names them), and throws when Unreal doesn't answer or the
-helper answers anything else, so no caller reads an editor it can't see as idle. `hero-shots
-{prefix, max}` lists the level's hero cameras (the build toolset's `shot_cameras`), takes a 960×540
-still from each label starting with `prefix`, at most `max` (8 at most), one at a time through
+`editor-activity` answers `{personActive, unsaved, pie, dirty}`: whether a play session runs and how
+many packages are unsaved (the helper's `editor_activity` names them), and whether the person is
+using the editor (below). With no editor of the game running, no linked project or Unreal still
+opening under Genex's own start it answers that nobody is and nothing is unsaved; it throws when
+Unreal runs but doesn't answer or the helper answers anything else, so no caller reads an editor it
+can't see as idle. `hero-shots {prefix?, max?}` lists the level's hero cameras (the build toolset's
+`shot_cameras`), takes a 960×540 still from each label starting with `prefix` (`GX_Shot_` unless
+given), at most `max` (8, also the most), one at a time through
 `capture_shot`, and answers `{shots: [{name, file, data, tone}]}`: the PNG as it landed in the
 project's own `Saved/Genex/captures` (that folder reached through no link below the project's) and
 its tone numbers. A still that never lands is left out, none is asked for after a minute, and a
 level without hero cameras has none.
+
+**The editor lock and Genex's moments** (plugin 0.7.0). The plugin declares one lock, `editor`
+(label "Unreal", per game, probe `editor-activity`), which its editor connector and its harness
+tools that work in the open editor need (`open-for-run`, `save-all`, `end-editor`, `reopen-editor`,
+`update-helper`, `add-cpp-module`, `export-reference`, `hero-shots`, `play-check`, `run-part`,
+`rollback-part`, `reload-level`); lookups, the gate, the probe and the readers need none. While the
+person plays in the game's editor, the agents' and Genex's calls there wait. A play the agent
+started is not the person's: the connector marks the agent's `StartPIE` with `agent-play.json` in
+its own folder (`<storage>/mcp/<game>`, `src/plugins/unreal/agent-play.ts`), cleared by its
+`StopPIE`, a crash under a call or the connector closing, and a mark older than 30 minutes is not
+believed; nor is a play the plugin's own queue is running. `new-game.ready` names `engine-status`,
+which also answers `{ready, note}`: whether a new Unreal game can be made here and the engine
+question's words for it. The handlers answer in hook terms when `context.hook` is set
+(`editor-moments.ts`, words in `hook-answers.ts`), and the manifest hooks them, each for games with
+the `unreal-project` fact: `run.prepare` → `open-for-run`, `log-errors`; `checkpoint.before` →
+`save-all`, `log-errors`; `checkpoint.after` → `hero-shots`; `restore.before` → `save-all`,
+`end-editor`; `restore.after` → `reopen-editor`; `health` → `editor-state`; `crash` →
+`reopen-editor`. Nothing hooks `run.end`: the person's editor stays open when a run ends.
+
+| Handler at its moment | In a run | In a chat |
+| --- | --- | --- |
+| `save-all` at `checkpoint.before` | blocks on a play, an editor that doesn't answer or can't tell, or a save that saved nothing | blocks on a play; otherwise notes what it saved or why not |
+| `save-all` at `restore.before` | nothing for an editor that isn't running; waits up to 5 minutes for a busy one; blocks when it stays busy or the save fails or leaves work | same |
+| `end-editor` at `restore.before` | blocks when Unreal couldn't be closed; a game with no linked project has nothing to end (`save-all` and `reopen-editor` do nothing for it either) | same |
+| `reopen-editor` at `restore.after`, `crash` | starts reopening, updating an outdated helper while Unreal is closed | same, but after a restore (the person's Rewind among them) only when that restore closed a running Unreal |
+| `editor-state` at `health` | quiet while it answers; pending while reopening, opening, busy or can't tell; blocks once reopening failed, its port is blocked or it is gone three asks in a row | same, gone in the chat's words |
+| `log-errors` at `run.prepare`, `checkpoint.before` | marks the log's end per game; notes the new errors since | same |
+| `hero-shots` at `checkpoint.after` | the stills as images, their tone as measures | nothing: no stills are taken |
+| `open-for-run` at `run.prepare` | opens a closed Unreal and waits for it; updates an outdated helper once its process exits (saved first, no snapshot); exports missing template facts; blocks without a helper or when Unreal can't be opened; its slowest path (`OPEN_FOR_RUN_MAX_MS`) stays under Genex's 30-minute ceiling for `run.prepare` | — |
 
 The Loop is one lead (the seed's `loop/unreal/lead.ts`), the only builder: a fresh session in the
 game folder on the Workers role's engine and model (high effort unless the person chose one; the
@@ -609,26 +644,34 @@ restart between turns: after C++ changes, or when the editor renders differently
 `note`) come with the director grant and no window. While a turn runs
 the harness looks every 15 s: the owner's words are steered at once, to be acted on now; a finished
 worker's news too; a save is asked for after 15 minutes of unsaved work, and the wrap-up 12
-minutes before the working deadline. Mid-turn, Unreal counts as crashed only when it misses three
-answers in a row, 5 s apart, and `editor-state` says no editor process of the project runs
-(`editor-life.ts`); one that answers nothing while its process runs is busy, and is left to work.
-A crashed one is reopened in place and the lead told what may be lost since its last save point;
-two failed reopens restore the last save point.
+minutes before the working deadline.
 
-A `save_point` refuses while the game plays or
-`editor-activity` can't say whether it does, then runs `save-all`, reads the log's errors new since
-the last one, takes a snapshot under the lead's label, captures the hero cameras (`GX_Shot_*`,
-through `hero-shots`, else the spawn shot of a `play-check` from an older plugin) as JPEG run
-artefacts with their tone numbers (a nearly black one is called out as a render to doubt, with the
-restart named), and adds a round to the graph. Between turns, a turn that made
-no save point and left the editor dirty is autosaved, never while a play session runs or may (the
-lead hears why it wasn't), and a rewind or rebuild runs cold (`restore.ts`): save unless Unreal is
-gone (a save that fails leaves Unreal open: nothing unsaved is ever ended; a busy editor is waited
-for up to 5 minutes, then left open and the run halts with why), `end-editor`, a check that Unreal
-no longer answers, `snapshot.restore` to the save point (the host's rescue snapshot keeps what was
-there), and `reopen-editor`, which builds the module; C++ that doesn't build goes back to the last
-save point. A rewind or rebuild still pending when the run paused runs before the resumed lead's
-first turn.
+The runner names none of the plugin's moment steps: it works through Genex's moments (the seed's
+`loop/hooks.ts`), and calls only the C++ module's `cpp-status` and `add-cpp-module` by name. Its
+start reads the C++ status, then fires `run.prepare` (a step that blocks halts the run with its
+reason; a helper update's note reaches the owner); its end fires `run.end`. Its turns fire
+`turn.start` and `turn.end` when a plugin hooks them; a held turn is no idle turn: the lead waits a
+minute and asks again, and five held in a row halt the run with why (the director's wake loop does
+the same, then wraps up). Mid-turn and between turns it asks `health`:
+only a block is a crash (Unreal gone three asks in a row, 5 s apart, or a reopen that failed); a
+busy or reopening Unreal is pending and left to work. A crash fires `crash` (the plugin reopens
+Unreal in place) and waits until `health` is quiet, twice at most; then the last save point is
+restored, and the lead is told what may be lost.
+
+A `save_point` is Genex's checkpoint (`checkpoint.take` under the lead's label): the plugin's steps
+before it save the editor's work (refused while a play the agent started runs, or when the save
+fails) and note the log's new errors; the snapshot follows; `hero-shots` after it hands back the
+hero cameras' stills, kept as JPEG run artefacts with their tone numbers (a nearly black one is
+called out as a render to doubt, with the restart named). The editor lock gives way to the person,
+so a save point waits while they play, and is refused when Genex can't tell. Between turns, a turn
+that made no save point gets an autosave asked only if the editor lock's probe says something is
+unsaved (the lead hears why it wasn't). A rewind is Genex's restore of the save point
+(`snapshot.restore`, naming the run's chat so Plan mode holds it): the plugin saves the editor's
+work unless Unreal is gone, ends it before the files change and reopens it after (a block keeps
+Unreal open and the files as they are); a rebuild fires the same restore moments with no file
+changed; then the runner waits until `health` is quiet. C++ that doesn't build goes back to the
+last save point. A rewind or rebuild still pending when the run paused runs before the resumed
+lead's first turn.
 
 Typed workers (`agents.ts`, at most two at once, medium effort, 25 minutes, a Genex cast 40)
 are small jobs of one kind (`AgentKind`: `blender_model`, `blender_prep`, `genex_cast`, `sound`,
@@ -869,7 +912,8 @@ gives way to installing 5.8 beside it (Open the Epic Games Launcher leads) and a
 project… (one made in Unreal's own New Project dialog works in chats, not in Loops); 5.8 without its
 templates gives way to verifying it in the Launcher. An agent's `new-game` is refused with the same
 ways, and the engine question never offers it then: with only a newer or only an older Unreal
-(`engine-status` newer-only or older-only) it offers "Unreal Engine 5.8" as needing 5.8 beside it.
+(`engine-status` newer-only or older-only, its `note` on the kind) it offers "Unreal Engine 5.8" as
+needing 5.8 beside it.
 
 **Open, quit and get Unreal.** `open-editor` runs `open -n -a <engine>/Engine/Binaries/Mac/UnrealEditor.app --args <uproject>`
 on a Mac, or starts `UnrealEditor.exe` detached on Windows, outside ProcessSandbox: it is the
@@ -1139,13 +1183,111 @@ the lead says otherwise, its isolation ([harness runtime](harness-runtime.md#wor
 `folders` (API 3) lists the folders outside the game the plugin's engine programs write to, each
 `{path, why}`: `path` one folder starting `~/` or `/`, at most 200 characters, with no `.` or `..`
 part and no glob; `why` 1–120 characters. Turning the plugin on approves them as write roots for
-workers' engine programs (the registry's `workerFolders()`, `~` expanded and deduped). A manifest is
+the engine programs of workers and jobs (the registry's `workerFolders()`, `~` expanded and
+deduped); the trust dialog of every install or update (each path and why, new ones marked; an
+install turns the plugin on), the plugin's page (Information, Folders: each path and why) and its
+suggestion card in the chat ("Turning it on lets its programs write in: …") name them first. A manifest is
 refused when a folder is `/`, the home folder or a folder holding it, `~/Library`,
 `~/Library/Application Support`, `~/Documents`, `~/Desktop` or `~/Downloads`, or is, holds or sits
 inside a login or Genex's own data (`~/.claude`, `~/.codex`, `~/.genex`, `~/.ssh`, `~/.aws`,
 `~/Library/Keychains`, `~/Library/Application Support/Genex`), compared case-blind. The Unreal
 plugin names the two its build tool writes: `~/Library/Application Support/Epic/UnrealBuildTool`
 and `/private/tmp/.dotnet`.
+
+### Hooks: Genex's moments
+
+`hooks` (API 3, `substrate/plugins/hook-manifest.ts`; vocabulary in `shared/plugin-hooks.ts`) names
+the plugin's harness tools Genex runs at its moments: up to 32 `{on, tool, facts?}`, each `(on,
+tool)` once. `tool` is one of the plugin's own tools with `audience: "harness"`, no `confirmation`
+and no `host`; `facts` (1–8 fact ids, each once) narrows it to the games they reach ([Scope by
+facts](#scope-by-facts)). Another plugin's tool, an agent tool or an unknown moment refuses the
+manifest.
+
+| Moment | When | A `block` |
+| --- | --- | --- |
+| `run.prepare` | before a run's first turn | closes the run with the reason |
+| `run.end` | after a run's last turn | is a note |
+| `turn.start`, `turn.end` | around a turn of the lead or the chat | at the start: the turn does not run |
+| `checkpoint.before`, `checkpoint.after` | around a snapshot Genex takes as a save point | before: no snapshot |
+| `restore.before`, `restore.after` | around a restore of the game's files (`forPerson` for the person's own Rewind) | before: no restore |
+| `worker.start`, `worker.end` | around a worker | at the start: the worker does not start |
+| `tool.before`, `tool.after` | around an agent's call of one of the plugin's **own** tools | before: the call answers the reason |
+| `health` | while Genex watches what the plugin drives | a failed check |
+| `crash` | after a failed health check | is a note |
+| `finish` | when the lead says the work is done | the lead keeps working |
+
+A moment runs the enabled plugins' handlers in plugin list order, then declaration order
+(`registry.hookPlan(on, game, own?)`); `registry.hookEvents(game)` lists the moments some plugin
+hooks for a game. A handler is told the moment in `context.hook` (`{on, runId?, turn?, label?,
+worker?, tool?, args?, forPerson?}`; `args` is a digest, never the arguments) and answers `{block?,
+note?, pending?, images?}` (`hookAnswerOf`: reasons up to 300 characters, notes up to 2,000, at most
+8 base64 PNG images of 8 MiB): `pending` asks Genex to ask again, anything else is ignored. A
+handler never rewrites arguments and never gives instructions, and git stays Genex's: no handler
+takes or restores a snapshot. The moments that write (`run.prepare`, `checkpoint.*`, `restore.*`,
+`crash`) wait while the chat plans, except the person's own Rewind.
+
+Genex runs them in `main/core/plugin-hooks.ts` (`HookService`), each step as a harness step through
+the registry, under the union of the steps' locks held for the whole moment (a checkpoint's before
+and after steps and its snapshot together); a run's moments pass the locks its own workers hold
+(`runHolders`), so its recovery never waits on its own writer in place. The host fires `checkpoint.*` (`checkpoint.take`, and
+the chat's `checkpoint` tool on a game whose plugins hook checkpoints, which then answers what was
+saved and the snapshot's id), `restore.*` around every restore of a game folder (the person's file
+Rewind with `forPerson`: no wait for the person or the plan) and `tool.*` around an agent's call of
+the plugin's own agent tool (a `tool.before` block is the call's answer, `{blocked}`, and nothing
+runs or is recorded; `tool.after` notes join the answer under `genex.notes`; each waits at most 15 s
+for its locks and runs a step at most a minute, so the agent's call, its 4-minute wait included,
+answers within the engine bridge's 10-minute deadline). The harness announces
+the rest through `hooks.fire` ([harness runtime](harness-runtime.md)): a chat turn its `turn.*`,
+every worker pool, the director's builders and the Unreal lead's typed workers `worker.*` (a
+`worker.start` block starts nothing and writes no record), the director `run.prepare`, `run.end`,
+each wake turn's `turn.*` and the lead's own `finish`, and the Unreal runner its moments. A step that fails blocks a
+blocking moment (fail closed), is `pending` at `health` (Genex can't tell is never a crash) and is a
+note elsewhere; a `block` at `health` is a failed check. Every note a moment's steps add is logged. A checkpoint asked only if unsaved is
+skipped when every probe of its steps' locks answers `unsaved: 0`, or one can't tell; it reads
+that before Plan mode holds it. When Genex itself holds a moment, a checkpoint or a restore back,
+the block carries `hold` (`HookHold`: `plan`, `person_first`, `cant_tell`, `busy`) and the lock's
+`label` beside its reason (on `HookBlockedError` too), at a writing moment (`crash`) as at a blocking
+one, and callers word the person's line from them, never from the reason, which is written for
+agents. A run's moments pass the locks its own workers hold, a chat's moments its chat's workers'
+(the person's Rewind passes none); a lock passed into stays held until every holder lets go. The
+run's or the chat's Stop (`engine.abort`) ends a moment the harness asked for
+(`main/core/moment-stops.ts`), its wait for locks included; a restore's after steps still run.
+`GameProject.hookEvents` lists a game's moments; absent, no plugin hooks it and nothing runs.
+
+### Locks: the person comes first
+
+`locks` (API 3) names what one holder at a time may use, such as an editor: up to 8 `{id, label,
+per, personFirst?}`. `id` is a slug (`^[a-z][a-z0-9-]{0,39}$`, unique in the manifest); `label`
+names the app the person sees, 1–60 characters on one line; `per` is `project` (one holder per
+game) or `app` (one on this Mac). A tool's or a plugin connector's `needs` (1–4 of the manifest's
+lock ids, each once) says which locks a call holds while it runs (`registry.needsOf(agentName)`);
+`registry.locksFor(game)` lists the `project` locks an agent tool or connector reaching the game
+needs (a harness tool's `needs` never counts: no worker calls it).
+`personFirst` names a tool as a hook's is chosen, which does not itself need the lock, answering
+`{personActive, unsaved?}` (`personFirstOf`; anything else means Genex can't tell). A lock grants
+nothing.
+
+Genex holds them (`main/core/plugin-locks.ts`). A call of a tool or connector that needs locks takes
+them in one key order, first come first served per lock, and then asks the probe straight through
+the registry, ending a probe's call when the wait does: while the person uses what the lock guards
+(or Genex can't tell) it asks again every 5 s, and once a probe saw the person at it the chat's working line reads "Waiting for you to finish
+in <label>" (`UiEvent.PersonFirst`, once per chat however many of its calls wait); a "not using it"
+answer stands 3 s. An agent's call has its
+arguments checked and its card answered before it waits (`registry.prepareTool`), and waits up
+to 4 minutes (within the engine bridge's 10-minute deadline for one call), then answers like a
+declined consent (`{blocker: "lock", lock, message}`, its record closed with the message); a
+person's own action never waits for the person. A worker writing in place holds Genex's in-place
+lock and the game's `project` locks for its whole life (`locks.hold`/`locks.release`,
+[harness runtime](harness-runtime.md#workers-in-a-chat)); its own calls pass them (on an engine the
+host seats no worker on too, as `unseatedHolder`), still giving way to the person, and its line and row read "Working in <label>". Any end of the harness, a planned
+restart's too, releases what it held for its workers (`releaseHarnessHolds`); the host's own holds (a
+restore, the person's Rewind) end with their own work.
+
+`needs` covers one call, never a job it leaves running: a tool that answers at once and works on
+in the background (the Unreal plugin's `add-cpp-module`, `reopen-editor`, `run-part`,
+`play-check`) lets its locks go as it answers, so another holder may take the editor while the job
+still closes, reopens or plays it. This is a known gap in "editor work waits its turn"; the Unreal
+runner covers adding C++ with its own wait (`whileAdding`).
 
 ### Scope by facts
 
@@ -1161,7 +1303,12 @@ rule, and `mcp.toolsFor(project, {facts})` leaves out a server that does not rea
 names `tools` reaches only while one of them does. A skill that applies only below the root says
 where after its name: `[example/page] (for site/)`. A tool's `makes` (1–4 fact ids, agent tools
 only) says which facts it makes in the game's folder; the snapshot lists the reaching ones as
-`kinds` (`{plugin, name, tool, makes}`). An agent never sees `facts` or `makes`. The Unreal
+`kinds` (`{plugin, name, tool, makes, asksReady?}`, `asksReady` when the tool declares `ready`). For a game with no kind yet, `plugins.tools {project}`
+asks each kind tool's `ready` harness tool (5 s at most, `main/core/kind-readiness.ts`) and adds
+its answer as `ready` (a boolean) and `note` (the words the engine card offers the kind with); an
+answer that is late, throws or is odd leaves both out. The card offers one kind per plugin: the
+one that answered, else one whose tool asks (`asksReady`), else the first; beside a plugin's note
+it names the tool as the session calls it. An agent never sees `facts`, `makes` or `ready`. The Unreal
 plugin's editor tools, skill and connector name `unreal-project`, so a web game's sessions get only
 `use-project`, `show-steps` and `new-game` (`use-project` and `new-game` declare `makes:
 ["unreal-project"]`). Publish goes by the same facts: a game served as a web game at its root may be
@@ -1246,13 +1393,15 @@ open; it refuses
 without an open game and creates nothing in Documents › Unreal Projects (Plan mode refuses all
 three). A chat build of a game still with no kind, with the plugin on, first asks the
 user Web or Unreal Engine with `ask_user`, unless the message names one
-(`loop/unreal-prompts.ts` `engineChoiceRule`; another engine plugin's kind tool, from
-`plugins.tools`'s `kinds`, is one more option, and the web answer calls `start_web_game`): before asking it reads the plugin's `engine-status`,
-so with no Unreal installed the agent points to the Unreal button instead of `new-game`, and with
-only a newer one it relays the plugin's refusal and its path. When the turn that makes the game's
-project ends while Unreal still opens it, the chat says it waits, polls `wait-editor` (150 s calls,
-up to 20 minutes) and the same session goes on as the chat's turn once Unreal answers; Stop ends
-the wait. A game from New game counts while it has no facts and nobody has answered in its chat;
+(`loop/unreal-prompts.ts` `engineChoiceRule`: one option per plugin among `plugins.tools`'s
+`kinds`, each in its plugin's readiness `note`, and the web answer calls `start_web_game`). The
+Unreal kind's `note` comes from `engine-status`, so with no Unreal installed the agent points to the
+Unreal button instead of `new-game`; any kind whose plugin says `ready: false` is never made: the
+person finishes its setup from that plugin's button first. A host that lists no kinds offers no
+question. When a chat turn changed the game's kind and the new kind's plugins hook `health`, the
+chat waits on Genex's `health` moment before the same session goes on: it says the first pending
+reason once (and on the status line), asks again every 5 s for up to 20 minutes, says a step's block
+and stops there, and Stop ends the wait (`loop/delegated-turn.ts` `continueOnNewFacts`). A game from New game counts while it has no facts and nobody has answered in its chat;
 a run's turns are never asked. With the plugin off a new game's brief never names Unreal, and an
 Unreal project's brief says it has no Unreal tools and saves in the editor itself before a
 checkpoint (`unrealWithoutPlugin`, `loop/project-prompts.ts`). In the panel, "Use in this game" links the open game to the shown set-up project;
@@ -1264,16 +1413,22 @@ game made while a game is open goes in that game's folder as `unreal/<Name>.upro
 `DerivedDataCache/` and `Binaries/` folders and `__pycache__/`) and becomes its project. Windows gets no Xcode rows; Visual
 Studio comes later.
 
-An Unreal game's chat keeps its editor work. When a chat turn (never a run's or a stopped one)
-ends, the harness asks the plugin's `editor-activity` (`{pie, dirty}`); with work unsaved it runs
-`save-all` and snapshots the game folder, and one line after the reply says so
-(`loop/delegated-turn.ts` `saveUnrealTurn`). While the game plays in the editor nothing is saved and
-the line says the work stays unsaved; an editor that can't say is left alone, and a failed save is
-not snapshotted. A turn that went on in Unreal after waiting for it is saved the same way when that
-leg ends. The chat's own session's `checkpoint` tool on an Unreal game saves the same way at
-once, then snapshots what is on disk under its note even when nothing could be saved, and answers
-what it did instead of only showing the note (`main/core/unreal-checkpoint.ts`,
-`DelegateRequest.onCheckpoint`; during play, and in Plan mode, it changes nothing).
+A chat keeps its apps' work. When a chat turn (never a run's or a stopped one) ends on a game whose
+plugins hook `checkpoint.*`, it takes Genex's checkpoint only if something is unsaved
+(`loop/hooks.ts` `endOfTurnCheckpoint`, `checkpoint.take {onlyIfUnsaved: true}`): on an Unreal game
+the plugin's steps save the editor's work and Genex snapshots the game folder, and one line after the
+reply says so with the steps' notes; a blocked checkpoint says why the work stays unsaved (a step's
+reason, or Genex's own hold in the person's words: they were using the app, Genex couldn't tell
+whether they were, or something else worked there; the chat's own workers writing in place never
+hold it), and nothing unsaved (or an editor that can't say) or Plan mode says nothing. A turn that went on after a kind change
+takes it when that leg ends. The chat turn also announces `turn.start` (a block ends the turn
+before any engine works, with the reason) and `turn.end`. The chat's own session's `checkpoint` tool on an Unreal game is Genex's checkpoint: the
+plugin's steps save the editor's work at once (a play blocks it; a save that fails or leaves work
+is a note), then the game folder is snapshotted under its note, and the tool answers what they did
+instead of only showing the note (`main/core/plugin-hooks.ts` `takeCheckpoint`,
+`DelegateRequest.onCheckpoint`; in Plan mode, while the person plays, or when Genex can't tell
+whether they do, it changes nothing). With the Unreal plugin off, a linked Unreal game's tool still
+snapshots the game folder, running no step: the session is told to save in the editor first.
 
 ## Panels and trusted approval
 
@@ -1569,8 +1724,8 @@ official ids.
 
 ## Deferred work
 
-- Agent behavior extension points: orchestration, judges and learning hooks. These need a
-  separate authority/evaluation design; API 3 still registers none of them.
+- Agent behavior extension points beyond [Genex's moments](#hooks-genexs-moments): judges and
+  learning hooks. These need a separate authority/evaluation design; API 3 registers none of them.
 - Studio-owned asset canvas: implemented as the Assets stage tab over plugin-neutral metadata
   (the host ledger, read-only plugin job records and the game's own assets folders). Interactive
   3D viewing and model/audio thumbnails remain deferred.

@@ -19,7 +19,7 @@ import type {
 } from "../../src/substrate/engines/types.ts";
 import type { AppLookPort, ScreenAccess } from "../../src/substrate/app-look.ts";
 import type { JobSpawn } from "../../src/substrate/jobs.ts";
-import { type CoreLite, coreLite } from "./core-lite.ts";
+import { type CoreLite, type CoreLiteOptions, coreLite } from "./core-lite.ts";
 import { tmpDir } from "./tmp.ts";
 
 export const CLAUDE = "claude-code";
@@ -128,6 +128,8 @@ export async function workerChat(
     appLook?: AppLookPort;
     /** macOS access for `app_look`; none: the core looks without asking. */
     screenAccess?: ScreenAccess;
+    /** The core's locks: how long an agent's call waits for one (`plugin-locks`). */
+    locks?: CoreLiteOptions["locks"];
   } = {},
 ) {
   /** The core announced a card (`UiEvent.ToolPermission`): a test waiting for one reads the rows again. */

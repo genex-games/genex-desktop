@@ -137,18 +137,18 @@ runs as trusted native code in a crash-isolated child process, not an OS sandbox
 Code dropped under the packages folder without a record is listed under **Not enabled** and runs
 only after **Allow…** (the same trust dialog); it never gets an enable toggle.
 
-Plugins may contribute toolbar buttons beside Live/Builds (see the Plugin toolbar row) — Genex
-contributes **Publish**, which opens the publish panel (see the Genex publish row). A
+Plugins may contribute toolbar buttons beside Live/Builds (Plugin toolbar row); Genex
+contributes **Publish** (Genex publish row). A
 tool declared with `confirmation` runs only after the host asks the user in the chat's pinned permission question
 (see the Agent consent cards row): the registry's consent seam fails closed when nobody can ask,
-agents never approve, and a declined or expired request is returned to the agent as text. Custom
+agents never approve, and a declined or expired request returns to the agent as text. Custom
 frames have no Studio preload; account/spending actions use trusted reviews. Standard settings and
 the independent SDK example exercise the same API. A curated index, sha-pinned GitHub installs, the
 install-time static scan and watch-folder hot reload are on the same page (see the Marketplace
 row); authors scaffold and check packages with `npm run plugin:new` / `plugin:doctor` /
 `plugin:pack` against the typed `src/plugin-sdk/index.d.ts`. See [Plugin SDK](../plugins.md) and
-the [plugin guide](../PLUGIN_GUIDE.md). Orchestration hooks remain an explicit follow-up; the shared
-asset canvas is the Assets stage tab, fed by the host-owned `asset_delivered` record every
+the [plugin guide](../PLUGIN_GUIDE.md). Calls hold `needs` locks; `hooks` run at Genex's moments; `folders` show
+on the plugin page and suggestion card. The shared asset canvas is the Assets stage tab, fed by the host-owned `asset_delivered` record every
 `assets.deliver` leaves and by the `plugin_tool_started`/`plugin_tool` pair the host writes
 around every plugin tool call.
 

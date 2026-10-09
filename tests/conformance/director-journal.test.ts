@@ -857,6 +857,58 @@ describe("a new worker and the workers from before the pause (workers.ts)", () =
   });
 });
 
+describe("a builder's start at Genex's moments (director/workers.ts)", () => {
+  /** A run whose game hooks the workers' moments, every moment answered quietly. */
+  function hookedLoopRun(host: FakeHost) {
+    const loopRun = workerLoopRun(host, { director: { workers: {} } }, Date.now());
+    loopRun.game = { hookEvents: ["worker.start", "worker.end"] };
+    const quiet = { blocked: null, pending: null, notes: [], images: [], ran: [] };
+    const answered = loopRun.ctx.call;
+    loopRun.ctx.call = (method: string, params: Record<string, unknown>) =>
+      method === HostMethod.HooksFire
+        ? (host.calls.push({ method, params }), Promise.resolve(quiet))
+        : answered(method, params);
+    return loopRun;
+  }
+  const moments = (host: FakeHost) =>
+    host.calls.filter((c) => c.method === HostMethod.HooksFire).map((c) => `${c.params.on} ${c.params.worker?.id}`);
+
+  it("a builder refused after its start was announced announces its end too, and no builder is kept", async () => {
+    const host = fakeHost();
+    const loopRun = hookedLoopRun(host);
+    const withHooks = loopRun.ctx.call;
+    loopRun.ctx.call = (method: string, params: Record<string, unknown>) =>
+      method === HostMethod.SnapshotWorktree
+        ? Promise.reject(new Error("no room for a copy"))
+        : withHooks(method, params);
+    const answer = await workerStart(loopRun)({ id: "sky" });
+    assert.equal(answer, 'could not start "sky": no room for a copy');
+    assert.deepEqual(moments(host), ["worker.start sky", "worker.end sky"]);
+    assert.equal(loopRun.state.workers.has("sky"), false);
+  });
+
+  it("a builder a plugin holds back at its start announces no end and starts nothing", async () => {
+    const host = fakeHost();
+    const loopRun = hookedLoopRun(host);
+    const withHooks = loopRun.ctx.call;
+    loopRun.ctx.call = (method: string, params: Record<string, unknown>) =>
+      method === HostMethod.HooksFire && params.on === "worker.start"
+        ? (host.calls.push({ method, params }),
+          Promise.resolve({
+            blocked: { plugin: "bench", tool: "gate", reason: "The bench is full." },
+            pending: null,
+            notes: [],
+            images: [],
+            ran: [],
+          }))
+        : withHooks(method, params);
+    const answer = await workerStart(loopRun)({ id: "sky" });
+    assert.match(String(answer), /holds the worker back: The bench is full\./);
+    assert.deepEqual(moments(host), ["worker.start sky"]);
+    assert.ok(!host.calls.some((c) => c.method === HostMethod.SnapshotWorktree), "no copy of the game");
+  });
+});
+
 /** A run whose host refuses the first `refusals` builder turns for room, as a full chat's ceiling does. */
 function roomLoopRun(refusals: number) {
   const host = fakeHost();

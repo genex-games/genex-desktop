@@ -4,7 +4,7 @@
  * the ask already named one. The web answer starts Genex's web starter (`start_web_game`); Unreal
  * goes through the plugin's `new-game` tool. With the plugin off nothing about Unreal reaches the
  * brief, and a game that has a kind is never asked. The signal is typed (`handoff.scaffolded`, the
- * host's facts for the folder, the plugin's tool in the host's tool list); the words live in
+ * host's facts for the folder, the kinds the host lists while the plugin is on); the words live in
  * `loop/unreal-prompts.ts`.
  */
 import assert from "node:assert/strict";
@@ -28,6 +28,8 @@ const ASK = "make a rally racing game";
 const PROJECT = "/Users/me/AI Games/rally/unreal/Rally.uproject";
 const SHAPE = { entry: "index.html", main: "src/main.js", build: null };
 const LAUNCH = { toolName: "start_unattended_run", hours: 2, frameCount: 0, project: "rally" };
+/** The Unreal plugin's kind, as the host lists it while the plugin is on. */
+const UNREAL_KIND = { plugin: "unreal", name: "Unreal Editor", tool: UNREAL_NEW_GAME_TOOL, makes: ["unreal-project"] };
 
 /** What a web brief varies by: the engine reading it, fresh or not, own shape, Loop, follow-up, resumed. */
 const WEB_BRIEF_AXES: Record<string, readonly unknown[]> = {
@@ -51,6 +53,28 @@ function webBriefs(): Array<Parameters<typeof buildContractorBrief>[0]> {
 const lines = (brief: string) => brief.split("\n");
 
 describe("the engine question in a chat's brief", () => {
+  it("a kind offered in its plugin's own words still names its tool the way this session calls it", () => {
+    const note = `Offer "Unreal Engine"; when the answer is Unreal Engine, call ${UNREAL_NEW_GAME_TOOL} with a template and a name.`;
+    for (const engine of [CLAUDE, CODEX]) {
+      for (const ready of [true, false]) {
+        const rule = engineChoiceRule(engine, null, [{ ...UNREAL_KIND, ready, note }]);
+        assert.ok(rule.includes(note), `${engine}: the plugin's words`);
+        assert.ok(rule.includes(toolCall(engine, UNREAL_NEW_GAME_TOOL)), `${engine}, ready ${ready}: its spelling`);
+      }
+    }
+  });
+
+  it("offers a plugin's kind tool that answers its readiness before another, even when the answer was late", () => {
+    const switcher = { ...UNREAL_KIND, tool: "unreal__use-project" };
+    // A late answer: neither kind carries `ready`; the host lists the kind that asks first.
+    const late = engineChoiceRule(CLAUDE, null, [{ ...UNREAL_KIND, asksReady: true }, switcher]);
+    assert.ok(late.includes(toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)), late);
+    assert.ok(!late.includes("unreal__use-project"), "never the tool that switches to an existing project");
+    const reversed = engineChoiceRule(CLAUDE, null, [switcher, { ...UNREAL_KIND, asksReady: true }]);
+    assert.ok(reversed.includes(toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)), reversed);
+    assert.ok(!reversed.includes("unreal__use-project"));
+  });
+
   it("a web brief is byte for byte the brief it was without the question", () => {
     for (const options of webBriefs())
       assert.equal(buildContractorBrief({ ...options, engineChoice: false }), buildContractorBrief(options));
@@ -58,8 +82,14 @@ describe("the engine question in a chat's brief", () => {
 
   it("a fresh web game asks web or Unreal first, naming both tools the way this session calls them", () => {
     for (const engine of ENGINES) {
-      const brief = buildContractorBrief({ ask: ASK, scaffolded: true, engine, engineChoice: true });
-      const rule = engineChoiceRule(engine);
+      const brief = buildContractorBrief({
+        ask: ASK,
+        scaffolded: true,
+        engine,
+        engineChoice: true,
+        kinds: [UNREAL_KIND],
+      });
+      const rule = engineChoiceRule(engine, null, [UNREAL_KIND]);
       assert.ok(lines(brief).includes(rule), `the rule is a line of the ${engine ?? "local"} brief`);
       assert.ok(rule.includes(toolCall(engine, "ask_user")), "it asks with the question card");
       assert.ok(rule.includes(toolCall(engine, UNREAL_NEW_GAME_TOOL)), "Unreal goes through the plugin's new-game");
@@ -70,13 +100,20 @@ describe("the engine question in a chat's brief", () => {
         "the rest of the brief is the web brief",
       );
     }
-    assert.ok(!engineChoiceRule(CLAUDE).includes("tool.mjs"), "a Claude session is never told to run the bridge");
-    assert.ok(!engineChoiceRule(CODEX).includes("mcp__"), "a Codex session is never told an mcp__ name");
+    assert.ok(
+      !engineChoiceRule(CLAUDE, null, [UNREAL_KIND]).includes("tool.mjs"),
+      "a Claude session is never told to run the bridge",
+    );
+    assert.ok(
+      !engineChoiceRule(CODEX, null, [UNREAL_KIND]).includes("mcp__"),
+      "a Codex session is never told an mcp__ name",
+    );
+    assert.equal(engineChoiceRule(CLAUDE), "", "no kind on offer: no question");
   });
 
   it("is never in an Unreal game's brief, nor in a resumed session's pickup", () => {
     for (const engine of ENGINES) {
-      const rule = engineChoiceRule(engine);
+      const rule = engineChoiceRule(engine, null, [UNREAL_KIND]);
       const unreal = buildContractorBrief({
         ask: ASK,
         engine,
@@ -139,7 +176,13 @@ function chatTurn(options: {
       "game.contentStamp": () => ({ all: options.stamp ?? null, source: options.stamp ?? null }),
       "game.list": () => options.games ?? [],
       "game.scaffold": (p) => game(String(p.name)),
-      "plugins.tools": () => ({ tools: options.tools ?? [], guidance: "", revision: 1 }),
+      // While the Unreal plugin is on (its new-game tool served), the host lists its kind.
+      "plugins.tools": () => ({
+        tools: options.tools ?? [],
+        guidance: "",
+        revision: 1,
+        kinds: offersUnrealGame(options.tools as never) ? [UNREAL_KIND] : [],
+      }),
       "engine.describe": () => [],
       // The preview answers at once, so no turn waits out the settle of a studio that cannot.
       "preview.ready": () => ({ ready: false }),
@@ -167,7 +210,7 @@ function handed(recorder: ReturnType<typeof chatTurn>) {
 }
 
 describe("a chat turn and the engine question", () => {
-  const RULE = engineChoiceRule(CLAUDE);
+  const RULE = engineChoiceRule(CLAUDE, null, [UNREAL_KIND]);
 
   it("with the Unreal plugin off, a new game's builder hears nothing about Unreal and gets no question card", async () => {
     const recorder = chatTurn({ tools: [OTHER_TOOL] });
@@ -247,7 +290,7 @@ describe("a chat turn and the engine question", () => {
  * the chat's first ask is a chat with no reply, no session and no run; both together ask.
  */
 describe("a game the app made before the chat's first ask", () => {
-  const RULE = engineChoiceRule(CLAUDE);
+  const RULE = engineChoiceRule(CLAUDE, null, [UNREAL_KIND]);
   const PENDING = { facts: [] };
   const madeGame = (extra: Record<string, unknown> = {}) => game("made-game", { ...PENDING, ...extra });
   const ON_ITS_GAME = { ...TURN, project: "made-game" };

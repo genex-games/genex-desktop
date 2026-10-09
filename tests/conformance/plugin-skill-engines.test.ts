@@ -175,6 +175,8 @@ function unscoped(manifest: PluginManifest): void {
   for (const tool of manifest.tools) {
     delete tool.facts;
     delete tool.makes;
+    // A readiness answers for a tool that makes a kind, so it goes with `makes`.
+    delete tool.ready;
   }
   for (const server of manifest.mcpServers ?? []) delete server.facts;
 }

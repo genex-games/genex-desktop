@@ -30,6 +30,7 @@ import { captureArgs } from "./capture-args.ts";
 import { openNoFollow, readRegularFile } from "../fsx.ts";
 import { schemaType } from "./tool-schema.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { MINUTE_MS } from "../../shared/duration.ts";
 
 /** A request bigger than this is refused unread: arguments, not payloads, travel through req/. */
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
@@ -102,6 +103,9 @@ export interface BridgeOptions {
  */
 export const BRIDGE_DIR = ".studio/bridge";
 
+/** How long the shim waits for the studio's answer to one tool call before it tells the contractor to carry on without it. */
+export const BRIDGE_TOOL_DEADLINE_MS = 10 * MINUTE_MS;
+
 /**
  * The shim the contractor runs. Deliberately dependency-free and synchronous: it is spawned
  * inside someone else's sandbox, where the only thing we can count on is `node` and the
@@ -156,7 +160,7 @@ fs.writeFileSync(tmp, JSON.stringify({ id, name, args }));
 fs.renameSync(tmp, path.join(here, "req", id + ".json"));
 
 const answer = path.join(here, "res", id + ".json");
-const deadline = Date.now() + Number(process.env.STUDIO_TOOL_TIMEOUT_MS || 600000);
+const deadline = Date.now() + Number(process.env.STUDIO_TOOL_TIMEOUT_MS || ${BRIDGE_TOOL_DEADLINE_MS});
 const idle = new Int32Array(new SharedArrayBuffer(4));
 while (Date.now() < deadline) {
   if (fs.existsSync(answer)) {

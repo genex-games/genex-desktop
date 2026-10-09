@@ -87,6 +87,19 @@ it("one line per worker, naming it, rewritten when it ends", () => {
   );
 });
 
+it("says where an in-place worker works by the lock it holds, before the engine an older record names", () => {
+  const line = (extra: Record<string, unknown>) =>
+    workerLines([started(1, "pool.w1", "Build the track", inRun, { isolation: "lock", ...extra })]);
+  assert.deepEqual(line({ where: "Unreal" }), ["Build the track in Unreal…"]);
+  assert.deepEqual(
+    line({ where: "Toy editor", in: "unreal" }),
+    ["Build the track in Toy editor…"],
+    "where wins over in",
+  );
+  assert.deepEqual(line({ where: 7, in: "unreal" }), ["Build the track in Unreal…"], "a where that is no text");
+  assert.deepEqual(line({ where: "  " }), ["Build the track…"], "an empty where");
+});
+
 it("says how the worker ended: added, done with its summary, not used with the note, didn't finish with why in the app's words, stopped", () => {
   const ending = (...rest: Array<Record<string, unknown>>) =>
     workerLines([

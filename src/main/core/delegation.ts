@@ -16,7 +16,7 @@ import {
   StopReason,
   type DelegateOwnership,
 } from "../../shared/engine-requests.ts";
-import { type ConversationRecord, type EventEnvelope, SnapshotScope, ThreadKind } from "../../shared/event-log.ts";
+import { type ConversationRecord, type EventEnvelope, ThreadKind } from "../../shared/event-log.ts";
 import { ExecutionStatus, RUN_START_EVENTS } from "../../shared/run-state.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import type { McpLiveTool } from "../../substrate/mcp/registry.ts";
@@ -59,7 +59,7 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { chatTurnOf, openDoor, recordSteerDelivered, settleDoor, type SteerDoor } from "./chat-steer.ts";
 import type { LeadAnswers, LeadSession, PersonSession } from "./chat-permissions.ts";
 import type { ActiveDelegation } from "./internals.ts";
-import { PluginCapability, type PluginAppliedSet, type PluginTool, PluginToolAudience } from "../../shared/plugins.ts";
+import { PluginCapability, type PluginAppliedSet, type PluginTool } from "../../shared/plugins.ts";
 import type { PluginSnapshot } from "../../substrate/plugins/registry.ts";
 import { type CutOffCall, clearCutOffs, peekCutOffs } from "./cut-off-calls.ts";
 import { clearUnsaved, peekUnsaved, type UnsavedFile } from "./unsaved-files.ts";
@@ -87,9 +87,12 @@ import { readEngineBinding } from "../../substrate/game-engine-binding.ts";
 import { FolderHolds, kindPending, type ProjectFact } from "../../shared/project-facts.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import type { ConnectorCallOptions } from "./plugin-tools.ts";
+import { workerHolder } from "./plugin-locks.ts";
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
-import { type UnrealCheckpointHost, unrealCheckpoint } from "./unreal-checkpoint.ts";
+import { checkpointWords } from "./plugin-hooks.ts";
+import { CHECKPOINT_TOOL } from "../../substrate/engines/studio-tool-prompts.ts";
+import { HookEvent } from "../../shared/plugin-hooks.ts";
 
 /**
  * Ceiling for a delegation that arrives without its own time budget. Generous — a chat build
@@ -297,6 +300,12 @@ interface DelegationSession {
   holds?: FolderHolds;
   /** A worker of a chat's lead, as the host honoured its grant (`#workerSeat`); null otherwise. */
   worker: WorkerFinding | null;
+  /**
+   * The holder an in-place worker's calls pass as when the host carries no seat for it (a direct
+   * engine's session): the in-place hold the harness took for its life names it alike, so its own
+   * calls never wait behind it (`#unseatedHolder`). Null for every other session.
+   */
+  unseatedHolder: string | null;
 }
 
 /** The run and message a chat's own session keeps the run's controls for. */
@@ -1590,6 +1599,21 @@ export class DelegationService {
   }
 
   /**
+   * The holder of a worker the harness asked for in the game's own folder whose session the host
+   * does not seat (`#workerSeat` answered null): the harness held its in-place locks for its life
+   * under this name (`locks.hold`), so its own calls pass them instead of waiting behind itself.
+   * Null for a coordinator, a candidate, a worker in a copy, or a session that names no worker.
+   */
+  #unseatedHolder(p: DelegateParams, target: DelegationTarget): string | null {
+    const asked = p.worker;
+    if (typeof asked?.id !== "string" || !asked.id || p.coordinator || target.candidate) return null;
+    if (typeof p.threadId !== "string" || !p.threadId) return null;
+    if (target.workCwd !== path.resolve(this.#core.games.dirFor(p.project))) return null;
+    const runId = typeof asked.runId === "string" && asked.runId ? asked.runId : null;
+    return workerHolder({ threadId: p.threadId, runId, id: asked.id });
+  }
+
+  /**
    * Whether an engine carries a worker's seat: a delegated engine (Claude Code, Codex) runs it in
    * the seat's mode, box and never-touch list. A local session's tool loop ignores a seat, so its
    * work stays unattended, with the sibling deny list.
@@ -1739,6 +1763,7 @@ export class DelegationService {
       attribution,
       credits: runCreditCap(p.creditCap, attribution?.runId ?? worker?.runId ?? director?.runId),
       worker,
+      unseatedHolder: worker ? null : this.#unseatedHolder(p, target),
       // The chat's coordinator speaks for this game in its chat without the builders' tools: it
       // reads what the builders have, never instructions for tools it cannot call (which read
       // as "Genex is unavailable" to the user).
@@ -1962,9 +1987,12 @@ export class DelegationService {
   }
 
   /**
-   * The studio's checkpoint made real for the chat's own session on an Unreal game, in the game's
-   * folder: the editor's work saved and the folder snapshotted (`unreal-checkpoint.ts`). A web game,
-   * a run's session and a worktree keep the note alone.
+   * The studio's checkpoint made real for the chat's own session in the game's folder, on a game
+   * whose plugins hook checkpoints: their steps around a snapshot of the folder (`plugin-hooks.ts`
+   * `takeCheckpoint`), answered as the session reads it (an Unreal game's editor is saved by the
+   * Unreal plugin's own step). A game in an engine's own editor whose plugin is off still gets the
+   * snapshot, with no step (the session is told to save in the editor itself). A web game no plugin
+   * hooks there, a run's session and a worktree keep the note alone.
    */
   #checkpointField(
     p: DelegateParams,
@@ -1973,15 +2001,13 @@ export class DelegationService {
     seat: DelegationSeat,
   ): Pick<DelegateRequest, "onCheckpoint"> {
     const inGame = target.workCwd === path.resolve(this.#core.games.dirFor(p.project));
-    const unrealChat = seat.engine === GameEngine.Unreal && isChatsOwnSession(p);
-    if (!(inGame && unrealChat)) return {};
-    const binding = { project: p.project, directory: target.workCwd, threadId: session.threadId };
-    const host: UnrealCheckpointHost = {
-      tool: (name) => this.#core.plugins.tool(name, {}, binding, session.abort.signal, PluginToolAudience.Harness),
-      snapshot: (reason) => this.#core.snapshot(SnapshotScope.Game, reason, p.project),
-      planning: () => this.#x.planning(session.threadId),
-    };
-    return { onCheckpoint: (note) => unrealCheckpoint(host, note) };
+    if (!(inGame && isChatsOwnSession(p))) return {};
+    const events = this.#core.plugins.hookEvents({ facts: seat.facts, ...(seat.holds ? { holds: seat.holds } : {}) });
+    const hooked = events.includes(HookEvent.CheckpointBefore) || events.includes(HookEvent.CheckpointAfter);
+    if (!hooked && seat.engine === GameEngine.Web) return {};
+    const ask = { project: p.project, threadId: session.threadId, signal: session.abort.signal };
+    const take = (note: string) => this.#core.hooks.takeCheckpoint({ ...ask, label: note });
+    return { onCheckpoint: async (note) => checkpointWords(await take(note), CHECKPOINT_TOOL.reply) };
   }
 
   /**
@@ -2153,6 +2179,8 @@ export class DelegationService {
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
     const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
+    // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
+    const holder = holderField(session);
     // Connector first: its names are `<connector>__<tool>`, and the registry is the
     // only thing that can say whether one of them is really on this list. A call to one the
     // session was not handed (another game's kind, a narrowed session's) is refused before
@@ -2163,6 +2191,7 @@ export class DelegationService {
         outlivesTurn: lead,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
+        ...holder,
       });
     }
     if (!tools.plugins.some((tool) => tool.name === name)) {
@@ -2177,6 +2206,7 @@ export class DelegationService {
       attribution: session.attribution,
       credits: session.credits,
       lead,
+      ...holder,
     });
     return pluginAnswer(result);
   }
@@ -2341,6 +2371,16 @@ function sessionTools(plugins: Pick<PluginSnapshot, "tools" | "guidance" | "appl
     playtest: null,
     director: null,
   };
+}
+
+/**
+ * The holder a worker's plugin and connector calls hold their locks as (`workerHolder`): a seated
+ * worker's, or an unseated in-place worker's; none for any other session.
+ */
+function holderField(session: Pick<DelegationSession, "worker" | "unseatedHolder">): { holder?: string } {
+  const { worker, unseatedHolder } = session;
+  if (worker) return { holder: workerHolder({ threadId: worker.chatThreadId, runId: worker.runId, id: worker.id }) };
+  return unseatedHolder ? { holder: unseatedHolder } : {};
 }
 
 /**

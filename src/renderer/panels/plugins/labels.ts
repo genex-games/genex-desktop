@@ -60,6 +60,14 @@ const SOURCE_LABEL: Record<PluginSourceKind, string> = {
 /** Where an installed plugin came from, in words. */
 export const sourceWords = (p: PluginInfo): string => SOURCE_LABEL[p.source] ?? "Marketplace";
 
+/** Between two folders in a line. */
+const FOLDER_SEPARATOR = "; ";
+
+/** The folders outside your games a plugin's programs write to, each with why; empty when it names none. */
+export function foldersLine(manifest: Pick<PluginManifest, "folders">): string {
+  return (manifest.folders ?? []).map((f) => PLUGINS_WORDS.page.folder(f.path, f.why)).join(FOLDER_SEPARATOR);
+}
+
 const CAN = PLUGINS_WORDS.can;
 /** The place in the capability sentence for game files, which two capabilities share. */
 const FILES = "files";

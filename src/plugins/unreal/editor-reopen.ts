@@ -40,7 +40,7 @@ import {
   type RestartTarget,
   runJob,
 } from "./editor-restart.ts";
-import { type HelperState, inspectProject, type SetupOptions } from "./setup.ts";
+import { HelperState, inspectProject, type SetupOptions, updateHelper } from "./setup.ts";
 import { type CompileOptions, type CompileResult, canCompileCpp, compileEditor } from "./ubt.ts";
 import type { XcodeStatus } from "./xcode.ts";
 
@@ -88,6 +88,8 @@ export type ReopenDeps = RestartDeps & {
   processes?: ProcessEnv;
   /** What setup reads for a project in the plugin's `storage`: the computer and the shipped helper. */
   setup(storage: string): SetupOptions;
+  /** Updates a project's Genex editor helper; `updateHelper` unless a test stands in. */
+  updateHelper?: typeof updateHelper;
 };
 
 /** How long the job waits for this project's processes to end after the quit, and after each signal. */
@@ -201,8 +203,11 @@ function send(env: ProcessEnv, pid: number, signal: NodeJS.Signals) {
   }
 }
 
-/** One reopen job's game, and the engine whose crash folder may hold its reports. */
-type ReopenTarget = RestartTarget & { engine: { version: string; directory: string } | undefined };
+/**
+ * One reopen job's game, the engine whose crash folder may hold its reports, and whether it brings an
+ * outdated Genex editor helper up to the plugin's while Unreal is closed.
+ */
+type ReopenTarget = RestartTarget & { engine: { version: string; directory: string } | undefined; helper?: boolean };
 
 /**
  * Ends what is left of this project's editor and crash reporter: the normal quit while the one
@@ -256,16 +261,34 @@ async function buildModule(deps: ReopenDeps, target: ReopenTarget): Promise<void
  */
 async function reopenNow(deps: ReopenDeps, target: ReopenTarget): Promise<void> {
   await endOwn(deps, target, MESSAGE.NotEnded);
+  if (target.helper) await updateOutdated(deps, target);
   await buildModule(deps, target);
   await deps.restart.forget?.(target.storage, target.project);
   await openAndWait(deps, target, MESSAGE.NotAnswering);
 }
 
+/**
+ * The project's Genex editor helper brought up to the plugin's while Unreal is closed, when it is
+ * older; an update that fails leaves the helper as it was, and Unreal opens with it.
+ */
+async function updateOutdated(deps: ReopenDeps, target: ReopenTarget): Promise<void> {
+  if ((await helperOf(deps, target.project, target.storage)) !== HelperState.Outdated) return;
+  await (deps.updateHelper ?? updateHelper)(target.project, deps.setup(target.storage)).catch(() => undefined);
+}
+
 /** Where reopening stands for each project, by its .uproject. */
 type Jobs = Map<string, Reopening>;
 
-/** Starts reopening the game's Unreal unless it already answers or a job already reopens it. */
-async function startReopen(deps: ReopenDeps, jobs: Jobs, storage: string, game: string): Promise<ReopenAnswer> {
+/**
+ * Starts reopening the game's Unreal unless it already answers or a job already reopens it; with
+ * `helper`, an outdated Genex editor helper is updated while Unreal is closed.
+ */
+async function startReopen(
+  deps: ReopenDeps,
+  jobs: Jobs,
+  ask: { storage: string; game: string; helper: boolean },
+): Promise<ReopenAnswer> {
+  const { storage, game, helper } = ask;
   const project = await deps.project(storage, game);
   if (!project) throw new Error(MESSAGE.NoProject);
   if (jobs.get(project)?.state === ReopenState.Reopening) return { started: true };
@@ -273,7 +296,7 @@ async function startReopen(deps: ReopenDeps, jobs: Jobs, storage: string, game: 
   // Another call may have started the job while this one asked.
   if (jobs.get(project)?.state === ReopenState.Reopening) return { started: true };
   const engine = await deps.engine();
-  runJob(jobs, project, REOPEN_STATES, deps.now, () => reopenNow(deps, { storage, game, project, engine }));
+  runJob(jobs, project, REOPEN_STATES, deps.now, () => reopenNow(deps, { storage, game, project, engine, helper }));
   return { started: true };
 }
 
@@ -329,13 +352,20 @@ async function endEditor(deps: ReopenDeps, jobs: Jobs, storage: string, game: st
   return { ended };
 }
 
-/** The runner's `reopen-editor`, `editor-state` and `end-editor` over one set of reopen jobs. */
+/**
+ * The runner's `reopen-editor`, `editor-state` and `end-editor` over one set of reopen jobs, and
+ * whether the game's editor process runs (null: can't tell, or no linked project).
+ */
 export function createReopenTools(deps: ReopenDeps) {
   const jobs: Jobs = new Map();
   return {
-    reopen: (storage: string, game: string) => startReopen(deps, jobs, storage, game),
+    reopen: (storage: string, game: string, helper = false) => startReopen(deps, jobs, { storage, game, helper }),
     state: (storage: string, game: string) => editorState(deps, jobs, storage, game),
     end: (storage: string, game: string) => endEditor(deps, jobs, storage, game),
+    running: async (storage: string, game: string) => {
+      const project = await deps.project(storage, game).catch(() => undefined);
+      return project ? ownEditorRuns(deps, project) : null;
+    },
   };
 }
 

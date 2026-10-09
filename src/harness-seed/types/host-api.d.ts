@@ -693,13 +693,20 @@ export interface PluginTool {
 
 /**
  * A tool a plugin offers that makes a kind of project (its manifest's `makes`), as a session's
- * snapshot lists it: the plugin's id and name, the tool's agent name `<plugin>__<tool>`, and the facts.
+ * snapshot lists it: the plugin's id and name, the tool's agent name `<plugin>__<tool>`, and the
+ * facts. `asksReady` says the tool declares a `ready` harness tool (a plugin's new-game tool, the
+ * one its engine card offers). For a game with no kind yet, the host fills `ready` and `note` from
+ * that tool (whether one can be made here now, and the words the engine card offers it with); both
+ * are absent when it declares none or its answer didn't come.
  */
 export interface PluginKindOffer {
   plugin: string;
   name: string;
   tool: string;
   makes: string[];
+  asksReady?: boolean;
+  ready?: boolean;
+  note?: string;
 }
 // ↑ src/shared/plugins.ts
 
@@ -777,6 +784,51 @@ export type LiveToolResult =
       isError?: boolean;
     };
 // ↑ src/shared/engine-requests.ts
+
+export type HookHold = 'plan' | 'person_first' | 'cant_tell' | 'busy';
+// ↑ src/shared/plugin-hooks.ts
+
+/** What held a moment back, beside its reason: Genex's hold and the lock's label, when it was Genex's. */
+export interface HookHeld {
+  hold?: HookHold;
+  label?: string;
+}
+// ↑ src/shared/plugin-hooks.ts
+
+/** A picture a handler hands back (a base64 PNG), with any numbers it measured. */
+export interface HookImage {
+  name: string;
+  data: string;
+  measures?: Record<string, number>;
+}
+// ↑ src/shared/plugin-hooks.ts
+
+/** What a moment's handlers answered: the first block, the first pending, every note and picture, and who ran (agent names, in order). */
+export interface HookReport {
+  blocked: ({ plugin: string; tool: string; reason: string } & HookHeld) | null;
+  pending: { plugin: string; reason: string } | null;
+  notes: Array<{ plugin: string; text: string }>;
+  images: HookImage[];
+  ran: string[];
+}
+// ↑ src/shared/plugin-hooks.ts
+
+export type CheckpointSkip = 'cant_tell' | 'nothing_unsaved';
+// ↑ src/shared/plugin-hooks.ts
+
+/**
+ * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures; why a
+ * handler, a lock or Plan mode stopped it (no snapshot; `hold` when it was Genex's); or why one
+ * asked only if something is unsaved was skipped.
+ */
+export type CheckpointAnswer =
+  | { snapshot: SnapshotRecord; notes: HookReport["notes"]; images: HookImage[] }
+  | ({ blocked: string } & HookHeld)
+  | { skipped: CheckpointSkip; reason: string };
+// ↑ src/shared/plugin-hooks.ts
+
+export type HookEvent = 'run.prepare' | 'run.end' | 'turn.start' | 'turn.end' | 'checkpoint.before' | 'checkpoint.after' | 'restore.before' | 'restore.after' | 'worker.start' | 'worker.end' | 'tool.before' | 'tool.after' | 'health' | 'crash' | 'finish';
+// ↑ src/shared/plugin-hooks.ts
 
 export type EngineKind = 'direct' | 'delegated';
 // ↑ src/shared/engine-descriptor.ts
@@ -1276,6 +1328,8 @@ export interface GameProject {
    * of its own of a kind no rule knows, or unreadable. Absent once it has facts, and from older lists.
    */
   holds?: FolderHolds;
+  /** The moments the plugins that are on hook for this folder (`shared/plugin-hooks.ts`); absent: none. */
+  hookEvents?: HookEvent[];
   /** What a port replaced, kept in the folder as the reference and no longer a kind of this game. */
   portedFrom?: ProjectFact[];
   /**
@@ -1316,7 +1370,7 @@ export interface ProjectRecent {
 export type ProjectStarter = 'web';
 // ↑ src/shared/project-facts.ts
 
-export type PluginCallBlocker = 'plan_mode';
+export type PluginCallBlocker = 'lock' | 'plan_mode';
 // ↑ src/shared/plugins.ts
 
 /**
@@ -1712,6 +1766,9 @@ export interface HarnessHostApi {
       reason?: string;
       /** Narrows the restore below what the record captured, e.g. game-only from a "both" snapshot. */
       scope?: HarnessSnapshotScope;
+      /** The chat and run the restore answers to: while that chat plans, the game's restore steps wait. */
+      threadId?: string;
+      runId?: string;
     };
     result: boolean;
   };
@@ -1781,6 +1838,55 @@ export interface HarnessHostApi {
   "mcp.invoke": {
     params: { project: string; threadId?: string; name: string; args?: Record<string, unknown> };
     result: LiveToolResult;
+  };
+  /**
+   * A worker writing in place starts: it takes Genex's one writer in place in the game folder,
+   * across every pool of the game, and the per-game locks of the plugins that are on that the
+   * game's tools need, until `locks.release`. `labels` names the apps those locks guard. Never
+   * waits: a lock another worker holds answers `busy`, in words naming who, and nothing is taken.
+   * A worker is known by the run that started it, else its chat, and its id.
+   */
+  "locks.hold": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string; title: string } };
+    result: { held: true; labels: string[] } | { busy: string };
+  };
+  /**
+   * A checkpoint of the game folder: the enabled plugins' `checkpoint.before` steps, a snapshot
+   * named for `label`, then their `checkpoint.after` steps, under their locks. `onlyIfUnsaved`
+   * skips it when the locks' probes say nothing is unsaved, or one can't tell. Held while the chat
+   * plans.
+   */
+  "checkpoint.take": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      label: string;
+      onlyIfUnsaved?: boolean;
+    };
+    result: CheckpointAnswer;
+  };
+  /**
+   * One of Genex's moments the harness announces (`SEED_FIRED_HOOK_EVENTS`): the enabled plugins'
+   * steps for it run in order and their answers come back. A restore announced here is a restart:
+   * no file changes.
+   */
+  "hooks.fire": {
+    params: {
+      project: string;
+      threadId?: string | null;
+      runId?: string | null;
+      on: HookEvent;
+      turn?: string | null;
+      label?: string | null;
+      worker?: { id: string; title: string; type?: string | null } | null;
+    };
+    result: HookReport;
+  };
+  /** A worker writing in place ended: every lock it holds in the game is let go; another's are untouched. */
+  "locks.release": {
+    params: { project: string; threadId: string; runId?: string | null; holder: { id: string } };
+    result: boolean;
   };
 
   // — sandboxed execution —
@@ -2058,6 +2164,9 @@ export type HarnessParams<K extends HarnessHostMethod> = HarnessHostApi[K]["para
 // ↑ src/shared/harness-api.ts
 
 export type HarnessResult<K extends HarnessHostMethod> = HarnessHostApi[K]["result"];
+// ↑ src/shared/harness-api.ts
+
+export type HostRefusal = 'UnknownMethod' | 'InvalidParams';
 // ↑ src/shared/harness-api.ts
 
 /** Composer Loop on a chat turn — hours from the stepper, stills the user dropped. */

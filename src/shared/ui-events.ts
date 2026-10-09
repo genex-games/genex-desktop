@@ -160,6 +160,11 @@ export interface UiEventMap {
   "plugin.event": { id: string; event: unknown; project?: string; threadId?: string };
   "plugin.consent": { consentId: string; threadId?: string; project: string; state: PluginConsentEvent["state"] };
   /**
+   * A call waits for the person to finish in what a plugin's lock guards (`label`, the app they
+   * see), or (`waiting: false`) no longer does: the chat's working line says so meanwhile.
+   */
+  "lock.person-first": { project: string; threadId?: string; label: string; waiting: boolean };
+  /**
    * A game chat's Claude session asked the person (`tool_permission` in the log), or the question
    * settled. A nudge to read the log again, never state: the harness may send any name.
    */
@@ -274,6 +279,7 @@ export const UiEvent = {
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
+  PersonFirst: "lock.person-first",
   ToolPermission: "tool.permission",
   PermissionsChanged: "permissions.changed",
   McpChanged: "mcp.changed",

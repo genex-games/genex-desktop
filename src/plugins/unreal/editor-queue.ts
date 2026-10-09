@@ -818,6 +818,9 @@ async function inEditor(
   }
 }
 
+/** The states in which a run has the editor to itself. */
+const IN_EDITOR: ReadonlySet<PartRunState> = new Set([PartRunState.Applying, PartRunState.Playing]);
+
 /** The queue over each game's one editor: part runs and play-checks, one at a time, in order. */
 export function createEditorQueue(deps: QueueDeps) {
   const runs = new Map<string, PartRun>();
@@ -853,7 +856,11 @@ export function createEditorQueue(deps: QueueDeps) {
       return inEditor(deps, run, turn, (guard) => checkPlay(deps, guard, job));
     });
 
-  return { enqueue, enqueuePlayCheck, status: (id: string): PartRun | undefined => runs.get(id) };
+  /** Whether a run of `game`'s has the editor now (applying or playing), so its play is the queue's own. */
+  const busy = (game: string): boolean =>
+    [...runs.values()].some((run) => run.game === game && IN_EDITOR.has(run.state));
+
+  return { enqueue, enqueuePlayCheck, busy, status: (id: string): PartRun | undefined => runs.get(id) };
 }
 
 /** The queue a backend keeps. */

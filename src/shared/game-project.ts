@@ -5,6 +5,7 @@
  */
 import type { EngineBinding } from "./game-engine.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
+import type { HookEvent } from "./plugin-hooks.ts";
 import type { FolderHolds, ProjectFact } from "./project-facts.ts";
 
 export interface GameProject {
@@ -36,6 +37,8 @@ export interface GameProject {
    * of its own of a kind no rule knows, or unreadable. Absent once it has facts, and from older lists.
    */
   holds?: FolderHolds;
+  /** The moments the plugins that are on hook for this folder (`shared/plugin-hooks.ts`); absent: none. */
+  hookEvents?: HookEvent[];
   /** What a port replaced, kept in the folder as the reference and no longer a kind of this game. */
   portedFrom?: ProjectFact[];
   /**

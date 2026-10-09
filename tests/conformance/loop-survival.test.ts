@@ -21,6 +21,7 @@ import {
 import { LEAD_TOOLS } from "../../src/harness-seed/loop/unreal/lead-tools.ts";
 import { GraphNodeKind } from "../../src/renderer/run-graph.ts";
 import { partRows, statusLine } from "../../src/renderer/run-steps.ts";
+import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "json" };
 import { graphOf, type LeadHost, leadHost, RUN, type Turn } from "../helpers/unreal-lead-host.ts";
 
 const MINUTE = 60_000;
@@ -183,17 +184,48 @@ const POLLS = new Set(["tool:unreal__editor-state", "tool:unreal__editor-activit
 /** The host calls that mark Genex's moments beside the plugin's tools. */
 const MOMENTS = new Set(["snapshot.create", "snapshot.restore", "engine.delegate"]);
 
+/** Each moment's handlers of the Unreal plugin, renamed: the runner must find them by its manifest. */
+const RENAMED: Record<string, string> = {
+  "open-for-run": "wake-up",
+  "save-all": "keep-everything",
+  "log-errors": "read-log",
+  "hero-shots": "stills",
+  "end-editor": "close-up",
+  "reopen-editor": "open-again",
+  "editor-state": "pulse",
+  "editor-activity": "who-is-there",
+};
+
+/** A canonical host whose Unreal manifest names every moment's handler (and the lock's probe) otherwise. */
+function renamedHost() {
+  const manifest = structuredClone(unrealManifest) as unknown as {
+    id: string;
+    tools: Array<{ name: string }>;
+    hooks: Array<{ tool: string }>;
+    locks: Array<{ personFirst?: string }>;
+  };
+  const named = (tool: string) => RENAMED[tool] ?? tool;
+  for (const tool of manifest.tools) tool.name = named(tool.name);
+  for (const hook of manifest.hooks ?? []) hook.tool = named(hook.tool);
+  for (const lock of manifest.locks ?? []) if (lock.personFirst) lock.personFirst = named(lock.personFirst);
+  const roles = Object.fromEntries(Object.entries(RENAMED).map(([role, name]) => [name, role]));
+  const host = leadHost({ turns: [...CANONICAL_TURNS], manifest: manifest as never, roles });
+  return { host, names: RENAMED };
+}
+
 /** The trail of plugin tools, snapshots and turns, with the editor's polls left out. */
 const momentTrail = (host: LeadHost) =>
   host.trail().filter((call) => !POLLS.has(call) && (call.startsWith("tool:") || MOMENTS.has(call)));
 
 /**
- * The editor calls at each moment, with the editor's polls left out. The start; a turn; before and
- * after its save point; a turn that ends with unsaved work is autosaved the same way, then its
- * rewind; a turn and its save point; the end leaves the editor open.
+ * The editor calls at each moment, with the editor's polls left out. The start (C++, then Unreal
+ * opened for the run and its log marked); a turn; before and after its save point; a turn that
+ * ends with unsaved work is autosaved the same way, then its rewind; a turn and its save point;
+ * the end leaves the editor open.
  */
 const MOMENT_TRAIL = [
   "tool:unreal__cpp-status",
+  "tool:unreal__open-for-run",
   "tool:unreal__log-errors",
   "engine.delegate",
   "tool:unreal__save-all",
@@ -260,23 +292,34 @@ describe("a canonical Unreal Loop, as Genex sees it", () => {
     for (const call of invokes) assert.equal(call.params.step, true, String(call.params.name));
   });
 
-  it("the runner's saves and shots wait in a planning chat; its reads do not", () => {
-    const invokes = host.rec.calls.filter((c) => c.method === "plugins.invoke");
-    const held = (name: string) => invokes.filter((c) => c.params.name === name).map((c) => c.params.checkpoint);
-    for (const name of ["unreal__save-all", "unreal__hero-shots", "unreal__end-editor", "unreal__reopen-editor"]) {
-      assert.ok(held(name).length > 0, name);
-      assert.ok(
-        held(name).every((flag) => flag === true),
-        name,
-      );
+  it("the runner's checkpoints and restores wait in a planning chat; its reads do not", () => {
+    // Genex holds a checkpoint and a game folder's restore while the run's chat plans: both name the run's chat.
+    const asked = (method: string) => host.rec.paramsOf(method);
+    for (const method of ["checkpoint.take", "snapshot.restore"]) {
+      assert.ok(asked(method).length > 0, method);
+      for (const params of asked(method)) assert.deepEqual([params.threadId, params.runId], ["t1", RUN.runId], method);
     }
-    for (const name of ["unreal__editor-state", "unreal__log-errors", "unreal__cpp-status"]) {
-      assert.ok(held(name).length > 0, name);
-      assert.ok(
-        held(name).every((flag) => flag === undefined),
-        name,
-      );
-    }
+    // No editor write is the runner's own call any more; its read of the C++ status is a plain step.
+    const invokes = host.rec.paramsOf("plugins.invoke");
+    assert.deepEqual([...new Set(invokes.map((p) => p.name))], ["unreal__cpp-status"]);
+    assert.ok(invokes.every((p) => p.checkpoint === undefined));
+  });
+
+  it("runs each moment's steps from the plugin's manifest, whatever they are named", async () => {
+    const renamed = renamedHost();
+    await run(renamed.host, shortRun(30));
+    const polls = new Set([
+      `tool:unreal__${renamed.names["editor-state"]}`,
+      `tool:unreal__${renamed.names["editor-activity"]}`,
+    ]);
+    const trail = renamed.host
+      .trail()
+      .filter((call) => !polls.has(call) && (call.startsWith("tool:") || MOMENTS.has(call)));
+    const rename = (call: string) => {
+      const tool = call.startsWith("tool:unreal__") ? call.slice("tool:unreal__".length) : null;
+      return tool && renamed.names[tool] ? `tool:unreal__${renamed.names[tool]}` : call;
+    };
+    assert.deepEqual(trail, MOMENT_TRAIL.map(rename));
   });
 
   it("polls the editor's state during and between turns", () => {

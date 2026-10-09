@@ -5,6 +5,7 @@
  */
 import type { PluginInfo } from "../../shared/plugins.ts";
 import { PluginOffer, type PluginSuggestedPayload } from "../../shared/project-tools.ts";
+import { PLUGIN_SUGGESTION_WORDS } from "../words.ts";
 
 /** What the card offers now: Turn on, Install…, or says the plugin is On. */
 export const SuggestionState = {
@@ -40,6 +41,17 @@ export function suggestionShown(
   const listed = list.find((p) => p.manifest.id === suggestion.pluginId && !p.unlisted);
   if (listed) return { name: listed.manifest.name, description: listed.manifest.description };
   return { name: suggestion.name, description: suggestion.description };
+}
+
+/**
+ * The card's line naming the folders outside the game an installed plugin's programs write to,
+ * which turning it on approves; empty when it names none or is not installed (Install… reviews a
+ * catalog plugin in Genex's own dialog first, which names its folders).
+ */
+export function suggestionFolders(list: readonly ListedPlugin[], pluginId: string): string {
+  const plugin = list.find((p) => p.manifest.id === pluginId && !p.unlisted && !p.removed);
+  const paths = (plugin?.manifest.folders ?? []).map((folder) => folder.path);
+  return paths.length ? PLUGIN_SUGGESTION_WORDS.folders(paths.join(", ")) : "";
 }
 
 const isText = (value: unknown): value is string => typeof value === "string";

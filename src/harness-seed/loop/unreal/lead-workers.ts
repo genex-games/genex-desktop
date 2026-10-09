@@ -57,6 +57,7 @@ function seatOf(lead: Lead): RunPoolSeat {
     // The run's Genex credit cap holds for its generic workers as for its typed ones.
     ...creditCapOf(lead),
     gameDir: game.dir,
+    game,
     leadFolder: { project: run.project },
     identity: { folderLabel: folderLabelOf(game.dir, null), facts: game.facts ?? UNREAL_AT_ROOT },
     clock: lead.clock,

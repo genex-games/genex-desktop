@@ -1,5 +1,6 @@
 /**
- * What the plugin trust dialog says, built from the package alone, and what an action's approval
+ * What the plugin trust dialog says, built from the package alone (the folders turning it on lets it
+ * write in among it), and what an action's approval
  * shows under its question: pure, so the words are tested without Electron.
  * `plugin-install-dialog.ts` and the plugins IPC show them.
  */
@@ -111,6 +112,19 @@ function hostToolUse(tool: PluginManifestTool): string {
   return tool.confirmation ? `${does}, ${WITH_CONSENT}` : does;
 }
 
+/**
+ * Turning a plugin on approves its `folders` as places its programs (and the workers and jobs that
+ * run them) may write outside the games, and installing turns it on: so the dialog names each with
+ * why, an update marking the new ones.
+ */
+function pluginFolderWords(manifest: PluginManifest, before: PluginManifest | undefined): string {
+  const folders = manifest.folders ?? [];
+  if (!folders.length) return "";
+  const had = before ? new Set((before.folders ?? []).map((f) => f.path)) : null;
+  const named = folders.map((f) => `${f.path}${had && !had.has(f.path) ? " (new)" : ""} (${f.why})`).join("; ");
+  return ` Turning it on lets its programs write in ${plural(folders.length, "folder")} outside your games: ${named}.`;
+}
+
 /** What the dialog says about the id a replacement erases, or nothing for a plain install. */
 function replacementWords(replaces: PluginInstallReview["replaces"]): string {
   if (!replaces) return "";
@@ -137,7 +151,7 @@ export function installDetail(facts: PluginInstallFacts): string {
   const { manifest, origin, scan, before, replaces, note } = facts;
   const added = manifest.capabilities.filter((c) => !(before?.capabilities ?? []).includes(c));
   const capabilities = `${manifest.capabilities.join(", ") || "none"}${added.length ? ` (new: ${added.join(", ")})` : ""}`;
-  return `${replacementWords(replaces)}${manifest.name} ${manifest.version} from ${pluginOriginWords(origin)} runs as trusted native code in a crash-isolated child process — not an OS sandbox. Publisher: ${manifest.publisher}. Capabilities: ${capabilities}.${pluginMcpWords(manifest, before)}${hostToolWords(manifest, before)}${pluginSkillWords(facts)} ${pluginScanWords(scan)}${note ? ` ${note}` : ""}`;
+  return `${replacementWords(replaces)}${manifest.name} ${manifest.version} from ${pluginOriginWords(origin)} runs as trusted native code in a crash-isolated child process — not an OS sandbox. Publisher: ${manifest.publisher}. Capabilities: ${capabilities}.${pluginMcpWords(manifest, before)}${pluginFolderWords(manifest, before)}${hostToolWords(manifest, before)}${pluginSkillWords(facts)} ${pluginScanWords(scan)}${note ? ` ${note}` : ""}`;
 }
 
 /** The arguments an approved action runs with, under its question; none, and nothing shows (never `{}`). */

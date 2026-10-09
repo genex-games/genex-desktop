@@ -97,11 +97,14 @@ export const POOL_WORDS = {
     `Not started: no plugin that is on declares the worker type ${type}. ${known.length ? `Known types: ${known.join(", ")}.` : "No plugin that is on declares any; start a worker with no type."}`,
   lockBusy: (id: string) =>
     `Not started: ${id} is writing in place now, and only one writer works in place at a time. Wait for it, start this one in its own copy (isolation copy), or as a reader.`,
+  inPlaceBusy: (host: string) =>
+    `Not started: ${host} Only one writer works in place at a time, across this chat and its runs. Wait for it, start this one in its own copy (isolation copy), or as a reader.`,
   badInput: (input: string) =>
     `Not started: ${JSON.stringify(input)} is not a path inside the project. Name inputs as paths relative to the project's folder.`,
   copyTooLarge: (host: string) =>
     `${host} Start it again with isolation lock (the one writer in place) or as a reader (isolation read).`,
   noCopy: (why: string) => `Not started: Genex could not make the worker's copy: ${why}`,
+  startHeld: (why: string) => `Not started: ${why}`,
   unknown: (id: string) => `No worker ${id} in this chat.`,
   none: "No workers yet in this chat.",
   status: (line: StatusLine) =>

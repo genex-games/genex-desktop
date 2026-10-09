@@ -163,9 +163,12 @@ async function markCopy(state: PoolState, record: WorkerRecord, verdict: WorkerV
   return merged;
 }
 
-/** A writer in place that finished: its work is in the game folder already, whatever the lead says of it. */
+/**
+ * A writer in place that finished and changed the game folder: its work is in the game already,
+ * whatever the lead says of it. One that changed nothing (or whose change git couldn't tell) may be rejected.
+ */
 const wroteInGame = (record: WorkerRecord): boolean =>
-  record.isolation === WorkerIsolation.Lock && record.state === WorkerState.Done;
+  record.isolation === WorkerIsolation.Lock && record.state === WorkerState.Done && record.changedGame === true;
 
 /**
  * `worker_mark`: the lead's word on what a worker delivered. A merge that failed leaves no verdict;

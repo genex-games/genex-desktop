@@ -1,6 +1,7 @@
 import { validateDetect } from "./detect-manifest.ts";
 import { validateAssets, validateWorkspace } from "./workspace-manifest.ts";
 import { validateFolders, validateWorkerTypes } from "./worker-manifest.ts";
+import { validateMomentSections } from "./hook-manifest.ts";
 import { applyToolScope, serverFacts, skillScopeFields } from "./scope-manifest.ts";
 import { validateNativeDeclarations } from "./native-manifest.ts";
 import { assertRelativePath, containedReal } from "../paths.ts";
@@ -571,8 +572,8 @@ function validateReachSections(m: PluginManifest, canonical: PluginManifest): vo
 
 /**
  * The account flow (API 2), and the API 3 delivery limits, native declarations, project detection,
- * what a project's history leaves out and where its assets live, and the plugin's worker types and
- * the folders its engine programs write to.
+ * what a project's history leaves out and where its assets live, the plugin's worker types and
+ * the folders its engine programs write to, and its locks and the handlers of Genex's moments.
  */
 function validateHostSections(m: PluginManifest, canonical: PluginManifest): void {
   if (m.account !== undefined) canonical.account = validateAccount(m, canonical.actions);
@@ -582,6 +583,7 @@ function validateHostSections(m: PluginManifest, canonical: PluginManifest): voi
   if (m.assetLimits !== undefined) canonical.assetLimits = validateAssetLimits(m);
   if (m.workerTypes !== undefined) canonical.workerTypes = validateWorkerTypes({ ...m, tools: canonical.tools });
   if (m.folders !== undefined) canonical.folders = validateFolders(m);
+  validateMomentSections(m, canonical);
   if (m.nativeRuntimes !== undefined || m.nativeJobs !== undefined) {
     if (m.apiVersion !== 3 || !hasCapability(m, PluginCapability.NativeRuntime))
       throw new Error(MESSAGE.NativeNeedsApi3);

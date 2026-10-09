@@ -61,6 +61,7 @@ import { assertGameFolderFree, GAME_PROJECT_FOLDER, ignoreUnrealScratch } from "
 import { isProjectPath } from "./project-file.ts";
 import { xcodeDownloadsLaunch } from "./xcode.ts";
 import { EditorWait, engineReadiness, waitForEditor } from "./editor-wait.ts";
+import { readinessAnswer } from "./hook-answers.ts";
 import {
   answersOrBlocked,
   Connection,
@@ -815,6 +816,11 @@ function loopTools(deps: UnrealBackendDeps) {
       forget: (storage, project) => retireStarting(storage, project),
     },
     watchCrash: (storage, game) => gameCrashCheck(deps, storage, game),
+    // A game whose project isn't set up has no start of Genex's to read.
+    starting: async (storage, game) => {
+      const editor = await gameEditor(storage, game).catch(() => undefined);
+      return editor ? editorStart(deps.env, storage, editor, deps.launch.now()) : null;
+    },
     ...(deps.processes ? { processes: deps.processes } : {}),
     now: deps.launch.now,
     sleep: (ms, signal) => sleep(ms, undefined, signal ? { signal } : undefined),
@@ -1135,7 +1141,7 @@ export function createUnrealBackend(deps: UnrealBackendDeps): PluginActivation {
     [UnrealTool.ShowSteps]: (_args, context) => showSteps(deps, context),
     [UnrealTool.NewGame]: (args, context) => newGame(deps, args, context),
     [UnrealTool.WaitEditor]: (args, context) => waitEditor(deps, args, context),
-    [UnrealTool.EngineStatus]: async () => engineReadiness(await findEngines(deps.env)),
+    [UnrealTool.EngineStatus]: async () => readinessAnswer(engineReadiness(await findEngines(deps.env))),
   };
   return {
     async action(name, args, context) {

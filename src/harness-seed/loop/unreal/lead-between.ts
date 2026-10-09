@@ -1,13 +1,18 @@
 /**
  * What the Unreal lead's run does with the editor outside the lead's own work, always cold: a
- * crashed Unreal is reopened in place (twice at most) and, when it won't come back, the game goes
- * back to the last save point; between turns, a turn that left unsaved work and no save point gets
- * an autosave, then the lead's rewind or rebuild runs, then the game's C++ module a C++ agent asked
- * for is added. What the lead should know of it is carried into its next digest. A run whose Unreal
- * can't be closed or reopened halts with why.
+ * crash (Genex's health check blocked) runs Genex's crash moment, at which the plugin reopens
+ * Unreal in place, and waits until health is quiet (twice at most); when it won't come back, the
+ * game goes back to the last save point, never when Genex held the crash moment back (nothing was
+ * tried in place, so the run halts and keeps the work). Between turns, a turn that left unsaved work and no save
+ * point gets an autosave, then the lead's rewind or rebuild runs, then the game's C++ module a C++
+ * agent asked for is added. What the lead should know of it is carried into its next digest. A run
+ * whose Unreal can't be closed or reopened halts with why, in the words the plugin's steps gave.
  */
+import { fireHooks, HookEvent, holdOf, REOPEN_WAIT_MS, runScope, waitReady } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
+import { minutes } from "../time.ts";
 import { landPending, relandAgents } from "./agents.ts";
+import { betweenHeldWords } from "./hold-words.ts";
 import { cppSupport, ensureCppModule, readCppStatus, type CppSetup, whileAdding } from "./cpp.ts";
 import type { LeadCrash, SavePoint } from "./lead-contract.ts";
 import { tellUser } from "./lead-graph.ts";
@@ -25,9 +30,10 @@ export const MAX_REOPENS = 2;
 const CLOCK_TIME = { start: 11, end: 16 } as const;
 
 const MESSAGE = {
-  EditorLost: (why: string) => `Unreal couldn't be reopened (${why}). Open Unreal, then Resume the Loop.`,
-  NotSaved: (why: string) => `${why}. Save your work in Unreal, then Resume the Loop.`,
-  NotClosed: (why: string) => `${why}. Quit Unreal, then Resume the Loop.`,
+  EditorLost: (why: string) => `Unreal couldn't be reopened (${clause(why)}). Open Unreal, then Resume the Loop.`,
+  NotSaved: (why: string) => `${clause(why)}. Save your work in Unreal, then Resume the Loop.`,
+  NotClosed: (why: string) => `${clause(why)}. Quit Unreal, then Resume the Loop.`,
+  TimedOut: (minutes: number) => `Unreal didn't answer within ${minutes} minutes of reopening`,
   NoSavePoint: "there is no save point to go back to",
   Restored: (label: string) => `Back to '${label}'`,
   Crashed: (at: string) => `Unreal crashed at ${at}; Genex reopened it.`,
@@ -35,8 +41,15 @@ const MESSAGE = {
     `Unreal crashed at ${at} and wouldn't reopen on the level as it was, so Genex went back to '${label}'.`,
 } as const;
 
+/** Words without the full stop they may end with, to go on in a sentence. */
+function clause(words: string): string {
+  return words.trim().replace(/[.]+$/, "");
+}
+
 /** Why the run halts when a restore or restart failed, in words the user can act on. */
 export function haltedBy(outcome: Extract<RestoreOutcome, { ok: false }>): string {
+  const held = outcome.held ? betweenHeldWords(outcome.held) : null;
+  if (held) return held;
   if (outcome.failure === RestoreFailure.NotSaved) return MESSAGE.NotSaved(outcome.why);
   if (outcome.failure === RestoreFailure.NotEnded) return MESSAGE.NotClosed(outcome.why);
   return MESSAGE.EditorLost(outcome.why);
@@ -67,13 +80,30 @@ async function restoreTo(lead: LeadRun, point: SavePoint): Promise<RestoreOutcom
   return restored;
 }
 
+/**
+ * Genex's crash moment (the plugin reopens Unreal), then a wait until health is quiet; why it isn't,
+ * or null. A crash moment Genex itself held back (Plan mode, a lock not given) reopened nothing:
+ * no wait, and its hold goes with the failure for the person's words.
+ */
+async function reopenOnce(lead: LeadRun): Promise<Extract<RestoreOutcome, { ok: false }> | null> {
+  const crash = await fireHooks(lead.ctx, lead.game, HookEvent.Crash, runScope(lead));
+  const held = crash.blocked ? holdOf(crash.blocked) : null;
+  if (crash.blocked && held) return { ok: false, failure: RestoreFailure.NotReopened, why: crash.blocked.reason, held };
+  const timeout = lead.clock.now() + REOPEN_WAIT_MS;
+  const ready = await waitReady(lead.ctx, lead.game, runScope(lead), lead.clock, Math.min(timeout, lead.finalDeadline));
+  if (ready.ok || lead.ctx.cancelled) return null;
+  const why = ready.timedOut ? MESSAGE.TimedOut(minutes(REOPEN_WAIT_MS)) : ready.reason;
+  return { ok: false, failure: RestoreFailure.NotReopened, why };
+}
+
 /** Reopens Unreal in place, at most `MAX_REOPENS` times; the last failure, or null once it answers. */
 async function reopenInPlace(lead: LeadRun): Promise<Extract<RestoreOutcome, { ok: false }> | null> {
   let last: Extract<RestoreOutcome, { ok: false }> | null = null;
   for (let tries = 0; tries < MAX_REOPENS && !lead.ctx.cancelled; tries += 1) {
-    const reopened = await coldRestore(lead, { snapshot: null });
-    if (reopened.ok) return null;
-    last = reopened;
+    last = await reopenOnce(lead);
+    if (!last) return null;
+    // Held back by Genex: asking again at once is held back alike.
+    if (last.held) return last;
   }
   return last;
 }
@@ -96,7 +126,10 @@ async function recover(lead: LeadRun): Promise<string | null> {
     const said = { lead: STEER.Crashed(time, last?.label ?? null), owner: MESSAGE.Crashed(time) };
     return recordCrash(lead, { at, reopened: true, restoredTo: null }, said);
   }
-  const restored = last && !lead.ctx.cancelled ? await restoreTo(lead, last) : null;
+  // A crash moment Genex held back never tried a reopen: going back to the save point would lose
+  // the work since it for an editor nobody tried to reopen in place.
+  const triedReopen = !failed.held;
+  const restored = last && triedReopen && !lead.ctx.cancelled ? await restoreTo(lead, last) : null;
   if (last && restored?.ok) {
     const said = { lead: STEER.Restored(time, last.label), owner: MESSAGE.RestoredAfterCrash(time, last.label) };
     return recordCrash(lead, { at, reopened: false, restoredTo: last.label }, said);
@@ -108,9 +141,10 @@ async function recover(lead: LeadRun): Promise<string | null> {
 }
 
 /**
- * Unreal is gone: reopened in place, or the game put back to its last save point when it won't
- * reopen twice; a run whose Unreal can't come back halts. Answers what the lead is told, or null
- * (nothing to tell: another recovery is under way, or the run halted).
+ * Unreal is gone (Genex's health check blocked): reopened in place through Genex's crash moment, or
+ * the game put back to its last save point when it won't reopen twice; a run whose Unreal can't
+ * come back halts. Answers what the lead is told, or null (nothing to tell: another recovery is
+ * under way, or the run halted).
  */
 export async function recoverEditor(lead: LeadRun): Promise<string | null> {
   if (lead.recovering) {
@@ -138,7 +172,7 @@ async function rewind(lead: LeadRun, label: string): Promise<void> {
   }
   const reason = restored && !restored.ok ? restored.why : MESSAGE.NoSavePoint;
   lead.journal.digest.carried.push(CARRIED.NoRewind(label, reason));
-  // A restore that ended Unreal and couldn't bring it back halts; one that left a busy Unreal open doesn't.
+  // A restore that ended Unreal and couldn't bring it back halts (health blocked); one that left a busy Unreal open doesn't.
   if (restored && !restored.ok && (await editorGone(lead))) lead.halted = haltedBy(restored);
 }
 
@@ -209,9 +243,9 @@ async function autosaveAfter(lead: LeadRun): Promise<void> {
 }
 
 /**
- * What waits for the end of a turn, cold, before the next: Unreal back if it went away, an
- * autosave when the turn made no save point, the lead's rewind or rebuild, then the C++ module a
- * C++ agent asked for (after a restore, so the restore never takes it back out).
+ * What waits for the end of a turn, cold, before the next: Unreal back if Genex's health check
+ * says it went away, an autosave when the turn made no save point, the lead's rewind or rebuild,
+ * then the C++ module a C++ agent asked for (after a restore, so the restore never takes it back out).
  */
 export async function betweenTurns(lead: LeadRun, savedInTurn: boolean): Promise<void> {
   if (lead.end || lead.ctx.cancelled) return;
@@ -234,8 +268,8 @@ export async function betweenTurns(lead: LeadRun, savedInTurn: boolean): Promise
 }
 
 /**
- * Unreal answers before the run's first turn, or the plugin reopens it; a run whose Unreal can't
- * be reopened halts.
+ * Kept for an older copy of a module that imports it (the plugin opens Unreal at Genex's run start
+ * now): Unreal answers, or is restarted; a run whose Unreal can't be reopened halts.
  */
 export async function ensureEditor(lead: LeadRun): Promise<void> {
   if (await editorAnswers(lead)) return;

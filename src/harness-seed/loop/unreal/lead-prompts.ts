@@ -299,14 +299,20 @@ export function handoverWords(options: { why: string; status: string }): string 
 /** What a turn carries from between turns. */
 export const CARRIED = {
   Autosaved: (label: string) => `Your turn ended with unsaved work, so Genex saved it as '${label}'.`,
-  NotAutosaved: (why: string) => `Your turn ended with unsaved work, and Genex couldn't save it: ${why}.`,
+  NotAutosaved: (why: string) => `Your turn ended with unsaved work, and Genex couldn't save it: ${clause(why)}.`,
   Rewound: (label: string) => `Genex put the game back to save point '${label}' before this turn, as you asked.`,
-  NoRewind: (label: string, why: string) => `Genex couldn't go back to '${label}': ${why}.`,
+  NoRewind: (label: string, why: string) => `Genex couldn't go back to '${label}': ${clause(why)}.`,
   Rebuilt: "Genex restarted Unreal (building the game's C++ first, when it has any) before this turn.",
   NotBuilt: (why: string, label: string) =>
     `Your C++ didn't build (${why}), so Genex went back to save point '${label}' and reopened Unreal. Fix the C++ before you rebuild again.`,
   Resumed: "The run was paused and goes on now: look at the level as it is before you build.",
+  TurnHeld: (why: string) => `Genex didn't start your last turn: ${clause(why)}.`,
 } as const;
+
+/** Words without the full stop they may end with, to go on in a sentence. */
+function clause(words: string): string {
+  return words.trim().replace(/[.]+$/, "");
+}
 
 /** The run tools' plain answers. */
 export const LEAD_TOOL_WORDS = {
@@ -352,13 +358,6 @@ function logLine(lines: readonly string[]): string {
 /** `save_point`'s answers. */
 export const SAVE_POINT_WORDS = {
   Busy: "A save point is already being made. Wait for its answer.",
-  NoEditor: "Unreal doesn't answer, so nothing was saved.",
-  InPlan:
-    "The chat is in Plan mode, so nothing was saved and no snapshot was taken. Saves wait until the plan is approved.",
-  Playing: "The game is playing in the editor: stop the play session first, then save. Nothing was saved.",
-  CantTell:
-    "Unreal can't tell whether the game is playing, and saving would end a play session, so nothing was saved. Try again in a moment.",
-  NotSaved: (problem: string) => `${problem}. No save point was made; save what is left, then try again.`,
   Refused: (why: string) => `No save point: ${why}`,
   /** How long the run goes on after a save: a lead that guesses its own time winds down early. */
   GoOn: (minutesLeft: number) =>
@@ -371,7 +370,7 @@ export const SAVE_POINT_WORDS = {
   Saved: (point: SavePoint) =>
     [
       `Saved '${point.label}' (snapshot ${point.snapshotId}).`,
-      logLine(point.logErrors),
+      ...(point.notes ?? [logLine(point.logErrors ?? [])]),
       point.thumbnails.length
         ? `Thumbnails:\n${point.thumbnails.map(thumbnailLine).join("\n")}`
         : `No hero camera was captured: place CameraActors named ${HERO_CAMERA_PREFIX}<name>.`,

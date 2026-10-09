@@ -10,9 +10,18 @@ import {
   gameKindOf,
   pluginFactSource,
   scopePaths,
+  scopeReaches,
   type SourcedFactRule,
 } from "../../shared/project-facts.ts";
 import type { ToolOffered } from "./tool-allow.ts";
+import {
+  type HookEvent,
+  type HookStep,
+  hookEventsOf,
+  hookPlan,
+  LockScope,
+  type PluginLock,
+} from "../../shared/plugin-hooks.ts";
 import {
   isAgentTool,
   isFileSkill,
@@ -127,8 +136,11 @@ const REPLACEMENT_TTL_MS = 10 * MINUTE_MS;
 const ACCOUNT_POLL_MS = 5 * SECOND_MS;
 /** A burst of saves in a watched folder is one reload. */
 const WATCH_DEBOUNCE_MS = 500;
-/** The host's ceiling for one backend call. */
-const CALL_TIMEOUT_MS = 190_000;
+/** The host's ceiling for one backend call, unless the caller allows longer (`tool`'s `timeoutMs`). */
+export const PLUGIN_CALL_TIMEOUT_MS = 190_000;
+
+/** A plugin tool's call, checked and consented to (`PluginRegistry.prepareTool`): answers as its backend does. */
+export type PreparedToolCall = () => ReturnType<PluginProcess["call"]>;
 /** A tool that runs a native job may wait for its longest job plus this margin. */
 const NATIVE_JOB_MARGIN_MS = 10 * SECOND_MS;
 /**
@@ -251,10 +263,36 @@ export interface PluginSnapshot {
   /** The tools on offer that make a kind of project in the game's folder (`makes`). */
   kinds: PluginKindOffer[];
 }
-/** A manifest tool as an agent sees it: named `<id>__<tool>`, without the host program, audience or scope. */
+/** A manifest tool as an agent sees it: named `<id>__<tool>`, without the host program, audience, scope, locks or readiness. */
 function agentTool(id: string, tool: PluginManifestTool): PluginTool {
-  const { host: _host, audience: _audience, facts: _facts, makes: _makes, ...declared } = tool;
+  const {
+    host: _host,
+    audience: _audience,
+    facts: _facts,
+    makes: _makes,
+    needs: _needs,
+    ready: _ready,
+    ...declared
+  } = tool;
   return { ...declared, name: `${id}__${tool.name}` };
+}
+/**
+ * The `needs` a plugin declares for one agent name: its tool's (`<plugin>__<tool>`) or its
+ * connector's (`<plugin>-<server>__<tool>`); undefined when the name is none of the plugin's.
+ */
+function declaredNeeds(manifest: PluginManifest, agentName: string): string[] | undefined {
+  const at = agentName.indexOf("__");
+  if (at < 0) return undefined;
+  const [owner, tool] = [agentName.slice(0, at), agentName.slice(at + 2)];
+  if (owner === manifest.id) return manifest.tools.find((t) => t.name === tool)?.needs ?? [];
+  return manifest.mcpServers?.find((server) => owner === `${manifest.id}-${server.id}`)?.needs;
+}
+/** A plugin's locks named by id, in the order named, each with its plugin. */
+function locksNamed(manifest: PluginManifest, ids: readonly string[]): Array<{ plugin: string; lock: PluginLock }> {
+  return ids.flatMap((id) => {
+    const lock = manifest.locks?.find((declared) => declared.id === id);
+    return lock ? [{ plugin: manifest.id, lock }] : [];
+  });
 }
 /** What one plugin hands a session for a game with `facts`, narrowed to `offered` when the session is. */
 interface PluginPart {
@@ -294,13 +332,15 @@ function skillGuidance({ manifest, reach }: PluginPart, game: GameKind): string[
     return isFileSkill(s) ? fileSkillIndexLine(manifest.id, s, where) : `[${manifest.id}/${s.name}]${where}\n${s.text}`;
   });
 }
-/** The kinds one plugin's reaching tools make, as the snapshot lists them. */
+/** The kinds one plugin's reaching tools make, as the snapshot lists them (with whether each answers its readiness). */
 function kindOffers({ manifest, reach }: PluginPart): PluginKindOffer[] {
-  return reach.tools.flatMap((t) =>
-    t.makes
-      ? [{ plugin: manifest.id, name: manifest.name, tool: `${manifest.id}__${t.name}`, makes: [...t.makes] }]
-      : [],
-  );
+  return reach.tools.flatMap((t) => {
+    if (!t.makes) return [];
+    const tool = `${manifest.id}__${t.name}`;
+    return [
+      { plugin: manifest.id, name: manifest.name, tool, makes: [...t.makes], ...(t.ready ? { asksReady: true } : {}) },
+    ];
+  });
 }
 /** The file a skill read names: the skill's own, or one of its references spelled exactly as listed. */
 function declaredSkillFile(skill: PluginFileSkill, file: unknown): string {
@@ -1049,11 +1089,57 @@ export class PluginRegistry {
   }
   /**
    * The folders outside the game the enabled plugins' engine programs write to, `~` expanded,
-   * resolved and deduped: workers' write roots. Turning a plugin on approves its folders for its
-   * engine programs (the consent card does not list them yet).
+   * resolved and deduped: the write roots of workers and jobs. Turning a plugin on approves its
+   * folders for its engine programs; its page and its suggestion card name them first.
    */
   workerFolders(): string[] {
     return [...new Set(this.#byId().flatMap((p) => pluginFolderPaths(p.manifest)))];
+  }
+  /**
+   * The handlers a moment runs for a game (`shared/plugin-hooks.ts` `hookPlan`): the enabled
+   * plugins' hooks in list order; `tool.*` only those of the plugin `own` whose tool is called.
+   */
+  hookPlan(on: HookEvent, game: GameKind, own?: string): HookStep[] {
+    return hookPlan(this.#hooked(), on, game, own);
+  }
+  /** The moments some enabled plugin has a handler at for a game: what its descriptor lists. */
+  hookEvents(game: GameKind): HookEvent[] {
+    return hookEventsOf(this.#hooked(), game);
+  }
+  #hooked() {
+    return this.#live().map((p) => ({ id: p.manifest.id, manifest: p.manifest }));
+  }
+  /** An enabled plugin's lock by id, or null. */
+  lockOf(pluginId: string, lockId: string): PluginLock | null {
+    const p = this.#installed.get(pluginId);
+    if (!isLive(p)) return null;
+    return p?.manifest.locks?.find((lock) => lock.id === lockId) ?? null;
+  }
+  /**
+   * The locks a call holds, by the agent name of a tool (`<plugin>__<tool>`) or of a plugin
+   * connector's tool (`<plugin>-<server>__<tool>`) of an enabled plugin; none for any other name.
+   */
+  needsOf(agentName: string): Array<{ plugin: string; lock: PluginLock }> {
+    for (const { manifest } of this.#live()) {
+      const needs = declaredNeeds(manifest, agentName);
+      if (needs) return locksNamed(manifest, needs);
+    }
+    return [];
+  }
+  /**
+   * The `project` locks of the enabled plugins that one of their agent tools or connectors reaching
+   * a game needs: what a worker writing in place in that game holds for its whole life. Only what
+   * the worker's session can call counts; the harness's own tools are never its.
+   */
+  locksFor(game: GameKind): Array<{ plugin: string; lock: PluginLock }> {
+    return this.#live().flatMap(({ manifest }) => {
+      const needed = new Set(
+        [...manifest.tools.filter(isAgentTool), ...(manifest.mcpServers ?? [])]
+          .filter((part) => scopeReaches(part.facts, game))
+          .flatMap((part) => part.needs ?? []),
+      );
+      return locksNamed(manifest, [...needed]).filter(({ lock }) => lock.per === LockScope.Project);
+    });
   }
   /** The enabled plugins in plugin-id order. */
   #byId(): PluginInfo[] {
@@ -1524,7 +1610,10 @@ export class PluginRegistry {
   /**
    * Run one plugin tool by its agent name for `caller`. A tool its plugin keeps for the harness
    * (`audience: "harness"`) runs only when the harness itself calls it: for any other caller it is
-   * unknown, refused before its arguments, consent or backend.
+   * unknown, refused before its arguments, consent or backend. `timeoutMs` lets a backend call run
+   * longer than the host's ceiling (a moment that opens an app), never shorter. `beforeRun` is
+   * awaited once the arguments are checked and the card answered, just before the call: an
+   * agent's turn at the locks its tool needs, so a refused call never waits for them.
    */
   async tool(
     name: string,
@@ -1532,12 +1621,31 @@ export class PluginRegistry {
     binding: PluginBinding,
     signal?: AbortSignal,
     caller: PluginToolAudience = PluginToolAudience.Agents,
+    timeoutMs = PLUGIN_CALL_TIMEOUT_MS,
+    beforeRun?: () => Promise<void>,
   ) {
+    const run = await this.prepareTool(name, args, binding, signal, caller, timeoutMs);
+    await beforeRun?.();
+    return run();
+  }
+  /**
+   * Everything `tool` does before the call itself: the tool is known to `caller`, its arguments
+   * are checked and its consent card answered. Answers the call, to run once whatever it waits
+   * for (its locks) is given; a refusal is thrown here, before any wait.
+   */
+  async prepareTool(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal?: AbortSignal,
+    caller: PluginToolAudience = PluginToolAudience.Agents,
+    timeoutMs = PLUGIN_CALL_TIMEOUT_MS,
+  ): Promise<PreparedToolCall> {
     const [id, tool, ...extra] = name.split("__");
     const p = this.#active(id);
     // A plugin with file skills has its skill tool answered here, in the host: never by its backend.
     if (!extra.length && tool === PLUGIN_SKILL_TOOL && p.manifest.skills.some(isFileSkill))
-      return this.#readSkill(id, p, args);
+      return async () => this.#readSkill(id, p, args);
     const declaration = p.manifest.tools.find((t) => t.name === tool);
     if (extra.length || !declaration) throw new Error(MESSAGE.UnknownTool);
     if (!isAgentTool(declaration) && caller !== PluginToolAudience.Harness) throw new Error(MESSAGE.UnknownTool);
@@ -1548,9 +1656,14 @@ export class PluginRegistry {
       const shown = host ? await this.#hostConsentArgs(id, host, args, binding) : args;
       await this.#consented(id, name, declaration, shown, binding, signal);
     }
-    if (host) return this.#runHostTool(id, host, args, binding, signal);
+    if (host) return () => this.#runHostTool(id, host, args, binding, signal);
     const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    return this.#process(id).call("tool", tool, args, binding, signal, Math.max(CALL_TIMEOUT_MS, ...nativeJobTimeouts));
+    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, ...nativeJobTimeouts);
+    return async () => {
+      // The plugin may have been turned off while the call waited its turn.
+      this.#active(id);
+      return this.#process(id).call("tool", tool, args, binding, signal, ceiling);
+    };
   }
   /** Asks the user before a tool that declares `confirmation`; a no is thrown, and the plugin must still be live after. */
   async #consented(
@@ -1730,7 +1843,7 @@ export class PluginRegistry {
         args,
         binding,
         undefined,
-        installsRuntime ? RUNTIME_INSTALL_TIMEOUT_MS : CALL_TIMEOUT_MS,
+        installsRuntime ? RUNTIME_INSTALL_TIMEOUT_MS : PLUGIN_CALL_TIMEOUT_MS,
       );
       await this.#afterAccountAction(id, p, name, account, answer, binding);
       const statusAnswer = name === account.status && answer && typeof answer === "object";

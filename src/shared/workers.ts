@@ -124,6 +124,23 @@ export const poolWorkerId = (id: string): string => `${POOL_WORKER_PREFIX}${id}`
 export const WORKER_TASK_CHARS = 300;
 /** The most characters of the person's request a chat turn's worker's start record keeps. */
 export const WORKER_ASK_CHARS = 300;
+/** The most characters of a worker's title the graph and the chat show, and a host's lock names its holder by. */
+export const WORKER_TITLE_CHARS = 80;
+/** The most characters of a worker's id (or kind) a lock or a moment names it by. */
+export const WORKER_ID_CHARS = 80;
+/** A worker's id or kind as a lock or a moment names it: letters, digits, `.`, `_` and `-`. */
+export const WORKER_ID = new RegExp(`^[A-Za-z0-9._-]{1,${WORKER_ID_CHARS}}$`);
+const CONTROL_CHARS = /\p{Cc}/u;
+
+/** Whether a value is a worker's id (or kind) as a lock or a moment names it. */
+export const isWorkerId = (value: unknown): value is string => typeof value === "string" && WORKER_ID.test(value);
+
+/** Whether a value is a worker's title a person could read: one line of 1 to `WORKER_TITLE_CHARS` characters. */
+export const isWorkerTitle = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= WORKER_TITLE_CHARS && !CONTROL_CHARS.test(value);
+
+/** What a lock or a moment refuses a worker it can't name by: the words of `isWorkerId` and `isWorkerTitle`. */
+export const WORKER_NAMING = `A worker is named by an id of letters, digits, '.', '_' and '-' (at most ${WORKER_ID_CHARS}), and a title of one line of at most ${WORKER_TITLE_CHARS} characters`;
 /** The most characters of a worker's own summary its end record keeps (its first sentence). */
 export const WORKER_SUMMARY_CHARS = 160;
 
@@ -131,7 +148,8 @@ export const WORKER_SUMMARY_CHARS = 160;
  * A worker a lead started (`worker_started`), in a run (`runId`) or in a chat turn (`turn`, with
  * the person's request as `ask`). Written by the harness; every field optional, as an older or an
  * agent-edited writer may leave any out. `isolation` picks the words the app shows, never shown
- * itself; `in` names the engine a worker works in when it works in the game folder of one.
+ * itself; `where` names the app a worker writing in place works in, by the label of the plugin
+ * lock it holds (at most `LOCK_LABEL_CHARS`), and wins over `in`, the engine an older record named.
  */
 export interface WorkerStartedPayload extends RunScope {
   workerId?: string;
@@ -140,6 +158,7 @@ export interface WorkerStartedPayload extends RunScope {
   type?: string;
   task?: string;
   in?: GameEngine;
+  where?: string;
   turn?: string;
   ask?: string;
   at?: string;

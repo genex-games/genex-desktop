@@ -7,6 +7,10 @@
  *
  * A module of its own: `restore.ts` is a module the agent may have kept from before, and a kept copy
  * exports only what it did then, so a name the lead newly needs comes from here.
+ *
+ * No current module calls this: Genex's `health` moment, which the Unreal plugin's
+ * `editor-state` answers, took it over. It stays because older copies of `lead-turn.ts` and
+ * `restore.ts` an agent kept import it.
  */
 import { SECOND_MS } from "../time.ts";
 import type { Lead } from "./lead-journal.ts";

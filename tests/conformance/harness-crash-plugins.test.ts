@@ -215,6 +215,17 @@ describe("a harness crash and the plugins", () => {
     assert.ok(lite.core.mcp.ids().includes(`${PLUGIN}-editor`), "the test plugin's connector too");
   });
 
+  it("a harness crash lets go of the game folder a worker held in place", async () => {
+    const hold = (id: string) =>
+      api["locks.hold"]!({ project, threadId, holder: { id, title: `Writer ${id}` } }) as Promise<object>;
+    assert.ok("held" in (await hold("w1")));
+    assert.ok("busy" in (await hold("w2")), "one writer in place at a time");
+    await crashHarness(lite);
+    assert.deepEqual(lite.core.locks.holders(), []);
+    assert.ok("held" in (await hold("w2")), "the reborn loop's writer takes it");
+    await api["locks.release"]!({ project, threadId, holder: { id: "w2" } });
+  });
+
   it("a plugin call the harness's crash cut off is recorded as outcome unknown, never sent again, and the chat's next session is told to check it", async () => {
     const backend = await who();
     firstCall = [`${PLUGIN}__wait`, {}];

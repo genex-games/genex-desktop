@@ -265,6 +265,8 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   const projectDir = game?.dir ?? null;
   if (!projectDir) throw new Error(`project ${run.project} has no folder`);
   loopRun.gameFacts = factsOfGame(game);
+  // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
+  loopRun.game = { hookEvents: game?.hookEvents };
   return projectDir;
 }
 

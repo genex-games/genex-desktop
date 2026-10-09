@@ -14,6 +14,7 @@ import { hasText } from "../text.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
 import { MAX_WORKER_WAIT_S, WORKER_QUESTION_PENDING, WorkerIsolation, WorkerStopCode, WorkerTool } from "./contract.ts";
 import { commitCopy, keepWork, markWorker, removeCopy } from "./pool-merge.ts";
+import { releaseInPlace } from "./in-place.ts";
 import { ended, scopeEnd, startWorker } from "./pool-start.ts";
 import { POOL_WORDS } from "./prompts.ts";
 import { questionOf, questionText } from "./questions.ts";
@@ -268,6 +269,8 @@ async function closePool(state: PoolState): Promise<void> {
   for (const record of runningRecords(state)) await abortWorker(state, record, why, scopeEnd(state));
   const runs = [...state.runs.values()];
   await Promise.race([Promise.all(runs), state.scope.clock.sleep(SETTLE_WAIT_MS)]);
+  // The scope is over: no worker of it writes in place any more, whether or not its session has let go.
+  for (const record of state.records) await releaseInPlace(state, record);
   for (const record of state.records) {
     if (!record.worktree) continue;
     const run = state.runs.get(record.id);

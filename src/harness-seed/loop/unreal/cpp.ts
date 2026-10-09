@@ -9,6 +9,7 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import { CLIP_DETAIL, clip } from "../text.ts";
+import { cppHeldWords } from "./hold-words.ts";
 import { MINUTE_MS, minutes, SECOND_MS } from "../time.ts";
 
 /** Where adding the game's C++ module stands, as the Unreal plugin's `cpp-status` names it. */
@@ -60,7 +61,7 @@ export type CppStatus = {
  */
 export type CppSupport =
   | { available: true; module: string | null }
-  | { available: false; why: string; stillAdding?: true };
+  | { available: false; why: string; stillAdding?: true; heldWords?: string };
 
 const isRecord = (value: unknown): value is AnyRecord =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -177,7 +178,10 @@ async function startAdding(setup: CppSetup): Promise<CppSupport | null> {
     if (module) return { available: true, module };
     return isRecord(answer) && answer.started === true ? null : { available: false, why: MESSAGE.AddUnclear };
   } catch (refused) {
-    return { available: false, why: MESSAGE.AddRefused(reason((refused as Error)?.message ?? refused)) };
+    const why = MESSAGE.AddRefused(reason((refused as Error)?.message ?? refused));
+    // Genex's own hold (a lock not given) is told to the person in their words, never the agents'.
+    const heldWords = isRecord(refused) ? cppHeldWords(refused) : null;
+    return { available: false, why, ...(heldWords ? { heldWords } : {}) };
   }
 }
 
@@ -196,6 +200,6 @@ export async function ensureCppModule(setup: CppSetup, support: CppSupport, want
   if (added.available) {
     await setup.snapshot(MESSAGE.CppModule);
     await setup.say(MESSAGE.Added(setup.game));
-  } else if (!setup.stopped()) await setup.say(MESSAGE.NotAdded(added.why));
+  } else if (!setup.stopped()) await setup.say(added.heldWords ?? MESSAGE.NotAdded(added.why));
   return added;
 }

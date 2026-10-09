@@ -194,7 +194,21 @@ while one of its tools reaches the game. Folders outside the game your engine's 
 go in `"folders": [{ "path": "~/Library/Application Support/ToyEngine", "why": "The toy engine's settings" }]`:
 turning your plugin on approves them as workers' write roots. A folder is one folder from `~/` or
 `/`, never a glob, a whole personal folder (`~/Documents`, `~/Library`, …), a login or Genex's own
-data. See [Worker types](plugins.md#worker-types) and [Folders](plugins.md#folders).
+data. See [Worker types](plugins.md#worker-types) and [Folders](plugins.md#folders). Your plugin's
+page and its suggestion card in the chat name these folders before anyone turns it on.
+
+An editor one holder at a time may use is a lock:
+`"locks": [{ "id": "toy-editor", "label": "Toy editor", "per": "project", "personFirst": "editor-state" }]`,
+and a tool or connector that uses it says `"needs": ["toy-editor"]`. `personFirst` names one of
+your harness tools answering `{ "personActive": false, "unsaved": 0 }`: while the person uses the
+editor, the agents' work in it waits. Hooks run your harness tools at Genex's moments, such as
+`"hooks": [{ "on": "checkpoint.before", "tool": "save-scenes" }]`; your handler reads
+`context.hook` (`{ on, runId?, worker?, … }`, absent when called directly) and answers `{ block?,
+note?, pending?, images? }`. A handler that throws blocks a moment that can be blocked, so answer
+`note` for trouble that should not stop the work. It never changes another call's arguments, and
+git stays Genex's. An agent tool that `makes` a kind
+may name a harness tool in `ready` that answers `{ ready, note }`. See
+[Hooks](plugins.md#hooks-genexs-moments) and [Locks](plugins.md#locks-the-person-comes-first).
 
 ## 3. Panels
 

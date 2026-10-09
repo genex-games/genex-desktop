@@ -8,6 +8,7 @@
  * Genex plugin is.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
@@ -228,21 +229,20 @@ describe("the rules each kind gets", () => {
     const web = lines.filter((line) => line.includes("window.__studio"));
     assert.ok(web.length > 0, "the web game's rules");
     for (const line of web) assert.ok(line.startsWith("For the web game in `site/`: "), line);
-    const unreal = lines.filter((line) => line.includes("unreal-editor__list_toolsets"));
+    const unreal = lines.filter((line) => line.includes("the Unreal editor connector's tools"));
     assert.ok(unreal.length > 0, "the Unreal project's rules");
     for (const line of unreal) assert.doesNotMatch(line, /^For the /, line);
     const single = buildContractorBrief({ ask: ASK, engine: CLAUDE, facts: [fact(CoreFact.WebGame)] as never });
     assert.doesNotMatch(single, /^For the /m, "one kind needs no path");
   });
 
-  it("an Unreal project the game is not linked to is never built through the Unreal tools until use-project links it", () => {
+  it("an Unreal project the game is not linked to is never built through the Unreal tools until it is linked", () => {
     const brief = buildContractorBrief({
       ask: ASK,
       engine: CLAUDE,
       folderLabel: "AI Games/keep",
       facts: [fact(CoreFact.UnrealProject, "unreal")] as never,
     });
-    const useProject = toolCall(CLAUDE, "unreal__use-project");
     assert.doesNotMatch(brief, /built in Unreal Engine, in the user's open Unreal Editor, through the Unreal tools/);
     assert.doesNotMatch(
       brief,
@@ -251,8 +251,15 @@ describe("the rules each kind gets", () => {
     );
     assert.doesNotMatch(brief, /lands in its Unreal project[^\n]*through the Unreal tools/);
     assert.match(brief, /the project chosen in Genex's Unreal panel/, "the tools work on the panel's project");
-    const linkLine = brief.split("\n").find((line) => line.includes(useProject)) ?? "";
-    assert.match(linkLine, /never call them before/, "no Unreal call before the link");
+    const linkLine = brief.split("\n").find((line) => line.includes("never call them before")) ?? "";
+    assert.match(linkLine, /is linked to this game/, "no Unreal call before the link");
+    // The harness names no plugin's tool: the plugin's own skill says which one links the project.
+    assert.doesNotMatch(brief, /use-project/);
+    const manifest = JSON.parse(readFileSync("src/plugins/unreal/plugin.json", "utf8")) as {
+      skills: Array<{ name: string; text?: string }>;
+    };
+    const skill = manifest.skills.find((s) => s.name === "unreal-editor")?.text ?? "";
+    assert.match(skill, /unreal__use-project links the project in this game's folder/);
     const linked = buildContractorBrief({
       ask: ASK,
       engine: CLAUDE,

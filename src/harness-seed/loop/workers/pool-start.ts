@@ -6,8 +6,7 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { DelegateResult, WorkerType } from "../../types/host-api.d.ts";
-import { CoreFact, hasFact } from "../folder-facts.ts";
-import { GameEngine } from "../game-engine.ts";
+import { type HookScope, workerEndHooks, workerStartHooks } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
 import {
@@ -19,6 +18,8 @@ import {
   WorkerStopCode,
 } from "./contract.ts";
 import { poolWorkerId, recordWorkerFinished, recordWorkerStarted } from "./events.ts";
+import { changedBetween, gameFingerprint } from "./game-change.ts";
+import { holdInPlace, releaseInPlace } from "./in-place.ts";
 import { commitCopy, removeCopy } from "./pool-merge.ts";
 import { POOL_WORDS, workerBrief } from "./prompts.ts";
 import {
@@ -100,12 +101,10 @@ function askOf(state: PoolState, args: AnyRecord): StartAsk | { refused: string 
   return { title, task: clip(args.task.trim(), MAX_TASK_CHARS), isolation, type: typed.type, research, ...read };
 }
 
-/** Why a start that asks well still cannot start now: the pool is full, or the in-place slot is taken. */
-function roomProblem(state: PoolState, isolation: WorkerIsolation): string | null {
+/** Why a start that asks well still cannot start now: the pool is full. Whether the game folder is free, the host says (`holdInPlace`). */
+function roomProblem(state: PoolState): string | null {
   const running = runningRecords(state);
-  if (running.length >= MAX_WORKERS_AT_ONCE) return POOL_WORDS.tooMany(running.length);
-  const writer = running.find((record) => record.isolation === WorkerIsolation.Lock);
-  return isolation === WorkerIsolation.Lock && writer ? POOL_WORDS.lockBusy(writer.id) : null;
+  return running.length >= MAX_WORKERS_AT_ONCE ? POOL_WORDS.tooMany(running.length) : null;
 }
 
 /** A new worker's record. */
@@ -160,19 +159,23 @@ function copyRefusal(err: unknown): string {
 export async function startWorker(state: PoolState, args: AnyRecord): Promise<string> {
   const ask = askOf(state, args);
   if ("refused" in ask) return ask.refused;
-  const room = roomProblem(state, ask.isolation);
+  const room = roomProblem(state);
   if (room) return room;
   const record = newRecord(state, ask);
+  // Its id and room are taken at once: a start in flight beside it numbers apart and counts.
   state.records.push(record);
-  if (ask.isolation === WorkerIsolation.Copy) {
-    try {
-      await makeCopy(state, record);
-    } catch (err) {
-      state.records.splice(state.records.indexOf(record), 1);
-      return copyRefusal(err);
-    }
-    // The pool closed while the copy was being made: no session starts, and the copy, empty, goes.
-    if (state.closing) await removeCopy(state, record);
+  // A plugin of the game may hold the worker back: nothing of it is made or written.
+  const blocked = await workerStartHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
+  if (blocked) {
+    unreserve(state, record);
+    return POOL_WORDS.startHeld(blocked);
+  }
+  const refused = await prepareWorkplace(state, record, ask.isolation);
+  if (refused) {
+    // Its start was announced: so is its end, though it never ran.
+    unreserve(state, record);
+    await workerEndHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
+    return refused;
   }
   const prompt = workerBrief({
     identity: state.scope.identity,
@@ -189,32 +192,66 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
   return POOL_WORDS.started(record.id, record.isolation);
 }
 
-/**
- * The engine a worker works in when it writes in place in the game folder of one: an Unreal
- * project's. A reader or a copy works in no engine's editor.
- */
-function workingIn(state: PoolState, record: WorkerRecord): GameEngine | undefined {
-  if (record.isolation !== WorkerIsolation.Lock) return undefined;
-  return hasFact(state.scope.identity.facts, CoreFact.UnrealProject) ? GameEngine.Unreal : undefined;
+/** A worker that did not start leaves the pool's records. */
+function unreserve(state: PoolState, record: WorkerRecord): void {
+  const at = state.records.indexOf(record);
+  if (at >= 0) state.records.splice(at, 1);
 }
 
-/** A worker's start on the chat's log, under its pool id. */
+/**
+ * Where the worker works, made ready: the game folder held for a writer in place (and how it
+ * stood then: its end says whether it changed, `recordEnd`), or its copy. Why not, or null.
+ */
+async function prepareWorkplace(
+  state: PoolState,
+  record: WorkerRecord,
+  isolation: WorkerRecord["isolation"],
+): Promise<string | null> {
+  if (isolation === WorkerIsolation.Lock) {
+    const held = await holdInPlace(state, record);
+    if ("refused" in held) return held.refused;
+    record.where = held.where;
+    record.gameTree = await gameFingerprint(state.scope.ctx, state.scope.project);
+  }
+  if (isolation === WorkerIsolation.Copy) {
+    try {
+      await makeCopy(state, record);
+    } catch (err) {
+      return copyRefusal(err);
+    }
+    // The pool closed while the copy was being made: no session starts, and the copy, empty, goes.
+    if (state.closing) await removeCopy(state, record);
+  }
+  return null;
+}
+
+/** A pool's moment: its game, chat and run, or the chat turn it serves. */
+function momentScope(state: PoolState): HookScope {
+  const { project, threadId, runId, turn } = state.scope;
+  if (runId) return { project, threadId, runId };
+  return { project, threadId, ...(turn ? { turn } : {}) };
+}
+
+/** A worker as Genex's moments name it. */
+const workerOf = (record: WorkerRecord) => ({ id: record.id, title: record.title, type: record.type });
+
+/** A worker's start on the chat's log, under its pool id: where it works in place, when it holds a plugin's lock. */
 function recordStart(state: PoolState, record: WorkerRecord): Promise<void> {
-  const { id, title, isolation, task, type } = record;
-  const engine = workingIn(state, record);
-  const worker = { workerId: poolWorkerId(id), title, isolation, task, type, ...(engine ? { in: engine } : {}) };
+  const { id, title, isolation, task, type, where } = record;
+  const worker = { workerId: poolWorkerId(id), title, isolation, task, type, ...(where ? { where } : {}) };
   return recordWorkerStarted(eventScope(state, record), worker, state.scope.clock.now());
 }
 
 /**
  * A worker's end on the chat's log: how it ended, why, its first sentence, whether its copy holds
- * work, and whether it finished work it wrote in place in the game folder (in the game already).
+ * work, and whether it finished work it wrote in place in the game folder (in the game already:
+ * only when the folder changed while it worked).
  */
 function recordEnd(state: PoolState, record: WorkerRecord, summary: string | null): Promise<void> {
   const end = END_OF[record.state];
   if (!end) return Promise.resolve();
   const delivered = record.isolation === WorkerIsolation.Copy && Boolean(record.commit);
-  const inGame = record.isolation === WorkerIsolation.Lock && end === WorkerEnd.Done;
+  const inGame = record.isolation === WorkerIsolation.Lock && end === WorkerEnd.Done && record.changedGame === true;
   const worker = { workerId: poolWorkerId(record.id), title: record.title, state: end, stoppedBecause: record.error };
   const ended = { ...worker, stopCode: record.stopCode ?? null, summary, delivered, inGame };
   return recordWorkerFinished(eventScope(state, record), ended, state.scope.clock.now());
@@ -303,7 +340,14 @@ export async function ended(
   record.stopCode = next === WorkerState.Done ? null : code;
   record.question = null;
   record.endedAt = state.scope.clock.now();
+  // Before the folder is free for another writer: did this one change it?
+  if (record.isolation === WorkerIsolation.Lock && next === WorkerState.Done)
+    record.changedGame = changedBetween(record.gameTree, await gameFingerprint(state.scope.ctx, state.scope.project));
   await persist(state);
+  // The game folder is free for the next writer in place, in any pool of the game.
+  await releaseInPlace(state, record);
   await recordEnd(state, record, summary);
+  if (END_OF[record.state])
+    await workerEndHooks(state.scope.ctx, state.scope.game, momentScope(state), workerOf(record));
   state.scope.onEnded?.(record);
 }

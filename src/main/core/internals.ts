@@ -28,6 +28,8 @@ import type { CutOffCall } from "./cut-off-calls.ts";
 import type { UnsavedFile } from "./unsaved-files.ts";
 import type { DelegationService } from "./delegation.ts";
 import type { StudioSettings } from "./settings.ts";
+import type { HookService } from "./plugin-hooks.ts";
+import type { LockService } from "./plugin-locks.ts";
 import type { PluginToolService } from "./plugin-tools.ts";
 import type { PreviewService } from "./previews.ts";
 import type { RecoveryService } from "./recovery.ts";
@@ -95,6 +97,8 @@ export interface WorkInFlight {
     AbortController,
     { project?: string | null; threadId?: string; outlivesTurn?: boolean }
   >;
+  /** Genex's moments the harness asked for, in flight, by the game and chat they answer to (`moment-stops.ts`). */
+  readonly activeMoments: Map<AbortController, { project: string; threadId?: string }>;
   /**
    * Plugin and connector calls cut off before they answered (outcome unknown), by the thread that
    * made them, until that thread's next delegated session is told of them (`cut-off-calls.ts`).
@@ -277,6 +281,10 @@ export interface CoreServices {
   readonly selfImprovement: SelfImprovementService;
   readonly selfEditGate: SelfEditGateService;
   readonly pluginTools: PluginToolService;
+  /** The locks plugin tools and connectors wait their turn for, the person first (`plugin-locks.ts`). */
+  readonly locks: LockService;
+  /** Genex's moments and the plugin steps they run (`plugin-hooks.ts`). */
+  readonly hooks: HookService;
   readonly conversation: ConversationService;
   readonly assets: AssetService;
   readonly rewind: ChatRewindService;
@@ -305,6 +313,7 @@ export function idleWork(): WorkInFlight {
   return {
     activeCompletions: new Map(),
     activeConnectorCalls: new Map(),
+    activeMoments: new Map(),
     cutOffCalls: new Map(),
     unsavedFiles: new Map(),
     activeDelegations: new Map(),

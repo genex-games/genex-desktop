@@ -76,6 +76,7 @@ import {
 import { ensureFactIgnoreRules, ensureIgnoreRules, ignoreRulesToWrite, nestedRepos } from "./nested-repos.ts";
 import { isBelow, isInside, samePath, throughClaudeFolder, toPosixRelative } from "./paths.ts";
 import { detectFacts } from "./project-facts.ts";
+import type { HookEvent } from "../shared/plugin-hooks.ts";
 import {
   declaresDependencies,
   detectProjectShape,
@@ -415,6 +416,8 @@ export class GameWorkspaces {
   readonly #factRules: () => readonly SourcedFactRule[];
   /** The enabled plugins' `workspace` and `assets` sections, read at each write of the rules. */
   readonly #workspaceSections: () => readonly PluginWorkspace[];
+  /** The moments the enabled plugins hook for a game of a kind, read at each description. */
+  readonly #hookEvents: (game: GameKind) => readonly HookEvent[];
   /** Real paths of games whose starter was found changed: never stamped again in this app run. */
   readonly #touched = new Set<string>();
 
@@ -427,6 +430,7 @@ export class GameWorkspaces {
     homeDir?: string;
     factRules?: () => readonly SourcedFactRule[];
     workspaceSections?: () => readonly PluginWorkspace[];
+    hookEvents?: (game: GameKind) => readonly HookEvent[];
   }) {
     this.root = options.root;
     this.templateDir = options.templateDir;
@@ -436,6 +440,7 @@ export class GameWorkspaces {
     this.homeDir = options.homeDir ?? os.homedir();
     this.#factRules = options.factRules ?? (() => []);
     this.#workspaceSections = options.workspaceSections ?? (() => []);
+    this.#hookEvents = options.hookEvents ?? (() => []);
   }
 
   dirFor(name: string): string {
@@ -955,6 +960,7 @@ export class GameWorkspaces {
     const record = { engine, portedFrom, scaffoldStamp: presentation?.scaffoldStamp };
     // A folder that can't be read is still listed: it has no facts and is of no kind Genex can name.
     const { facts, holds } = await this.#kind(dir, record).catch(unreadableKind);
+    const hookEvents = this.#hookEvents({ facts, ...(holds ? { holds } : {}) });
     return {
       name,
       dir,
@@ -972,6 +978,7 @@ export class GameWorkspaces {
       ...(engine ? { engine } : {}),
       facts,
       ...(holds ? { holds } : {}),
+      ...(hookEvents.length > 0 ? { hookEvents: [...hookEvents] } : {}),
       ...(portedFrom.length > 0 ? { portedFrom } : {}),
       web: hasFact(facts, CoreFact.WebGame, "."),
       ...(presentation?.scaffoldStamp ? { scaffoldStamp: presentation.scaffoldStamp } : {}),

@@ -6,7 +6,10 @@ import type { GameKind } from "../../shared/project-facts.ts";
 import { HostMethod, type HarnessHostHandlers } from "../../shared/harness-api.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { CONNECTOR_ARGS_CAP } from "../core/plugin-tools.ts";
+import { IN_PLACE_LOCK, isLockRefused, workerHolder } from "../core/plugin-locks.ts";
+import { isWorkerId, isWorkerTitle, WORKER_NAMING } from "../../shared/workers.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
+import { kindsWithReadiness } from "../core/kind-readiness.ts";
 import { pluginsFind, pluginsSuggest } from "../core/project-tools.ts";
 
 /** Why a plugin or connector call from the harness is refused. */
@@ -16,6 +19,8 @@ const MESSAGE = {
   argsNotJson: "Connector arguments must be JSON",
   argsTooLarge: "Connector arguments are too large",
   unknownConnectorTool: "Unknown connector tool",
+  unknownGame: "No such game",
+  badHolder: WORKER_NAMING,
 } as const;
 
 /** The engine the local harness's own plugin calls are recorded under. */
@@ -53,14 +58,61 @@ async function kindOf(core: StudioCore, project: string | null | undefined): Pro
   return core.games.kindOf(project).catch(() => ({ facts: [] }));
 }
 
+/** The worker a lock is held for, as the harness names it; refused unless its id and title are plain. */
+function holderOf(
+  holder: { id?: unknown; title?: unknown } | undefined,
+  titled: boolean,
+): { id: string; title: string } {
+  const id = holder?.id;
+  const title = holder?.title;
+  if (!isWorkerId(id) || (titled && !isWorkerTitle(title))) throw new Error(MESSAGE.badHolder);
+  return { id, title: typeof title === "string" ? title : "" };
+}
+
+/**
+ * A worker writing in place starts: Genex's one writer in place in the game folder, and the
+ * per-game locks of the plugins that are on that its tools need, all at once or none, without
+ * waiting and without asking the person (its own calls do).
+ */
+async function holdInPlace(
+  core: StudioCore,
+  x: CoreInternals,
+  p: { project: string; threadId: string; runId?: string | null; holder: { id: string; title: string } },
+): Promise<{ held: true; labels: string[] } | { busy: string }> {
+  const holder = holderOf(p.holder, true);
+  // A game of any kind: an Unreal game's folder holds no web page.
+  await core.games.kindOf(p.project).catch(() => {
+    throw new Error(MESSAGE.unknownGame);
+  });
+  const binding = await requirePluginBinding(core, p.project, p.threadId);
+  const plugins = core.plugins.locksFor(await kindOf(core, p.project));
+  try {
+    await x.locks.hold([IN_PLACE_LOCK, ...plugins], {
+      binding,
+      waitMs: 0,
+      holder: workerHolder({ threadId: p.threadId, runId: p.runId, id: holder.id }),
+      title: holder.title,
+      personFirst: false,
+      forHarness: true,
+    });
+  } catch (error) {
+    if (isLockRefused(error)) return { busy: error.message };
+    throw error;
+  }
+  return { held: true, labels: plugins.map(({ lock }) => lock.label) };
+}
+
 export function pluginsRpc(core: StudioCore, x: CoreInternals) {
   return {
     [HostMethod.PluginsPreflightMultiplayer]: (p) => preflightMultiplayer(core, p.project, p.threadId),
     // One snapshot, so the local harness's tools and their guidance describe the same plugins,
     // those that reach the game it serves.
     [HostMethod.PluginsTools]: async (p = {}) => {
-      const { tools, guidance, kinds } = core.plugins.snapshot(await kindOf(core, p?.project));
-      return { tools, guidance, kinds, revision: x.toolRegistryRevision };
+      const game = await kindOf(core, p?.project);
+      const { tools, guidance, kinds } = core.plugins.snapshot(game);
+      // A game with no kind yet: the engine card offers each kind as its plugin says it stands.
+      const offered = await kindsWithReadiness(core, p?.project, game, kinds);
+      return { tools, guidance, kinds: offered, revision: x.toolRegistryRevision };
     },
     // The kinds of worker a lead may start for this game: those the enabled plugins declare whose
     // tools reach it, read by its facts as its plugin tools are.
@@ -105,6 +157,13 @@ export function pluginsRpc(core: StudioCore, x: CoreInternals) {
       const game = await kindOf(core, binding.project);
       if (!core.mcp.reaches(connector, game.facts, game.holds)) throw new Error(MESSAGE.unknownConnectorTool);
       return x.pluginTools.invokeConnectorTool(p.name, args, binding);
+    },
+    [HostMethod.LocksHold]: (p) => holdInPlace(core, x, p),
+    // Only the worker's own locks go: another holder's, or a holder that holds nothing, change nothing.
+    [HostMethod.LocksRelease]: async (p) => {
+      const holder = holderOf(p.holder, false);
+      x.locks.releaseHolder(workerHolder({ threadId: p.threadId, runId: p.runId, id: holder.id }));
+      return true;
     },
   } satisfies Partial<HarnessHostHandlers>;
 }

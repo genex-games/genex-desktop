@@ -90,6 +90,40 @@ function appendedOf(params: Record<string, unknown>): Appended[] {
   }));
 }
 
+/**
+ * The host's one writer in place per game, shared by every pool of it (`locks.hold`/`locks.release`):
+ * a writer is known by the run or chat that started it and its id, and is answered the labels of
+ * the plugin locks the game's plugins need (`labels`).
+ */
+export function fakeLocks(labels: readonly string[] = []) {
+  const held = new Map<string, { key: string; title: string }>();
+  const keyOf = (p: Record<string, unknown>) =>
+    `${String(p.runId ?? p.threadId)}:${String((p.holder as { id?: unknown })?.id)}`;
+  const releases: string[] = [];
+  return {
+    held,
+    releases,
+    handlers: {
+      [HostMethod.LocksHold]: (p: Record<string, unknown>) => {
+        const project = String(p.project);
+        const writer = held.get(project);
+        if (writer && writer.key !== keyOf(p)) return { busy: `"${writer.title}" is working in the game folder now.` };
+        held.set(project, { key: keyOf(p), title: String((p.holder as { title?: unknown })?.title) });
+        return { held: true, labels: [...labels] };
+      },
+      [HostMethod.LocksRelease]: (p: Record<string, unknown>) => {
+        releases.push(keyOf(p));
+        const project = String(p.project);
+        if (held.get(project)?.key === keyOf(p)) held.delete(project);
+        return true;
+      },
+    },
+  };
+}
+
+/** A host's in-place table, as `fakeLocks` makes one. */
+export type FakeLocks = ReturnType<typeof fakeLocks>;
+
 /** The fake host: real git in the repository and its copies, sessions the test ends, and the chat's log. */
 export function poolHost(
   repo: string,
@@ -103,8 +137,11 @@ export function poolHost(
     abort?: (params: Record<string, unknown>, end: () => void) => { aborted: number };
     /** How the host answers a record the pool appends: kept (the default), or as the test says. */
     append?: (params: Record<string, unknown>) => unknown;
+    /** The host's writer in place (shared between hosts of one game), or `false` for a host without one. */
+    locks?: FakeLocks | false;
   } = {},
 ) {
+  const locks = options.locks === false ? null : (options.locks ?? fakeLocks());
   const sessions: Session[] = [];
   const artifacts = new Map<string, unknown>();
   const appended: Appended[] = [];
@@ -163,6 +200,7 @@ export function poolHost(
         end();
         return { aborted: 1 };
       },
+      ...(locks ? locks.handlers : {}),
     },
   });
   /** The latest session of a worker. */
@@ -171,7 +209,7 @@ export function poolHost(
     assert.ok(found, `${id} has a session`);
     return found;
   };
-  return { recorder, sessions, artifacts, appended, log, sessionOf };
+  return { recorder, sessions, artifacts, appended, log, sessionOf, locks };
 }
 
 /** The fake host of one test. */
@@ -183,6 +221,8 @@ export type PoolOptions = {
   runId?: string;
   ask?: string;
   facts?: readonly FactRef[];
+  /** The moments the game's plugins hook, as its descriptor lists them (absent: none, as a web game's). */
+  hookEvents?: readonly string[];
 };
 
 /** A pool for the chat turn (or, with `runId`, a run), on the fake host. */
@@ -197,6 +237,7 @@ export function chatPool(host: Host, repo: string, turnOrOptions: string | PoolO
     ...(options.ask === undefined ? {} : { ask: options.ask }),
     engine: CLAUDE,
     gameDir: repo,
+    ...(options.hookEvents ? { game: { hookEvents: options.hookEvents } } : {}),
     leadFolder: { project: PROJECT },
     identity: { folderLabel: "AI Games/garden", facts: options.facts ?? WEB_FACTS },
     clock: fastClock(),

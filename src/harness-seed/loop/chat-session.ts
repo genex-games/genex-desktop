@@ -10,7 +10,6 @@ import { handoverSection } from "./session-compact-prompts.ts";
 import { toolCall } from "./model-roles.ts";
 import { EventKind, InterviewMode, RunEvent } from "./run-events.ts";
 import { engineChoiceRule, unrealRules, unrealWorkHere, unrealWorkspaceRule } from "./unreal-prompts.ts";
-import type { UnrealOnComputer } from "./unreal/editor-wait.ts";
 import { TRANSCRIPT_CHARS, TRANSCRIPT_MESSAGES } from "./brief-window.ts";
 import {
   CoreFact,
@@ -27,7 +26,6 @@ import {
   factPrefix,
   ownKindRules,
   pendingKindRule,
-  UNREAL_KIND,
   unknownKindRules,
   unrealWithoutPlugin,
 } from "./project-prompts.ts";
@@ -390,10 +388,10 @@ function factRules(
   engine: string | undefined,
   game: GameBuild,
   folder: FolderShape,
-  { offered, asked, unreal }: { offered: readonly PluginKindOffer[]; asked: boolean; unreal: UnrealOnComputer | null },
+  { offered, asked }: { offered: readonly PluginKindOffer[]; asked: boolean },
 ): string[] {
   if (kindUnknown(game)) return unknownKindRules(engine, game.holds);
-  if (kindPending(game)) return [...pendingKindRule(engine, offered, unreal, game.holds, asked), TEMPLATE_RULE];
+  if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), TEMPLATE_RULE];
   const several = game.facts.length > 1;
   return game.facts.flatMap((fact) => {
     const rules = rulesOfFact(engine, fact, game, folder);
@@ -467,7 +465,7 @@ const RESUME_BUILD =
  *   launch?: LaunchGrant | null,
  *   afterLoopRun?: string | null,
  *   engineChoice?: boolean,
- *   unrealEngine?: UnrealOnComputer | null,
+ *   unrealEngine?: unknown,
  *   compacted?: string | null,
  *   fresh?: boolean,
  *   facts?: FactRef[] | null,
@@ -499,8 +497,6 @@ export function buildContractorBrief({
   afterLoopRun = null,
   /** A new game while the Unreal plugin is on: the user picks the web or Unreal first (unreal-prompts.ts). */
   engineChoice = false,
-  /** What this computer has of Unreal, for the engine question's Unreal option (unreal/editor-wait.ts); null: unknown. */
-  unrealEngine = null,
   /** The handover the session before this one wrote when the chat was compacted (session-compact.ts). */
   compacted = null,
   /** Nothing has been made in this game yet: the studio's template, as it was made. */
@@ -531,7 +527,8 @@ export function buildContractorBrief({
   launch?: LaunchGrant | null;
   afterLoopRun?: string | null;
   engineChoice?: boolean;
-  unrealEngine?: UnrealOnComputer | null;
+  /** Read no more, kept for a caller kept from before: each kind's readiness comes with the kinds (`ready`, `note`). */
+  unrealEngine?: unknown;
   compacted?: string | null;
   fresh?: boolean;
   facts?: readonly FactRef[] | null;
@@ -555,13 +552,9 @@ export function buildContractorBrief({
   // The rules a build follows depend on whose game this is — every run brief already carries
   // the shape (autopilot.ts, director.ts, facet-loop.ts); a chat build used to carry none.
   // A folder with no kind yet hears of the kinds on offer on every message; the card only when bridged.
-  const choice = {
-    offered: engineChoice ? offeredKinds(kinds) : kinds,
-    asked: engineChoice,
-    unreal: unrealEngine,
-  };
+  const choice = { offered: kinds, asked: engineChoice };
   const rules = [
-    ...engineQuestion(engine, game, engineChoice, unrealEngine),
+    ...engineQuestion(engine, game, engineChoice, kinds),
     ...factRules(engine, game, { ownShape, shape, contractMissing }, choice),
     ...contractorRules(engine, game),
   ];
@@ -596,23 +589,19 @@ export function buildContractorBrief({
     .join("\n");
 }
 
-/** The kinds the question card offers: the host's, or the Unreal plugin's alone when it lists none. */
-function offeredKinds(kinds: readonly PluginKindOffer[]): readonly PluginKindOffer[] {
-  return kinds.length > 0 ? kinds : [UNREAL_KIND];
-}
-
 /**
  * The engine question, first, for a new web game of a caller that names the engine and not the
- * facts; nothing otherwise (a folder with no kind yet is asked by its facts' rules).
+ * facts, offering the kinds on offer (none: no question); nothing otherwise (a folder with no kind
+ * yet is asked by its facts' rules).
  */
 function engineQuestion(
   engine: string | undefined,
   game: GameBuild,
   engineChoice: boolean,
-  unreal: UnrealOnComputer | null,
+  kinds: readonly PluginKindOffer[],
 ): string[] {
   const asks = engineChoice && game.legacy && game.gameEngine === GameEngine.Web;
-  return asks ? [engineChoiceRule(engine, unreal)] : [];
+  return asks ? [engineChoiceRule(engine, null, kinds)] : [];
 }
 
 /**

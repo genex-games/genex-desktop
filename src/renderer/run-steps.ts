@@ -438,9 +438,14 @@ const WORKER_STATE_WORD: Partial<Record<StepState, string>> = {
   [StepState.NotInBuild]: WORKER_WORDS.stopped,
 };
 
-/** Whether a worker works in the game folder of an engine other than the web's. */
-const worksInEngine = (worker: WorkerInfo): worker is WorkerInfo & { in: GameEngine } =>
-  worker.in !== null && worker.in !== GameEngine.Web;
+/**
+ * Where a worker works in place, in words: the label of the lock it holds, else (an older record)
+ * the engine other than the web's whose game folder it works in; null for neither.
+ */
+function workingPlace(worker: WorkerInfo): string | null {
+  if (worker.where) return worker.where;
+  return worker.in !== null && worker.in !== GameEngine.Web ? GAME_ENGINE_WORDS[worker.in] : null;
+}
 
 /** Whether a part stopped short of its end for a reason worth saying; one that finished its work has none. */
 export const stoppedShort = (reason: string | null | undefined): reason is string =>
@@ -463,8 +468,10 @@ export function workerStopWords(worker: WorkerInfo): string | null {
 function workerWord(step: Step): string | null {
   const { worker } = step;
   if (!worker) return null;
-  if (step.state === StepState.Building)
-    return worksInEngine(worker) ? WORKER_WORDS.workingIn(GAME_ENGINE_WORDS[worker.in]) : WORKER_WORDS.working;
+  if (step.state === StepState.Building) {
+    const place = workingPlace(worker);
+    return place ? WORKER_WORDS.workingIn(place) : WORKER_WORDS.working;
+  }
   const rejected = worker.verdict === WorkerVerdict.Rejected;
   if (step.state === StepState.NotInBuild && rejected) return WORKER_WORDS.notUsed;
   return WORKER_STATE_WORD[step.state] ?? null;

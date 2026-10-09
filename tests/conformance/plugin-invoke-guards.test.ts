@@ -137,6 +137,8 @@ it("a run's plugin call answers to the Plan mode of the chat the run was started
       cutOffCalls: new Map(),
       planning: async (thread) => thread === parent,
       bypassing: async () => false,
+      locks: core.locks,
+      hooks: core.hooks,
     });
     const ways: Array<[string, Partial<PluginCallContext>]> = [
       ["a worker's attribution", { attribution: { runId: "run-p", agentId: "w1" } }],

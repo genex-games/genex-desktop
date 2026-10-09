@@ -26,6 +26,8 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginContext } from "../../plugin-sdk/index.d.ts";
+import { type HookAnswer, type HookContext, HookEvent } from "../../shared/plugin-hooks.ts";
+import { agentPlaying, forgetAgentPlay } from "./agent-play.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { atomicWriteJson, isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
@@ -50,8 +52,18 @@ import {
   userHome,
 } from "./editor-log.ts";
 import { BUILD_TOOLSET, CaptureTool, landedShot } from "./editor-captures.ts";
+import {
+  endAtMoment,
+  healthAtMoment,
+  type MomentOps,
+  openForRun,
+  reopenAtMoment,
+  saveAtMoment,
+} from "./editor-moments.ts";
 import { createReopenTools, type ProcessEnv } from "./editor-reopen.ts";
 import type { EditorRestart } from "./editor-restart.ts";
+import { EditorStart } from "./editor-status.ts";
+import { inRun, logAnswer, probeAnswer, shotsAnswer } from "./hook-answers.ts";
 import { HELPER_TOOLSET } from "./editor-port.ts";
 import {
   createEditorQueue,
@@ -79,7 +91,7 @@ import { type CompileJobs, compileWaitMs, cppFingerprint, createCompileJobs, fre
 import { parsePartManifest } from "./part-manifest.ts";
 import { type PartCheck, parsePartTest, readPartCheck } from "./part-test.ts";
 import { readBlueprintGuide } from "./blueprint-guide.ts";
-import { PROJECT_EXPORT, readProjectBlueprints } from "./project-blueprints.ts";
+import { PROJECT_EXPORT, projectExported, readProjectBlueprints } from "./project-blueprints.ts";
 import { checkPython, type PythonCpp, PythonProblemCode, unrealPython } from "./python-check.ts";
 import { loadReference, parseReference, referencePaths, storeReference } from "./reference-store.ts";
 import {
@@ -187,6 +199,10 @@ export const LeadLoopToolName = {
 } as const;
 export type LeadLoopToolName = (typeof LeadLoopToolName)[keyof typeof LeadLoopToolName];
 
+/** The Unreal plugin's harness tools for Genex's moments only, by their names after `unreal__`. */
+export const MomentToolName = { OpenForRun: "open-for-run" } as const;
+export type MomentToolName = (typeof MomentToolName)[keyof typeof MomentToolName];
+
 /** The most node types one lookup answers. */
 const MAX_FOUND_NODES = 40;
 const BASES: ReadonlySet<string> = new Set(Object.values(BaseClass));
@@ -223,6 +239,7 @@ const MESSAGE = {
     `${id}: a check is {"tag": "genex:…", "exists": true or false} or {"player": field, "atLeast" and/or "atMost": number}.`,
   ChecksRefused: (problems: string[]) => `play-check queued nothing:\n${problems.join("\n")}`,
   NotAnswering: "This game's Unreal isn't answering, so Genex saved nothing.",
+  CantTellUse: "This game's Unreal runs but isn't answering, so Genex can't tell whether you are using it.",
   NoSaveAnswer: "The Genex editor helper didn't answer save_all with what it saved.",
   StillPlaying: "This game's Unreal is still in a play session after Genex asked it to stop, so Genex saved nothing.",
   NoLinkedProject: "This game isn't linked to an Unreal project.",
@@ -262,12 +279,19 @@ const HERO_SHOT_WIDTH = 960;
 const HERO_SHOT_HEIGHT = 540;
 const HERO_SHOT_DELAY_S = 2;
 const MAX_HERO_SHOTS = 8;
+/** The start of the hero cameras' labels Genex's skill has the agent place (`gx.shot_camera`). */
+const HERO_CAMERA_PREFIX = "GX_Shot_";
 /** No still is asked for once a hero-shots call has run this long: its caller's save point is waiting. */
 const HERO_SHOTS_WAIT_MS = MINUTE_MS;
 /** A hero cameras' prefix: the start of a label, in label characters. */
 const HERO_PREFIX = /^[A-Za-z0-9_]{1,32}$/;
 /** How many log offsets `log-errors` remembers the log's file of, to tell a log Unreal started anew. */
 const MAX_LOG_PLACES = 256;
+/** How many games' log marks `log-errors` keeps at once. */
+const MAX_LOG_MARKS = 256;
+/** How many new log lines a checkpoint's note counts. */
+const MAX_MOMENT_LOG_LINES = 20;
+
 /** The Genex editor helper this plugin ships, beside its backend: in the build and in the source. */
 const SHIPPED_HELPER = path.join(path.dirname(fileURLToPath(import.meta.url)), HELPER_FOLDER);
 
@@ -311,6 +335,8 @@ export type LoopToolsDeps = {
   setup?(storage: string): SetupOptions;
   /** Updates a project's Genex editor helper; `updateHelper` unless a test stands in. */
   updateHelper?: typeof updateHelper;
+  /** Where Genex's own start of the game's set-up project stands (the toolbar's Starting); null without one. */
+  starting?(storage: string, game: string): Promise<EditorStart | null>;
 };
 
 type Handler = (args: Record<string, unknown>, context: PluginContext, storage: string) => Promise<unknown>;
@@ -578,6 +604,7 @@ export function createLoopTools(deps: LoopToolsDeps) {
   const cpp = createCppTools(deps);
   const set: SetDeps = { ...deps, setup: deps.setup ?? systemSetup() };
   const reopen = createReopenTools(set);
+  const moments = momentTools(set, queueFor, reopen);
 
   const handlers: Record<LoopToolName, Handler> = {
     [LoopToolName.CheckPart]: async (args, context, storage) => {
@@ -630,13 +657,13 @@ export function createLoopTools(deps: LoopToolsDeps) {
       findNodes(deps, storage, args, await templateBlueprints(deps, storage, context.project)),
     [LoopToolName.CppStatus]: (_args, context, storage) => cpp.status(storage, game(context)),
     [LoopToolName.AddCppModule]: (_args, context, storage) => cpp.add(storage, game(context)),
-    [LoopToolName.ReopenEditor]: (_args, context, storage) => reopen.reopen(storage, game(context)),
-    [LoopToolName.EditorState]: (_args, context, storage) => reopen.state(storage, game(context)),
+    ...restartHandlers(reopen, moments),
   };
   const every: Record<AnyLoopToolName, Handler> = {
     ...handlers,
-    ...liveHandlers(set, queueFor, reopen),
-    ...leadHandlers(set),
+    ...liveHandlers(set, queueFor, reopen, moments),
+    ...leadHandlers(set, moments),
+    [MomentToolName.OpenForRun]: async (_args, context, storage) => openForRun(moments.ops(context, storage)),
   };
   return {
     has: (name: string): name is AnyLoopToolName => Object.hasOwn(every, name),
@@ -645,8 +672,8 @@ export function createLoopTools(deps: LoopToolsDeps) {
   };
 }
 
-/** Any of the Loop's tools: the part tools, the harness's and the lead's. */
-export type AnyLoopToolName = LoopToolName | LiveLoopToolName | LeadLoopToolName;
+/** Any of the Loop's tools: the part tools, the harness's, the lead's and the moments' own. */
+export type AnyLoopToolName = LoopToolName | LiveLoopToolName | LeadLoopToolName | MomentToolName;
 
 /** The tools' dependencies with setup's chosen: a test's, or this computer's. */
 type SetDeps = LoopToolsDeps & { setup(storage: string): SetupOptions };
@@ -673,52 +700,185 @@ async function linkedOrThrow(deps: LoopToolsDeps, storage: string, game: string)
   return project;
 }
 
+/** The reopen job's tools: reopening Unreal and where it stands, each answering a moment in its own terms. */
+function restartHandlers(
+  reopen: ReturnType<typeof createReopenTools>,
+  moments: MomentTools,
+): Pick<Record<LoopToolName, Handler>, typeof LoopToolName.ReopenEditor | typeof LoopToolName.EditorState> {
+  return {
+    [LoopToolName.ReopenEditor]: (_args, context, storage) =>
+      context.hook
+        ? reopenAtMoment(moments.ops(context, storage), context.hook)
+        : reopen.reopen(storage, gameOf(context)),
+    [LoopToolName.EditorState]: (_args, context, storage) =>
+      context.hook
+        ? healthAtMoment(moments.ops(context, storage), context.hook)
+        : reopen.state(storage, gameOf(context)),
+  };
+}
+
 /** The lead's save and restart tools over the part tools' queue and reopen jobs. */
 function liveHandlers(
   deps: SetDeps,
   queueFor: (storage: string) => EditorQueue,
   reopen: ReturnType<typeof createReopenTools>,
+  moments: MomentTools,
 ): Record<LiveLoopToolName, Handler> {
-  const readLog = createLogReader(deps);
   return {
     [LiveLoopToolName.PlayCheck]: async (args, context, storage) => {
       const job = { game: gameOf(context), checks: readPlayChecks(args.checks), ownerWaitMs: PLAY_CHECK_OWNER_WAIT_MS };
       return { id: queueFor(storage).enqueuePlayCheck(job) };
     },
-    [LiveLoopToolName.SaveAll]: async (_args, context, storage) => saveAll(deps, storage, gameOf(context)),
-    [LiveLoopToolName.LogErrors]: async (args, context, storage) => readLog(storage, gameOf(context), sinceOf(args)),
-    [LiveLoopToolName.EndEditor]: async (_args, context, storage) => reopen.end(storage, gameOf(context)),
+    [LiveLoopToolName.SaveAll]: async (_args, context, storage) =>
+      context.hook
+        ? saveAtMoment(moments.ops(context, storage), context.hook)
+        : saveAll(deps, storage, gameOf(context)),
+    [LiveLoopToolName.LogErrors]: async (args, context, storage) =>
+      context.hook
+        ? moments.log(storage, gameOf(context), context.hook)
+        : moments.readLog(storage, gameOf(context), sinceOf(args)),
+    [LiveLoopToolName.EndEditor]: async (_args, context, storage) =>
+      context.hook ? endAtMoment(moments.ops(context, storage)) : reopen.end(storage, gameOf(context)),
     [LiveLoopToolName.UpdateHelper]: async (_args, context, storage) =>
       updateGameHelper(deps, storage, gameOf(context)),
   };
 }
 
-/** The lead's tools: the editor's activity, and the hero cameras' stills. */
-function leadHandlers(deps: SetDeps): Record<LeadLoopToolName, Handler> {
+/** The lead's tools: the editor's activity (the editor lock's probe), and the hero cameras' stills. */
+function leadHandlers(deps: SetDeps, moments: MomentTools): Record<LeadLoopToolName, Handler> {
   return {
-    [LeadLoopToolName.EditorActivity]: async (_args, context, storage) =>
-      editorActivity(deps, storage, gameOf(context)),
+    [LeadLoopToolName.EditorActivity]: async (_args, context, storage) => moments.probe(storage, gameOf(context)),
     [LeadLoopToolName.HeroShots]: async (args, context, storage) =>
-      heroShots(deps, storage, gameOf(context), heroAsk(args)),
+      context.hook
+        ? moments.shots(storage, gameOf(context), context.hook)
+        : heroShots(deps, storage, gameOf(context), heroAsk(args)),
+  };
+}
+
+/** The moments' tools: one game's editor operations, the log's per-game marks, the probe and the stills. */
+type MomentTools = ReturnType<typeof momentTools>;
+
+/**
+ * What the handlers do at Genex's moments, over the part tools' queue and reopen jobs: each game's
+ * editor operations (`editor-moments.ts`), where each game's log stood at its run's start or last
+ * checkpoint (lost with a backend restart: the next checkpoint reads from then), the editor lock's
+ * probe, and the hero cameras' stills as pictures.
+ */
+function momentTools(
+  deps: SetDeps,
+  queueFor: (storage: string) => EditorQueue,
+  reopen: ReturnType<typeof createReopenTools>,
+) {
+  const readLog = createLogReader(deps);
+  const marks = new Map<string, number>();
+  const mark = (game: string, offset: number) => {
+    if (!marks.has(game) && marks.size >= MAX_LOG_MARKS) marks.delete(marks.keys().next().value ?? "");
+    marks.set(game, offset);
+  };
+  const log = async (storage: string, game: string, hook: HookContext): Promise<HookAnswer> => {
+    if (hook.on !== HookEvent.RunPrepare && hook.on !== HookEvent.CheckpointBefore) return {};
+    const since = hook.on === HookEvent.CheckpointBefore ? marks.get(game) : undefined;
+    const read = await readLog(storage, game, since).catch(() => null);
+    if (!read) return {};
+    mark(game, read.offset);
+    return since === undefined ? {} : logAnswer(read.lines.slice(0, MAX_MOMENT_LOG_LINES), hook);
+  };
+  // Only a run's save points carry thumbnails: a chat's checkpoint would capture stills nobody reads.
+  const shots = async (storage: string, game: string, hook: HookContext): Promise<HookAnswer> => {
+    if (!inRun(hook)) return {};
+    if (!(await deps.editorAnswers(storage, game).catch(() => false))) return {};
+    return shotsAnswer((await heroShots(deps, storage, game, heroAsk({}))).shots);
+  };
+  const probe = async (storage: string, game: string) => {
+    if (!(await deps.editorAnswers(storage, game).catch(() => false))) {
+      if (await nobodyIn(deps, reopen, storage, game)) return probeAnswer(null, false, false);
+      throw new Error(MESSAGE.CantTellUse);
+    }
+    const asked = deps.now();
+    const activity = await readActivity(deps, storage, game);
+    // The agent's play ended some other way than its own stop: its marker would claim the next play.
+    if (activity && !activity.pie) await forgetAgentPlay(storage, game, asked);
+    return probeAnswer(activity, await agentPlaying(storage, game, deps.now()), queueFor(storage).busy(game));
+  };
+  const closed = new Set<string>();
+  const ops = (context: PluginContext, storage: string): MomentOps => {
+    const key = `${storage}\0${gameOf(context)}`;
+    const restoreClosed = {
+      mark: () => {
+        if (closed.size >= MAX_LOG_MARKS) closed.clear();
+        closed.add(key);
+      },
+      take: () => closed.delete(key),
+    };
+    return { ...editorOps(deps, reopen, context, storage), restoreClosed };
+  };
+  return { readLog, log, shots, probe, ops };
+}
+
+/**
+ * Whether nobody can be using the game's Unreal, which doesn't answer: the game has no linked
+ * project, no editor process of it runs, or Genex is still opening it (it answers nobody yet).
+ */
+async function nobodyIn(
+  deps: SetDeps,
+  reopen: ReturnType<typeof createReopenTools>,
+  storage: string,
+  game: string,
+): Promise<boolean> {
+  if (!(await deps.project(storage, game).catch(() => undefined))) return true;
+  if ((await reopen.running(storage, game)) === false) return true;
+  return (await deps.starting?.(storage, game).catch(() => null)) === EditorStart.Starting;
+}
+
+/** One game's editor operations for a moment's handler. */
+function editorOps(
+  deps: SetDeps,
+  reopen: ReturnType<typeof createReopenTools>,
+  context: PluginContext,
+  storage: string,
+): Omit<MomentOps, "restoreClosed"> {
+  const game = gameOf(context);
+  const linked = () => deps.project(storage, game).catch(() => undefined);
+  return {
+    now: deps.now,
+    sleep: deps.sleep,
+    signal: context.signal,
+    answers: () => deps.editorAnswers(storage, game).catch(() => false),
+    running: () => reopen.running(storage, game),
+    activity: () => readActivity(deps, storage, game),
+    save: () => saveAll(deps, storage, game),
+    end: () => reopen.end(storage, game),
+    reopen: (helper) => reopen.reopen(storage, game, helper),
+    state: () => reopen.state(storage, game),
+    start: async () => (deps.starting ? deps.starting(storage, game) : null),
+    projectName: async () => {
+      const project = await linked();
+      return project ? path.parse(project).name : null;
+    },
+    updateHelper: () => updateGameHelper(deps, storage, game),
+    exported: async () => projectExported(await linked()),
+    exportReference: () => exportReference(deps, storage, game),
   };
 }
 
 /**
- * `editor-activity`: whether the game's editor is in a play session, and how many packages it
- * holds unsaved; throws when Unreal doesn't answer or the helper answers anything else, so no
- * caller reads an editor it can't see as idle.
+ * What the game's open editor is doing: whether it is in a play session, and how many packages it
+ * holds unsaved; throws when the helper answers anything else, so no caller reads an editor it
+ * can't see as idle.
  */
-async function editorActivity(deps: LoopToolsDeps, storage: string, game: string) {
-  if (!(await deps.editorAnswers(storage, game).catch(() => false))) throw new Error(MESSAGE.NotAnswering);
+async function readActivity(deps: LoopToolsDeps, storage: string, game: string) {
   const answer = await deps.editorCall(storage, game, LoopTool.EditorActivity, {});
   const reply = isJsonObject(answer) ? answer : {};
   if (typeof reply.pie !== "boolean" || !Array.isArray(reply.dirty)) throw new Error(MESSAGE.NoActivityAnswer);
   return { pie: reply.pie, dirty: reply.dirty.length };
 }
 
-/** What `hero-shots` is asked: the cameras' prefix and how many; throws on anything else. */
+/**
+ * What `hero-shots` is asked: the cameras' prefix (`GX_Shot_` when absent) and how many (all it
+ * takes, {@link MAX_HERO_SHOTS}, when absent); throws on anything else.
+ */
 function heroAsk(args: Record<string, unknown>): { prefix: string; max: number } {
-  const { prefix, max } = args;
+  const { prefix = HERO_CAMERA_PREFIX, max = MAX_HERO_SHOTS } = args;
   if (typeof prefix !== "string" || !HERO_PREFIX.test(prefix)) throw new Error(MESSAGE.BadPrefix);
   const whole = typeof max === "number" && Number.isSafeInteger(max);
   if (!whole || max < 1 || max > MAX_HERO_SHOTS) throw new Error(MESSAGE.BadMax(MAX_HERO_SHOTS));

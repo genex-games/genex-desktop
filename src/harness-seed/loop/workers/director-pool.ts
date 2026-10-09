@@ -80,6 +80,7 @@ function seatOf(loopRun: LoopRun): RunPoolSeat {
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     gameDir: projectDir,
+    ...(loopRun.game ? { game: loopRun.game } : {}),
     leadFolder: integrationWorktree,
     identity: { folderLabel: folderLabelOf(projectDir, run.project), facts: loopRun.gameFacts ?? WEB_AT_ROOT },
     clock: REAL_CLOCK,

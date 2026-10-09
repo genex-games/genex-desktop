@@ -8,7 +8,7 @@ import { Icon } from "../../ui/icons.tsx";
 import { IconButton } from "../../ui/kit.tsx";
 import { PLUGINS_WORDS, SKILLS_WORDS } from "../../words.ts";
 import { PluginPanelHost } from "../PluginPanelHost.tsx";
-import { capabilityLine, sourceWords } from "./labels.ts";
+import { capabilityLine, foldersLine, sourceWords } from "./labels.ts";
 
 const PAGE = PLUGINS_WORDS.page;
 import type { OpenPanel, PluginsPage } from "./page.ts";
@@ -178,7 +178,7 @@ export function PluginSkills({
   );
 }
 
-/** What the plugin is: who makes it, which version from where, what it can do, and what the scan saw. */
+/** What the plugin is: who makes it, which version from where, what it can do, where outside your games it writes, and what the scan saw. */
 export function Information({ detail }: { detail: PluginInfo }): JSX.Element {
   const { manifest, scan } = detail;
   const bundled = detail.source === PluginSourceKind.Bundled;
@@ -191,6 +191,12 @@ export function Information({ detail }: { detail: PluginInfo }): JSX.Element {
         <dd>{bundled ? PAGE.bundled(manifest.version) : PAGE.from(manifest.version, sourceWords(detail))}</dd>
         <dt>{PAGE.can}</dt>
         <dd>{capabilityLine(manifest)}</dd>
+        {manifest.folders?.length ? (
+          <>
+            <dt>{PAGE.folders}</dt>
+            <dd>{foldersLine(manifest)}</dd>
+          </>
+        ) : null}
         {scan && !bundled && (
           <>
             <dt>{PAGE.scan}</dt>

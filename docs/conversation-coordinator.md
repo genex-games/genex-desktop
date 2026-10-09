@@ -711,12 +711,13 @@ tools, guidance and connectors by the game's facts ([scope by facts](plugins.md#
 web-only skills, and the Unreal editor's tools only for a game that holds an Unreal project. A game with
 no kind yet, on any fresh brief until it has one, while an engine plugin offers a kind (`plugins.tools`'s `kinds`), is
 briefed to ask Web or that engine first, unless the message names one, with `ask_user` bridged in even with Loop off,
-and Unreal offered by what the plugin's `engine-status` says this computer has; the recorded
+and each kind offered by the readiness its plugin gives the host (`kinds[].ready`, `note`; Unreal's
+from `engine-status`); the recorded
 question is asked like a Loop chat's, and the next turn resumes the same session, which calls
 `unreal__new-game` for Unreal. A chat turn whose game's served facts changed (a port, or files it
 wrote) goes on by itself in the same session, with the tools and a fresh brief writer for the new
-kind (`continueOnNewFacts`, [plugins](plugins.md#scope-by-facts)); one that linked an Unreal
-project, or switched its link to another, first waits for Unreal to open it. A delegation that gave
+kind (`continueOnNewFacts`, [plugins](plugins.md#scope-by-facts)); when the new kind's plugins hook
+`health` (an Unreal project linked or switched), it first waits until nothing is pending. A delegation that gave
 a game with no kind its kind by files it wrote tells the app the game changed when it ends. The health pass waits on the page's own readiness (`preview.ready`
 with `gesture: false`, so the user's window is never clicked): up to the project's boot budget
 (15 s by default) for a page that signals readiness, the old short grace for one that signals

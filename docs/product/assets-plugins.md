@@ -8,12 +8,12 @@ by name. Deliveries and outside changes refresh it. Cards hide metadata; animati
 into their model.
 
 Opening a file shows it with only Reveal in Finder and Close: images (click: full
-size), audio/video, 3D models with their clips, textures or bounded text. Unsupported
-formats and decoder failures explain themselves; media reads are bounded and load lazily.
+size), audio/video, 3D models with clips, textures or bounded text. Unsupported
+formats and decoder failures say why; media loads lazily, bounded.
 
 Chat shows game-folder files, Open in Assets and bounded batches. Builds shows Loop workspace
 assets as thumbnails with their location until landing; checks and Blender passes are notes;
-visuals preview in two columns, sounds in compact rows. Job completion or “seen in game”
+visuals preview in two columns, sounds in rows. Job completion or “seen in game”
 never proves integration or passing checks.
 
 ## Tools and setup
@@ -30,12 +30,12 @@ The host draws Genex's app-wide page (balance, routed tools) and Local Blender's
 runtime card. Connect, unapproved, reuses a saved account or
 opens browser sign-in; setup survives restart and reinstall. Game spend is in the usage panel.
 Enabled Genex suggests assets in planning; workers use it once the account is ready. Your
-preferences win; failures and fallbacks are disclosed.
+preferences win; failures and fallbacks are shown.
 Genex bundles its MCP with the same account: game/animation search, owned games and
 generation status. Host tools handle generation, delivery, credits and publishing
 and run the pinned Genex CLI outside the game: `genex__cli` free; `genex__cli-paid` and
 `genex__package` (pinned multiplayer or player-identity package, build games) after consent.
-Publish (a host-drawn stage dialog) tests the draft before making it public.
+Publish (a host-drawn dialog) tests the draft before making it public.
 Agents read Genex’s guide and cards via `genex__skill`, never from game files.
 Plugin MCPs connect on first use; the composer shows actionable failures only.
 
@@ -47,20 +47,21 @@ a newer compatible release. See the [release procedure](../STUDIO-MARKETPLACE-RE
 ## Permissions and lifecycle
 
 Installation shows publisher and capabilities; new capabilities need confirmation. Game agents
-never install, enable or approve plugins; an agent may suggest one that is off or in
-Genex's catalog as a card only your click acts on. Process isolation
+never install, enable or approve plugins; an agent may suggest one off or in
+Genex's catalog, as a card only your click acts on. Process isolation
 does not sandbox native code.
 
 Confirmation tools ask in chat ([questions](chat.md#questions-and-plans)); routine generation
 progress has no answer controls.
 
 Connector tools ask before each call unless Settings holds an exact tool grant; server hints
-grant nothing. Plugin upload staging shows the complete included/excluded file list
-for a second approval. Revocation prevents future calls; remote side effects remain.
+grant nothing. Plugin uploads show every included/excluded file for a second approval.
+Revoking stops future calls, not remote effects. While you play in a plugin's editor, agents'
+work there waits and the chat says so.
 
-Removal keeps data, credentials and jobs; another source reusing a plugin's id needs
-**Replace and erase data**, and bundled ids cannot be taken. Reinstall is explicit, bundled plugins too;
-local reinstall reviews a fresh snapshot. Host-managed secrets never enter composer text.
+Removal keeps data, credentials and jobs; reusing a plugin's id from another source needs
+**Replace and erase data** (never a bundled id). Reinstall is explicit; local reinstall reviews a
+fresh snapshot. Host-managed secrets never enter composer text.
 
 Skills lists Studio’s own (local chat, planner, director), this game’s, each provider’s global
 and plugin skills. Codex says whether workers load its catalog; Claude’s global entries stay

@@ -377,6 +377,24 @@ person's (`studio:jobs.stop`, fixture-safe, Studio's main frame only; `stoppedBy
 lead's line add not to start it again unless asked. A running job's start is a current-state fact of its chat, so the line and Stop stay whatever page
 is loaded; what a rewind keeps of them is in [the coordinator](conversation-coordinator.md).
 
+## The person comes first
+
+A plugin's lock ([plugins](plugins.md#locks-the-person-comes-first)) orders work that was already
+allowed and grants nothing: a call still asks for its card, Plan still holds it, and its mode is the
+chat's. A tool or connector that needs a lock waits for whoever holds it, and while the lock's
+probe says the person is using what it guards (playing in the editor), the agents' and Genex's
+calls there wait too; the chat's working line says "Waiting for you to finish in <label>" (only
+once the probe saw the person). An agent's call waits up to 4 minutes, within the engine bridge's
+10-minute deadline, then answers like a declined consent. The person's own action
+(their Rewind) never waits for the person. A worker writing in place holds the game's locks for its
+whole life, and the harness's death (or restart) releases them. A lock covers a call, not a job the
+call leaves running (an Unreal reopen or play check), so such a job's editor is not kept from
+others while it runs. Unreal's lock sees the person's play only: a play the agent started through
+the editor connector, or Genex's own check, is not theirs. Residuals: the person's edits outside a
+play session are not detected, so the agents' work there does not wait for them; a play the person
+starts before the lock's probe saw the agent's own play end counts as the agent's; and a play the
+agent starts another way (a script) counts as the person's, so its own editor calls wait for it.
+
 ## Looking at apps
 
 `app_look {app?, window?}` ([`src/main/core/app-look-tool.ts`](../src/main/core/app-look-tool.ts),

@@ -24,6 +24,10 @@ import { durationCommission, goalCommission } from "./commission.ts";
  * Its functions take the run explicitly; they are not bound onto it.
  */
 import { isResumeFailure } from "../chat-session.ts";
+import { fireHooks, HookEvent, type HookScope, runScope as runMoment } from "../hooks.ts";
+import { HOOK_PROMPTS } from "../hooks-prompts.ts";
+import { type HeldBack, turnsHeldWords } from "./held-words.ts";
+import { whileTurnHeld } from "./turn-hold.ts";
 import { HostMethod } from "../host-methods.ts";
 import { jobEndLine } from "../jobs/prompts.ts";
 import { JOB_POLL_MS, jobEnds } from "../jobs/watch.ts";
@@ -194,6 +198,8 @@ export interface WakeState {
   promptWords: string[];
   /** The turn under way was cut short to hand the lead the user's words: it is resumed at once with them. */
   cut: boolean;
+  /** The session's first message, when a plugin held its turn back: it opens the next one (`heldTurn`). */
+  heldFirst?: string;
   finishNew: boolean;
   finishSaid: boolean;
   /** The plan window (its `planReviewUntil`) whose closing a wake has said. */
@@ -1217,7 +1223,13 @@ async function takeTurn(
   kit: TurnKit,
   prompt: string,
 ): Promise<Partial<DelegateResult>> {
-  let asked = prompt;
+  // One turn to the game's plugins, its resumptions included: its start and its end name it alike.
+  const moment = turnScope(loopRun, wake);
+  const held = await heldTurn(loopRun, wake, kit, prompt, moment);
+  if (held) return held;
+  const first = wake.heldFirst;
+  wake.heldFirst = undefined;
+  let asked = first ? `${first}\n\n${prompt}` : prompt;
   let result = await oneTurn(loopRun, wake, kit, asked);
   while (wake.cut && !loopRunOver(loopRun)) {
     wake.cut = false;
@@ -1229,7 +1241,44 @@ async function takeTurn(
     result = await oneTurn(loopRun, wake, kit, asked);
   }
   wake.cut = false;
+  await fireHooks(loopRun.ctx, loopRun.game, HookEvent.TurnEnd, moment);
   return result;
+}
+
+/** A lead's turn as Genex's moments name it: the run, and the turn's number. */
+function turnScope(loopRun: LoopRun, wake: WakeState): HookScope {
+  return { ...runMoment(loopRun), turn: String(wake.turns + 1) };
+}
+
+/**
+ * A lead's turn a plugin of the game holds back before it starts: asked again after a wait
+ * (turn-hold.ts), never counted as an idle turn. Null once the turn may start. A turn still held
+ * after the last ask is a failed turn with the hold's reason (the run wraps up, saying why): the
+ * lead hears why, the user's words the message carried are said again then, and a first message
+ * (the brief) opens the next one.
+ */
+async function heldTurn(
+  loopRun: LoopRun,
+  wake: WakeState,
+  kit: TurnKit,
+  prompt: string,
+  moment: HookScope,
+): Promise<Partial<DelegateResult> | null> {
+  let held: HeldBack | null = null;
+  const ask = async () => {
+    const report = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.TurnStart, moment);
+    held = report.blocked;
+    return report.blocked?.reason ?? null;
+  };
+  const cantWait = () => wake.wrapping || loopRunOver(loopRun) || kit.clock.now() >= loopRun.softDeadline;
+  const reason = await whileTurnHeld(ask, kit.clock, cantWait);
+  if (reason === null) return null;
+  if (wake.turns === 0) wake.heldFirst ??= prompt;
+  wake.owed.unshift(...wake.promptWords);
+  wake.promptWords = [];
+  loopRun.note(HOOK_PROMPTS.turnHeld(reason));
+  // The failed turn's words reach the person: Genex's own hold in theirs, never the agents'.
+  return { ok: false, turns: 0, errorText: turnsHeldWords(held ?? { reason }) };
 }
 
 /** A turn cut before it read its message is asked it again — its words and all — with the user's newer words after it. */

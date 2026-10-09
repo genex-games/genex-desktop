@@ -7,7 +7,6 @@
 import type { PluginKindOffer } from "../types/host-api.d.ts";
 import { CoreFact, type FactRef, FolderHolds, ProjectTool } from "./folder-facts.ts";
 import { toolCall } from "./model-roles.ts";
-import type { UnrealOnComputer } from "./unreal/editor-wait.ts";
 // A kept older `unreal-prompts.ts` exports only what it did: new names live here, never there.
 import { engineChoiceRule, UNREAL_NEW_GAME_TOOL } from "./unreal-prompts.ts";
 
@@ -111,7 +110,7 @@ function newProjectWords(holds: FolderHolds | null | undefined): string {
 export function pendingKindRule(
   engine: string | undefined,
   kinds?: readonly PluginKindOffer[] | null,
-  unreal?: UnrealOnComputer | null,
+  unreal?: unknown,
   holds?: FolderHolds | null,
   asked = true,
 ): string[] {
@@ -179,8 +178,9 @@ export function unknownKindRules(engine: string | undefined, holds: FolderHolds 
 }
 
 /**
- * The Unreal plugin's kind offer as a host that lists no `kinds` stands for it: the plugin is on when
- * its new-game tool is served (`offersUnrealGame`).
+ * The Unreal plugin's kind offer as a host that listed no `kinds` once stood for it. Kept for an older
+ * copy of a module that imports it: no current module reads it, since every kind on offer, with its
+ * readiness, comes from the host's `kinds`.
  */
 export const UNREAL_KIND: PluginKindOffer = {
   plugin: "unreal",

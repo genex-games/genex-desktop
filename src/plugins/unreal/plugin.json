@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unreal",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "name": "Unreal Editor",
   "publisher": "Genex",
   "description": "Agents build your game in Unreal Editor 5.8 on this computer. Getting Unreal needs a free Epic account; each game has its own Unreal project.",
@@ -38,6 +38,7 @@
     {
       "name": "new-game",
       "makes": ["unreal-project"],
+      "ready": "engine-status",
       "description": "Make this game's Unreal project from one of Genex's Blueprint templates, in this game's folder as unreal/<name>.uproject: Genex sets it up, links this game to it and opens it in Unreal, as New game in the Unreal panel does. Use it only when the user chose Unreal Engine for this game and it has no Unreal project yet; a game folder that already has an unreal folder is refused. Unreal's first start takes minutes: Genex continues this chat by itself once Unreal is ready, so end your reply after this call with what you will build first.",
       "parameters": {
         "type": "object",
@@ -108,6 +109,7 @@
     {
       "name": "run-part",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: put a part that passes check-part in the editor queue (apply, play its test, take play shots). Answers {id} at once; read part-result. Don't call it yourself in a chat.",
       "parameters": {
         "type": "object",
@@ -138,6 +140,7 @@
     {
       "name": "rollback-part",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: take a part's actors and its /Game/Parts folder out of the open editor before its files are restored.",
       "parameters": {
         "type": "object",
@@ -153,6 +156,7 @@
     {
       "name": "reload-level",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: reload the open level after a part's files were restored.",
       "parameters": {
         "type": "object",
@@ -162,6 +166,7 @@
     {
       "name": "export-reference",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: export this engine's Blueprint node reference and Python names from the open editor, for check-part.",
       "parameters": {
         "type": "object",
@@ -180,6 +185,7 @@
     {
       "name": "add-cpp-module",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: add the game's C++ module in the background (save, quit Unreal, write and build the module, open Unreal again). Answers {started} at once, or the module the game has; read cpp-status.",
       "parameters": {
         "type": "object",
@@ -189,6 +195,7 @@
     {
       "name": "reopen-editor",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: after Unreal crashed, reopen it in the background (end this game's hung editor and its crash reporter, build the game's C++ module, open the project and wait until it answers). Answers {started} at once, or {answering} when Unreal already answers; read editor-state.",
       "parameters": {
         "type": "object",
@@ -230,6 +237,7 @@
     {
       "name": "play-check",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: play the game in the editor as a checkpoint, applying nothing (settle, a shot where play starts, a drive along the route with frames, a shot after it, the board's checks, the probes). Answers {id} at once; read part-result.",
       "parameters": {
         "type": "object",
@@ -245,6 +253,7 @@
     {
       "name": "save-all",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: end a play session, then save every unsaved level and asset in this game's open editor.",
       "parameters": {
         "type": "object",
@@ -268,6 +277,7 @@
     {
       "name": "end-editor",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: end this game's Unreal editor and its crash reporter, saving nothing (call save-all first).",
       "parameters": {
         "type": "object",
@@ -277,6 +287,7 @@
     {
       "name": "update-helper",
       "audience": "harness",
+      "needs": ["editor"],
       "description": "For Genex's Unreal Loop only: update this game's Genex editor helper to the plugin's while Unreal is closed; a helper file the user changed is kept beside it as .mine.",
       "parameters": {
         "type": "object",
@@ -286,7 +297,7 @@
     {
       "name": "editor-activity",
       "audience": "harness",
-      "description": "For Genex only: whether this game's open editor is in a play session (pie) and how many packages it holds unsaved (dirty), read before Genex saves its work.",
+      "description": "For Genex only: whether this game's open editor is in a play session (pie) and how many packages it holds unsaved (dirty), read before Genex saves its work; as the editor lock's probe, whether the person is using it (personActive: their play, not one the agent or Genex started) and how much is unsaved.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -295,20 +306,30 @@
     {
       "name": "hero-shots",
       "audience": "harness",
-      "description": "For Genex's Unreal Loop only: a still from each of the level's hero cameras whose labels start with prefix, at most max, each with its PNG data and tone numbers.",
+      "needs": ["editor"],
+      "description": "For Genex's Unreal Loop only: a still from each of the level's hero cameras whose labels start with prefix (GX_Shot_ unless given), at most max (8 unless given), each with its PNG data and tone numbers.",
       "parameters": {
         "type": "object",
         "properties": {
           "prefix": {
             "type": "string",
-            "description": "The start of the hero cameras' labels, such as GX_Shot_."
+            "description": "Optional: the start of the hero cameras' labels, GX_Shot_ unless given."
           },
           "max": {
             "type": "number",
-            "description": "How many cameras to capture, 1 to 8."
+            "description": "Optional: how many cameras to capture, 1 to 8 (8 unless given)."
           }
-        },
-        "required": ["prefix", "max"]
+        }
+      }
+    },
+    {
+      "name": "open-for-run",
+      "audience": "harness",
+      "needs": ["editor"],
+      "description": "For Genex only: at a run's start, make sure this game's Unreal is open with the current Genex editor helper and its reference exported.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
       }
     }
   ],
@@ -317,7 +338,7 @@
       "name": "unreal-editor",
       "facts": ["unreal-project"],
       "tools": ["blueprint-guide", "find-nodes", "check-part"],
-      "text": "This game is built in the user's open Unreal Editor 5.8 through unreal-editor__list_toolsets, unreal-editor__describe_toolset and unreal-editor__call_tool. Find a toolset with list_toolsets, read its tools and input schemas with describe_toolset, then call_tool with toolset_name, tool_name (without the toolset prefix) and arguments matching the schema. Calls go to this game's own Unreal project, and each answer names it; unreal__use-project switches to another set-up project only when the user asks.\nEvery change lands in the user's editor at once; save only when asked. A project inside the game folder (unreal/) is covered by the game's checkpoints and Rewind; one elsewhere is not. Never build file watchers, polling scripts or exec bridges between the game folder and Unreal: the tools are the only way in.\nBlueprints: read the Blueprint guides in Epic's AgentSkillToolset first, and look up every node before you write Blueprint text (find the node by name; never guess). Write events without the AddEvent| prefix. A function needs its graph created before its text. There are no key-event nodes: use Enhanced Input actions or poll in Tick. A literal can't be bound to a name: pass it where it is used.\nPlay-testing: stop play before editing the level. Start with call_tool EditorToolset.EditorAppToolset StartPIE with {\"options\":{\"bSimulate\":false,\"playMode\":\"PlayMode_InViewPort\",\"warmupSeconds\":2}} and look with the Genex editor helper's eyes in genex_build.tools.GenexBuildTools, never CaptureEditorImage (it shows the whole editor window) or CaptureViewport (the editor camera): capture_play shows the 3D frame the player sees during play (on-screen UI such as the HUD and screen-space bars is not in it), motion_strip takes frames a set number of game seconds apart with where the pawn was in each (start a move with hold first), and capture_shot takes a still from a hero camera without playing. Each answer is the picture with its tone numbers (black point, contrast, near against far contrast) and, in play, the frame rate. When list_toolsets shows genex_play.tools.GenexPlayTools (the Genex editor helper), play like the player: list_actions shows the controls, hold with {name, x, seconds} presses an input action (Throttle) or a key (W) and returns at once while the game keeps receiving it, player_state reads the pawn's position and speed, probe_route measures it against the game's GenexRoute and drive_route drives it along the route. Call release_all, then StopPIE, when you are done; imports and retargets refuse during play.\nBuilding: when list_toolsets shows genex_build.tools.GenexBuildTools (the Genex editor helper), build with code, not clicks: keep each system's geometry, materials and light in a Python file in the game's unreal/build/ folder and run it with run_script {file, args_json}. A script gets unreal, args and the gx library (read genex_build.gx's notes): gx.scope makes a script idempotent (running it again replaces what it made), gx.instances draws one mesh many times as one actor (never one actor per copy), gx.kit_module makes bevelled Nanite kit pieces, gx.world_material makes world-aligned concrete, steel, grime or emissive, gx.atmosphere(\"megastructure\" or \"daylight\") replaces the template sky with light, volumetric fog, manual exposure and a grade, and gx.shot_camera places the hero cameras capture_shot uses. A failing script answers its file and line; an MCP timeout does not stop a running script; a run that changed a level with navigation bounds rebuilds its nav mesh. Use execute_tool_script only for small queries. import_model brings a model file of the game's assets/ in as one static mesh with the collision and Nanite you choose, and answers its real path and the file's own triangle count; import_character, import_animation and import_sound bring rigged characters, clips and .wav, .mp3, .ogg or .flac sounds in; retarget plays one skeleton's clips on another; attach_to_socket puts a mesh in a hand on a Blueprint; audit counts primitives, instances and triangles; attach_mesh adds a mesh to a Blueprint component. set_route, track_terrain and dirt_material serve racing games. Pass compound arguments as JSON text. In Unreal's Python, a function's out-parameters come back as a tuple: pick the value you want by its type, not its position. genex_loop.tools.GenexLoopTools is Genex's own Loop toolset: calls to it are refused.\nOn a Mac, the editor log is ~/Library/Logs/Unreal Engine/<Project>Editor/<Project>.log and crash reports are in ~/Library/Application Support/Epic/UnrealEngine/5.8/Saved/Crashes/. When a call says Unreal crashed, or that the project is not answering, another project is open instead, or it is not set up, tell the user what the message says to do from the Unreal button instead of retrying, and look before repeating it once it answers.\nXcode is recommended, not required: without it, work in Blueprints and Python only. Call unreal__show-steps when C++ would clearly help."
+      "text": "This game is built in the user's open Unreal Editor 5.8 through unreal-editor__list_toolsets, unreal-editor__describe_toolset and unreal-editor__call_tool. Find a toolset with list_toolsets, read its tools and input schemas with describe_toolset, then call_tool with toolset_name, tool_name (without the toolset prefix) and arguments matching the schema. Calls go to this game's own Unreal project once it is linked, and each answer names it. unreal__use-project links the project in this game's folder once the user has set it up from the Unreal button (until then, never call these tools: they reach whichever project the Unreal panel chose, which can be another game's), and switches to another set-up project only when the user asks.\nEvery change lands in the user's editor at once; save only when asked. A project inside the game folder (unreal/) is covered by the game's checkpoints and Rewind; one elsewhere is not. Never build file watchers, polling scripts or exec bridges between the game folder and Unreal: the tools are the only way in.\nBlueprints: read the Blueprint guides in Epic's AgentSkillToolset first, and look up every node before you write Blueprint text (find the node by name; never guess). Write events without the AddEvent| prefix. A function needs its graph created before its text. There are no key-event nodes: use Enhanced Input actions or poll in Tick. A literal can't be bound to a name: pass it where it is used.\nPlay-testing: stop play before editing the level. Start with call_tool EditorToolset.EditorAppToolset StartPIE with {\"options\":{\"bSimulate\":false,\"playMode\":\"PlayMode_InViewPort\",\"warmupSeconds\":2}} and look with the Genex editor helper's eyes in genex_build.tools.GenexBuildTools, never CaptureEditorImage (it shows the whole editor window) or CaptureViewport (the editor camera): capture_play shows the 3D frame the player sees during play (on-screen UI such as the HUD and screen-space bars is not in it), motion_strip takes frames a set number of game seconds apart with where the pawn was in each (start a move with hold first), and capture_shot takes a still from a hero camera without playing. Each answer is the picture with its tone numbers (black point, contrast, near against far contrast) and, in play, the frame rate. When list_toolsets shows genex_play.tools.GenexPlayTools (the Genex editor helper), play like the player: list_actions shows the controls, hold with {name, x, seconds} presses an input action (Throttle) or a key (W) and returns at once while the game keeps receiving it, player_state reads the pawn's position and speed, probe_route measures it against the game's GenexRoute and drive_route drives it along the route. Call release_all, then StopPIE, when you are done; imports and retargets refuse during play.\nBuilding: when list_toolsets shows genex_build.tools.GenexBuildTools (the Genex editor helper), build with code, not clicks: keep each system's geometry, materials and light in a Python file in the game's unreal/build/ folder and run it with run_script {file, args_json}. A script gets unreal, args and the gx library (read genex_build.gx's notes): gx.scope makes a script idempotent (running it again replaces what it made), gx.instances draws one mesh many times as one actor (never one actor per copy), gx.kit_module makes bevelled Nanite kit pieces, gx.world_material makes world-aligned concrete, steel, grime or emissive, gx.atmosphere(\"megastructure\" or \"daylight\") replaces the template sky with light, volumetric fog, manual exposure and a grade, and gx.shot_camera places the hero cameras capture_shot uses. A failing script answers its file and line; an MCP timeout does not stop a running script; a run that changed a level with navigation bounds rebuilds its nav mesh. Use execute_tool_script only for small queries. import_model brings a model file of the game's assets/ in as one static mesh with the collision and Nanite you choose, and answers its real path and the file's own triangle count; import_character, import_animation and import_sound bring rigged characters, clips and .wav, .mp3, .ogg or .flac sounds in; retarget plays one skeleton's clips on another; attach_to_socket puts a mesh in a hand on a Blueprint; audit counts primitives, instances and triangles; attach_mesh adds a mesh to a Blueprint component. set_route, track_terrain and dirt_material serve racing games. Pass compound arguments as JSON text. In Unreal's Python, a function's out-parameters come back as a tuple: pick the value you want by its type, not its position. genex_loop.tools.GenexLoopTools is Genex's own Loop toolset: calls to it are refused.\nOn a Mac, the editor log is ~/Library/Logs/Unreal Engine/<Project>Editor/<Project>.log and crash reports are in ~/Library/Application Support/Epic/UnrealEngine/5.8/Saved/Crashes/. When a call says Unreal crashed, or that the project is not answering, another project is open instead, or it is not set up, tell the user what the message says to do from the Unreal button instead of retrying, and look before repeating it once it answers.\nXcode is recommended, not required: without it, work in Blueprints and Python only. Call unreal__show-steps when C++ would clearly help."
     }
   ],
   "panels": [
@@ -407,6 +428,7 @@
     {
       "id": "editor",
       "facts": ["unreal-project"],
+      "needs": ["editor"],
       "transport": "stdio",
       "command": "node",
       "args": ["editor-mcp.mjs"],
@@ -423,6 +445,19 @@
       "tools": ["check-part"],
       "isolation": "copy"
     }
+  ],
+  "locks": [{ "id": "editor", "label": "Unreal", "per": "project", "personFirst": "editor-activity" }],
+  "hooks": [
+    { "on": "run.prepare", "tool": "open-for-run", "facts": ["unreal-project"] },
+    { "on": "run.prepare", "tool": "log-errors", "facts": ["unreal-project"] },
+    { "on": "checkpoint.before", "tool": "save-all", "facts": ["unreal-project"] },
+    { "on": "checkpoint.before", "tool": "log-errors", "facts": ["unreal-project"] },
+    { "on": "checkpoint.after", "tool": "hero-shots", "facts": ["unreal-project"] },
+    { "on": "restore.before", "tool": "save-all", "facts": ["unreal-project"] },
+    { "on": "restore.before", "tool": "end-editor", "facts": ["unreal-project"] },
+    { "on": "restore.after", "tool": "reopen-editor", "facts": ["unreal-project"] },
+    { "on": "health", "tool": "editor-state", "facts": ["unreal-project"] },
+    { "on": "crash", "tool": "reopen-editor", "facts": ["unreal-project"] }
   ],
   "folders": [
     { "path": "~/Library/Application Support/Epic/UnrealBuildTool", "why": "Unreal's build tool writes its log here" },

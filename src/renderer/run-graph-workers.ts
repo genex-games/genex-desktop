@@ -25,8 +25,10 @@ export interface WorkerInfo {
   type: string | null;
   /** how it stands in the game: picks the words, never shown */
   isolation: WorkerIsolation | null;
-  /** the engine it works in, when it works in the game folder of one */
+  /** the engine it works in, when it works in the game folder of one (older records) */
   in: GameEngine | null;
+  /** the app it works in place in, by the label of the lock it holds; wins over `in` */
+  where: string | null;
   /** what the lead asked it, clipped by the harness */
   task: string | null;
   /** the first sentence of its own report, when it gave one */
@@ -77,11 +79,15 @@ const jobEnd = (value: unknown): JobState =>
   isJobState(value) && value !== JobState.Running ? value : JobState.Failed;
 const jobStopper = (value: unknown): JobStopper | null => (isJobStopper(value) ? value : null);
 
+/** Where an in-place worker works, as its start record names it: trimmed text, or null. */
+const placeOf = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value.trim() : null);
+
 function emptyInfo(): WorkerInfo {
   return {
     type: null,
     isolation: null,
     in: null,
+    where: null,
     task: null,
     summary: null,
     turn: null,
@@ -115,6 +121,7 @@ export function onWorkerStarted(ledger: WorkerLedger, row: WorkerRow, payload: P
     type: strOrNull(payload.type),
     isolation: isWorkerIsolation(payload.isolation) ? payload.isolation : null,
     in: isGameEngine(payload.in) ? payload.in : null,
+    where: placeOf(payload.where),
     task: strOrNull(payload.task),
     turn: strOrNull(payload.turn),
   };

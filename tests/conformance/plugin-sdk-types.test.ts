@@ -157,6 +157,26 @@ test("the panel's Choose file request and src/shared/plugin-file-request.ts are 
   assert.equal(diagnostics.length, 0, report(diagnostics));
 });
 
+test("the SDK's moments, what a handler is told and what it answers, and src/shared/plugin-hooks.ts are mutually assignable", (t) => {
+  const hooks = path.resolve("src/shared/plugin-hooks.ts");
+  const diagnostics = compile(t, {
+    "hooks.ts": `
+      import type { PluginHookAnswer as SdkAnswer, PluginHookContext as SdkContext, PluginHookEvent as SdkEvent } from ${quote(sdk)};
+      import type { HookAnswer as SharedAnswer, HookContext as SharedContext, HookEvent as SharedEvent } from ${quote(hooks)};
+      declare const sdkEvent: SdkEvent; declare const sharedEvent: SharedEvent;
+      export const eventToShared: SharedEvent = sdkEvent;
+      export const eventToSdk: SdkEvent = sharedEvent;
+      declare const sdkContext: SdkContext; declare const sharedContext: SharedContext;
+      export const contextToShared: SharedContext = sdkContext;
+      export const contextToSdk: SdkContext = sharedContext;
+      declare const sdkAnswer: SdkAnswer; declare const sharedAnswer: SharedAnswer;
+      export const answerToShared: SharedAnswer = sdkAnswer;
+      export const answerToSdk: SdkAnswer = sharedAnswer;
+    `,
+  });
+  assert.equal(diagnostics.length, 0, report(diagnostics));
+});
+
 test("an undeclared host method and a non-scalar tool argument are compile errors", (t) => {
   const wrongHost = compile(t, {
     "steal.ts": `

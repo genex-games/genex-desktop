@@ -143,7 +143,10 @@ describe("engine-status, before a new game's engine question", () => {
   for (const [name, engines, engine, version] of rows)
     it(`says ${engine} for ${name}`, async () => {
       const c = await computer({ engines });
-      assert.deepEqual(await c.tool("engine-status"), { engine, version });
+      const answer = (await c.tool("engine-status")) as Record<string, unknown>;
+      assert.deepEqual({ engine: answer.engine, version: answer.version }, { engine, version });
+      assert.equal(answer.ready, engine === EngineReadiness.Ready, "ready only when a new game can be made here");
+      assert.equal(typeof answer.note, "string", "with the words the card shows");
     });
 });
 

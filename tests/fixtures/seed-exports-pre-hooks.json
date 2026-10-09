@@ -1,0 +1,2313 @@
+{
+  "from": "c25612a1",
+  "modules": {
+    "loop/chat-session.ts": [
+      "SERVES_AFTER_LOOP_RUN",
+      "buildContractorBrief",
+      "buildInterviewBrief",
+      "isContinueAsk",
+      "isResumeFailure",
+      "lastContractorSession",
+      "nameFromAsk",
+      "originalAsk",
+      "resolveChatProject"
+    ],
+    "loop/delegated-turn.ts": [
+      "DELEGATE_TOOL",
+      "MessageUsageSource",
+      "SERVES_AFTER_LOOP_RUN",
+      "SERVES_REOPEN",
+      "runDelegatedTurn"
+    ],
+    "loop/director.ts": [
+      "DIRECTOR_TOOLS",
+      "MAX_DIRECTOR_MEMORY",
+      "MAX_WAIT_S",
+      "MAX_WORKERS",
+      "MIN_FREE_MB",
+      "MONITOR_TICK_MS",
+      "PLAN_REVIEW_WAIT_MS",
+      "WINDOW_RETRIES_MS",
+      "clampBoard",
+      "clampDirectorMemory",
+      "compilePlan",
+      "compileWorkerSpec",
+      "contractBrief",
+      "directorBrief",
+      "directorMemoryKeep",
+      "directorTalk",
+      "directorTool",
+      "headSynced",
+      "iterationDigest",
+      "landingWords",
+      "loopDigest",
+      "loopNote",
+      "makeRouteDefect",
+      "medianMinutes",
+      "monitorEveryMs",
+      "monitorFindings",
+      "monitorNote",
+      "plainly",
+      "planReviewWaitMs",
+      "preparationBudgetMs",
+      "runDirector",
+      "seatsLead",
+      "shortBudgetWarning",
+      "singleWorkerBrief",
+      "startingHeads",
+      "timedWorkRemaining",
+      "waitDigest",
+      "waitForPlanGo",
+      "workerDigest",
+      "workerWindows",
+      "wrapReserveMs",
+      "wrapUpPrompt"
+    ],
+    "loop/director/loop-run.ts": [
+      "BuildTarget",
+      "SERVES_LEAD",
+      "WindowLease",
+      "appendRun",
+      "bindLoopRun",
+      "consoleInheritedBy",
+      "currentHead",
+      "decision",
+      "errorsLogged",
+      "evidenceOf",
+      "keepMemory",
+      "ledgerFacts",
+      "ledgerLines",
+      "medianRoundMs",
+      "nestedGit",
+      "neverMeasured",
+      "note",
+      "notesSince",
+      "patientEvidence",
+      "protectHead",
+      "recordVerdict",
+      "remember",
+      "rememberEvidence",
+      "resolveRoot",
+      "runRoundMinutes",
+      "runRoundMs",
+      "runningWorkers",
+      "saveJournal",
+      "shotsOf",
+      "syncHead",
+      "withLease",
+      "workerCommit",
+      "writeVerdict"
+    ],
+    "loop/director/setup.ts": [
+      "SERVES_LEAD",
+      "buildStartingPoint",
+      "installContract",
+      "lookAtStart",
+      "loopRunReport",
+      "pageAttaches",
+      "prepareLoopRun"
+    ],
+    "loop/director/tools.ts": [
+      "SERVES_LEAD",
+      "closeJudgeAsk",
+      "handler",
+      "judge",
+      "judgeTheLanding",
+      "playtest",
+      "show",
+      "statusText",
+      "wait",
+      "workersEngineLimit"
+    ],
+    "loop/director/wake.ts": [
+      "BUSY_RETRY_MS",
+      "LIMIT_WAIT_MARGIN_MS",
+      "MAX_BUSY_RETRIES",
+      "MAX_FRESH_SESSIONS",
+      "MAX_LIMIT_WAITS",
+      "SERVES_LEAD",
+      "SYSTEM_CLOCK",
+      "WAKE_ENDING",
+      "WAKE_POLL_MS",
+      "WRAP_UP_MIN_MS",
+      "fitHappened",
+      "journalWake",
+      "runWakeLoop"
+    ],
+    "loop/director/workers.ts": [
+      "SERVES_LEAD",
+      "holdForPlanReview",
+      "interruptWorker",
+      "lookAtWorker",
+      "loopIntegration",
+      "monitorSweep",
+      "noteWorkerLimit",
+      "protectWorker",
+      "recordRound",
+      "routeUserSteers",
+      "runWorker",
+      "setPlan",
+      "settleWorkers",
+      "startMonitor",
+      "startRefusal",
+      "startWorker",
+      "stopWorker",
+      "workerSetupOf"
+    ],
+    "loop/host-methods.ts": [
+      "HostMethod"
+    ],
+    "loop/project-prompts.ts": [
+      "FACT_WORDS",
+      "UNREAL_KIND",
+      "appIdentity",
+      "factLine",
+      "factPrefix",
+      "factWords",
+      "factsReadyPrompt",
+      "ownKindRules",
+      "pendingKindRule",
+      "pluginFirstRule",
+      "unknownKindRules",
+      "unrealWithoutPlugin"
+    ],
+    "loop/unreal-prompts.ts": [
+      "UNREAL_NEW_GAME_TOOL",
+      "engineChoiceRule",
+      "offersUnrealGame",
+      "unrealRules",
+      "unrealWorkHere",
+      "unrealWorkspaceRule"
+    ],
+    "loop/unreal/agents.ts": [
+      "MAX_AGENT_INPUTS",
+      "MAX_LAND_FILES",
+      "MAX_LAND_FILE_BYTES",
+      "agentFolder",
+      "agentNews",
+      "agentStatus",
+      "askingAgents",
+      "creditCapOf",
+      "landAgent",
+      "landPending",
+      "markAgent",
+      "relandAgents",
+      "settleAgents",
+      "startAgent",
+      "stopAgent",
+      "waitAgent"
+    ],
+    "loop/unreal/editor-crash.ts": [
+      "REOPEN_POLL_MS",
+      "REOPEN_TIMEOUT_MS",
+      "ReopenEnd",
+      "ReopenState",
+      "reopenEditor"
+    ],
+    "loop/unreal/lead-between.ts": [
+      "MAX_REOPENS",
+      "addModuleIfAsked",
+      "betweenTurns",
+      "ensureEditor",
+      "haltedBy",
+      "recoverEditor",
+      "refreshCpp"
+    ],
+    "loop/unreal/lead-contract.ts": [
+      "AGENT_DELIVERY_ROOT",
+      "AGENT_MAIN_TOOLS",
+      "AGENT_MANIFEST_FILE",
+      "AGENT_MS",
+      "AGENT_PART_PREFIX",
+      "AGENT_TOOL_ALLOW",
+      "AGENT_TURN_MS",
+      "AgentFileRole",
+      "AgentKind",
+      "AgentPluginTool",
+      "AgentState",
+      "AgentVerdict",
+      "AssetVerdict",
+      "CAST_AGENT_MS",
+      "HERO_CAMERA_PREFIX",
+      "LEAD_JOURNAL_KIND",
+      "LEAD_PART",
+      "LEAD_VERDICT_SOURCE",
+      "LeadEndReason",
+      "LeadTool",
+      "MAX_AGENT_WAIT_S",
+      "MAX_CRITIC_DEFECTS",
+      "MAX_HERO_SHOTS",
+      "MAX_RUNNING_AGENTS",
+      "MergeStage",
+      "WHOLE_FRAME",
+      "kindOffered"
+    ],
+    "loop/unreal/lead-graph.ts": [
+      "agentMarked",
+      "agentNode",
+      "agentPart",
+      "criticAdvice",
+      "leadCloseOf",
+      "leadCloseSentence",
+      "leadFinished",
+      "leadStarted",
+      "milestoneColumn",
+      "milestonePart",
+      "savePointRound",
+      "tellUser"
+    ],
+    "loop/unreal/lead-journal.ts": [
+      "DEFAULT_CREDIT_CAP",
+      "SNAPSHOT_SCOPE",
+      "fromOlderLoop",
+      "gameText",
+      "leadJournalOf",
+      "milestoneNow",
+      "newLeadJournal",
+      "oneGitWrite",
+      "readLeadJournal",
+      "requiredNow",
+      "saveLead",
+      "unrealTool",
+      "why"
+    ],
+    "loop/unreal/lead-prompts.ts": [
+      "BUILD_SCRIPTS",
+      "BUILD_TOOLSET",
+      "CARRIED",
+      "HANDOVER_WHY",
+      "LEAD_TOOL_WORDS",
+      "PYTHON_TUPLES",
+      "RUN_STATUS",
+      "SAVE_POINT_WORDS",
+      "STEER",
+      "digestPrompt",
+      "handoverWords",
+      "leadBrief"
+    ],
+    "loop/unreal/lead-steps.ts": [
+      "PluginCallBlocker",
+      "heldInPlan",
+      "unrealTool",
+      "unrealWrite"
+    ],
+    "loop/unreal/lead-turn.ts": [
+      "FRESH_EYES_MS",
+      "MAX_HANDOVERS",
+      "MAX_LIMIT_WAITS",
+      "RUN_ENDS",
+      "SAVE_STEER_MS",
+      "TURN_MS",
+      "WRAP_UP_MS",
+      "abortTurn",
+      "failedEnd",
+      "finishAsked",
+      "inWrapUp",
+      "leadEngine",
+      "leadTurn",
+      "steerOrCarry",
+      "unsavedSince",
+      "userWords",
+      "wrapUpWords"
+    ],
+    "loop/unreal/lead-workers.ts": [
+      "workerTools"
+    ],
+    "loop/unreal/lead.ts": [
+      "SAVE_STEER_MS",
+      "TURN_MS",
+      "WRAP_UP_MS",
+      "runUnrealLead"
+    ],
+    "loop/unreal/live-contract.ts": [
+      "EditorHelperState",
+      "LIVE_JOURNAL_KIND",
+      "LiveCamera",
+      "PartRunEnd",
+      "UnrealLivePluginTool",
+      "UnrealLoopTool"
+    ],
+    "loop/unreal/restore.ts": [
+      "RestoreFailure",
+      "closeEditor",
+      "coldRestore",
+      "editorAnswers",
+      "editorGone",
+      "sourceStamp",
+      "unsavedWork"
+    ],
+    "loop/unreal/save-point.ts": [
+      "LeadPluginTool",
+      "SAVE_POINT_MS",
+      "autosave",
+      "editorActivity",
+      "markLog",
+      "savePoint"
+    ],
+    "loop/workers/chat-workers.ts": [
+      "chatWorkerTool",
+      "chatWorkersGrant",
+      "closeChatWorkers",
+      "openChatWorkers",
+      "withChatWorkers"
+    ],
+    "loop/workers/contract.ts": [
+      "MAX_WORKERS_AT_ONCE",
+      "MAX_WORKER_WAIT_S",
+      "POOL_WORKER_PREFIX",
+      "WORKER_ASK_CHARS",
+      "WORKER_QUESTION_EVENT",
+      "WORKER_QUESTION_PENDING",
+      "WORKER_SUMMARY_CHARS",
+      "WORKER_TASK_CHARS",
+      "WORKER_TITLE_CHARS",
+      "WorkerEnd",
+      "WorkerEvent",
+      "WorkerIsolation",
+      "WorkerRefusal",
+      "WorkerStopCode",
+      "WorkerTool",
+      "WorkerVerdict"
+    ],
+    "loop/workers/director-pool.ts": [
+      "briefOf",
+      "closeReaders",
+      "markWorker",
+      "pooledAnswer",
+      "readerLines",
+      "recordBuilderEnded",
+      "recordBuilderStarted",
+      "rejectedNews",
+      "rejectedWorkers",
+      "unrejected",
+      "waitingBuilders"
+    ],
+    "loop/workers/events.ts": [
+      "firstSentence",
+      "poolWorkerId",
+      "recordWorkerFinished",
+      "recordWorkerStarted",
+      "workerFinishedPayload",
+      "workerStartedPayload"
+    ],
+    "loop/workers/pool-merge.ts": [
+      "commitCopy",
+      "keepWork",
+      "markWorker",
+      "removeCopy"
+    ],
+    "loop/workers/pool-start.ts": [
+      "ended",
+      "scopeEnd",
+      "startWorker"
+    ],
+    "loop/workers/pool.ts": [
+      "openPool"
+    ],
+    "loop/workers/prompts.ts": [
+      "DIRECTOR_MARK_WORDS",
+      "FIT_IN_WORDS",
+      "POOL_WORDS",
+      "RUN_POOL_WORDS",
+      "WORKERS_BRIEF_LINE",
+      "workerBrief"
+    ],
+    "loop/workers/records.ts": [
+      "CHAT_WORKERS_ARTIFACT",
+      "REAL_CLOCK",
+      "WorkerState",
+      "cwdOf",
+      "eventScope",
+      "gameGitWrite",
+      "isWorking",
+      "keptRef",
+      "nextWorkerId",
+      "persist",
+      "readRecords",
+      "recordOf",
+      "recordsArtifact",
+      "runWorkersArtifact",
+      "runningRecords",
+      "threadSlug"
+    ]
+  },
+  "imports": {
+    "loop/chat-session.ts": {
+      "./launch-prompts.ts": [
+        "launchRules",
+        "RESUME_LOOP_CHAT"
+      ],
+      "./game-engine.ts": [
+        "GameEngine"
+      ],
+      "./session-compact-prompts.ts": [
+        "handoverSection"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "InterviewMode",
+        "RunEvent"
+      ],
+      "./unreal-prompts.ts": [
+        "engineChoiceRule",
+        "unrealRules",
+        "unrealWorkHere",
+        "unrealWorkspaceRule"
+      ],
+      "./brief-window.ts": [
+        "TRANSCRIPT_CHARS",
+        "TRANSCRIPT_MESSAGES"
+      ],
+      "./folder-facts.ts": [
+        "CoreFact",
+        "FolderHolds",
+        "factsOfEngine",
+        "hasFact",
+        "kindPending",
+        "kindUnknown",
+        "servedAsWeb"
+      ],
+      "./project-prompts.ts": [
+        "appIdentity",
+        "factPrefix",
+        "ownKindRules",
+        "pendingKindRule",
+        "UNREAL_KIND",
+        "unknownKindRules",
+        "unrealWithoutPlugin"
+      ],
+      "./workers/prompts.ts": [
+        "WORKERS_BRIEF_LINE"
+      ]
+    },
+    "loop/delegated-turn.ts": {
+      "./config.ts": [
+        "GIT_TIMEOUT_MS",
+        "MIN_DELEGATE_TIMEOUT_MS"
+      ],
+      "./git.ts": [
+        "GIT",
+        "gitAt"
+      ],
+      "./chat-session.ts": [
+        "buildContractorBrief",
+        "isContinueAsk",
+        "lastContractorSession",
+        "nameFromAsk",
+        "resolveChatProject"
+      ],
+      "../tools/game-tools.ts": [
+        "tools as launchToolset"
+      ],
+      "./interview-question.ts": [
+        "askUser",
+        "recordInterviewQuestion"
+      ],
+      "./after-loop-run.ts": [
+        "afterLoopRunGrant",
+        "resumeAsked"
+      ],
+      "./after-loop-run-prompts.ts": [
+        "afterLoopRunNote"
+      ],
+      "./reopen-run.ts": [
+        "commissionHours",
+        "reopenAsked",
+        "reopens"
+      ],
+      "./reopen-run-prompts.ts": [
+        "reopenRunTool"
+      ],
+      "./chat-steer.ts": [
+        "steeredCall"
+      ],
+      "./game-engine.ts": [
+        "engineOfGame",
+        "GameEngine"
+      ],
+      "./web-game.ts": [
+        "holdsWebGame"
+      ],
+      "./folder-facts.ts": [
+        "CoreFact",
+        "factsOfGame",
+        "hasFact",
+        "kindPending",
+        "servedAsWeb",
+        "servedFactsKey",
+        "servedFactsOf"
+      ],
+      "./unreal-prompts.ts": [
+        "offersUnrealGame"
+      ],
+      "./project-prompts.ts": [
+        "factsReadyPrompt",
+        "UNREAL_KIND"
+      ],
+      "./unreal/editor-wait.ts": [
+        "EditorWait",
+        "UNREAL_START_WAIT_MS",
+        "unrealOnComputer",
+        "WAIT_MESSAGE",
+        "waitEndWords",
+        "waitForEditor"
+      ],
+      "./unreal/editor-wait-prompts.ts": [
+        "unrealReadyPrompt"
+      ],
+      "./outage.ts": [
+        "EngineFailure",
+        "StopReason"
+      ],
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./page-contract.ts": [
+        "StudioContract"
+      ],
+      "./run-events.ts": [
+        "EventKind",
+        "RunEvent"
+      ],
+      "./text.ts": [
+        "clip",
+        "CLIP_BRIEF",
+        "CLIP_DETAIL",
+        "CLIP_GAME_TITLE"
+      ],
+      "./json.ts": [
+        "isPlainRecord"
+      ],
+      "./time.ts": [
+        "SECOND_MS",
+        "sleep"
+      ],
+      "./first-preview.ts": [
+        "recordFirstPreview"
+      ],
+      "./tool-loop.ts": [
+        "canFallBack",
+        "runToolLoop"
+      ],
+      "./chat-continuity.ts": [
+        "briefSummary",
+        "goesOn"
+      ],
+      "./compaction-log.ts": [
+        "compactedSummary",
+        "endedByCompaction"
+      ],
+      "./unreal/editor-activity.ts": [
+        "EDITOR_ACTIVITY_TOOL",
+        "editorActivityOf"
+      ],
+      "./turn-record.ts": [
+        "TurnStop",
+        "sayInTurn"
+      ],
+      "./workers/chat-workers.ts": [
+        "chatWorkersGrant",
+        "withChatWorkers"
+      ]
+    },
+    "loop/director.ts": {
+      "./director/trace.ts": [
+        "tracedContext"
+      ],
+      "./director/timing.ts": [
+        "retainSpan"
+      ],
+      "./model-roles.ts": [
+        "plannerModel",
+        "roleEffort",
+        "RoleKey"
+      ],
+      "./git.ts": [
+        "GIT",
+        "gitAt"
+      ],
+      "./config.ts": [
+        "MIN_DELEGATE_TIMEOUT_MS",
+        "PLAN_REVIEW_WAIT_MS"
+      ],
+      "./host-methods.ts": [
+        "HostMethod"
+      ],
+      "./outage.ts": [
+        "EngineFailure",
+        "engineLimitOf",
+        "StopReason"
+      ],
+      "./provider-loss.ts": [
+        "isProviderLoss",
+        "noteProviderLoss",
+        "pauseDecision",
+        "pauseEnding"
+      ],
+      "./run-events.ts": [
+        "RunEvent"
+      ],
+      "./shell.ts": [
+        "isCommit"
+      ],
+      "./chat-session.ts": [
+        "isResumeFailure"
+      ],
+      "./text.ts": [
+        "CLIP_QUOTE"
+      ],
+      "./time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS",
+        "sleep"
+      ],
+      "./verdict.ts": [
+        "NotLandedReason"
+      ],
+      "./live-chat-served.ts": [
+        "servesLiveChat"
+      ],
+      "./director/setup.ts": [
+        "prepareLoopRun"
+      ],
+      "./director/reopen.ts": [
+        "reopenMarkOf"
+      ],
+      "./director/reopen-prompts.ts": [
+        "reopenNote"
+      ],
+      "./director/budgets.ts": [
+        "timedWorkRemaining"
+      ],
+      "./director/briefs.ts": [
+        "continuationPrompt",
+        "directorBrief",
+        "limitResumePrompt",
+        "resumeNote",
+        "wrapUpPrompt"
+      ],
+      "./director/tool-specs.ts": [
+        "DIRECTOR_TOOLS",
+        "directors"
+      ],
+      "./director/wake.ts": [
+        "LIMIT_WAIT_MARGIN_MS",
+        "MAX_LIMIT_WAITS",
+        "runWakeLoop",
+        "SYSTEM_CLOCK",
+        "WAKE_ENDING",
+        "WRAP_UP_MIN_MS"
+      ],
+      "./director/wake-prompts.ts": [
+        "longTurnRules",
+        "wakeTools"
+      ],
+      "./director/wake-schedule.ts": [
+        "DirectorLoop",
+        "directorLoopOf",
+        "WRAP_UP_MARGIN_MS",
+        "WrapCause"
+      ],
+      "./director/lead-line.ts": [
+        "openLeadLine"
+      ],
+      "./director/lead-session.ts": [
+        "bookmarkLead",
+        "freshChat",
+        "leadSeat",
+        "servesLead"
+      ]
+    },
+    "loop/director/loop-run.ts": {
+      "../config.ts": [
+        "GIT_TIMEOUT_MS",
+        "PAGE_SEED"
+      ],
+      "../evidence.ts": [
+        "gatherEvidence",
+        "patientEvidence as lookPatiently",
+        "withLease as leaseWindow"
+      ],
+      "../git.ts": [
+        "headOf",
+        "shortSha",
+        "updateRef"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../ledger.ts": [
+        "appendLedger",
+        "rarelyMeasurable"
+      ],
+      "../outcomes.ts": [
+        "isRunning"
+      ],
+      "../run-events.ts": [
+        "appendRun as appendRunEvent",
+        "RunEvent",
+        "RunMode",
+        "saveJournal as saveRunJournal",
+        "writeRunArtifact"
+      ],
+      "../shell.ts": [
+        "isCommit"
+      ],
+      "../state-shape.ts": [
+        "isTruncatedState",
+        "statePathsNamedByChecks"
+      ],
+      "../verdict.ts": [
+        "verdictRecord"
+      ],
+      "./args.ts": [
+        "slug",
+        "withoutFrames"
+      ],
+      "./budgets.ts": [
+        "medianMinutes"
+      ],
+      "./journal.ts": [
+        "journalText",
+        "recordLoopRun"
+      ],
+      "./memory.ts": [
+        "directorMemoryKeep"
+      ],
+      "./rules.ts": [
+        "plainly"
+      ]
+    },
+    "loop/director/setup.ts": {
+      "../config.ts": [
+        "DEFAULT_WALL_CLOCK_MS",
+        "MIN_DELEGATE_TIMEOUT_MS",
+        "PAGE_SEED"
+      ],
+      "../evidence.ts": [
+        "gatherEvidence"
+      ],
+      "../git.ts": [
+        "commitAll",
+        "GIT",
+        "gitAt",
+        "gitlinks",
+        "headOf",
+        "resetClean",
+        "shortSha"
+      ],
+      "../contract-kept.ts": [
+        "keptContractWords"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../folder-facts.ts": [
+        "factsOfGame",
+        "ProjectStarter"
+      ],
+      "../page-contract.ts": [
+        "AttachedContract",
+        "StudioContract"
+      ],
+      "../kinds.ts": [
+        "readDeclaredGame"
+      ],
+      "../ledger.ts": [
+        "appendLedger",
+        "ledgerFromEvents",
+        "loadGameLessons",
+        "readLedger"
+      ],
+      "../library.ts": [
+        "writeWorktreeFile"
+      ],
+      "../model-roles.ts": [
+        "roleEffort",
+        "roleEngine",
+        "RoleKey"
+      ],
+      "../outage.ts": [
+        "engineLimitOf"
+      ],
+      "../provider-loss.ts": [
+        "isProviderLoss",
+        "noteProviderLoss"
+      ],
+      "../prompts-build.ts": [
+        "baseBrief"
+      ],
+      "../repo.ts": [
+        "runRef"
+      ],
+      "../run-events.ts": [
+        "EventKind",
+        "JournalPhase",
+        "RunEvent",
+        "RunMode"
+      ],
+      "../run-inbox.ts": [
+        "createRunInbox"
+      ],
+      "../shell.ts": [
+        "isCommit"
+      ],
+      "../time.ts": [
+        "MINUTE_MS"
+      ],
+      "./loop-run.ts": [
+        "bindLoopRun",
+        "BuildTarget",
+        "WindowLease"
+      ],
+      "./budgets.ts": [
+        "preparationBudgetMs"
+      ],
+      "./foundation.ts": [
+        "foundationFirst"
+      ],
+      "./briefs.ts": [
+        "contractBrief",
+        "preparationBudgetNote"
+      ],
+      "./journal.ts": [
+        "loopRunClock",
+        "restoreLoopRun"
+      ],
+      "./memory.ts": [
+        "clampDirectorMemory"
+      ],
+      "./reopen.ts": [
+        "outcomesAwaitPlan",
+        "reopenCommits",
+        "reopenMarkOf"
+      ],
+      "./rules.ts": [
+        "startingHeads"
+      ],
+      "../workers/identity.ts": [
+        "runIdentity",
+        "withIdentity"
+      ],
+      "../held-hud.ts": [
+        "noteHudUpgrade"
+      ]
+    },
+    "loop/director/tools.ts": {
+      "./progress.ts": [
+        "keepCheckpoint"
+      ],
+      "./timing.ts": [
+        "retainSpan",
+        "timedOperation"
+      ],
+      "./goals.ts": [
+        "GoalBlocker",
+        "GoalStatus",
+        "goalDecision",
+        "recordGoalEvidence",
+        "replanGoal"
+      ],
+      "../checks.ts": [
+        "renderScoreboard",
+        "runDeterministicChecks",
+        "summarizeScoreboard",
+        "toScoreboard",
+        "unmeasured"
+      ],
+      "../facet-loop.ts": [
+        "FACET_POLICY"
+      ],
+      "../git.ts": [
+        "GIT",
+        "gitAt",
+        "headOf",
+        "shortSha"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../judge.ts": [
+        "askVisionBoard",
+        "blindCompare",
+        "Side",
+        "visionCheck"
+      ],
+      "../outage.ts": [
+        "EngineFailure",
+        "outageDelays",
+        "withProviderPatience"
+      ],
+      "../outcomes.ts": [
+        "isRunning",
+        "WorkerMode"
+      ],
+      "../playtester.ts": [
+        "runPlaytest"
+      ],
+      "../repo.ts": [
+        "attemptRef"
+      ],
+      "../run-events.ts": [
+        "RunEvent",
+        "SteeringSource"
+      ],
+      "../spec.ts": [
+        "CheckKind",
+        "CheckWeight",
+        "MoveOwner",
+        "normalizeFacetSpec",
+        "normalizeMilestone"
+      ],
+      "../facet/stage.ts": [
+        "FacetStage",
+        "isFinishing",
+        "stageArg"
+      ],
+      "../facet/beyond.ts": [
+        "playtestStepWords"
+      ],
+      "../facet/growth.ts": [
+        "withOpenRung"
+      ],
+      "../facet/stage-prompts.ts": [
+        "STEER_BACK_TO_BUILD",
+        "STEER_EMPTY_REFUSAL",
+        "steerStageRefusal",
+        "steerStageWords"
+      ],
+      "../text.ts": [
+        "CLIP_REASON"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS",
+        "sleep"
+      ],
+      "../verdict.ts": [
+        "Against",
+        "againstWords",
+        "observedFrom",
+        "VerdictPass",
+        "VerdictRule"
+      ],
+      "./args.ts": [
+        "list",
+        "namedTitle",
+        "num",
+        "parseJson",
+        "slug",
+        "yes"
+      ],
+      "./budgets.ts": [
+        "MAX_WAIT_S",
+        "MAX_WORKERS",
+        "workerWindows"
+      ],
+      "./digests.ts": [
+        "waitDigest",
+        "workerDigest"
+      ],
+      "./journal.ts": [
+        "priorWorkerStatus",
+        "priorWorkersStatus"
+      ],
+      "./lead-session.ts": [
+        "setAsideStrays"
+      ],
+      "./lead-session-prompts.ts": [
+        "LEAD_DIRTY",
+        "LEAD_LIVE_DIRTY"
+      ],
+      "./loop-run.ts": [
+        "BuildTarget",
+        "WindowLease"
+      ],
+      "./close-prompts.ts": [
+        "finalJudgeQuestion"
+      ],
+      "./art-direction.ts": [
+        "routeShipDefects",
+        "shipParts"
+      ],
+      "./art-direction-prompts.ts": [
+        "defectsByPart",
+        "SHIP_ALONE",
+        "SHIP_QUESTION",
+        "shipNext"
+      ],
+      "../ship-review.ts": [
+        "SHIP_VIEW",
+        "shipReview"
+      ],
+      "../judge-provenance.ts": [
+        "JudgeParse"
+      ],
+      "./rules.ts": [
+        "plainly"
+      ],
+      "./tool-specs.ts": [
+        "DirectorTool",
+        "headSynced"
+      ],
+      "./wake-schedule.ts": [
+        "passDeadline"
+      ],
+      "../goal-prompts.ts": [
+        "workingGoal"
+      ],
+      "../workers/contract.ts": [
+        "WorkerTool"
+      ],
+      "../workers/director-pool.ts": [
+        "briefOf",
+        "markWorker",
+        "pooledAnswer",
+        "readerLines",
+        "rejectedNews",
+        "unrejected",
+        "waitingBuilders"
+      ]
+    },
+    "loop/director/wake.ts": {
+      "../prompt.ts": [
+        "estimateTokens"
+      ],
+      "./progress.ts": [
+        "outcomeTally",
+        "reviewProgress",
+        "verifyNudgeDue"
+      ],
+      "./commission.ts": [
+        "durationCommission",
+        "goalCommission"
+      ],
+      "../chat-session.ts": [
+        "isResumeFailure"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../jobs/prompts.ts": [
+        "jobEndLine"
+      ],
+      "../jobs/watch.ts": [
+        "JOB_POLL_MS",
+        "jobEnds"
+      ],
+      "../outage.ts": [
+        "EngineFailure",
+        "engineLimitOf",
+        "isTransientProviderError",
+        "outageDelays",
+        "StopReason",
+        "withProviderPatience"
+      ],
+      "../provider-loss.ts": [
+        "isProviderLoss",
+        "lostSignIn",
+        "noteProviderLoss",
+        "pauseDecision"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL"
+      ],
+      "../run-events.ts": [
+        "RunEvent"
+      ],
+      "../steer-delivery.ts": [
+        "SteerDelivery"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS",
+        "sleep"
+      ],
+      "../workers/director-pool.ts": [
+        "rejectedNews",
+        "unrejected"
+      ],
+      "./briefs.ts": [
+        "limitResumePrompt",
+        "wrapUpPrompt"
+      ],
+      "./budgets.ts": [
+        "MAX_WORKERS",
+        "workerWindows"
+      ],
+      "./digests.ts": [
+        "waitDigest"
+      ],
+      "./journal.ts": [
+        "priorDigestWorkers",
+        "priorWorkersSummary",
+        "recordLoopRun",
+        "restoredWake",
+        "resumedFromJournal",
+        "wakeRecord"
+      ],
+      "./journal-prompts.ts": [
+        "resumeClosing",
+        "resumedHeading"
+      ],
+      "./reopen.ts": [
+        "isReopened"
+      ],
+      "./reopen-prompts.ts": [
+        "reopenClosing",
+        "reopenedHeading"
+      ],
+      "./lead-session.ts": [
+        "folderBusy"
+      ],
+      "./wake-prompts.ts": [
+        "carryOn",
+        "FRESH_LOG_LINES",
+        "FRESH_NOTES",
+        "freshStart",
+        "idleAsk",
+        "SESSION_LOST_WHY",
+        "sinceThen",
+        "userSaysBlock",
+        "wakeDigest",
+        "wakeRules",
+        "wrapLead"
+      ],
+      "./wake-schedule.ts": [
+        "afterTurn",
+        "HEARTBEAT_MS",
+        "nextWake",
+        "NoteKind",
+        "TurnEnd",
+        "WAKE_WINDOW_MS",
+        "WakeCause",
+        "WRAP_UP_MARGIN_MS",
+        "WrapCause"
+      ],
+      "./live-prompts.ts": [
+        "cutShortWake",
+        "midTurnUserSays"
+      ],
+      "./art-direction-prompts.ts": [
+        "artDirectionBlock",
+        "ART_SKIPPED",
+        "shipLookBlock"
+      ],
+      "../goal-prompts.ts": [
+        "workingGoal"
+      ],
+      "../scope.ts": [
+        "runScope"
+      ],
+      "../facet/stage.ts": [
+        "FacetStage",
+        "isFinishing"
+      ]
+    },
+    "loop/director/workers.ts": {
+      "./prerequisites.ts": [
+        "requireMultiplayer"
+      ],
+      "./goals.ts": [
+        "reviseGoals",
+        "createGoals",
+        "goalAttemptRefusal",
+        "goalDecision",
+        "GoalStatus",
+        "startGoalAttempt"
+      ],
+      "./commission.ts": [
+        "goalCommission"
+      ],
+      "../config.ts": [
+        "MIN_DELEGATE_TIMEOUT_MS",
+        "PAGE_SEED"
+      ],
+      "../facet-loop.ts": [
+        "normalizeFacetPolicy",
+        "runFacetLoop",
+        "steerPrompt"
+      ],
+      "./single-worker-prompts.ts": [
+        "carryOnPrompt"
+      ],
+      "../git.ts": [
+        "commitAll",
+        "GIT",
+        "gitAt",
+        "gitExec",
+        "headOf",
+        "LABEL_SHA_LENGTH",
+        "shortSha",
+        "updateRef"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../judge.ts": [
+        "CRITIC_PRINCIPLES"
+      ],
+      "../kinds.ts": [
+        "isGameKind",
+        "KIND_NAMES",
+        "writeDeclaredGame"
+      ],
+      "../ledger.ts": [
+        "refusalRecord",
+        "roundRecord"
+      ],
+      "../model-roles.ts": [
+        "roleEffort",
+        "roleEngine",
+        "RoleKey"
+      ],
+      "../outage.ts": [
+        "EngineFailure",
+        "isEngineLimit",
+        "limitWords",
+        "StopReason"
+      ],
+      "../provider-loss.ts": [
+        "lossWords",
+        "noteProviderLoss"
+      ],
+      "../outcomes.ts": [
+        "isRunning",
+        "setWorkerState",
+        "WorkerMode",
+        "WorkerState"
+      ],
+      "../repo.ts": [
+        "runRef"
+      ],
+      "../run-events.ts": [
+        "RunEvent"
+      ],
+      "../scout.ts": [
+        "normalizeScoutSetup"
+      ],
+      "../facet/stage.ts": [
+        "FacetStage",
+        "isFinishing",
+        "stageArg"
+      ],
+      "../facet/stage-prompts.ts": [
+        "FINISH_SINGLE_REFUSAL",
+        "FINISH_START_MOVES"
+      ],
+      "../facet/growth.ts": [
+        "isOpenRung"
+      ],
+      "../shell.ts": [
+        "isCommit"
+      ],
+      "../scope.ts": [
+        "addToScope",
+        "restoreScope",
+        "runScope"
+      ],
+      "../screen-owner.ts": [
+        "linkScreenOwner",
+        "runningScreenOwner",
+        "SCREEN_CRITIC"
+      ],
+      "../spec.ts": [
+        "CheckWeight",
+        "MAX_DONE",
+        "MAX_MILESTONES"
+      ],
+      "../text.ts": [
+        "CLIP_BRIEF",
+        "CLIP_DETAIL",
+        "CLIP_QUOTE",
+        "CLIP_REASON",
+        "clip"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS",
+        "sleep"
+      ],
+      "../verdict.ts": [
+        "observedFrom",
+        "VerdictPass",
+        "VerdictRule"
+      ],
+      "./args.ts": [
+        "KIND_QUOTED",
+        "list",
+        "num",
+        "parseJson",
+        "slug",
+        "withoutFrames",
+        "yes"
+      ],
+      "./budgets.ts": [
+        "CLOSE_SETTLE_MS",
+        "MAX_WORKERS",
+        "MIN_FREE_MB",
+        "monitorEveryMs",
+        "planReviewWaitMs",
+        "shortBudgetWarning",
+        "WORKER_FLOOR_MS",
+        "workerWindows"
+      ],
+      "./briefs.ts": [
+        "singleWorkerBrief"
+      ],
+      "./digests.ts": [
+        "iterationDigest",
+        "loopNote",
+        "workerDigest"
+      ],
+      "./conflict-worker.ts": [
+        "conflictMergeOf",
+        "markersLeft",
+        "mergeFirst"
+      ],
+      "./contract-gate.ts": [
+        "briefWithContract",
+        "contractAtFork",
+        "contractBeforeFork",
+        "contractOnPlan",
+        "contractSeam"
+      ],
+      "./journal.ts": [
+        "defaultWorkerId",
+        "priorFork",
+        "priorIdRefusal",
+        "priorWorkerIds"
+      ],
+      "./lead-session-prompts.ts": [
+        "LEAD_FORK_REFUSED",
+        "LEAD_START_DIRTY"
+      ],
+      "./loop-run.ts": [
+        "BuildTarget"
+      ],
+      "./rules.ts": [
+        "compilePlan",
+        "compileWorkerSpec",
+        "makeRouteDefect",
+        "monitorFindings",
+        "monitorNote",
+        "PlanHold",
+        "waitForPlanGo"
+      ],
+      "./wake-prompts.ts": [
+        "planHeldWords",
+        "planSetWords",
+        "WAKE_START_NEXT"
+      ],
+      "./wake-schedule.ts": [
+        "NoteKind"
+      ],
+      "../workers/identity.ts": [
+        "runIdentity"
+      ],
+      "../workers/room.ts": [
+        "stoppableRoomClock",
+        "withWorkerRoom"
+      ],
+      "../workers/director-pool.ts": [
+        "briefOf",
+        "recordBuilderEnded",
+        "recordBuilderStarted"
+      ]
+    },
+    "loop/host-methods.ts": {},
+    "loop/project-prompts.ts": {
+      "./folder-facts.ts": [
+        "CoreFact",
+        "FolderHolds",
+        "ProjectTool"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ],
+      "./unreal-prompts.ts": [
+        "engineChoiceRule",
+        "UNREAL_NEW_GAME_TOOL"
+      ]
+    },
+    "loop/unreal-prompts.ts": {
+      "./folder-facts.ts": [
+        "ProjectTool"
+      ],
+      "./interview-question.ts": [
+        "askUser"
+      ],
+      "./model-roles.ts": [
+        "toolCall"
+      ],
+      "./unreal/editor-wait.ts": [
+        "EngineReadiness"
+      ]
+    },
+    "loop/unreal/agents.ts": {
+      "../build-turn.ts": [
+        "buildTurn"
+      ],
+      "../git.ts": [
+        "GIT",
+        "gitExec"
+      ],
+      "../git-delivery.ts": [
+        "checkoutPaths",
+        "commitFolder",
+        "treeEntries"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../json.ts": [
+        "isPlainRecord"
+      ],
+      "../model-roles.ts": [
+        "modelOn",
+        "RoleKey",
+        "roleEngine"
+      ],
+      "../shell.ts": [
+        "isCommit",
+        "shellQuote"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip",
+        "hasText"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "SECOND_MS"
+      ],
+      "../workers/contract.ts": [
+        "WorkerRefusal",
+        "WorkerStopCode"
+      ],
+      "../workers/questions.ts": [
+        "waitingWorkers"
+      ],
+      "../workers/room.ts": [
+        "withWorkerRoom"
+      ],
+      "../workers/run-pool.ts": [
+        "closeRunPool"
+      ],
+      "./agent-prompts.ts": [
+        "AGENT_WORDS",
+        "agentBrief",
+        "agentTitle",
+        "DELIVERY_WORDS",
+        "deliveredNews",
+        "deliversMesh",
+        "PROP_TRIANGLES"
+      ],
+      "./cpp.ts": [
+        "cppFolder"
+      ],
+      "./pool-news.ts": [
+        "takePoolNews"
+      ],
+      "./critic.ts": [
+        "lookAtDelivery"
+      ],
+      "./game-paths.ts": [
+        "pathShapeProblem",
+        "realInside"
+      ],
+      "./lead-contract.ts": [
+        "AGENT_DELIVERY_ROOT",
+        "AGENT_MAIN_TOOLS",
+        "AGENT_MANIFEST_FILE",
+        "AGENT_TOOL_ALLOW",
+        "AGENT_TURN_MS",
+        "AgentFileRole",
+        "AgentKind",
+        "AgentPluginTool",
+        "AgentState",
+        "AgentVerdict",
+        "MAX_AGENT_WAIT_S",
+        "MAX_RUNNING_AGENTS"
+      ],
+      "../workers/identity.ts": [
+        "folderLabelOf"
+      ],
+      "./lead-graph.ts": [
+        "agentMarked",
+        "agentNode",
+        "agentPart"
+      ],
+      "./lead-journal.ts": [
+        "milestoneNow",
+        "oneGitWrite",
+        "SNAPSHOT_SCOPE",
+        "saveLead",
+        "why"
+      ]
+    },
+    "loop/unreal/editor-crash.ts": {
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS"
+      ]
+    },
+    "loop/unreal/lead-between.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "./agents.ts": [
+        "landPending",
+        "relandAgents"
+      ],
+      "./cpp.ts": [
+        "cppSupport",
+        "ensureCppModule",
+        "readCppStatus",
+        "whileAdding"
+      ],
+      "./lead-graph.ts": [
+        "tellUser"
+      ],
+      "./lead-journal.ts": [
+        "oneGitWrite",
+        "SNAPSHOT_SCOPE",
+        "saveLead"
+      ],
+      "./lead-steps.ts": [
+        "unrealTool",
+        "unrealWrite"
+      ],
+      "./lead-prompts.ts": [
+        "CARRIED",
+        "STEER"
+      ],
+      "./live-contract.ts": [
+        "UnrealLoopTool"
+      ],
+      "./restore.ts": [
+        "coldRestore",
+        "editorAnswers",
+        "editorGone",
+        "RestoreFailure",
+        "sourceStamp"
+      ],
+      "./save-point.ts": [
+        "autosave"
+      ]
+    },
+    "loop/unreal/lead-contract.ts": {
+      "../director/budgets.ts": [
+        "MAX_WAIT_S"
+      ],
+      "../director/tool-specs.ts": [
+        "DirectorTool"
+      ],
+      "../time.ts": [
+        "MINUTE_MS"
+      ],
+      "../workers/contract.ts": [
+        "WorkerTool",
+        "WorkerVerdict"
+      ],
+      "./live-contract.ts": [
+        "UnrealLoopTool"
+      ]
+    },
+    "loop/unreal/lead-graph.ts": {
+      "../judge.ts": [
+        "Side"
+      ],
+      "../outcomes.ts": [
+        "WorkerMode",
+        "WorkerState"
+      ],
+      "../run-events.ts": [
+        "appendRun",
+        "RunEvent"
+      ],
+      "../workers/contract.ts": [
+        "WorkerEnd",
+        "WorkerIsolation"
+      ],
+      "../workers/events.ts": [
+        "recordWorkerFinished",
+        "recordWorkerStarted"
+      ],
+      "./agent-prompts.ts": [
+        "agentTitle"
+      ],
+      "./lead-contract.ts": [
+        "AGENT_PART_PREFIX",
+        "AgentState",
+        "AgentVerdict",
+        "LEAD_PART",
+        "LEAD_VERDICT_SOURCE",
+        "MAX_RUNNING_AGENTS",
+        "MergeStage"
+      ]
+    },
+    "loop/unreal/lead-journal.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../json.ts": [
+        "isPlainRecord"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip"
+      ],
+      "../run-events.ts": [
+        "JournalPhase",
+        "saveJournal"
+      ],
+      "../run-journal.ts": [
+        "readJournal"
+      ],
+      "./lead-contract.ts": [
+        "AgentState",
+        "LEAD_JOURNAL_KIND",
+        "LEAD_PART"
+      ],
+      "./live-contract.ts": [
+        "LIVE_JOURNAL_KIND"
+      ]
+    },
+    "loop/unreal/lead-prompts.ts": {
+      "../model-roles.ts": [
+        "toolCall"
+      ],
+      "../folder-facts.ts": [
+        "ProjectTool"
+      ],
+      "../project-prompts.ts": [
+        "appIdentity"
+      ],
+      "../workers/identity.ts": [
+        "UNREAL_AT_ROOT"
+      ],
+      "../unreal-prompts.ts": [
+        "unrealRules",
+        "unrealWorkHere"
+      ],
+      "./critic-prompts.ts": [
+        "requiredText"
+      ],
+      "./lead-contract.ts": [
+        "AgentKind",
+        "kindOffered",
+        "HERO_CAMERA_PREFIX",
+        "LeadTool",
+        "MAX_HERO_SHOTS",
+        "MAX_RUNNING_AGENTS"
+      ],
+      "./template-kind.ts": [
+        "TemplateKind"
+      ]
+    },
+    "loop/unreal/lead-steps.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../json.ts": [
+        "isPlainRecord"
+      ]
+    },
+    "loop/unreal/lead-turn.ts": {
+      "../chat-session.ts": [
+        "isResumeFailure"
+      ],
+      "../config.ts": [
+        "MIN_DELEGATE_TIMEOUT_MS"
+      ],
+      "../director/lead-session.ts": [
+        "bookmarkLead",
+        "freshChat"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../jobs/prompts.ts": [
+        "jobEndLine"
+      ],
+      "../jobs/watch.ts": [
+        "jobEnds"
+      ],
+      "../model-roles.ts": [
+        "modelOn",
+        "RoleKey",
+        "roleEffort",
+        "roleEngine"
+      ],
+      "../outage.ts": [
+        "EngineFailure",
+        "engineLimitOf",
+        "isEngineLimit",
+        "StopReason"
+      ],
+      "../run-events.ts": [
+        "ExecutionStatus"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "minutes",
+        "SECOND_MS"
+      ],
+      "./agents.ts": [
+        "agentNews",
+        "creditCapOf"
+      ],
+      "./lead-contract.ts": [
+        "LeadEndReason"
+      ],
+      "./lead-graph.ts": [
+        "tellUser"
+      ],
+      "./lead-journal.ts": [
+        "gameText",
+        "requiredNow",
+        "saveLead",
+        "why"
+      ],
+      "./lead-prompts.ts": [
+        "digestPrompt",
+        "HANDOVER_WHY",
+        "handoverWords",
+        "leadBrief",
+        "STEER"
+      ],
+      "./lead-tools.ts": [
+        "LEAD_TOOLS",
+        "runStatusText"
+      ],
+      "./editor-life.ts": [
+        "EditorLife",
+        "editorLife"
+      ],
+      "./save-point.ts": [
+        "editorActivity"
+      ]
+    },
+    "loop/unreal/lead-workers.ts": {
+      "../model-roles.ts": [
+        "modelOn",
+        "RoleKey",
+        "roleEngine"
+      ],
+      "../text.ts": [
+        "hasText"
+      ],
+      "../workers/contract.ts": [
+        "WorkerIsolation",
+        "WorkerTool"
+      ],
+      "../workers/identity.ts": [
+        "folderLabelOf",
+        "UNREAL_AT_ROOT"
+      ],
+      "../workers/records.ts": [
+        "readRecords",
+        "runningRecords",
+        "runWorkersArtifact"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../workers/run-pool.ts": [
+        "holdsWorker",
+        "openRunPool",
+        "runPool",
+        "runPoolCall",
+        "runPoolStatus"
+      ],
+      "./agent-prompts.ts": [
+        "AGENT_WORDS"
+      ],
+      "./agents.ts": [
+        "agentStatus",
+        "askingAgents",
+        "creditCapOf",
+        "markAgent",
+        "startAgent",
+        "stopAgent",
+        "waitAgent"
+      ],
+      "./lead-contract.ts": [
+        "AgentKind",
+        "AgentState"
+      ],
+      "./pool-news.ts": [
+        "notePoolEnd"
+      ],
+      "./lead-journal.ts": [
+        "oneGitWrite"
+      ]
+    },
+    "loop/unreal/lead.ts": {
+      "../director/journal.ts": [
+        "loopRunClock"
+      ],
+      "../director/lead-line.ts": [
+        "openLeadLine"
+      ],
+      "../director/lead-session.ts": [
+        "leadSeat"
+      ],
+      "../director/tool-specs.ts": [
+        "directors"
+      ],
+      "../folder-facts.ts": [
+        "factsOfGame"
+      ],
+      "../game-engine.ts": [
+        "engineOfGame",
+        "GameEngine"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../model-roles.ts": [
+        "supportsSessions"
+      ],
+      "../run-events.ts": [
+        "appendRun",
+        "ExecutionStatus",
+        "JournalPhase",
+        "RunEvent",
+        "saveJournal",
+        "writeRunArtifact"
+      ],
+      "../run-journal.ts": [
+        "readJournal"
+      ],
+      "../time.ts": [
+        "HOUR_MS",
+        "MINUTE_MS",
+        "SECOND_MS",
+        "sleepUnlessCancelled"
+      ],
+      "./agents.ts": [
+        "settleAgents"
+      ],
+      "./cpp.ts": [
+        "cppSupport",
+        "readCppStatus"
+      ],
+      "./lead-between.ts": [
+        "betweenTurns",
+        "ensureEditor",
+        "recoverEditor"
+      ],
+      "./lead-contract.ts": [
+        "AgentPluginTool",
+        "LeadEndReason"
+      ],
+      "./lead-graph.ts": [
+        "leadCloseOf",
+        "leadFinished",
+        "leadStarted",
+        "tellUser"
+      ],
+      "./lead-journal.ts": [
+        "fromOlderLoop",
+        "leadJournalOf",
+        "newLeadJournal",
+        "oneGitWrite",
+        "gameText",
+        "SNAPSHOT_SCOPE",
+        "saveLead",
+        "why"
+      ],
+      "./lead-steps.ts": [
+        "unrealTool",
+        "unrealWrite"
+      ],
+      "./lead-prompts.ts": [
+        "CARRIED"
+      ],
+      "./lead-tools.ts": [
+        "leadToolHandler"
+      ],
+      "./lead-turn.ts": [
+        "failedEnd",
+        "finishAsked",
+        "leadEngine",
+        "leadTurn",
+        "RUN_ENDS"
+      ],
+      "./live-contract.ts": [
+        "EditorHelperState",
+        "UnrealLivePluginTool",
+        "UnrealLoopTool"
+      ],
+      "./project-facts.ts": [
+        "PROJECT_FACTS_FILE",
+        "projectFacts"
+      ],
+      "./restore.ts": [
+        "closeEditor",
+        "sourceStamp"
+      ],
+      "./save-point.ts": [
+        "autosave",
+        "markLog"
+      ],
+      "./template-kind.ts": [
+        "TemplateKind",
+        "templateKind"
+      ]
+    },
+    "loop/unreal/live-contract.ts": {},
+    "loop/unreal/restore.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "SECOND_MS"
+      ],
+      "./editor-crash.ts": [
+        "ReopenEnd",
+        "reopenEditor"
+      ],
+      "./editor-life.ts": [
+        "EditorLife",
+        "editorLife"
+      ],
+      "./live-contract.ts": [
+        "UnrealLivePluginTool",
+        "UnrealLoopTool"
+      ],
+      "./lead-journal.ts": [
+        "oneGitWrite",
+        "why"
+      ],
+      "./lead-steps.ts": [
+        "unrealTool",
+        "unrealWrite"
+      ]
+    },
+    "loop/unreal/save-point.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../json.ts": [
+        "isPlainRecord"
+      ],
+      "../time.ts": [
+        "minutes",
+        "SECOND_MS"
+      ],
+      "./lead-contract.ts": [
+        "HERO_CAMERA_PREFIX",
+        "MAX_HERO_SHOTS",
+        "WHOLE_FRAME"
+      ],
+      "./lead-graph.ts": [
+        "savePointRound"
+      ],
+      "./lead-journal.ts": [
+        "milestoneNow",
+        "oneGitWrite",
+        "requiredNow",
+        "SNAPSHOT_SCOPE",
+        "saveLead",
+        "why"
+      ],
+      "./lead-steps.ts": [
+        "heldInPlan",
+        "unrealTool",
+        "unrealWrite"
+      ],
+      "./lead-prompts.ts": [
+        "SAVE_POINT_WORDS"
+      ],
+      "./live-contract.ts": [
+        "LiveCamera",
+        "PartRunEnd",
+        "UnrealLivePluginTool",
+        "UnrealLoopTool"
+      ],
+      "./editor-activity.ts": [
+        "EDITOR_ACTIVITY_TOOL",
+        "editorActivityOf"
+      ],
+      "./restore.ts": [
+        "editorAnswers"
+      ]
+    },
+    "loop/workers/chat-workers.ts": {
+      "../model-roles.ts": [
+        "isDelegated",
+        "modelOn",
+        "RoleKey",
+        "roleEngine",
+        "withRoles"
+      ],
+      "./prompts.ts": [
+        "POOL_WORDS"
+      ],
+      "./pool.ts": [
+        "openPool"
+      ],
+      "./records.ts": [
+        "REAL_CLOCK"
+      ],
+      "./specs.ts": [
+        "workerTools"
+      ]
+    },
+    "loop/workers/contract.ts": {},
+    "loop/workers/director-pool.ts": {
+      "../director/args.ts": [
+        "slug"
+      ],
+      "../model-roles.ts": [
+        "modelOn",
+        "roleEffort",
+        "RoleKey",
+        "roleEngine"
+      ],
+      "../outcomes.ts": [
+        "isRunning",
+        "WorkerState"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip",
+        "hasText"
+      ],
+      "./contract.ts": [
+        "WorkerEnd",
+        "WorkerIsolation",
+        "WorkerStopCode",
+        "WorkerTool",
+        "WorkerVerdict"
+      ],
+      "./events.ts": [
+        "recordWorkerFinished",
+        "recordWorkerStarted"
+      ],
+      "./identity.ts": [
+        "folderLabelOf",
+        "WEB_AT_ROOT"
+      ],
+      "./prompts.ts": [
+        "DIRECTOR_MARK_WORDS",
+        "FIT_IN_WORDS",
+        "RUN_POOL_WORDS"
+      ],
+      "./records.ts": [
+        "REAL_CLOCK"
+      ],
+      "./questions.ts": [
+        "waitingWorkers"
+      ],
+      "./run-pool.ts": [
+        "closeRunPool",
+        "runPool",
+        "runPoolCall",
+        "runPoolStatus"
+      ]
+    },
+    "loop/workers/events.ts": {
+      "../run-events.ts": [
+        "appendRun"
+      ],
+      "../text.ts": [
+        "clip",
+        "hasText"
+      ],
+      "../word-clip.ts": [
+        "clipWords"
+      ],
+      "./contract.ts": [
+        "POOL_WORKER_PREFIX",
+        "WORKER_ASK_CHARS",
+        "WORKER_SUMMARY_CHARS",
+        "WORKER_TASK_CHARS",
+        "WorkerEvent"
+      ]
+    },
+    "loop/workers/pool-merge.ts": {
+      "../git.ts": [
+        "GIT",
+        "gitAt",
+        "gitExec",
+        "headOf",
+        "mergeNoFf",
+        "shortFailure",
+        "updateRef"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../shell.ts": [
+        "commitArg",
+        "isCommit"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip",
+        "hasText"
+      ],
+      "./claude-folder.ts": [
+        "throughClaudeFolder"
+      ],
+      "./contract.ts": [
+        "WorkerIsolation",
+        "WorkerVerdict"
+      ],
+      "./events.ts": [
+        "poolWorkerId",
+        "recordWorkerFinished"
+      ],
+      "./prompts.ts": [
+        "POOL_WORDS"
+      ],
+      "./records.ts": [
+        "eventScope",
+        "gameGitWrite",
+        "isWorking",
+        "keptRef",
+        "persist",
+        "recordOf",
+        "WorkerState"
+      ]
+    },
+    "loop/workers/pool-start.ts": {
+      "../folder-facts.ts": [
+        "CoreFact",
+        "hasFact"
+      ],
+      "../game-engine.ts": [
+        "GameEngine"
+      ],
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../text.ts": [
+        "CLIP_DETAIL",
+        "clip",
+        "hasText"
+      ],
+      "./contract.ts": [
+        "MAX_WORKERS_AT_ONCE",
+        "WORKER_TITLE_CHARS",
+        "WorkerEnd",
+        "WorkerIsolation",
+        "WorkerRefusal",
+        "WorkerStopCode"
+      ],
+      "./events.ts": [
+        "poolWorkerId",
+        "recordWorkerFinished",
+        "recordWorkerStarted"
+      ],
+      "./pool-merge.ts": [
+        "commitCopy",
+        "removeCopy"
+      ],
+      "./prompts.ts": [
+        "POOL_WORDS",
+        "workerBrief"
+      ],
+      "./records.ts": [
+        "eventScope",
+        "gameGitWrite",
+        "isWorking",
+        "persist",
+        "nextWorkerId",
+        "runningRecords",
+        "threadSlug",
+        "WorkerState"
+      ]
+    },
+    "loop/workers/pool.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../text.ts": [
+        "hasText"
+      ],
+      "../time.ts": [
+        "MINUTE_MS",
+        "SECOND_MS"
+      ],
+      "./contract.ts": [
+        "MAX_WORKER_WAIT_S",
+        "WORKER_QUESTION_PENDING",
+        "WorkerIsolation",
+        "WorkerStopCode",
+        "WorkerTool"
+      ],
+      "./pool-merge.ts": [
+        "commitCopy",
+        "keepWork",
+        "markWorker",
+        "removeCopy"
+      ],
+      "./pool-start.ts": [
+        "ended",
+        "scopeEnd",
+        "startWorker"
+      ],
+      "./prompts.ts": [
+        "POOL_WORDS"
+      ],
+      "./questions.ts": [
+        "questionOf",
+        "questionText"
+      ],
+      "./records.ts": [
+        "cwdOf",
+        "isWorking",
+        "persist",
+        "readRecords",
+        "recordOf",
+        "recordsArtifact",
+        "runningRecords",
+        "WorkerState"
+      ]
+    },
+    "loop/workers/prompts.ts": {
+      "../folder-facts.ts": [
+        "CoreFact",
+        "ProjectTool"
+      ],
+      "../project-prompts.ts": [
+        "appIdentity"
+      ],
+      "./contract.ts": [
+        "MAX_WORKERS_AT_ONCE",
+        "WorkerIsolation",
+        "WorkerTool"
+      ]
+    },
+    "loop/workers/records.ts": {
+      "../host-methods.ts": [
+        "HostMethod"
+      ],
+      "../time.ts": [
+        "sleep"
+      ]
+    }
+  }
+}

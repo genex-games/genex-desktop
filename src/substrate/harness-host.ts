@@ -17,7 +17,7 @@ import path from "node:path";
 import { atomicWriteJson, ensureDir, listJsonFiles, readJson } from "./fsx.ts";
 import { shortId } from "./ids.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
-import { harnessParamsProblem } from "../shared/harness-api.ts";
+import { HostRefusal, harnessParamsProblem } from "../shared/harness-api.ts";
 import {
   BootReason,
   DispatchActionType,
@@ -503,7 +503,7 @@ export class HarnessHost {
     this.#lastHeartbeat = this.#now();
     const handler = this.options.api[message.method];
     if (!handler) {
-      this.#refuseRpc(message.id, { message: MESSAGE.UnknownMethod(message.method), name: "UnknownMethod" });
+      this.#refuseRpc(message.id, { message: MESSAGE.UnknownMethod(message.method), name: HostRefusal.UnknownMethod });
       return;
     }
     // A path-bearing method whose params are the wrong shape never reaches its handler: the
@@ -513,7 +513,7 @@ export class HarnessHost {
     if (refused) {
       this.#refuseRpc(message.id, {
         message: refused.message,
-        name: "InvalidParams",
+        name: HostRefusal.InvalidParams,
         data: { method: refused.method, issues: refused.issues },
       });
       return;

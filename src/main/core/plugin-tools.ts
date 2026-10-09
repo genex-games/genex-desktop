@@ -29,6 +29,8 @@ import { genexTelemetryEnv } from "../../substrate/genex-telemetry.ts";
 import { type ConnectorCall, type ConnectorToolEvent, McpHealth, type McpChange } from "../../shared/mcp.ts";
 import { connectorCallFields, keepCaptures } from "./connector-record.ts";
 import { noteCutOff } from "./cut-off-calls.ts";
+import { isLockRefused, type LockRefused } from "./plugin-locks.ts";
+import { EMPTY_HOOK_REPORT, HookEvent, type HookReport } from "../../shared/plugin-hooks.ts";
 import { GenexStudioTool } from "./genex-cli-prompts.ts";
 import { type RunCreditCap, RunCreditLedger } from "./run-credits.ts";
 import { assertPublishable } from "./genex-publish.ts";
@@ -93,6 +95,31 @@ const MESSAGE = {
 /** The answer, never an error, of a plugin call the chat's Plan mode held back. */
 const PLAN_ANSWER = { consent: "declined", blocker: PluginCallBlocker.PlanMode, message: MESSAGE.inPlan } as const;
 
+/** The answer, never an error, of a plugin call whose lock was not given in time: like a declined consent. */
+const lockAnswer = (refused: LockRefused) =>
+  ({
+    consent: "declined",
+    blocker: PluginCallBlocker.Lock,
+    lock: refused.label,
+    reason: refused.code,
+    message: refused.message,
+  }) as const;
+
+/** The answer, never an error, of an agent's call the person declined or whose lock was not given; null for any other failure. */
+function declinedAnswer(err: unknown): object | null {
+  if (isLockRefused(err)) return lockAnswer(err);
+  if (!(err instanceof PluginConsentDeclined)) return null;
+  return {
+    consent: "declined",
+    blocker: "approval_required",
+    by: err.by,
+    message: CONSENT_DECLINED_MESSAGES[err.by],
+  };
+}
+
+/** Nothing to let go: a call that needs no lock. */
+const NO_RELEASE = (): void => {};
+
 /** The plugin whose MCP server is Studio's own Genex CLI, seeded with a tools workspace. */
 const GENEX_PLUGIN_ID = "genex";
 
@@ -118,6 +145,11 @@ export interface PluginCallContext {
   /** A harness step that writes (a chat's checkpoint, a run's save point or editor change): Plan mode holds it back. */
   checkpoint?: boolean;
   /**
+   * The worker the call is made by (`workerHolder`): it passes the locks that worker holds for its
+   * whole life (an in-place writer's), still giving way to the person. The lead's calls carry none.
+   */
+  holder?: string;
+  /**
    * A build's lead's call, the chat's main agent's: its consent card outlives the chat's turns, as
    * its tool permission cards do, and is asked each time, never answered by an earlier decline in
    * its run, as the chat's own session's.
@@ -142,6 +174,8 @@ export interface ConnectorCallOptions {
    * thread the session reports on.
    */
   runId?: string;
+  /** The worker the call is made by, as `PluginCallContext.holder`. */
+  holder?: string;
 }
 
 export class PluginToolService {
@@ -154,6 +188,8 @@ export class PluginToolService {
     | "bypassing"
     | "consent"
     | "cutOffCalls"
+    | "hooks"
+    | "locks"
     | "mcpSecrets"
     | "planning"
     | "pluginCallAttribution"
@@ -167,6 +203,8 @@ export class PluginToolService {
       | "bypassing"
       | "consent"
       | "cutOffCalls"
+      | "hooks"
+      | "locks"
       | "mcpSecrets"
       | "planning"
       | "pluginCallAttribution"
@@ -335,34 +373,89 @@ export class PluginToolService {
     if (this.#harnessStep(name)) return this.#runHarnessStep(name, args, binding, signal, ctx);
     if (!readsSkill(name) && (await this.#planning(binding.project, binding.threadId, callRun(ctx)?.runId)))
       return { ...PLAN_ANSWER };
+    // The plugin's own `tool.before` steps, before anything is recorded or held: a block is the answer.
+    const before = await this.#ownToolMoment(HookEvent.ToolBefore, name, args, binding, signal, ctx);
+    if (before.blocked) return { blocked: before.blocked.reason };
     const kindChange = await this.#beforeKindChange(name, binding);
     if (kindChange && isRefused(kindChange)) return kindChange;
     const started = await this.pluginToolStarted(name, args, binding, ctx);
     let result: unknown;
     try {
-      // Refused before its consent card: Genex would export an Unreal game's folder as a web game.
-      if (name === GenexStudioTool.Publish) await assertPublishable(this.#core, binding.project);
-      // Refused before Genex is asked: the run's paid jobs have committed its credit cap.
-      const overCap = this.#credits.refusal(name, ctx.credits ?? null);
-      if (overCap) throw new Error(overCap);
-      result = await this.#core.plugins.tool(name, args, binding, signal);
-      this.#credits.count(name, ctx.credits ?? null, result);
+      result = await this.#callAgentTool(name, args, binding, signal, ctx);
     } catch (err) {
       await this.pluginToolFinished(started, { error: err }, 0, binding);
-      if (err instanceof PluginConsentDeclined)
-        return {
-          consent: "declined",
-          blocker: "approval_required",
-          by: err.by,
-          message: CONSENT_DECLINED_MESSAGES[err.by],
-        };
+      const declined = declinedAnswer(err);
+      if (declined) return declined;
       throw err;
     }
     // Counted before the bytes are split off downstream: the record that reaches the log never holds them.
     const returned = (result as { images?: unknown } | null)?.images;
     const count = Array.isArray(returned) ? returned.length : 0;
     await this.pluginToolFinished(started, { result }, count, binding);
-    return kindChange ? afterKindChange(this.#core, kindChange, result) : result;
+    const answered = kindChange ? await afterKindChange(this.#core, kindChange, result) : result;
+    const after = await this.#ownToolMoment(HookEvent.ToolAfter, name, args, binding, signal, ctx);
+    return withHookNotes(answered, after.notes);
+  }
+
+  /**
+   * A `tool.*` moment around an agent's call of a plugin's own tool: only that plugin's steps run,
+   * told the tool and a digest of its arguments, never the arguments, under the caller's holder (a
+   * worker writing in place passes its own locks). A skill read is no action.
+   */
+  async #ownToolMoment(
+    on: typeof HookEvent.ToolBefore | typeof HookEvent.ToolAfter,
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+  ): Promise<HookReport> {
+    if (readsSkill(name) || !binding.project) return EMPTY_HOOK_REPORT;
+    const runId = callRun(ctx)?.runId;
+    return this.#x.hooks.fire(
+      on,
+      {
+        project: binding.project,
+        ...(binding.threadId ? { threadId: binding.threadId } : {}),
+        ...(runId ? { runId } : {}),
+        tool: name,
+        args: JSON.stringify(consentArgsDigest(args)),
+      },
+      { ...(signal ? { signal } : {}), ...(ctx.holder ? { holder: ctx.holder } : {}) },
+    );
+  }
+
+  /**
+   * An agent's call itself, between its records: refused before its card or Genex is asked when it
+   * cannot go (a publish of a game Genex cannot export, a run's spent credit cap), its arguments
+   * checked and its card answered, then run in its turn at the locks it needs, the person first,
+   * the chat showing the call going meanwhile.
+   */
+  async #callAgentTool(
+    name: string,
+    args: Record<string, unknown>,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    ctx: PluginCallContext,
+  ): Promise<unknown> {
+    // Refused before its consent card: Genex would export an Unreal game's folder as a web game.
+    if (name === GenexStudioTool.Publish) await assertPublishable(this.#core, binding.project);
+    // Refused before Genex is asked: the run's paid jobs have committed its credit cap.
+    const overCap = this.#credits.refusal(name, ctx.credits ?? null);
+    if (overCap) throw new Error(overCap);
+    // Its arguments are checked and its card answered first: a refused call never waits its turn,
+    // and no lock is held while the person reads the card.
+    let release = NO_RELEASE;
+    const takeTurn = async (): Promise<void> => {
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, callRun(ctx)?.runId);
+    };
+    try {
+      const result = await this.#core.plugins.tool(name, args, binding, signal, undefined, undefined, takeTurn);
+      this.#credits.count(name, ctx.credits ?? null, result);
+      return result;
+    } finally {
+      release();
+    }
   }
 
   /** A call to a tool that makes a kind of project in the bound game: refused during its run, else snapshotted first. */
@@ -386,9 +479,43 @@ export class PluginToolService {
     ctx: PluginCallContext,
   ): Promise<unknown> {
     if (ctx.caller !== PluginToolAudience.Harness) throw new Error(MESSAGE.unknownTool(name));
-    if (ctx.checkpoint && (await this.#planning(binding.project, binding.threadId, callRun(ctx)?.runId)))
-      return { ...PLAN_ANSWER };
-    return this.#core.plugins.tool(name, args, binding, signal, PluginToolAudience.Harness);
+    const runId = callRun(ctx)?.runId;
+    if (ctx.checkpoint && (await this.#planning(binding.project, binding.threadId, runId))) return { ...PLAN_ANSWER };
+    let release = NO_RELEASE;
+    try {
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, runId);
+      return await this.#core.plugins.tool(name, args, binding, signal, PluginToolAudience.Harness);
+    } catch (err) {
+      if (isLockRefused(err)) return lockAnswer(err);
+      throw err;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Hold, for one call, the locks the tool or connector `name` needs (`PluginRegistry.needsOf`):
+   * in turn behind other holders, and while the person uses what one guards, until the agent's
+   * wait runs out (`LockRefused`). A wait on the person is told to the chat the call answers to.
+   * Answers the release; a call that needs nothing holds nothing.
+   */
+  async #holdNeeds(
+    name: string,
+    binding: PluginBinding,
+    signal: AbortSignal | undefined,
+    holder: string | undefined,
+    runId: string | undefined,
+  ): Promise<() => void> {
+    const needs = this.#core.plugins.needsOf(name);
+    if (!needs.length) return NO_RELEASE;
+    const threadId = binding.threadId ? await consentAudience(this.#core, binding, runId) : undefined;
+    return this.#x.locks.hold(needs, {
+      binding,
+      ...(threadId ? { threadId } : {}),
+      ...(signal ? { signal } : {}),
+      waitMs: this.#x.locks.agentWaitMs,
+      holder: holder ?? shortId("call"),
+    });
   }
 
   /** Whether `name` is a tool its plugin keeps for the harness's own calls (`audience: "harness"`). */
@@ -425,8 +552,10 @@ export class PluginToolService {
     const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const call = this.#connectorCall(name, args);
     let sent = false;
+    let release = NO_RELEASE;
     try {
       await this.#connectorConsent(name, args, binding, callSignal, options);
+      release = await this.#holdConnectorNeeds(name, binding, callSignal, options);
       await this.#appendQuietly(customEventData(CustomEvent.ConnectorToolStarted, { ...call }), binding);
       sent = true;
       const result = await this.#core.mcp.tool(name, args, binding, callSignal);
@@ -450,8 +579,25 @@ export class PluginToolService {
       await this.#connectorFailed(name, call, err, cutOff, Date.now() - started, binding);
       throw err;
     } finally {
+      release();
       this.#x.activeConnectorCalls.delete(controller);
     }
+  }
+
+  /** The locks a plugin's connector needs, held for its call as a plugin tool's are (after its consent). */
+  #holdConnectorNeeds(
+    name: string,
+    binding: { project?: string | null; threadId?: string } | undefined,
+    signal: AbortSignal,
+    { holder, runId }: ConnectorCallOptions,
+  ): Promise<() => void> {
+    if (!binding?.project) return Promise.resolve(NO_RELEASE);
+    const bound: PluginBinding = {
+      project: binding.project,
+      directory: this.#core.games.dirFor(binding.project),
+      ...(binding.threadId ? { threadId: binding.threadId } : {}),
+    };
+    return this.#holdNeeds(name, bound, signal, holder, runId);
   }
 
   /**
@@ -894,6 +1040,27 @@ function cutOffArgs(call: ConnectorCall): string {
   const args = call.args ? JSON.stringify(call.args) : "";
   return [named, args].filter(Boolean).join(" ");
 }
+
+/**
+ * A tool's answer with its plugin's `tool.after` notes: after a text answer's words, else under
+ * `genex.notes` beside the answer's own fields (and beside a note Genex already added there).
+ */
+function withHookNotes(result: unknown, notes: HookReport["notes"]): unknown {
+  if (!notes.length) return result;
+  const texts = notes.map((note) => note.text);
+  if (typeof result === "string") return [result, ...texts].filter(Boolean).join("\n\n");
+  if (!isRecordValue(result)) return { answer: result ?? null, genex: { notes: texts } };
+  return { ...result, genex: { ...genexFields(result.genex), notes: texts } };
+}
+
+/** What an answer already holds under `genex`: a note Genex added is kept beside the plugin's notes. */
+function genexFields(genex: unknown): Record<string, unknown> {
+  if (typeof genex === "string") return { note: genex };
+  return isRecordValue(genex) ? genex : {};
+}
+
+const isRecordValue = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** A plugin's skill tool: reading how to use the plugin is planning, never an action. */
 function readsSkill(name: string): boolean {

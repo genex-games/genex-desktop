@@ -45,6 +45,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { GIT, gitAt } from "./git.ts";
 import { MIN_DELEGATE_TIMEOUT_MS, PLAN_REVIEW_WAIT_MS } from "./config.ts";
+import { fireHooks, HookEvent, notesText, runScope } from "./hooks.ts";
+import { runHeldWords } from "./director/held-words.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EngineFailure, engineLimitOf, StopReason } from "./outage.ts";
 import { isProviderLoss, noteProviderLoss, pauseDecision, pauseEnding } from "./provider-loss.ts";
@@ -347,9 +349,15 @@ async function resumeWords(loopRun: LoopRun): Promise<string | null> {
  */
 async function prepareTheStart(
   loopRun: LoopRun,
-): Promise<{ contract: AnyRecord | null; startingPoint: AnyRecord | null }> {
+): Promise<{ contract: AnyRecord | null; startingPoint: AnyRecord | null; held?: string }> {
   const { baseCommit, buildStartingPoint, contractMissing, ctx, installContract, journal, priorJournal } = loopRun;
   const { shotsOf, startEvidence, state, writeVerdict } = loopRun;
+  // The game's plugins prepare their apps first; one that can't holds the run back before any turn.
+  const prepared = await fireHooks(ctx, loopRun.game, HookEvent.RunPrepare, runScope(loopRun));
+  // A Stop while the steps worked is the user's stop (the caller closes it so), never a hold.
+  if (prepared.blocked && ctx.cancelled) return { contract: null, startingPoint: null };
+  if (prepared.blocked) return { contract: null, startingPoint: null, held: runHeldWords(prepared.blocked) };
+  for (const text of notesText(prepared)) loopRun.note(text);
   const firstLoopRunOnABuild = !priorJournal?.director && !state.fromScratch;
   if (firstLoopRunOnABuild && startEvidence) {
     await writeVerdict("director/start/verdict.json", {
@@ -626,6 +634,8 @@ async function tearDown(loopRun: LoopRun): Promise<void> {
   await ctx
     .call(HostMethod.SnapshotRemoveWorktree, { project: run.project, path: integrationWorktree })
     .catch(() => {});
+  // The run is over: the game's plugins hear it (their notes are logged by Genex).
+  await fireHooks(ctx, loopRun.game, HookEvent.RunEnd, runScope(loopRun));
   ctx.setStatus("idle");
 }
 
@@ -730,6 +740,16 @@ export async function runDirector(
   let looping = false;
   try {
     const start = await prepareTheStart(loopRun);
+    // A plugin held the run back while it prepared: it closes before any turn, saying why.
+    if (start.held) {
+      await line?.release({ heardNone: true });
+      await loopRun.closeTheLoopRun({
+        land: false,
+        stopWhy: "the run didn't start",
+        because: start.held,
+      });
+      return report;
+    }
     // A Stop while the run prepared (the starting point, the contract): no session opens, and
     // the run closes as the user's stop — a session has Edit and Bash and would work on.
     if (loopRun.ctx.cancelled) {

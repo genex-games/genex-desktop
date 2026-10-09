@@ -170,7 +170,7 @@ export async function savePointRound(lead: Lead, point: SavePoint): Promise<void
     label: point.label,
     snapshot: point.snapshotId,
     shots: point.thumbnails,
-    logErrors: point.logErrors,
+    logErrors: point.logErrors ?? [],
     auto: point.auto,
   };
   // The save's label names its node; the summary is what it asked of the game.

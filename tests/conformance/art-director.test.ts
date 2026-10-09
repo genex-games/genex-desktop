@@ -43,7 +43,9 @@ import { SHIP_QUESTION, shipFinishLine } from "../../src/harness-seed/loop/direc
 import { finishMarkMs } from "../../src/harness-seed/loop/director/budgets.ts";
 import { priorWorkersStatus, restoreLoopRun } from "../../src/harness-seed/loop/director/journal.ts";
 import { runWakeLoop, type DirectorTalk, type WakeClock } from "../../src/harness-seed/loop/director/wake.ts";
-import { WakeCause } from "../../src/harness-seed/loop/director/wake-schedule.ts";
+import { WakeCause, WrapCause } from "../../src/harness-seed/loop/director/wake-schedule.ts";
+import { HELD_TURN_WAIT_MS, MAX_HELD_TURNS } from "../../src/harness-seed/loop/director/turn-hold.ts";
+import { HOOK_PROMPTS } from "../../src/harness-seed/loop/hooks-prompts.ts";
 import { HOUR_MS, MINUTE_MS } from "../../src/harness-seed/loop/time.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
@@ -1430,5 +1432,99 @@ describe("the goal ledger on every wake (director/progress.ts, wake.ts)", () => 
       "every 60 working minutes, and after the look at 90",
     );
     assert.match(wakes[2]!, /playtest goal=hud/);
+  });
+});
+
+describe("the lead's turn as Genex's moments name it (wake.ts)", () => {
+  it("a lead's turn names one turn at its start and at its end", async () => {
+    const host = fakeHost();
+    const quiet = { blocked: null, pending: null, notes: [], images: [], ran: [] };
+    const { loopRun } = fakeLoopRun(host, {
+      over: { game: { hookEvents: ["turn.start", "turn.end"] } },
+      answers: { [HostMethod.HooksFire]: () => quiet },
+    });
+    const { talk } = lead((turn) => {
+      if (turn === 2) loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+
+    const moments = host.calls
+      .filter((c) => c.method === HostMethod.HooksFire)
+      .map((c) => `${c.params.on} ${c.params.turn}`);
+    assert.deepEqual(moments, ["turn.start 1", "turn.end 1", "turn.start 2", "turn.end 2"]);
+  });
+
+  /** A run whose game hooks the lead's turns; `turnStart` answers each `turn.start` by its count. */
+  function heldRun(turnStart: (asked: number) => Record<string, unknown> | null) {
+    const host = fakeHost();
+    const quiet = { blocked: null, pending: null, notes: [], images: [], ran: [] };
+    let asked = 0;
+    const { loopRun } = fakeLoopRun(host, {
+      over: { game: { hookEvents: ["turn.start", "turn.end"] } },
+      answers: {
+        [HostMethod.HooksFire]: (params: Record<string, unknown>) => {
+          if (params.on !== "turn.start") return quiet;
+          asked += 1;
+          return { ...quiet, blocked: turnStart(asked) };
+        },
+      },
+    });
+    const starts = () => asked;
+    return { host, loopRun, starts };
+  }
+  const BENCH = { plugin: "bench", tool: "gate", reason: "The bench is being oiled." };
+
+  it("a turn held at its start is asked again after a wait and runs once nothing holds it, the brief first", async () => {
+    const { loopRun, starts } = heldRun((asked) => (asked <= 2 ? BENCH : null));
+    const clock = fakeClock(T0 + MINUTE_MS);
+    const { talk, turns } = lead(() => {
+      loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, clock);
+    assert.equal(starts(), 3);
+    assert.equal(clock.at - (T0 + MINUTE_MS), 2 * HELD_TURN_WAIT_MS, "a wait between asks");
+    assert.equal(turns.length, 1);
+    assert.match(turns[0]!.prompt, /You are the DIRECTOR/);
+    assert.notEqual(outcome.wrapCause, WrapCause.Idle);
+  });
+
+  it("a first turn held past every ask is no idle turn: the next turn opens with the held brief and the lead hears why", async () => {
+    const { loopRun } = heldRun((asked) => (asked <= MAX_HELD_TURNS ? BENCH : null));
+    const { talk, turns } = lead(() => {
+      loopRun.state.finished = true;
+      return { ok: true, sessionId: "lead-1", turns: 1 };
+    });
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(turns.length, 1, "only the turn nothing held reached the session");
+    assert.match(turns[0]!.prompt, /^You are the DIRECTOR/, "the held brief opens it");
+    assert.ok(turns[0]!.prompt.includes(HOOK_PROMPTS.turnHeld(BENCH.reason)), turns[0]!.prompt.slice(0, 400));
+    assert.notEqual(outcome.wrapCause, WrapCause.Idle);
+  });
+
+  it("a turn start that keeps being held ends the lead's turns as failed with the hold's reason, never idle", async () => {
+    const { loopRun, starts } = heldRun(() => BENCH);
+    const { talk, turns } = lead(() => ({ ok: true, sessionId: "lead-1", turns: 1 }));
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(turns.length, 0, "no held turn reached the session");
+    assert.ok(starts() >= MAX_HELD_TURNS);
+    assert.equal(outcome.wrapCause, WrapCause.Failed);
+    assert.match(String(outcome.failed?.errorText), /The bench is being oiled/);
+  });
+
+  it("a turn start Genex itself keeps holding for the person ends in the person's words, never the agents'", async () => {
+    const hold = {
+      plugin: "@genex",
+      tool: "",
+      reason: "The person is using Unreal. Try again later, or ask them in the chat.",
+    };
+    const { loopRun } = heldRun(() => ({ ...hold, hold: "person_first", label: "Unreal" }));
+    const { talk } = lead(() => ({ ok: true, sessionId: "lead-1", turns: 1 }));
+    const outcome = await runWakeLoop(loopRun, talk, BRIEF, fakeClock(T0 + MINUTE_MS));
+    assert.equal(outcome.wrapCause, WrapCause.Failed);
+    const words = String(outcome.failed?.errorText);
+    assert.match(words, /you were using Unreal|finish in Unreal/);
+    assert.doesNotMatch(words, /the person|ask them|Try again later|a plugin of this game/i);
   });
 });

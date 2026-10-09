@@ -1,8 +1,9 @@
 /**
- * Reopening Unreal after it went away under the Unreal lead: the runner has the plugin reopen it
- * (`reopen-editor`, a background job that ends a hung editor or its crash reporter, builds the
- * game's module and opens the project) and asks `editor-state` until Unreal answers again. Every
- * answer is read as data.
+ * Reopening Unreal after it went away under the Unreal lead, as an older runner did it: it had the
+ * plugin reopen it (`reopen-editor`) and asked `editor-state` until Unreal answered again. The
+ * runner reopens Unreal through Genex's crash moment and waits on Genex's health check now
+ * (`../hooks.ts`), so no current module calls this; it stays because an older copy of `restore.ts`
+ * an agent kept imports it. Every answer is read as data.
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import { CLIP_DETAIL, clip } from "../text.ts";

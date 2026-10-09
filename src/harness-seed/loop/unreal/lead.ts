@@ -1,14 +1,17 @@
 /**
  * The Unreal Loop's lead: ONE session builds the whole game in the user's visible Unreal editor and
- * judges its own captures. The run prepares as before (C++ status, the editor, the Genex editor
- * helper, the template's facts), seats a fresh lead session by default, and then works in turns of
+ * judges its own captures. The run prepares (C++ status, then Genex's run start, at which the
+ * plugins that are on open what the game needs, and the template's facts), seats a fresh lead
+ * session by default, and then works in turns of
  * at most `TURN_MS`, resumed in the same session: the first opens with the brief, every later one
  * with a digest (time left, the owner's words, finished sub-agents, the last save point, the
  * critic's advice). Mid-turn the harness steers the owner's words at once, a finished sub-agent's
  * news, a save after `SAVE_STEER_MS` without one, a crash and its reopen, and the wrap-up at the
  * soft deadline (`lead-turn.ts`). Between turns it saves what the lead left unsaved
- * (`lead-between.ts`); at the end it settles the sub-agents (keeping every delivered file) and
- * closes the run. The Builds graph reads it as a director's run (`lead-graph.ts`).
+ * (`lead-between.ts`); at the end it settles the sub-agents (keeping every delivered file), fires
+ * Genex's run end and closes the run. The Builds graph reads it as a director's run (`lead-graph.ts`).
+ * The runner never names a plugin's steps: what the editor does at each moment is the plugin's
+ * (`../hooks.ts`); only the C++ module's own tools are called by name.
  */
 import path from "node:path";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
@@ -18,35 +21,36 @@ import { type LeadSeat, leadSeat } from "../director/lead-session.ts";
 import { directors } from "../director/tool-specs.ts";
 import { factsOfGame } from "../folder-facts.ts";
 import { engineOfGame, GameEngine } from "../game-engine.ts";
+import { fireHooks, HookEvent, notesText, runScope } from "../hooks.ts";
 import { HostMethod } from "../host-methods.ts";
 import { supportsSessions } from "../model-roles.ts";
 import { appendRun, ExecutionStatus, JournalPhase, RunEvent, saveJournal, writeRunArtifact } from "../run-events.ts";
 import { readJournal } from "../run-journal.ts";
-import { HOUR_MS, MINUTE_MS, SECOND_MS, sleepUnlessCancelled } from "../time.ts";
+import { HOUR_MS, MINUTE_MS, sleepUnlessCancelled } from "../time.ts";
 import { settleAgents } from "./agents.ts";
 import { cppSupport, readCppStatus } from "./cpp.ts";
-import { betweenTurns, ensureEditor, recoverEditor } from "./lead-between.ts";
+import { closeHeldWords, startHeldWords, turnsHeldWords } from "./hold-words.ts";
+import { betweenTurns, recoverEditor } from "./lead-between.ts";
 import { AgentPluginTool, LeadEndReason, type LeadJournal } from "./lead-contract.ts";
 import { leadCloseOf, leadFinished, leadStarted, tellUser } from "./lead-graph.ts";
-import {
-  fromOlderLoop,
-  type LeadClock,
-  leadJournalOf,
-  newLeadJournal,
-  oneGitWrite,
-  gameText,
-  SNAPSHOT_SCOPE,
-  saveLead,
-  why,
-} from "./lead-journal.ts";
-import { unrealTool, unrealWrite } from "./lead-steps.ts";
+import { fromOlderLoop, type LeadClock, leadJournalOf, newLeadJournal, gameText, saveLead } from "./lead-journal.ts";
+import { unrealTool } from "./lead-steps.ts";
 import { CARRIED } from "./lead-prompts.ts";
 import { leadToolHandler } from "./lead-tools.ts";
-import { failedEnd, finishAsked, type LeadRun, leadEngine, leadTurn, RUN_ENDS, type RunEnd } from "./lead-turn.ts";
-import { EditorHelperState, UnrealLivePluginTool, UnrealLoopTool } from "./live-contract.ts";
+import {
+  failedEnd,
+  finishAsked,
+  type LeadRun,
+  leadEngine,
+  leadTurn,
+  RUN_ENDS,
+  type RunEnd,
+  type TurnHeld,
+} from "./lead-turn.ts";
+import { UnrealLoopTool } from "./live-contract.ts";
 import { PROJECT_FACTS_FILE, projectFacts } from "./project-facts.ts";
-import { closeEditor, sourceStamp } from "./restore.ts";
-import { autosave, markLog } from "./save-point.ts";
+import { sourceStamp } from "./restore.ts";
+import { autosave } from "./save-point.ts";
 import { TemplateKind, templateKind } from "./template-kind.ts";
 
 export { SAVE_STEER_MS, TURN_MS, WRAP_UP_MS } from "./lead-turn.ts";
@@ -60,6 +64,12 @@ const DEFAULT_RUN_MS = HOUR_MS;
  */
 const QUICK_TURN_MS = 2 * MINUTE_MS;
 const MAX_QUICK_TURNS = 3;
+/**
+ * A turn a plugin held back at its start is no quick turn: the run waits this long before it asks
+ * again, and halts with why after this many held in a row.
+ */
+const HELD_TURN_WAIT_MS = MINUTE_MS;
+const MAX_HELD_TURNS = 5;
 /** This many turns in a row the engine answered as failed end the run as failed. */
 const MAX_FAILED_TURNS = 3;
 /** A new turn needs at least this much of the run's working time. */
@@ -69,9 +79,6 @@ const MAX_REFERENCES = 24;
 const REFERENCE_CHARS = 120;
 /** A reference's name: one line of name characters. */
 const NOT_NAME = /[^A-Za-z0-9 ._()-]/g;
-/** How long a helper update waits for a closed editor's process to exit, asking this often. */
-const EXIT_WAIT_MS = 60 * SECOND_MS;
-const EXIT_POLL_MS = 2 * SECOND_MS;
 
 const MESSAGE = {
   NotUnreal: "This game isn't linked to an Unreal project, so the Unreal Loop can't build it.",
@@ -79,19 +86,22 @@ const MESSAGE = {
     "This game's Unreal project lives outside its folder, so its save points couldn't be undone. Make a new Unreal game for the Loop.",
   NoSessions: (engine: string) =>
     `The Unreal Loop needs an engine that keeps a session (Claude Code or Codex); ${engine} doesn't, so nothing was built.`,
-  NoHelper:
-    "This game's Unreal project has no Genex editor helper, so the Loop can't save or capture it. Set the project up from the Unreal panel, then start the Loop again.",
+  StartBlocked: (reason: string) => `${sentence(reason)} Then start the Loop again.`,
   OlderLoop: "This run was made by an older Unreal Loop, which can't be resumed; start a new run.",
   TimeUp: "the run's time ran out",
   Idle: (turns: number) => `the lead ended ${turns} turns in a row within minutes: it had nothing more to build`,
   EngineFailed: (turns: number, why: string) => `the lead's engine failed ${turns} turns in a row: ${why}`,
-  BeforeHelperUpdate: "Before Genex editor helper update",
-  HelperUpdated: (to: string) => `Updated this game's Genex editor helper to ${to} before the Loop.`,
-  HelperNotUpdated: (reason: string) =>
-    `The Genex editor helper couldn't be updated (${reason}); the Loop goes on with it.`,
   NotSavedAtClose: (why: string) =>
-    `Genex didn't save Unreal's last work as the Loop ended: ${why}. Save it in Unreal.`,
+    `Genex didn't save Unreal's last work as the Loop ended: ${sentence(why)} Save it in Unreal.`,
+  TurnsHeld: (times: number, why: string) =>
+    `Genex held the lead's turn back ${times} times in a row: ${sentence(why)} Resume the Loop to try again.`,
 } as const;
+
+/** Words ending as a sentence does. */
+function sentence(words: string): string {
+  const text = words.trim();
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
 
 // ── before the run ─────────────────────────────────────────────────────────────────────────────
 
@@ -143,7 +153,12 @@ function newLead(
     run,
     threadId,
     clock,
-    game: { dir: String(game.dir), title: String(game.title || run.project), facts: factsOfGame(game) },
+    game: {
+      dir: String(game.dir),
+      title: String(game.title || run.project),
+      facts: factsOfGame(game),
+      hookEvents: Array.isArray(game.hookEvents) ? game.hookEvents.map(String) : [],
+    },
     journal: { ...journal, phase: JournalPhase.Director, run },
     ...times,
     template: "",
@@ -171,16 +186,11 @@ function newLead(
 }
 
 /**
- * The template's facts the Genex editor helper exported, and which template it is. A project that
- * never exported them has the editor export them once.
+ * The template's facts the Genex editor helper exported, and which template it is (the plugin's
+ * run-start step has the editor export them when the project has none).
  */
 async function readTemplate(lead: LeadRun): Promise<void> {
-  const command = `cat ${PROJECT_FACTS_FILE} 2>/dev/null || true`;
-  let text = await gameText(lead, command);
-  if (!projectFacts(text) && !lead.halted) {
-    await unrealWrite(lead, UnrealLoopTool.ExportReference).catch(() => {});
-    text = await gameText(lead, command);
-  }
+  const text = await gameText(lead, `cat ${PROJECT_FACTS_FILE} 2>/dev/null || true`);
   lead.template = projectFacts(text);
   lead.templateKind = templateKind(text);
 }
@@ -213,66 +223,37 @@ async function readOffers(lead: LeadRun): Promise<LeadRun["offers"]> {
   };
 }
 
-/** A snapshot of the game folder, by its reason; its id. */
-async function snapshot(lead: LeadRun, reason: string): Promise<string> {
-  const made = await oneGitWrite(lead, () =>
-    lead.ctx.call(HostMethod.SnapshotCreate, { scope: SNAPSHOT_SCOPE, reason, project: lead.run.project }),
-  );
-  return made.snapshot_id;
+/** What the plugins' steps at a moment noted, told to the owner. */
+async function tellNotes(lead: LeadRun, report: Parameters<typeof notesText>[0]): Promise<void> {
+  for (const note of notesText(report)) await tellUser(lead, note).catch(() => {});
 }
 
 /**
- * The project's Genex editor helper, brought up to the plugin's before the first turn when it is
- * older: Unreal closed with its work saved (a save that fails leaves it open and the helper as it
- * was), a snapshot, the update, and Unreal reopened. A project with no helper at all halts the run.
+ * What the run knows before its first turn: C++, then Genex's run start (the plugins open what the
+ * game needs; a step that blocks halts the run with its reason), the template, the plugins, the build.
  */
-async function updateHelper(lead: LeadRun): Promise<void> {
-  const state = (await unrealTool(lead, UnrealLoopTool.EditorState).catch(() => null)) as AnyRecord | null;
-  if (state?.helper === EditorHelperState.Missing) lead.halted = MESSAGE.NoHelper;
-  if (state?.helper !== EditorHelperState.Outdated) return;
-  const closed = await closeEditor(lead);
-  if (closed.ok) await processGone(lead);
-  if (closed.ok) await snapshot(lead, MESSAGE.BeforeHelperUpdate).catch(() => "");
-  const updated = closed.ok
-    ? await unrealWrite(lead, UnrealLivePluginTool.UpdateHelper).catch((err: unknown) => ({ error: why(err) }))
-    : { error: closed.why };
-  const said = updated as AnyRecord;
-  const line = said.error ? MESSAGE.HelperNotUpdated(String(said.error)) : MESSAGE.HelperUpdated(String(said.to));
-  await tellUser(lead, line).catch(() => {});
-  await ensureEditor(lead);
-}
-
-/**
- * Waits, up to EXIT_WAIT_MS, until the closed editor's process has exited: Unreal stops answering
- * before it is gone, and the helper's files can't be updated while it runs.
- */
-async function processGone(lead: LeadRun): Promise<void> {
-  const until = lead.clock.now() + EXIT_WAIT_MS;
-  while (lead.clock.now() < until && !lead.ctx.cancelled) {
-    const state = (await unrealTool(lead, UnrealLoopTool.EditorState).catch(() => null)) as AnyRecord | null;
-    if (state?.running !== true) return;
-    await lead.clock.sleep(EXIT_POLL_MS);
-  }
-}
-
-/** What the run knows before its first turn: C++, the editor and its helper, the template, the plugins, the build, the log. */
 async function prepare(lead: LeadRun): Promise<void> {
   lead.cpp = cppSupport(readCppStatus(await unrealTool(lead, UnrealLoopTool.CppStatus).catch(() => null)));
-  await ensureEditor(lead);
-  if (!lead.halted) await updateHelper(lead);
+  const started = await fireHooks(lead.ctx, lead.game, HookEvent.RunPrepare, runScope(lead));
+  // A Stop while the start's steps worked is the person's stop, never a hold (`endsNow`).
+  if (lead.ctx.cancelled) return;
+  if (started.blocked) lead.halted = startHeldWords(started.blocked) ?? MESSAGE.StartBlocked(started.blocked.reason);
+  await tellNotes(lead, started);
   await readTemplate(lead);
   lead.offers = await readOffers(lead);
   lead.references = await readReferences(lead);
   lead.journal.builtStamp ??= await sourceStamp(lead).catch(() => null);
-  if (!lead.halted) await markLog(lead);
 }
 
 // ── the turns ──────────────────────────────────────────────────────────────────────────────────
 
-/** Why the run ends before another turn, or null when one may start. */
+/**
+ * Why the run ends before another turn, or null when one may start. The person's Stop comes first:
+ * a restore or a moment their Stop cut short may have halted the run on the way.
+ */
 async function endsNow(lead: LeadRun): Promise<RunEnd | null> {
-  if (lead.halted) return RUN_ENDS.halted(lead.halted);
   if (lead.ctx.cancelled) return RUN_ENDS.stopped();
+  if (lead.halted) return RUN_ENDS.halted(lead.halted);
   if (await finishAsked(lead)) return RUN_ENDS.finished();
   const timeLeft = lead.softDeadline - lead.clock.now() >= MIN_TURN_MS;
   return timeLeft ? null : { status: ExecutionStatus.Completed, reason: LeadEndReason.TimeUp, why: MESSAGE.TimeUp };
@@ -281,8 +262,8 @@ async function endsNow(lead: LeadRun): Promise<RunEnd | null> {
 /** Whether the lead asked for a rewind or a rebuild that its turn's end never ran (the run paused first). */
 const betweenPending = (journal: LeadJournal): boolean => journal.between.rewind !== null || journal.between.rebuild;
 
-/** Turns in a row so far: quick ones, and ones the engine failed. */
-type TurnCount = { quick: number; failed: number };
+/** Turns in a row so far: quick ones, ones the engine failed, and ones a plugin held back. */
+type TurnCount = { quick: number; failed: number; held: number };
 
 /**
  * Counts the turn that just ended, and how the run ends because of it, or null: the engine failing
@@ -304,15 +285,33 @@ function turnCounted(lead: LeadRun, count: TurnCount, turn: { tookMs: number; sa
   return count.quick >= MAX_QUICK_TURNS ? idle : null;
 }
 
+/**
+ * A turn a plugin held back at its start: never a quick turn. The run waits before it asks again,
+ * and halts with why (Genex's own hold in the person's words) after {@link MAX_HELD_TURNS} in a row.
+ */
+async function turnHeld(lead: LeadRun, count: TurnCount, held: TurnHeld): Promise<void> {
+  count.held += 1;
+  if (count.held >= MAX_HELD_TURNS) {
+    lead.halted = turnsHeldWords(held) ?? MESSAGE.TurnsHeld(count.held, held.reason);
+    return;
+  }
+  await lead.clock.sleep(HELD_TURN_WAIT_MS);
+}
+
 /** The lead's turns, one after another with no gap, until the time is up or the run stops, pauses or halts. */
 async function turns(lead: LeadRun): Promise<void> {
-  const count: TurnCount = { quick: 0, failed: 0 };
+  const count: TurnCount = { quick: 0, failed: 0, held: 0 };
   while (!lead.end) {
     lead.end = await endsNow(lead);
     if (lead.end) break;
     const started = lead.clock.now();
     const saves = lead.journal.savePoints.length;
-    await leadTurn(lead, recoverEditor);
+    const held = await leadTurn(lead, recoverEditor);
+    if (held) {
+      await turnHeld(lead, count, held);
+      continue;
+    }
+    count.held = 0;
     if (lead.ctx.cancelled) lead.end ??= failedEnd(lead, null);
     const saved = lead.journal.savePoints.length > saves;
     lead.end ??= turnCounted(lead, count, { tookMs: lead.clock.now() - started, saved });
@@ -345,7 +344,9 @@ async function work(lead: LeadRun, resuming: boolean): Promise<void> {
 async function closingSave(lead: LeadRun): Promise<void> {
   if (lead.halted) return;
   const saved = await autosave(lead).catch(() => null);
-  if (saved && "skipped" in saved) await tellUser(lead, MESSAGE.NotSavedAtClose(saved.skipped)).catch(() => {});
+  if (!saved || !("skipped" in saved)) return;
+  const words = closeHeldWords(saved) ?? MESSAGE.NotSavedAtClose(saved.skipped);
+  await tellUser(lead, words).catch(() => {});
 }
 
 /** The graph's own close, or nothing when it can't say. */
@@ -386,10 +387,11 @@ function reportOf(lead: LeadRun, end: RunEnd): AnyRecord {
   };
 }
 
-/** The close: the work saved, the sub-agents settled (their deliveries kept), the report and the journal. */
+/** The close: the work saved, Genex's run end, the sub-agents settled (their deliveries kept), the report and the journal. */
 async function closeLead(lead: LeadRun): Promise<AnyRecord> {
   const end = lead.end ?? { status: ExecutionStatus.Completed, reason: LeadEndReason.TimeUp, why: null };
   await closingSave(lead);
+  await tellNotes(lead, await fireHooks(lead.ctx, lead.game, HookEvent.RunEnd, runScope(lead)));
   await settleAgents(lead).catch(() => {});
   lead.journal.ends.push({ reason: end.reason, at: lead.clock.now(), words: end.why ?? "" });
   const paused = end.status === ExecutionStatus.Paused;

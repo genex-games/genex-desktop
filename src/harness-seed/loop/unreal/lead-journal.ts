@@ -57,10 +57,11 @@ export type Lead = {
   threadId: string;
   clock: LeadClock;
   /**
-   * The game's folder (the lead's seat), its name as the user knows it, and what its folder holds
-   * (`game.list`'s `facts`; absent: the lead's Unreal project at its root).
+   * The game's folder (the lead's seat), its name as the user knows it, what its folder holds
+   * (`game.list`'s `facts`; absent: the lead's Unreal project at its root) and the moments its
+   * plugins hook (`hookEvents`; absent: none).
    */
-  game: { dir: string; title: string; facts?: FactRef[] };
+  game: { dir: string; title: string; facts?: FactRef[]; hookEvents?: string[] };
   journal: LeadJournal;
   /** When the run's clock started (earlier than now on a resume), and its two deadlines. */
   started: number;

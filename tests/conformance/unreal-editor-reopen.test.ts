@@ -10,14 +10,16 @@
  * real files.
  */
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
+import type { PluginContext, PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
+import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { rememberAnswers } from "../../src/plugins/unreal/editor-port.ts";
 import { ReopenState } from "../../src/plugins/unreal/editor-reopen.ts";
+import { EditorHealth, type HealthRead, healthAnswer } from "../../src/plugins/unreal/hook-answers.ts";
 import { createLoopTools, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
-import { HelperState } from "../../src/plugins/unreal/setup.ts";
+import { HelperState, type SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { CompileFailure, type CompileOptions, type CompileResult } from "../../src/plugins/unreal/ubt.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -74,6 +76,8 @@ type Options = {
   remembered?: boolean;
   /** The computer the tools run on: a Mac lists its processes, elsewhere only the editors are counted. */
   platform?: NodeJS.Platform;
+  /** Whether the project holds an older Genex editor helper than the plugin ships. */
+  outdatedHelper?: boolean;
 };
 
 type Paths = { home: string; project: string; crashes: string; ours: string; other: string; elsewhere: string };
@@ -115,6 +119,14 @@ async function reopenFiles(module: boolean) {
   return { root, unreal, storage, paths };
 }
 
+/** `editor-state`'s answer, as the tests read it. */
+type EditorState = {
+  answering: boolean;
+  running: boolean | null;
+  reopening: { state: string; error?: string; seconds?: number };
+  helper: string | null;
+};
+
 async function reopenWorld(options: Options = {}) {
   const { root, unreal, storage, paths } = await reopenFiles(options.module !== false);
   const { home, project } = paths;
@@ -144,8 +156,10 @@ async function reopenWorld(options: Options = {}) {
     return state.answering;
   };
   const remembered = rememberAnswers(asked, () => clock.at);
+  const helper = options.outdatedHelper ? await helperUpdates(root, paths, events, rows) : {};
 
   const tools = createLoopTools({
+    ...helper,
     platform: options.platform ?? "darwin",
     engine: async () => ({ version: "5.8", directory: path.join(root, "engine") }),
     project: async () => (options.unlinked ? undefined : project),
@@ -199,12 +213,6 @@ async function reopenWorld(options: Options = {}) {
     callId: 1,
     host: (async () => storage) as never,
   };
-  type EditorState = {
-    answering: boolean;
-    running: boolean | null;
-    reopening: { state: string; error?: string; seconds?: number };
-    helper: string | null;
-  };
   const editorState = async () => (await tools.call(LoopToolName.EditorState, {}, context, storage)) as EditorState;
   const reopen = () => tools.call(LoopToolName.ReopenEditor, {}, context, storage);
   const endEditor = () => tools.call(LiveLoopToolName.EndEditor, {}, context, storage);
@@ -217,7 +225,59 @@ async function reopenWorld(options: Options = {}) {
     }
     throw new Error("never settled");
   };
-  return { paths, rows, events, signals, clock, state, reopen, reopened, editorState, endEditor };
+  /** A tool called at one of Genex's moments. */
+  const atMoment = (name: string, hook: PluginHookContext) =>
+    tools.call(name as LoopToolName, {}, { ...context, hook }, storage);
+  return { paths, rows, events, signals, clock, state, reopen, reopened, editorState, endEditor, atMoment };
+}
+
+/** A setup env for the project's helper: this stand-in computer, where nothing else runs. */
+function setupEnv(home: string): SetupEnv {
+  return {
+    home,
+    platform: "darwin",
+    programData: path.join(home, "ProgramData"),
+    editorRunning: async () => false,
+    portListening: async () => false,
+    editorAnswers: async () => false,
+    xcode: async () => ({ state: XcodeState.Ready }) as never,
+    freeBytes: async () => 0,
+    totalMemory: () => 0,
+  };
+}
+
+/**
+ * The tools' setup with the plugin's shipped helper, and an older copy of it in the project, and a
+ * stand-in update that records itself and finds no editor of the project running.
+ */
+async function helperUpdates(root: string, paths: Paths, events: string[], rows: Row[]) {
+  const shipped = await olderHelper(root, paths.project);
+  return {
+    setup: (folder: string) => ({ env: setupEnv(paths.home), helper: shipped, storage: folder }),
+    updateHelper: async () => {
+      events.push("update-helper");
+      const running = rows.some(
+        (row) => path.basename(row.exec) === "UnrealEditor" && row.args.includes(paths.project),
+      );
+      assert.ok(!running, "Unreal is closed");
+      return { from: "0.4.0", to: "0.5.0", kept: [] };
+    },
+  };
+}
+
+/** The plugin's shipped helper, and an older copy of it in the project; the shipped folder. */
+async function olderHelper(root: string, project: string): Promise<string> {
+  const shipped = path.join(root, "shipped", "GenexEditorHelper");
+  await mkdir(path.join(shipped, "Content", "Python"), { recursive: true });
+  await writeFile(
+    path.join(shipped, "GenexEditorHelper.uplugin"),
+    JSON.stringify({ Version: 5, VersionName: "0.5.0" }),
+  );
+  await writeFile(path.join(shipped, "Content", "Python", "tools.py"), "# tools\n");
+  const own = path.join(path.dirname(project), "Plugins", "GenexEditorHelper");
+  await cp(shipped, own, { recursive: true });
+  await writeFile(path.join(own, "GenexEditorHelper.uplugin"), JSON.stringify({ Version: 4, VersionName: "0.4.0" }));
+  return shipped;
 }
 
 describe("reopen-editor", () => {
@@ -569,3 +629,149 @@ describe("end-editor (the live builder's cold restore)", () => {
 function reporter(argument: string): Row {
   return { pid: 6000, exec: REPORTER_EXEC, args: `${REPORTER_EXEC} ${argument} -Unattended` };
 }
+
+describe("at Genex's moments", () => {
+  const health: PluginHookContext = { on: HookEvent.Health, runId: "run-7" };
+  type Answer = { block?: string; pending?: string; note?: string };
+
+  it("editor-state at health is pending while Unreal reopens or is busy, blocks once it is gone three times in a row, and is silent when it answers", async () => {
+    const open = await reopenWorld({ answering: true });
+    assert.deepEqual(await open.atMoment(LoopToolName.EditorState, health), {});
+
+    const reopening = await reopenWorld({ openTakes: NEVER });
+    await reopening.reopen();
+    const waiting = (await reopening.atMoment(LoopToolName.EditorState, health)) as Answer;
+    assert.match(waiting.pending ?? "", /reopening Unreal/);
+
+    const busy = await reopenWorld({
+      rows: (p) => [{ pid: 9200, exec: EDITOR_EXEC, args: `${EDITOR_EXEC} ${p.project}` }],
+    });
+    const working = (await busy.atMoment(LoopToolName.EditorState, health)) as Answer;
+    assert.match(working.pending ?? "", /busy/);
+    assert.equal(working.block, undefined, "a busy editor is no crash");
+
+    const gone = await reopenWorld();
+    const crashed = (await gone.atMoment(LoopToolName.EditorState, health)) as Answer;
+    assert.match(crashed.block ?? "", /Unreal isn't running/);
+    assert.ok(gone.clock.at >= 10_000, "asked three times, five seconds apart");
+    assert.deepEqual(gone.events, [], "health only reads");
+
+    const failed = await reopenWorld({ compile: () => BROKEN });
+    await failed.reopen();
+    await failed.reopened();
+    const lost = (await failed.atMoment(LoopToolName.EditorState, health)) as Answer;
+    assert.match(lost.block ?? "", /reopening Unreal failed: .*didn't build/);
+  });
+
+  it("editor-state's answer at health, in a run and in a chat: pending while Unreal may yet answer, blocked once it can't", () => {
+    const chat: PluginHookContext = { on: HookEvent.Health };
+    type Row = [string, HealthRead, PluginHookContext, keyof Answer, RegExp];
+    const rows: Row[] = [
+      ["opening, in a run", { health: EditorHealth.Starting, project: "Tower" }, health, "pending", /opening Tower/],
+      ["opening, in a chat", { health: EditorHealth.Starting, project: "Tower" }, chat, "pending", /opening Tower/],
+      [
+        "its port blocked",
+        { health: EditorHealth.PortBlocked, project: "Tower", error: "Port 8000 is taken by another app." },
+        chat,
+        "block",
+        /Port 8000 is taken/,
+      ],
+      ["its port blocked, no reason", { health: EditorHealth.PortBlocked, project: "Tower" }, health, "block", /Tower/],
+      ["no linked project, in a run", { health: EditorHealth.NoProject }, health, "block", /isn't linked/],
+      [
+        "no linked project, in a chat",
+        { health: EditorHealth.NoProject },
+        chat,
+        "block",
+        /Open it from the Unreal button/,
+      ],
+      [
+        "processes that can't be listed",
+        { health: EditorHealth.Unknown, project: "Tower" },
+        health,
+        "pending",
+        /can't tell/,
+      ],
+      ["gone, in a run", { health: EditorHealth.Gone, project: "Tower" }, health, "block", /isn't running/],
+      [
+        "gone, in a chat",
+        { health: EditorHealth.Gone, project: "Tower" },
+        chat,
+        "block",
+        /didn't finish opening Tower/,
+      ],
+    ];
+    for (const [name, read, hook, field, words] of rows) {
+      const answer = healthAnswer(read, hook) as Answer;
+      assert.deepEqual(Object.keys(answer), [field], name);
+      assert.match(String(answer[field]), words, name);
+    }
+  });
+
+  it("end-editor before a restore blocks when Unreal still answers after it ended everything", async () => {
+    const w = await reopenWorld({ answering: true });
+    const answer = (await w.atMoment(LiveLoopToolName.EndEditor, {
+      on: HookEvent.RestoreBefore,
+      runId: "run-7",
+    })) as Answer;
+    assert.match(answer.block ?? "", /Unreal couldn't be closed for the restore \(.*didn't end/);
+
+    const closes = await reopenWorld({
+      rows: (p) => [{ pid: 9200, exec: EDITOR_EXEC, args: `${EDITOR_EXEC} ${p.project}` }],
+    });
+    assert.deepEqual(await closes.atMoment(LiveLoopToolName.EndEditor, { on: HookEvent.RestoreBefore }), {});
+  });
+
+  it("a restore of a folder whose Unreal project isn't linked ends nothing and goes on, at every moment and for the person", async () => {
+    for (const hook of [
+      { on: HookEvent.RestoreBefore, forPerson: true },
+      { on: HookEvent.RestoreBefore, runId: "run-7" },
+      { on: HookEvent.RestoreBefore },
+    ] as PluginHookContext[]) {
+      const w = await reopenWorld({ unlinked: true });
+      assert.deepEqual(await w.atMoment(LiveLoopToolName.SaveAll, hook), {}, JSON.stringify(hook));
+      assert.deepEqual(await w.atMoment(LiveLoopToolName.EndEditor, hook), {}, JSON.stringify(hook));
+      assert.deepEqual(await w.atMoment(LoopToolName.ReopenEditor, { ...hook, on: HookEvent.RestoreAfter }), {});
+      assert.deepEqual(w.events, [], "nothing was quit, ended or opened");
+      assert.deepEqual(w.signals, [], "no process was signalled");
+      assert.equal(w.clock.at, 0, "no wait on an editor that can't exist");
+    }
+  });
+
+  it("reopen-editor updates an outdated helper while Unreal is closed, before it opens it", async () => {
+    const w = await reopenWorld({ outdatedHelper: true });
+    assert.deepEqual(await w.atMoment(LoopToolName.ReopenEditor, { on: HookEvent.RestoreAfter, runId: "run-7" }), {});
+    const end = await w.reopened();
+    assert.equal(end.reopening.state, ReopenState.Done, end.reopening.error);
+    assert.deepEqual(w.events, ["update-helper", "compile", `forget ${NAME}.uproject`, `open ${NAME}.uproject`]);
+
+    const direct = await reopenWorld({ outdatedHelper: true });
+    await direct.reopen();
+    await direct.reopened();
+    assert.equal(direct.events.includes("update-helper"), false, "a direct call only reopens, as before");
+  });
+
+  it("the person's Rewind reopens only an Unreal its restore closed: a closed one stays closed, its helper untouched", async () => {
+    const before: PluginHookContext = { on: HookEvent.RestoreBefore, forPerson: true };
+    const after: PluginHookContext = { on: HookEvent.RestoreAfter, forPerson: true };
+    const closed = await reopenWorld({ outdatedHelper: true });
+    assert.deepEqual(await closed.atMoment(LiveLoopToolName.EndEditor, before), {});
+    assert.deepEqual(await closed.atMoment(LoopToolName.ReopenEditor, after), {});
+    assert.equal((await closed.editorState()).reopening.state, ReopenState.Idle, "no reopen started");
+    assert.deepEqual(closed.events, [], "Unreal was not opened, and its helper was not updated");
+
+    const open = await reopenWorld({
+      answering: true,
+      rows: (p) => [{ pid: 9200, exec: EDITOR_EXEC, args: `${EDITOR_EXEC} ${p.project}` }],
+    });
+    assert.deepEqual(await open.atMoment(LiveLoopToolName.EndEditor, before), {});
+    assert.deepEqual(await open.atMoment(LoopToolName.ReopenEditor, after), {});
+    assert.equal((await open.reopened()).reopening.state, ReopenState.Done);
+    assert.ok(open.events.includes(`open ${NAME}.uproject`), "the Unreal the restore closed was opened again");
+
+    const crashed = await reopenWorld();
+    assert.deepEqual(await crashed.atMoment(LoopToolName.ReopenEditor, { on: HookEvent.Crash, runId: "run-7" }), {});
+    await crashed.reopened();
+    assert.ok(crashed.events.includes(`open ${NAME}.uproject`), "a crash still reopens Unreal");
+  });
+});

@@ -716,8 +716,22 @@ export class ChatRewindService {
     return this.#core.host.dispatch({ type: DispatchActionType.QueueMessage, threadId, messageId, operation });
   }
 
-  /** Files first, then the conversation. Nothing half-done: a failure puts the files back. */
+  /**
+   * Files first, then the conversation. Nothing half-done: a failure puts the files back. The files
+   * change between the game's plugins' restore steps (an editor saved and closed before, opened
+   * after), the person's own: they never wait for the person or the plan, and a step's block keeps
+   * the files and fails the rewind with its reason.
+   */
   async #apply(request: RewindRequest): Promise<AppliedRewind> {
+    const project = request.meta?.project;
+    if (!(request.files && request.dir && project)) return this.#applyFiles(request);
+    return this.#x.hooks.restoreWithHooks(project, () => this.#applyFiles(request), {
+      forPerson: true,
+      threadId: request.threadId,
+    });
+  }
+
+  async #applyFiles(request: RewindRequest): Promise<AppliedRewind> {
     const { dir } = request;
     let restored: RestoredFiles | null = null;
     try {

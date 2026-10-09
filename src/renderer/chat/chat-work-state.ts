@@ -4,7 +4,7 @@
  * is a quiet line, never "Thinking". Pure, so ChatPanel only reads the answer.
  */
 import { RunState, type RunExecution } from "../../shared/run-state.ts";
-import { CHAT_WORDS, runIdIn } from "../words.ts";
+import { CHAT_WORDS, PERSON_FIRST_WORDS, runIdIn } from "../words.ts";
 import { type ActivityItem, type ConversationEntry, WORK_KIND, workHasResults } from "./conversation-entries.ts";
 
 type WorkEntry = Extract<ConversationEntry, { kind: typeof WORK_KIND }>;
@@ -95,17 +95,20 @@ export function chatWorkState(input: ChatWorkInput): ChatWorkState {
   };
 }
 
-/** The busy line's label: a stop, a send, a question or a plan change comes before the work itself. */
+/** The busy line's label: a stop, a send, a question, a wait for the person or a plan change comes before the work itself. */
 export function busyLabel(state: {
   stopping: boolean;
   sending: boolean;
   questionsWaiting: boolean;
   revisingPlan: boolean;
   current: string;
+  /** What the work waits for the person to finish in (a lock's label), when it does. */
+  personFirst?: string | null;
 }): string {
   if (state.stopping) return CHAT_WORDS.stopping;
   if (state.sending) return CHAT_WORDS.sending;
   if (state.questionsWaiting) return CHAT_WORDS.waitingForAnswer;
+  if (state.personFirst) return PERSON_FIRST_WORDS.waiting(state.personFirst);
   if (state.revisingPlan) return CHAT_WORDS.describeChanges;
   return state.current;
 }

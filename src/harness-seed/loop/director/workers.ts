@@ -14,6 +14,8 @@ import { MIN_DELEGATE_TIMEOUT_MS, PAGE_SEED } from "../config.ts";
 import { normalizeFacetPolicy, runFacetLoop, steerPrompt } from "../facet-loop.ts";
 import { carryOnPrompt } from "./single-worker-prompts.ts";
 import { commitAll, GIT, gitAt, gitExec, headOf, LABEL_SHA_LENGTH, shortSha, updateRef } from "../git.ts";
+import { runScope as runMoment, workerEndHooks, workerStartHooks } from "../hooks.ts";
+import { HOOK_PROMPTS } from "../hooks-prompts.ts";
 import { HostMethod } from "../host-methods.ts";
 import { CRITIC_PRINCIPLES } from "../judge.ts";
 import { isGameKind, KIND_NAMES, writeDeclaredGame } from "../kinds.ts";
@@ -1445,12 +1447,15 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
     budgetMs,
     policySpec,
   });
+  // A plugin of the game may hold the builder back before anything of it is made.
+  const held = await workerStartHooks(ctx, loopRun.game, runMoment(loopRun), starting);
+  if (held) return HOOK_PROMPTS.workerHeld(held);
   const opened = await openWorkspace(loopRun, starting, pooled);
-  if (typeof opened === "string") return opened;
+  if (typeof opened === "string") return startRefused(loopRun, starting, opened);
   const refused = await forkGate(loopRun, opened, from);
-  if (refused) return refused;
+  if (refused) return startRefused(loopRun, starting, refused);
   const worker = await openThread(loopRun, opened);
-  if (typeof worker === "string") return worker;
+  if (typeof worker === "string") return startRefused(loopRun, starting, worker);
   worker.goal = goal;
   compileContract(loopRun, worker, parsed, args);
   // A part the art director found defects in while nobody ran it: they are this worker's questions now.
@@ -1467,6 +1472,12 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
     waking: loopRun.waking === true,
     lead: Boolean(loopRun.lead),
   });
+}
+
+/** A builder refused after its start was announced: its end is announced too, and the refusal is the answer. */
+async function startRefused(loopRun: LoopRun, starting: StartingWorker, refusal: string): Promise<string> {
+  await workerEndHooks(loopRun.ctx, loopRun.game, runMoment(loopRun), starting);
+  return refusal;
 }
 
 async function chargeGoalAttempt(loopRun: LoopRun, goal: string): Promise<void> {
@@ -1889,6 +1900,7 @@ async function closeOutWorker(loopRun: LoopRun, worker: Worker): Promise<void> {
     ...(worker.replaces ? { replaces: worker.replaces } : {}),
   });
   await recordBuilderEnded(loopRun, worker, because);
+  await workerEndHooks(loopRun.ctx, loopRun.game, runMoment(loopRun), worker);
   // A worker the lead stopped settling is its own doing: it opens the next digest, and wakes nobody.
   note(
     `worker ${worker.id} ${worker.state}${because ? ` — ${because}` : ""}`,

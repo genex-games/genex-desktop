@@ -1,6 +1,9 @@
 /**
  * What the chat's own session is told when Unreal answers after a turn that made the game's Unreal
  * project (`editor-wait.ts`): it goes on with what it said it would build, now through the editor.
+ *
+ * No current module calls this: the session goes on with its game's new kind
+ * (`factsReadyPrompt`). It stays because an older copy of `delegated-turn.ts` an agent kept imports it.
  */
 
 /** The prompt that resumes the session once the game's Unreal project answers. */

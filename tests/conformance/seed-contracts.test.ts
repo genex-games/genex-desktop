@@ -20,11 +20,10 @@ import blenderManifest from "../../src/plugins/blender/plugin.json" with { type:
 import genexManifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { PartRunState, PlayCheckShot } from "../../src/plugins/unreal/editor-queue.ts";
 import { LeadLoopToolName, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
-import { EDITOR_ACTIVITY_TOOL as seedEditorActivityTool } from "../../src/harness-seed/loop/unreal/editor-activity.ts";
 import { LeadPluginTool as seedLeadPluginTool } from "../../src/harness-seed/loop/unreal/save-point.ts";
 import { PluginCallBlocker as seedPluginCallBlocker } from "../../src/harness-seed/loop/unreal/lead-steps.ts";
 import { PluginCallBlocker } from "../../src/shared/plugins.ts";
-import { UnrealCheckpointTool } from "../../src/main/core/unreal-checkpoint.ts";
+import { LOCK_LABEL_CHARS } from "../../src/shared/plugin-hooks.ts";
 import { HelperState } from "../../src/plugins/unreal/setup.ts";
 import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "json" };
 import * as seedInbox from "../../src/harness-seed/loop/run-inbox.ts";
@@ -46,6 +45,7 @@ import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
 import * as seedWorkers from "../../src/harness-seed/loop/workers/contract.ts";
+import * as seedWhere from "../../src/harness-seed/loop/workers/where.ts";
 import * as seedWorkerRecords from "../../src/harness-seed/loop/workers/records.ts";
 import * as seedJobs from "../../src/harness-seed/loop/jobs/contract.ts";
 import * as seedBudgets from "../../src/harness-seed/loop/director/budgets.ts";
@@ -719,13 +719,6 @@ describe("the Unreal plugin's harness tools a save asks (plugins/unreal ↔ the 
     assert.deepEqual(seedLeadPluginTool, named);
     for (const name of Object.values(seedLeadPluginTool)) assert.ok(harness.has(name), name);
   });
-
-  it("asks a chat turn's and a checkpoint's editor activity by the plugin's harness tool", () => {
-    for (const name of [seedEditorActivityTool, ...Object.values(UnrealCheckpointTool)])
-      assert.ok(harness.has(name), name);
-    assert.equal(seedEditorActivityTool, seedLeadPluginTool.EditorActivity);
-    assert.equal(UnrealCheckpointTool.EditorActivity, seedEditorActivityTool);
-  });
 });
 
 describe("skill edits (shared/skill-edits.ts ↔ loop/skills.ts)", () => {
@@ -767,19 +760,6 @@ describe("run budgets (shared/run-state.ts ↔ loop/chat-dispatch.ts)", () => {
       hours: null,
     });
     assert.deepEqual(recordedRunLoop(seedChatDispatch.intakeBudgets({ hours: 1 })), { hours: 1 });
-  });
-});
-
-describe("a chat's first steps with Unreal (plugins/unreal/editor-wait.ts ↔ loop/unreal/editor-wait.ts)", () => {
-  it("names the plugin's harness tools and reads their answers by the plugin's own wire values", async () => {
-    const plugin = await import("../../src/plugins/unreal/editor-wait.ts");
-    const seed = await import("../../src/harness-seed/loop/unreal/editor-wait.ts");
-    assert.deepEqual(seed.EditorWait, plugin.EditorWait);
-    assert.deepEqual(seed.EngineReadiness, plugin.EngineReadiness);
-    const harnessTools = unrealManifest.tools
-      .filter((tool) => (tool as { audience?: string }).audience === "harness")
-      .map((tool) => `${unrealManifest.id}__${tool.name}`);
-    for (const name of Object.values(seed.UnrealChatTool)) assert.ok(harnessTools.includes(name), name);
   });
 });
 
@@ -849,6 +829,9 @@ describe("one worker model (shared/workers.ts ↔ loop/workers/contract.ts)", ()
     assert.equal(seedWorkers.WORKER_TASK_CHARS, workers.WORKER_TASK_CHARS);
     assert.equal(seedWorkers.WORKER_ASK_CHARS, workers.WORKER_ASK_CHARS);
     assert.equal(seedWorkers.WORKER_SUMMARY_CHARS, workers.WORKER_SUMMARY_CHARS);
+    assert.equal(seedWorkers.WORKER_TITLE_CHARS, workers.WORKER_TITLE_CHARS);
+    // Where an in-place worker works is a lock's label, as long as a label may be.
+    assert.equal(seedWhere.WORKER_WHERE_CHARS, LOCK_LABEL_CHARS);
   });
 
   it("Plan holds the director's merge and its landing finish by the seed's own names and its own reading of land", () => {
@@ -872,5 +855,27 @@ describe("one worker model (shared/workers.ts ↔ loop/workers/contract.ts)", ()
       false,
     ])
       assert.equal(finishLands({ land }), seedYes(land, true), `land=${JSON.stringify(land)}`);
+  });
+});
+
+describe("Genex's moments (shared/plugin-hooks.ts ↔ loop/hooks.ts)", () => {
+  it("names the hook events, the blocking ones, checkpoint skips, Genex's holds and the label cap as the app does", async () => {
+    const seed = await import("../../src/harness-seed/loop/hooks.ts");
+    const app = await import("../../src/shared/plugin-hooks.ts");
+    assert.deepEqual(seed.HookEvent, app.HookEvent);
+    assert.deepEqual([...seed.SEED_FIRED_HOOK_EVENTS].sort(), [...app.SEED_FIRED_HOOK_EVENTS].sort());
+    assert.deepEqual([...seed.BLOCKING_HOOK_EVENTS].sort(), [...app.BLOCKING_HOOK_EVENTS].sort());
+    assert.deepEqual(seed.CheckpointSkip, app.CheckpointSkip);
+    assert.equal(seed.HOOK_BLOCKED, app.HOOK_BLOCKED);
+    assert.deepEqual(seed.HookHold, app.HookHold);
+    assert.equal(seed.HOOK_LABEL_CHARS, app.HOOK_LABEL_CHARS);
+  });
+
+  it("tells an older host by the name the host refuses an unknown method with", async () => {
+    const seed = await import("../../src/harness-seed/loop/hooks.ts");
+    const { HostRefusal } = await import("../../src/shared/harness-api.ts");
+    assert.equal(seed.UNKNOWN_METHOD, HostRefusal.UnknownMethod);
+    assert.equal(seed.olderHost({ name: HostRefusal.UnknownMethod }), true);
+    assert.equal(seed.olderHost({ name: HostRefusal.InvalidParams }), false);
   });
 });

@@ -7,6 +7,7 @@ import { steerIntoChat } from "../core/chat-steer.ts";
 import { CompletionService } from "../core/completion.ts";
 import { hardwareReport } from "../core/hardware-report.ts";
 import type { ActiveDelegation } from "../core/internals.ts";
+import { stopMoments } from "../core/moment-stops.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 
 /**
@@ -37,6 +38,7 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
       let aborted = 0;
       if (!p.cwd) {
         x.cancelConnectorCalls(p);
+        stopMoments(x, p);
         core.plugins?.cancel({ project: p.project, threadId: p.threadId });
         const scope = { ...(p.project ? { project: p.project } : {}), ...(p.threadId ? { threadId: p.threadId } : {}) };
         x.consent.cancel(scope, "stop");

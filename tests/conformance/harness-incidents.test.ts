@@ -9497,7 +9497,8 @@ describe("an Unreal Loop that threw its work away", () => {
   });
 });
 
-import { engineChoiceRule } from "../../src/harness-seed/loop/unreal-prompts.ts";
+/** How the engine question opens in a brief, whatever words each kind's plugin offers it with. */
+const ENGINE_QUESTION = "FIRST, THE ENGINE:";
 
 /**
  * New game makes the game before the chat's first ask, as an empty folder with no kind; with the
@@ -9544,16 +9545,16 @@ describe("a game New game made is asked its engine on its chat's first ask", () 
     await turnsEnded(1);
     await rig.core.sendUserMessage("Web, please", { engine: "vendor", thread });
     await turnsEnded(2);
-    const rule = engineChoiceRule("vendor");
     const [first, next] = requests;
     assert.ok(first && next, "both messages reached the builder");
-    assert.ok(first.prompt.split("\n").includes(rule), "the first build asks the engine first");
+    const asks = (prompt: string) => prompt.split("\n").some((line) => line.startsWith(ENGINE_QUESTION));
+    assert.ok(asks(first.prompt), "the first build asks the engine first");
     assert.deepEqual(
       first.interviewTools?.map((tool) => tool.name),
       ["ask_user"],
       "with the question card bridged in",
     );
-    assert.ok(!next.prompt.includes(rule), "a later message is never asked again");
+    assert.ok(!asks(next.prompt), "a later message is never asked again");
     assert.equal(next.interviewTools, undefined);
   });
 });
@@ -9643,6 +9644,43 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
     assert.ok(!host.tools().includes(UnrealLoopTool.ReopenEditor), "never reopened");
     assert.doesNotMatch(host.steered().join("\n"), /crashed/);
     assert.equal(host.snapshotReasons()[0], "Autosave", "its work was saved once it answered again");
+  });
+
+  it("UL16. the person's Stop while Unreal opened for the run ended it paused, blaming the game's plugins: a Stop is always the person's stop", async () => {
+    const host = leadLoop.leadHost();
+    host.rec.handle("hooks.fire", (params) => {
+      if (params.on !== "run.prepare") return { blocked: null, pending: null, notes: [], images: [], ran: [] };
+      host.rec.cancel();
+      throw new Error("Stopped.");
+    });
+    const report = await runLead(host, { minutes: 20 });
+    assert.equal(report.executionStatus, "cancelled");
+    assert.doesNotMatch(String(report.stoppedBecause), /couldn't ask the game's plugins/);
+  });
+
+  it("UL17. a crash Genex held back for another holder rolled the game back to its last save point, losing the work since: nothing is restored, and the run halts saying why", async () => {
+    const crashes: leadLoop.Turn = async ({ host }) => {
+      host.work("the second stair");
+      host.editor.answering = false;
+      await host.until(() => host.rec.paramsOf("hooks.fire").some((p) => p.on === "crash"));
+      return undefined;
+    };
+    const host = leadLoop.leadHost({ turns: [leadLoop.buildsAndSaves, crashes] });
+    const passOn = host.rec.ctx.call;
+    const busy = {
+      plugin: "@genex",
+      tool: "",
+      reason: "Another holder is working in Unreal now.",
+      hold: "busy",
+      label: "Unreal",
+    };
+    host.rec.ctx.call = (method: string, params?: Record<string, unknown>) =>
+      method === "hooks.fire" && params?.on === "crash"
+        ? Promise.resolve({ blocked: busy, pending: null, notes: [], images: [], ran: [] })
+        : passOn(method, params);
+    const report = await runLead(host, { minutes: 40 });
+    assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "the work since the save point stays");
+    assert.equal(report.executionStatus, "paused");
   });
 
   it("UL2. an hour of editor work went by without a save point: after 15 minutes of unsaved work the lead is steered to look, then save", async () => {

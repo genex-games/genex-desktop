@@ -28,6 +28,8 @@ import {
   steerStageRefusal,
   steerStageWords,
 } from "../facet/stage-prompts.ts";
+import { fireHooks, HookEvent, runScope } from "../hooks.ts";
+import { HOOK_PROMPTS } from "../hooks-prompts.ts";
 import { CLIP_REASON } from "../text.ts";
 import { MINUTE_MS, minutes, SECOND_MS, sleep } from "../time.ts";
 import { Against, againstWords, observedFrom, VerdictPass, VerdictRule } from "../verdict.ts";
@@ -1320,6 +1322,16 @@ function oneAtATime<T>(loopRun: LoopRun, change: () => T | Promise<T>): Promise<
 }
 
 /**
+ * The lead's `finish`, unless a plugin of the game holds it back: the lead hears why and the run goes
+ * on. Only the lead's own call asks; the close's own finish fires no moment.
+ */
+async function finishUnlessHeld(loopRun: LoopRun, args: AnyRecord): Promise<unknown> {
+  const held = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.Finish, runScope(loopRun));
+  if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
+  return loopRun.finish(args);
+}
+
+/**
  * The tools another part of the run answers (workers.ts, integrate.ts, the looks above). The
  * handler returns their answer as it comes, as the switch it replaced always did: a failure in one
  * of them rejects the dispatch instead of becoming a `<tool> failed: …` sentence.
@@ -1334,7 +1346,7 @@ const HANDED_OFF = {
   [DirectorTool.Playtest]: (loopRun, args) => loopRun.playtest(args),
   [DirectorTool.Integrate]: (loopRun, args) => loopRun.integrate(args),
   [DirectorTool.Show]: (loopRun, args) => loopRun.show(args),
-  [DirectorTool.Finish]: (loopRun, args) => loopRun.finish(args),
+  [DirectorTool.Finish]: (loopRun, args) => finishUnlessHeld(loopRun, args),
 } satisfies Partial<Record<DirectorTool, Tool>>;
 
 /** The tools this handler answers itself: it waits for each, so a failure is said as a sentence. */

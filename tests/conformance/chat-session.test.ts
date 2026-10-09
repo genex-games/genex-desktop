@@ -203,11 +203,11 @@ describe("the brief of a game that builds in Unreal", () => {
       gameEngine: GameEngine.Unreal,
       engineProject: PROJECT,
     });
-    for (const tool of ["list_toolsets", "describe_toolset", "call_tool"])
-      assert.ok(
-        brief.includes(`mcp__studio__unreal-editor__${tool}`),
-        `names unreal-editor__${tool} as this session calls it`,
-      );
+    assert.ok(
+      brief.includes("the Unreal editor connector's tools, as the Unreal plugin's skill describes"),
+      "names the editor connector, whose tools the plugin's skill describes",
+    );
+    assert.doesNotMatch(brief, /unreal-editor__/, "never spells a connector tool's name");
     assert.ok(brief.includes(PROJECT), "says the work lands in the linked project");
     assert.match(brief, /NOTES\.md/);
     assert.match(brief, /Blueprint/);
@@ -225,7 +225,7 @@ describe("the brief of a game that builds in Unreal", () => {
       gameEngine: GameEngine.Unreal,
       engineProject: PROJECT,
     });
-    assert.match(brief, /unreal-editor__call_tool/);
+    assert.match(brief, /the Unreal editor connector's tools/);
     assert.doesNotMatch(brief, WEB_PAGE);
     assert.doesNotMatch(brief, /npm run build|src\/main\.ts/, "the web shape's entry and build are not its");
   });

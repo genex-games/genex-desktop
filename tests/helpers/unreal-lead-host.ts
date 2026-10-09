@@ -2,21 +2,41 @@
  * A fake host for the Unreal Loop's lead (`runUnrealLead`): a third-person game linked to the Unreal
  * project inside its folder, and an editor that answers the Unreal plugin's harness tools from a
  * small model (whether it answers, whether it is dirty or playing, its log, its C++ source; a
- * snapshot holds the level's marks and a restore puts them back). A test may stall `editor-state`,
- * make a reopen fail, take away the plugin's newer tools, or answer any plugin tool itself. The
- * lead's session is a script of turns: each `engine.delegate` runs the next one, which calls the run
- * tools through the studio's own `director_tool` dispatch (`directorTool`), as the host forwards
+ * snapshot holds the level's marks and a restore puts them back). Genex's moments (`hooks.fire`,
+ * `checkpoint.take`, `snapshot.restore`) run on a fake bus (`unreal-moment-bus.ts`) that plans the
+ * steps from the Unreal plugin's manifest (or one a test hands it, with its tools renamed: `roles`
+ * says which plugin tool each one stands for) and answers each step through the plugin's own moment
+ * code (`editor-moments.ts`, `hook-answers.ts`) over the model. A test may stall `editor-state`,
+ * make a reopen fail, or answer any plugin tool (`answers`) or a whole step (`stepAnswers`) itself.
+ * The lead's session is a script of turns: each `engine.delegate` runs the next one, which calls the
+ * run tools through the studio's own `director_tool` dispatch (`directorTool`), as the host forwards
  * them, and may wait while the harness watches it. The clock is the test's: a wait moves it and
- * yields once.
+ * yields once. Every call, step, probe, snapshot and restore lands on one ordered trail.
  */
 import { setImmediate as tick } from "node:timers/promises";
 import { directorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
+import { PROJECT_FACTS_FILE } from "../../src/harness-seed/loop/unreal/project-facts.ts";
+import {
+  endAtMoment,
+  healthAtMoment,
+  type MomentOps,
+  openForRun,
+  reopenAtMoment,
+  saveAtMoment,
+} from "../../src/plugins/unreal/editor-moments.ts";
+import type { EditorStateAnswer } from "../../src/plugins/unreal/editor-reopen.ts";
+import { type EditorActivity, logAnswer, probeAnswer, shotsAnswer } from "../../src/plugins/unreal/hook-answers.ts";
+import unrealManifest from "../../src/plugins/unreal/plugin.json" with { type: "json" };
+import type { HelperUpdate } from "../../src/plugins/unreal/setup.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
+import { type HookContext, HookEvent, type HookedPlugin, hookEventsOf } from "../../src/shared/plugin-hooks.ts";
 import { PluginCallBlocker } from "../../src/shared/plugins.ts";
+import { CoreFact, type GameKind } from "../../src/shared/project-facts.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
 import { WorkerIsolation, type WorkerType } from "../../src/shared/workers.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 import { type CtxRecorder, ctxRecorder } from "./ctx-recorder.ts";
+import { type BusHost, checkpoint, fire, restore } from "./unreal-moment-bus.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -130,9 +150,11 @@ export type Editor = {
   helper: string | null;
   misses: number;
   reopening: Record<string, unknown>;
-  /** Unsaved packages (null: the plugin has no `editor-activity` tool), and whether a play session runs. */
+  /** Unsaved packages (null: the plugin's `editor-activity` can't say), and whether a play session runs. */
   dirty: number | null;
   playing: boolean;
+  /** Whether the person started the play session (unset: the agent did, through the editor connector). */
+  personPlays?: boolean;
   /** How many reopens fail before one works. */
   reopenFails: number;
   /**
@@ -159,6 +181,12 @@ export type LeadHost = {
   planning: boolean;
   /** A plugin tool's own answer, in place of the stand-in's, by its name (a throw is a refusal). */
   answers: Map<string, (args: Record<string, unknown>) => unknown>;
+  /** A whole step's answer at a moment, in place of the plugin's, by the step's agent name. */
+  stepAnswers: Map<string, (hook: HookContext) => unknown>;
+  /** The plugin manifest the bus plans each moment from (the Unreal plugin's, unless a test hands its own). */
+  manifest: HookedPlugin["manifest"] & { id: string };
+  /** Which Unreal plugin tool each of the manifest's tools stands for, when a test renamed them. */
+  roles: Record<string, string>;
   /** New error lines the editor's log gives the next `log-errors` read. */
   logLines: string[];
   /** Run artifacts by id (the journal is one), as `artifact.write` keeps them. */
@@ -181,18 +209,32 @@ export type LeadHost = {
   /** The events the runner appended, as the log keeps them, oldest first. */
   events: () => EventEnvelope[];
   appended: (eventType: string) => Array<Record<string, unknown>>;
-  /** The Unreal plugin tools the runner called, by name, in order. */
+  /** The Unreal plugin tools that ran for the runner (its own calls, the moments' steps and probes), by name, in order. */
   tools: () => string[];
-  /** The calls in order, as the method or, for a plugin call, `tool:<name>`. */
+  /**
+   * The calls in order, as the method or, for a plugin call, `tool:<name>`; a moment's steps and
+   * probes as `tool:<plugin>__<tool>`, its snapshot as `snapshot.create` and its restore as
+   * `snapshot.restore` where they happen (the bus's own methods are not on it).
+   */
   trail: () => string[];
   /** The lead turns' prompts, in order. */
   prompts: () => string[];
-  /** The steered texts, in order, and the snapshots' reasons. */
+  /** The steered texts, in order, and the snapshots' reasons (a checkpoint's by its label). */
   steered: () => string[];
   snapshotReasons: () => string[];
 };
 
-type Internals = LeadHost & { snapshots: Map<string, { marks: Set<string>; source: string }>; plays: number };
+type Internals = LeadHost & {
+  snapshots: Map<string, { marks: Set<string>; source: string }>;
+  plays: number;
+  log: string[];
+  reasons: string[];
+  logMarked: boolean;
+  /** Whether a restore's `end-editor` closed a running Unreal, for its `reopen-editor`. */
+  restoreClosed: boolean;
+  /** The recorder's own call, which leaves the trail alone (a stand-in's read of the game folder). */
+  plainCall: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+};
 
 /** `editor-state`: a stall misses the answer once (its process runs on), else whether Unreal answers and runs. */
 function editorState(host: LeadHost) {
@@ -223,11 +265,11 @@ function reopenEditor(host: LeadHost) {
   return { answering: true };
 }
 
-/** A PNG shot as the plugin hands it back. */
+/** A PNG shot as the plugin hands it back: its data in base64, as a moment's picture must be. */
 const shot = (name: string, tone?: Record<string, number>) => ({
   name,
   file: `/u/Saved/Genex/${name}.png`,
-  data: `PNG:${name}`,
+  data: Buffer.from(`PNG:${name}`).toString("base64"),
   ...(tone ? { tone } : {}),
 });
 
@@ -285,6 +327,131 @@ function standInAnswer(host: Internals, name: string, args: Record<string, unkno
   }
 }
 
+/** One plugin tool's answer: the test's own, else the stand-in's. */
+async function pluginAnswer(host: Internals, name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  const own = host.answers.get(name);
+  return own ? own(args) : standInAnswer(host, name, args);
+}
+
+/** The Unreal plugin's agent name of one of its tools. */
+const unreal = (tool: string) => `unreal__${tool}`;
+
+/** Whether the project's editor process runs, as the model says (null: the plugin can't tell). */
+const editorRuns = (editor: Editor): boolean | null =>
+  editor.running === undefined ? editor.answering : editor.running;
+
+/** The editor operations the plugin's moment code uses, over the model and the test's answers. */
+function opsOf(host: Internals): MomentOps {
+  const call = (tool: string) => pluginAnswer(host, unreal(tool));
+  const read = async () => (await call("editor-state")) as EditorStateAnswer;
+  return {
+    now: host.now,
+    sleep: (ms) => host.sleep(ms),
+    signal: new AbortController().signal,
+    answers: async () => (await read().catch(() => null))?.answering === true,
+    running: async () => (await read()).running,
+    activity: async () => (await call("editor-activity")) as EditorActivity,
+    save: async () => {
+      const saved = (await call("save-all")) as { saved?: unknown; dirty?: unknown };
+      return { saved: saved?.saved !== false, dirty: Array.isArray(saved?.dirty) ? saved.dirty.map(String) : [] };
+    },
+    end: async () => {
+      await call("end-editor");
+      if (host.editor.answering) throw new Error("it still answers after Genex ended it");
+    },
+    reopen: () => call("reopen-editor"),
+    state: read,
+    start: async () => null,
+    projectName: async () => "TowerClimb",
+    updateHelper: async () => (await call("update-helper")) as HelperUpdate,
+    exported: async () => {
+      const command = `cat ${PROJECT_FACTS_FILE} 2>/dev/null || true`;
+      const read = await host.plainCall("run.exec", { command, project: GAME.name }).catch(() => null);
+      return String((read as { stdout?: unknown } | null)?.stdout ?? "").trim() !== "";
+    },
+    exportReference: () => call("export-reference"),
+    restoreClosed: {
+      mark: () => {
+        host.restoreClosed = true;
+      },
+      take: () => {
+        const closed = host.restoreClosed;
+        host.restoreClosed = false;
+        return closed;
+      },
+    },
+  };
+}
+
+/** `log-errors` at a moment: marks where the log ends at a run's start, then notes the lines new since. */
+function logStep(host: Internals, hook: HookContext) {
+  const lines = host.logLines.splice(0);
+  if (hook.on === HookEvent.RunPrepare || !host.logMarked) {
+    host.logMarked = true;
+    return {};
+  }
+  return hook.on === HookEvent.CheckpointBefore ? logAnswer(lines.slice(0, 20), hook) : {};
+}
+
+/** Each Unreal plugin tool a moment runs, answered by the plugin's own moment code over the model. */
+const STEPS: Record<string, (host: Internals, hook: HookContext) => Promise<unknown> | unknown> = {
+  "open-for-run": (host) => openForRun(opsOf(host)),
+  "log-errors": logStep,
+  "save-all": (host, hook) => saveAtMoment(opsOf(host), hook),
+  "hero-shots": (host) => shotsAnswer((host.heroCameras ?? []).map((camera) => ({ ...shot(camera), tone: GOOD_TONE }))),
+  "end-editor": (host) => endAtMoment(opsOf(host)),
+  "reopen-editor": (host, hook) => reopenAtMoment(opsOf(host), hook),
+  "editor-state": (host, hook) => healthAtMoment(opsOf(host), hook),
+};
+
+/** The editor lock's probe, as the plugin answers it: nobody when no editor runs, can't tell when one runs and answers nothing. */
+async function probe(host: Internals): Promise<unknown> {
+  const { editor } = host;
+  if (!editor.answering && editorRuns(editor) === false) return probeAnswer(null, false, false);
+  if (!editor.answering) throw new Error("Unreal doesn't answer");
+  const activity = (await pluginAnswer(host, unreal("editor-activity"))) as EditorActivity;
+  return probeAnswer(activity, editor.personPlays !== true, false);
+}
+
+/** The game's kind: the Unreal project at its root. */
+const GAME_KIND: GameKind = { facts: [{ id: CoreFact.UnrealProject, path: "." }] };
+
+/** The bus over this host: the manifest's plan, the model's answers, the host's trail. */
+function busOf(host: Internals): BusHost {
+  const roleOf = (tool: string) => host.roles[tool] ?? tool;
+  return {
+    plugins: () => [{ id: host.manifest.id, manifest: host.manifest }],
+    game: GAME_KIND,
+    planning: () => host.planning,
+    now: host.now,
+    sleep: host.sleep,
+    step: async (plugin, tool, hook) => {
+      const own = host.stepAnswers.get(`${plugin}__${tool}`);
+      if (own) return own(hook);
+      const answer = STEPS[roleOf(tool)];
+      if (!answer) throw new Error(`Unknown tool: ${tool}`);
+      return answer(host, hook);
+    },
+    probe: async (_plugin, lock) => {
+      if (roleOf(String(lock.personFirst)) !== "editor-activity") throw new Error(`Unknown tool: ${lock.personFirst}`);
+      return probe(host);
+    },
+    log: (entry, during) => {
+      host.log.push(entry);
+      if (during) watched(host, during);
+    },
+    snapshot: (label) => {
+      const id = `snap-${host.snapshots.size + 1}`;
+      host.snapshots.set(id, { marks: new Set(host.level.marks), source: host.level.source });
+      host.reasons.push(label);
+      return { snapshot_id: id, scope: "game", git: {}, created_at: new Date(0).toISOString(), reason: label };
+    },
+  };
+}
+
+/** The moments the manifest's plugin hooks for the game, as `game.list` lists them. */
+const hookEventsFor = (host: Internals) => hookEventsOf([{ id: host.manifest.id, manifest: host.manifest }], GAME_KIND);
+
 /** One lead turn: the next scripted one (or one that builds and saves), on the test's clock. */
 async function delegate(host: LeadHost, params: Record<string, unknown>, n: number) {
   const turn = host.turns.shift() ?? buildsAndSaves;
@@ -333,14 +500,18 @@ function steerAnswer(host: LeadHost, params: Record<string, unknown>) {
   return { how: taken ? "mid-turn" : null, accepted: taken ? ids : [] };
 }
 
+/** The bus's own methods: what they do lands on the trail as it happens, never the call itself. */
+const BUS_METHODS: ReadonlySet<string> = new Set(["hooks.fire", "checkpoint.take", "snapshot.restore"]);
+
 /** The host's answers, by method. */
 function handlers(host: Internals) {
   let turns = 0;
   let crops = 0;
+  const bus = busOf(host);
   return {
     "events.append": () => ({ ids: [] }),
     "events.messages": () => [],
-    "game.list": () => [GAME],
+    "game.list": () => [{ ...GAME, facts: GAME_KIND.facts, hookEvents: hookEventsFor(host) }],
     "engine.describe": () => [{ id: "claude-code", kind: "delegated", supportsSessions: true }],
     "plugins.tools": () => ({
       tools: [{ name: "blender__model" }, { name: "genex__asset" }],
@@ -368,14 +539,16 @@ function handlers(host: Internals) {
       watched(host, "snapshot.create");
       const id = `snap-${host.snapshots.size + 1}`;
       host.snapshots.set(id, { marks: new Set(host.level.marks), source: host.level.source });
+      host.reasons.push(String(params.reason));
       return { snapshot_id: id, scope: "game", git: {}, created_at: new Date(0).toISOString(), reason: params.reason };
     },
-    "snapshot.restore": (params: Record<string, unknown>) => {
-      watched(host, "snapshot.restore");
-      const held = host.snapshots.get(String(params.snapshotId));
-      if (held) host.level = { marks: new Set(held.marks), source: held.source };
-      return true;
-    },
+    "snapshot.restore": (params: Record<string, unknown>) =>
+      restore(bus, params, () => {
+        const held = host.snapshots.get(String(params.snapshotId));
+        if (held) host.level = { marks: new Set(held.marks), source: held.source };
+      }),
+    "checkpoint.take": (params: Record<string, unknown>) => checkpoint(bus, params),
+    "hooks.fire": (params: Record<string, unknown>) => fire(bus, params),
     "run.exec": (params: Record<string, unknown>) => {
       const command = String(params.command);
       if (command.includes("unreal/Source")) return { code: 0, stdout: `${host.level.source}\n`, stderr: "" };
@@ -394,7 +567,14 @@ function handlers(host: Internals) {
 }
 
 /** A fake host for one or more lead runs on the tower game; `options.turns` scripts the lead's turns. */
-export function leadHost(options: { turns?: Turn[]; workerTypes?: readonly WorkerType[] } = {}): LeadHost {
+export function leadHost(
+  options: {
+    turns?: Turn[];
+    workerTypes?: readonly WorkerType[];
+    manifest?: LeadHost["manifest"];
+    roles?: Record<string, string>;
+  } = {},
+): LeadHost {
   const host = {
     clock: { now: Date.UTC(2026, 9, 6, 12) },
     editor: {
@@ -410,6 +590,9 @@ export function leadHost(options: { turns?: Turn[]; workerTypes?: readonly Worke
     heroCameras: ["GX_Shot_Ant", "GX_Shot_Well"],
     planning: false,
     answers: new Map(),
+    stepAnswers: new Map(),
+    manifest: options.manifest ?? (unrealManifest as unknown as LeadHost["manifest"]),
+    roles: options.roles ?? {},
     logLines: [],
     artifacts: new Map<string, unknown>(),
     inFlight: { now: 0, most: 0 },
@@ -420,6 +603,10 @@ export function leadHost(options: { turns?: Turn[]; workerTypes?: readonly Worke
     workerTypes: options.workerTypes ?? BUNDLED_WORKER_TYPES,
     snapshots: new Map(),
     plays: 0,
+    log: [],
+    reasons: [],
+    logMarked: false,
+    restoreClosed: false,
   } as unknown as Internals;
   host.now = () => host.clock.now;
   host.sleep = async (ms: number) => {
@@ -435,6 +622,13 @@ export function leadHost(options: { turns?: Turn[]; workerTypes?: readonly Worke
     return done();
   };
   host.rec = ctxRecorder({ threadId: "t1", handlers: handlers(host) });
+  // One ordered trail: each call as it is made, and the bus's steps, snapshots and restores where they happen.
+  const plain = host.rec.ctx.call.bind(host.rec.ctx);
+  host.plainCall = plain;
+  host.rec.ctx.call = (method: string, params?: Record<string, unknown>) => {
+    if (!BUS_METHODS.has(method)) host.log.push(method === "plugins.invoke" ? `tool:${String(params?.name)}` : method);
+    return plain(method, params);
+  };
   host.events = () => loggedEvents(host.rec);
   host.appended = (eventType) =>
     host.rec
@@ -442,13 +636,12 @@ export function leadHost(options: { turns?: Turn[]; workerTypes?: readonly Worke
       .flatMap((p) => p.batch as Array<{ event_type: string; payload: Record<string, unknown> }>)
       .filter((e) => e.event_type === eventType)
       .map((e) => e.payload);
-  host.tools = () => host.rec.paramsOf("plugins.invoke").map((p) => String(p.name));
-  host.trail = () =>
-    host.rec.calls.map((c) => (c.method === "plugins.invoke" ? `tool:${String(c.params.name)}` : c.method));
+  host.tools = () => host.log.filter((entry) => entry.startsWith("tool:")).map((entry) => entry.slice("tool:".length));
+  host.trail = () => [...host.log];
   host.prompts = () => host.rec.paramsOf("engine.delegate").map((p) => String(p.prompt));
   host.steered = () =>
     host.rec.paramsOf("engine.steer").flatMap((p) => (p.messages as Array<{ text: string }>).map((m) => m.text));
-  host.snapshotReasons = () => host.rec.paramsOf("snapshot.create").map((p) => String(p.reason));
+  host.snapshotReasons = () => [...host.reasons];
   return host;
 }
 

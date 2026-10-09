@@ -861,9 +861,9 @@ SDK: [marketplace](../plugins.md#marketplace), [GitHub installs](../plugins.md#i
 ([`native.ts`](../../src/substrate/plugins/native.ts), `native-process.ts`) run reviewed recipes:
 declared runtimes, pinned installers, fixed job recipes and limits. Agents choose only validated
 inputs; only a trusted setup action installs a runtime; job processes are confined, backend code is
-not. Plugin APIs grant no orchestration, judging or learning authority. The job's sandbox
-(`nativeSandboxProfile`), its process-group kill and output delivery (`copyDeclaredOutput`,
-`copyRuntimeTree`) are specified in [API 3 managed-native services](../plugins.md#api-3-managed-native-services).
+not. Plugins get no judging or learning authority; their hooks only block or note at
+[Genex's moments](../plugins.md#hooks-genexs-moments), never rewrite arguments. Sandbox, kill and
+output delivery: [API 3 managed-native services](../plugins.md#api-3-managed-native-services).
 
 **MCP connectors.** Studio's main process is the only MCP client. `McpRegistry`
 ([`src/substrate/mcp/registry.ts`](../../src/substrate/mcp/registry.ts)) owns connectors,
