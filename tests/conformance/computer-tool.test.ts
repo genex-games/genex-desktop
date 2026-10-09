@@ -243,6 +243,7 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
         return { ok: true, applied: 1, width: 960, height: 600 };
       },
       studioState: async () => ({ frame: 1 }),
+      screenshot: async () => Buffer.from("jpeg"),
       pointer: () => ({ x: 480, y: 300 }),
       viewSize: () => ({ width: 960, height: 600 }),
       consoleEntries: () => [],

@@ -9,6 +9,7 @@ import { COVER_TOOL } from "../../shared/cover-recipe.ts";
 import { ChatActivityPhase, SessionActivityRole, delegationActivityScope } from "../../shared/chat-activity.ts";
 import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
 import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
+import type { ComputerTraceSummary } from "../../shared/computer-target.ts";
 import {
   DelegationRefusal,
   EngineFailureKind,
@@ -135,10 +136,15 @@ const DIRECTOR_LOOK: LiveTool = {
   },
 };
 
+/** The scratch folder a blind judge starts in: empty, shared, and never a build. */
+const BLIND_JUDGE_FOLDER = "blind-judge";
+
 interface PlaytestTools {
   liveTools: NonNullable<DelegateRequest["liveTools"]>;
   onLiveTool: OnLiveTool;
   release: () => Promise<void>;
+  /** What the session's computer trace adds up to: where it was written, whether the goal was verified. */
+  trace: () => ComputerTraceSummary;
 }
 
 interface DirectorTools {
@@ -564,13 +570,29 @@ export class DelegationService {
         await sleep(ms);
       },
     };
+    const trace = () => computer.trace();
+    // A judge plays with the computer alone: the shorthands are a playtester's, and their files
+    // land outside the trace a judge's evidence is read from.
+    if (pt.role === "judge") {
+      return {
+        liveTools: computer.liveTools,
+        onLiveTool: computer.onLiveTool,
+        release: () => session.release(),
+        trace,
+      };
+    }
     const onLiveTool: OnLiveTool = async (name, args) => {
       if (name === COMPUTER_TOOL_NAME) return computer.onLiveTool(name, args);
       const { port: live, problem } = await computer.ensureLoaded();
       if (problem) return problem;
       return runPlaytestTool(name, args, live, context);
     };
-    return { liveTools: [...computer.liveTools, ...PLAYTEST_TOOLS], onLiveTool, release: () => session.release() };
+    return {
+      liveTools: [...computer.liveTools, ...PLAYTEST_TOOLS],
+      onLiveTool,
+      release: () => session.release(),
+      trace,
+    };
   }
 
   /**
@@ -805,7 +827,7 @@ export class DelegationService {
       });
       await this.#settled(p, engineId, session, result, tools);
       this.#core.budget.recordUsage(workClass, result.usage, engineId);
-      return result;
+      return tools.playtest ? { ...result, trace: tools.playtest.trace() } : result;
     } catch (err) {
       throw await this.#failed(engineId, session, err);
     } finally {
@@ -1308,10 +1330,11 @@ export class DelegationService {
     tools: SessionTools,
     reach: SessionReach,
   ): Promise<DelegateRequest> {
-    const { engineId, workCwd, optimization } = target;
-    const { extraReads, denyReads } = reach;
+    const { engineId, optimization } = target;
+    const { blindness, workCwd, extraReads, denyReads } = await this.#sessionReach(target, grants, reach);
     const ownership = normalizeOwnership(p.ownership);
     return {
+      ...blindness,
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
       trustedProjectSettings: (await this.#core.games.presentation(p.project)).trustProjectSettings === true,
       ...(optimization ? { optimization } : {}),
@@ -1340,6 +1363,34 @@ export class DelegationService {
       ...steerField(session),
       onEvent: this.#onEvent(session),
     };
+  }
+
+  /**
+   * Where the session starts and what it may read. A judge that plays starts in an empty folder
+   * and reads nothing but its own frames: the build reaches it only through the computer tool, so
+   * no note in the code can answer for the game.
+   */
+  async #sessionReach(
+    target: DelegationTarget,
+    grants: DelegationGrants,
+    reach: SessionReach,
+  ): Promise<{ blindness: { blind?: true }; workCwd: string; extraReads: string[]; denyReads: string[] }> {
+    if (grants.playtest?.role !== "judge") {
+      return { blindness: {}, workCwd: target.workCwd, extraReads: reach.extraReads, denyReads: reach.denyReads };
+    }
+    return {
+      blindness: { blind: true },
+      workCwd: await this.#blindCwd(),
+      extraReads: grants.playShotsDir ? [grants.playShotsDir] : [],
+      denyReads: [...reach.denyReads, target.workCwd],
+    };
+  }
+
+  /** The one empty folder every blind judge starts in, made again if something swept it. */
+  async #blindCwd(): Promise<string> {
+    const dir = path.join(this.#core.layout.scratch, BLIND_JUDGE_FOLDER);
+    await ensureDir(dir);
+    return dir;
   }
 
   /**

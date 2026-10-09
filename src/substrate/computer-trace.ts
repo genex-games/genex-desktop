@@ -6,7 +6,7 @@
  *
  * Electron-free and pure: the session decides what goes in a row; this module only shapes it.
  */
-import type { InputRoute } from "../shared/computer-target.ts";
+import type { ComputerTraceSummary, InputRoute } from "../shared/computer-target.ts";
 
 /** The file every session's trace is written to, beside its frames. */
 export const TRACE_FILE = "trace.jsonl";
@@ -34,16 +34,8 @@ export interface TraceRow {
   reached?: true;
 }
 
-/** What a finished session's trace adds up to. */
-export interface TraceSummary {
-  /** Where the trace was written; null before the first action. */
-  path: string | null;
-  steps: number;
-  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
-  deterministic: boolean;
-  /** The index of the action after which the goal was verified, or null. */
-  reachedAt: number | null;
-}
+/** What a finished session's trace adds up to (`shared/computer-target.ts`). */
+export type TraceSummary = ComputerTraceSummary;
 
 /** The fields of a parsed request worth keeping: the model's notes and the batch's own steps are not. */
 const DROPPED_FIELDS = new Set(["surfaceNote", "observeNote"]);

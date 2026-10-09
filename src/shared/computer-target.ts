@@ -124,3 +124,25 @@ export function canPoint(caps: Pick<TargetCapabilities, "pointer">): boolean {
 export function hasState(caps: Pick<TargetCapabilities, "state">): boolean {
   return caps.state !== StateLevel.None;
 }
+
+/** How a computer session treats the target's clock between moves. */
+export const ComputerPacing = {
+  /** The game keeps running between actions (a builder, a scout, the lead). */
+  Running: "running",
+  /** The clock runs only during a move, on wall time (a playtester). */
+  Paced: "paced",
+  /** The clock is seeded and stepped by exact amounts: the same inputs replay the same run (a judge). */
+  Stepped: "stepped",
+} as const;
+export type ComputerPacing = (typeof ComputerPacing)[keyof typeof ComputerPacing];
+
+/** What a finished computer session's trace adds up to, as a delegation's result carries it. */
+export interface ComputerTraceSummary {
+  /** Where the trace was written; null before the first action. */
+  path: string | null;
+  steps: number;
+  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
+  deterministic: boolean;
+  /** The index of the action after which the studio verified the goal was reached, or null. */
+  reachedAt: number | null;
+}

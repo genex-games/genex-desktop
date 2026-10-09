@@ -5,14 +5,14 @@
  * {@link computerSession}; this module is its browser source (`browser-preview-target.ts`).
  */
 import { type AgentScreen, type AgentScreenRole, ScreenDeed } from "../../shared/agent-screen.ts";
-import { BROWSER_CAPABILITIES } from "../../shared/computer-target.ts";
+import { BROWSER_CAPABILITIES, ComputerPacing, type ComputerTraceSummary } from "../../shared/computer-target.ts";
 import { computerToolDefinition } from "../../substrate/computer-tool.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
 import { type BrowserPreviewTarget, browserPreviewTarget } from "./browser-preview-target.ts";
-import { ComputerPacing, computerSession, type TargetSource } from "./computer-session.ts";
+import { type ComputerSessionOptions, computerSession, type TargetSource } from "./computer-session.ts";
 import type { PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
 import type { SessionPort } from "./session-port.ts";
@@ -23,7 +23,7 @@ const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
   scout: "scout",
   director: "director",
   playtester: "playtester",
-  judge: "playtester",
+  judge: "judge",
 };
 
 /**
@@ -56,6 +56,27 @@ export interface ComputerTools {
   /** The build the window shows; the director's `look` moves it. */
   root: () => string;
   retarget: (root: string) => void;
+  /** What the session's trace adds up to so far. */
+  trace: () => ComputerTraceSummary;
+}
+
+/**
+ * How a role's session runs: a judge on a seeded, stepped clock (its run can be replayed), a
+ * playtester paced on wall time, everyone else on a running game. The roles that play to judge
+ * see the result of every move without asking; the grant's goal and budget ride along.
+ */
+function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir: string): ComputerSessionOptions {
+  const judging = role === "judge";
+  const pacing = PACED_ROLES.has(role)
+    ? (grant.pacing ?? (judging ? ComputerPacing.Stepped : ComputerPacing.Paced))
+    : ComputerPacing.Running;
+  return {
+    pacing,
+    frameDir,
+    observeByDefault: PACED_ROLES.has(role),
+    ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
+    ...(grant.quest ? { quest: grant.quest } : {}),
+  };
 }
 
 /**
@@ -116,21 +137,25 @@ export function computerTools(
     role,
   });
   const source = browserSource(previews, grant, role, sessionPort, screen);
-  const session = computerSession(source, initialRoot, {
-    pacing: PACED_ROLES.has(role) ? ComputerPacing.Paced : ComputerPacing.Running,
-    frameDir: iterationDir(outDir, grant.iteration),
-  });
+  const session = computerSession(
+    source,
+    initialRoot,
+    sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration)),
+  );
   const ensureLoaded = async (force = false): Promise<ComputerLoad> => {
     const loaded = await session.ensureLoaded(force);
     return { port: loaded.target.port, problem: loaded.problem, note: loaded.note };
   };
   const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : "playtester";
   return {
-    liveTools: [computerToolDefinition({ role: toolRole, capabilities: source.caps })],
+    liveTools: [
+      computerToolDefinition({ role: toolRole, capabilities: source.caps, observeByDefault: PACED_ROLES.has(role) }),
+    ],
     onLiveTool: (name, args) => session.run(name, args),
     ensureLoaded,
     screen,
     root: () => session.root(),
     retarget: (next: string) => session.retarget(next),
+    trace: () => session.trace(),
   };
 }

@@ -13,7 +13,7 @@ import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ScreenAct } from "../../shared/agent-screen.ts";
-import { canPause, type InputRoute, type TargetCapabilities } from "../../shared/computer-target.ts";
+import { ComputerPacing, canPause, type InputRoute, type TargetCapabilities } from "../../shared/computer-target.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CaptureSurface, type PreviewSetup } from "../../shared/preview-contract.ts";
@@ -30,7 +30,7 @@ import {
   unsupportedAction,
 } from "../../substrate/computer-tool.ts";
 import { COMPUTER_ARG_PROBLEM } from "../../substrate/computer-tool-prompts.ts";
-import type { ComputerTarget, TargetLoad } from "../../substrate/computer-target.ts";
+import type { ComputerTarget, TargetLoad, TargetShot } from "../../substrate/computer-target.ts";
 import { TRACE_FILE, type TraceRow, type TraceSummary, traceArgs, traceLine } from "../../substrate/computer-trace.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import { ensureDir } from "../../substrate/fsx.ts";
@@ -49,16 +49,7 @@ const FRAME_NAME_CHARS = 40;
 /** The seed a stepped session plants when it was given none, so two runs start from the same dice. */
 const DEFAULT_SEED = 1;
 
-/** How a session treats the target's clock between moves. */
-export const ComputerPacing = {
-  /** The game keeps running between actions (a builder, a scout, the lead). */
-  Running: "running",
-  /** The clock runs only during a move, on wall time (a playtester). */
-  Paced: "paced",
-  /** The clock is seeded and stepped by exact amounts: the same inputs replay the same run (a judge). */
-  Stepped: "stepped",
-} as const;
-export type ComputerPacing = (typeof ComputerPacing)[keyof typeof ComputerPacing];
+export { ComputerPacing };
 
 /** What a session needs from the kind of target it drives: how it loads, and where its frames go. */
 export interface TargetSource<T extends ComputerTarget = ComputerTarget> {
@@ -195,6 +186,11 @@ async function zoom(ctx: ActionContext): Promise<LiveToolResult> {
   };
 }
 
+/** A picture the target answered, as opposed to the error it threw. */
+function isShot(value: unknown): value is TargetShot {
+  return typeof value === "object" && value !== null && Buffer.isBuffer((value as { jpeg?: unknown }).jpeg);
+}
+
 /** What a move brings back: the picture asked for (or the session's default), or only its text. */
 async function observed(ctx: ActionContext, text: string, hint: boolean): Promise<LiveToolResult> {
   const { request, target, helpers } = ctx;
@@ -206,7 +202,12 @@ async function observed(ctx: ActionContext, text: string, hint: boolean): Promis
     return `${ctx.surfaceLine}${text}${hint && !asked ? "\nScreenshot to see the result." : ""}`;
   }
   const surface = mode === ComputerObserve.Canvas ? CaptureSurface.Canvas : CaptureSurface.Auto;
-  const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface });
+  // The move already happened: a picture that cannot be taken is said, never a failed move.
+  const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface }).catch((err: unknown) => err);
+  if (!isShot(shot)) {
+    await helpers.frame(target, null, ctx.caption, ctx.act);
+    return `${ctx.surfaceLine}${text}\n${COMPUTER_ARG_PROBLEM.observeFailed(errorMessage(shot))}`;
+  }
   const file = await helpers.saveFrame(shot.jpeg, `after-${request.action}`);
   ctx.record.frame = file;
   await helpers.frame(target, shot.jpeg, ctx.caption, ctx.act);

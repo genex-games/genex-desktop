@@ -270,8 +270,15 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -919,6 +926,18 @@ export interface CompleteResponse {
 }
 // ↑ src/shared/engine-requests.ts
 
+/** What a finished computer session's trace adds up to, as a delegation's result carries it. */
+export interface ComputerTraceSummary {
+  /** Where the trace was written; null before the first action. */
+  path: string | null;
+  steps: number;
+  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
+  deterministic: boolean;
+  /** The index of the action after which the studio verified the goal was reached, or null. */
+  reachedAt: number | null;
+}
+// ↑ src/shared/computer-target.ts
+
 export interface DelegateResult {
   requestedModel?: string;
   cliVersion?: string;
@@ -950,6 +969,8 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
 }
 // ↑ src/shared/engine-requests.ts
 
