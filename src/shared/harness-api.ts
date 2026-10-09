@@ -31,6 +31,7 @@ import type {
   StudioToolSpec,
   ToolDefinition,
 } from "./engine-requests.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import type { ProjectAssets } from "./game-assets.ts";
 import type {
@@ -458,6 +459,19 @@ export interface HarnessHostApi {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
+  /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
+  };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
@@ -624,6 +638,7 @@ export const HostMethod = {
   PreviewCrop: "preview.crop",
   PreviewDiff: "preview.diff",
   PreviewInput: "preview.input",
+  PreviewComputer: "preview.computer",
   PreviewConsole: "preview.console",
   PreviewGpuErrors: "preview.gpuErrors",
   PreviewStatus: "preview.status",
@@ -694,6 +709,7 @@ export const HARNESS_PARAM_SCHEMAS = {
     playtest: z.object({ project, root: text, runId: optionalText, facetId: optionalText }).nullish(),
     director: z.object({ project, root: text, runId: text }).nullish(),
   }),
+  "preview.computer": z.object({ project, root: text, handle: text, runId: optionalText, facetId: optionalText }),
   "game.setCover": z.object({ project }),
   "game.setCoverShader": z.object({ project }),
   "game.contentStamp": z.object({ project }),

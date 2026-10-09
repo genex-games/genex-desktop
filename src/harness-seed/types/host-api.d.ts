@@ -1714,6 +1714,19 @@ export interface HarnessHostApi {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
+  /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
+  };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
