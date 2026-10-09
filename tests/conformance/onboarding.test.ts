@@ -118,6 +118,29 @@ describe("first launch", () => {
     assert.deepEqual(codex({ engine: engine("ready") }), { kind: "on", label: "ChatGPT connected" });
   });
 
+  it("gives OpenCode one line for every step of its terminal sign-in", () => {
+    const opencode = (input: Partial<ConnectInput>) =>
+      connectView("opencode", { engine: engine("needs_login"), ...input });
+    assert.deepEqual(opencode({}), { kind: "action", action: "connect", label: "Connect OpenCode" });
+    assert.deepEqual(opencode({ openCodeSigningIn: true }), { kind: "busy", label: "Signing in…", cancel: true });
+    assert.deepEqual(opencode({ engine: engine("ready") }), { kind: "on", label: "OpenCode connected" });
+    assert.deepEqual(opencode({ engine: engine("not_installed", "missing") }), {
+      kind: "action",
+      action: "install",
+      label: "Set up OpenCode",
+    });
+    assert.deepEqual(opencode({ engine: engine("needs_login", "incompatible") }), {
+      kind: "action",
+      action: "update",
+      label: "Update OpenCode",
+    });
+    assert.deepEqual(opencode({ engine: engine("error") }), {
+      kind: "action",
+      action: "recheck",
+      label: "Check OpenCode again",
+    });
+  });
+
   it("installs or updates a CLI in place and says so while it runs", () => {
     const view = (id: "claude-code" | "codex", input: Partial<ConnectInput>) =>
       connectView(id, { engine: engine("not_installed", "missing"), ...input });

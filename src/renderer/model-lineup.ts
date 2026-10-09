@@ -1,11 +1,12 @@
 /**
- * Which subscription models the picker shows when nobody chose: the newest version of each
+ * Which models the picker shows when nobody chose: the newest version of each
  * family, from the provider's newest generation. A model's family and version are read from its
  * provider id (Claude's resolved model, Codex's slug), never from its display name, so a new
  * release replaces the one before it without a table to keep. An id that cannot be read stays
- * in the picker: a model named some new way must never vanish. A catalog of hundreds (OpenRouter,
- * OpenCode) starts instead with its first few: the newest GPT and Claude it lists, a vendor at a
- * time, then the rest in the order the provider lists them. Settings choices (`state/model-picker.ts`) override the rule per model; the provider's
+ * in the picker: a model named some new way must never vanish. A catalog of hundreds (OpenRouter)
+ * starts instead with its first few: the newest GPT and Claude it lists, a vendor at a
+ * time, then the rest in the order the provider lists them. OpenCode lists everything it can run,
+ * grouped Zen, Go, then any other vendor, with no Older models. Settings choices (`state/model-picker.ts`) override the rule per model; the provider's
  * default always shows.
  */
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
@@ -29,7 +30,7 @@ interface Lineage {
 /** The id that means "whatever the CLI is set to"; it is no model of its own. */
 const DEFAULT_MODEL = "default";
 /** Catalogs too long to list whole, and how many of their first models the picker lists. */
-const FIRST_FEW: Partial<Record<string, number>> = { [EngineId.OpenRouter]: 3, [EngineId.OpenCode]: 3 };
+const FIRST_FEW: Partial<Record<string, number>> = { [EngineId.OpenRouter]: 3 };
 
 /** `claude-opus-5-5`, `claude-opus-5`, `claude-haiku-4-5-20251001`. */
 const CLAUDE_ID = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/;
@@ -170,6 +171,8 @@ export function latestModels(
         .slice(0, firstFew)
         .map((model) => model.id),
     );
+  // OpenCode shows everything it can run: ranked best first, with no Older models.
+  if (engine === EngineId.OpenCode) return new Set(newestFirst(listed, runnable).map((model) => model.id));
   const read = listed.flatMap((model) => {
     const lineage = lineageOf(engine, model);
     return lineage ? [{ model, lineage }] : [];
@@ -183,6 +186,37 @@ export function latestModels(
   const kept = new Set([...newest.values()].map((entry) => entry.model.id));
   const unread = (model: LineupModel) => !read.some((entry) => entry.model === model);
   return new Set(listed.filter((model) => kept.has(model.id) || unread(model)).map((model) => model.id));
+}
+
+/** OpenCode's own backends by name; any other vendor keeps its id as its heading. */
+const VENDOR_LABEL: Record<string, string> = { [EngineId.OpenCode]: "Zen", "opencode-go": "Go" };
+/** Zen first, Go second, any other vendor in catalog order. */
+const GROUP_RANK: Record<string, number> = { [EngineId.OpenCode]: 0, "opencode-go": 1 };
+
+/** One Settings vendor group: OpenCode's own backends by name, any other vendor by its id. */
+export interface ModelGroup {
+  key: string;
+  label: string;
+  ids: string[];
+}
+
+/**
+ * OpenCode's Settings groups, catalog order kept inside each: Zen, Go, then any other vendor as
+ * listed. A model without a vendor prefix lands in Other.
+ */
+export function openCodeGroups(models: readonly { id: string }[]): ModelGroup[] {
+  const groups = new Map<string, { label: string; ids: string[] }>();
+  for (const model of models) {
+    const slash = model.id.indexOf("/");
+    const vendor = slash > 0 ? model.id.slice(0, slash) : "";
+    const label = VENDOR_LABEL[vendor] ?? (vendor || "Other");
+    const key = vendor || "other";
+    const group = groups.get(key) ?? { label, ids: [] };
+    group.ids.push(model.id);
+    groups.set(key, group);
+  }
+  const rank = (key: string): number => GROUP_RANK[key] ?? 2;
+  return [...groups.entries()].sort((a, b) => rank(a[0]) - rank(b[0])).map(([key, group]) => ({ key, ...group }));
 }
 
 /** The ids the picker shows: the rule, then the person's Settings choices; the provider default always. */
