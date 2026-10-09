@@ -705,6 +705,12 @@ describe("OpenCode's sandbox and config", () => {
           `${access} ${bridge} never asks`,
         );
         assert.deepEqual(config.permissions.at(0), { action: "*", resource: "*", effect: "deny" });
+        for (const action of ["subagent", "question"]) {
+          assert.ok(
+            config.permissions.some((r: { action: string; effect: string }) => r.action === action),
+            `${access} ${bridge} names ${action} explicitly: a spawned agent must never escape this policy`,
+          );
+        }
         assert.deepEqual(config.plugins, [], "no project plugin runs in a studio session");
         assert.equal(config.share, "manual");
         assert.equal(config.update, "disable");

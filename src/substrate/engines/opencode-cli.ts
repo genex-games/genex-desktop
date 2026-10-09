@@ -242,6 +242,10 @@ export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string 
     { action: "webfetch", resource: "*", effect: "deny" },
     { action: "websearch", resource: "*", effect: "deny" },
     { action: "skill", resource: "*", effect: "deny" },
+    // A spawned subagent resolves its own permissions, not this policy's: never let one start.
+    // A question has nobody to answer it in a non-interactive session: never ask one.
+    { action: "subagent", resource: "*", effect: "deny" },
+    { action: "question", resource: "*", effect: "deny" },
     { action: "external_directory", resource: "*", effect: access === OpenCodeAccess.ReadOnly ? "allow" : "deny" },
   ];
   return JSON.stringify({ permissions, plugins: [], share: "manual", update: "disable" });
