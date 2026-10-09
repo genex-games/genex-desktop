@@ -258,7 +258,8 @@ search default.
 Connector tools are host-owned and arrive from one list. Studio main is the only MCP client: the
 connector registry connects each enabled connector, namespaces its tools `<connector>__<tool>` and
 appends them to the same `liveTools` every path already carries, so Claude Code gets them on the
-in-process `studio` server, Codex through the file bridge and the local harness over `mcp.tools` /
+in-process `studio` server, Codex through the file bridge (or, opted in, as app-server dynamic
+tools: [Model setup and activity](connections-and-context.md#model-setup-and-activity)) and the local harness over `mcp.tools` /
 `mcp.invoke`. The harness never speaks MCP itself, and it never learns a connector's name from a
 prompt file: guidance is one short paragraph the registry composes for whatever was in scope, tool
 schemas travel as `inputSchema` beside the flat `parameters`, and a name collision with a plugin

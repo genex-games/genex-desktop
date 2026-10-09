@@ -68,6 +68,16 @@ import {
   releaseStaleLocks,
 } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
+import { CodexEvent, CodexItem, CodexItemStatus } from "./codex-exec-events.ts";
+import {
+  CODEX_DYNAMIC_TOOLS_MIN_VERSION,
+  DynamicContentType,
+  type DynamicToolSpec,
+  ToolDelivery,
+  dynamicToolSpecs,
+  meetsMinimumVersion,
+} from "./codex-dynamic-tools.ts";
+import { type CodexDynamicTurn, openCodexTurn, threadStartParams, turnStartParams } from "./codex-turns.ts";
 
 /** The bridge's tool list moved to `studio-bridge.ts`, shared with OpenCode; kept here for importers. */
 export { bridgeTools };
@@ -99,7 +109,7 @@ import {
 } from "./common.ts";
 import { StudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
-import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, dynamicToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -146,8 +156,16 @@ export interface CodexEngineOptions {
   resolveCli?: typeof resolveCodingCli;
   /** Injected in tests. */
   execFn?: CodexExec;
-  /** Injected in tests: the app server Compact Now runs on (codex-app-server.ts). */
+  /** Injected in tests: the app server Compact Now and dynamic-tool turns run on (codex-app-server.ts). */
   appServerFn?: CodexAppServer;
+  /**
+   * Run a turn that has live tools on Codex's app server, with the studio's tools as Codex dynamic
+   * tools (`codex-turns.ts`): pictures inline, arguments as JSON, no file bridge. Off by default,
+   * and it stays off until a live spike confirms the app server's `dynamicTools`, which CLI 0.159
+   * marks experimental: its shape may change in any release, and only a scripted server has
+   * exercised this path. Off, or on an older CLI, every turn keeps `codex exec` and the bridge.
+   */
+  codexDynamicTools?: boolean;
   /** Injected catalog refresh; production delegates to the selected CLI. */
   refreshCatalogue?: typeof refreshCodexCatalogue;
   readModels?: typeof readCodexModels;
@@ -239,34 +257,6 @@ const SPAWN_FAILURE_PATTERN = /\bspawn\b.*\b(ENOTDIR|ENOENT)\b|\b(ENOTDIR|ENOENT
 /** A server error or a dropped connection: the service is unavailable, not the build broken. */
 const UNAVAILABLE_PATTERN = /\b5\d\d\b|stream disconnected|connection (reset|closed)|timed? out/i;
 
-/** `codex exec --json` event types, as the CLI spells them. Vendor wire values. */
-const CodexEvent = {
-  ThreadStarted: "thread.started",
-  TurnCompleted: "turn.completed",
-  TurnFailed: "turn.failed",
-  Error: "error",
-  ItemStarted: "item.started",
-  ItemUpdated: "item.updated",
-  ItemCompleted: "item.completed",
-} as const;
-
-/** The item types inside a Codex `item.*` event. */
-const CodexItem = {
-  AgentMessage: "agent_message",
-  Reasoning: "reasoning",
-  CommandExecution: "command_execution",
-  FileChange: "file_change",
-  McpToolCall: "mcp_tool_call",
-  WebSearch: "web_search",
-  Error: "error",
-} as const;
-
-/** Where a Codex item stands (`item.status`), as the CLI spells it. */
-const CodexItemStatus = {
-  Completed: "completed",
-  Failed: "failed",
-} as const;
-
 /** The kind of one change in a `file_change` item that creates a file (the rest edit one). */
 const FILE_CHANGE_ADD = "add";
 
@@ -274,6 +264,7 @@ const FILE_CHANGE_ADD = "add";
 const TOOL_ITEMS = new Set<string>([
   CodexItem.CommandExecution,
   CodexItem.McpToolCall,
+  CodexItem.DynamicToolCall,
   CodexItem.WebSearch,
   CodexItem.FileChange,
 ]);
@@ -371,8 +362,13 @@ export class CodexEngine implements Engine {
   #usageRead: Promise<ProviderUsage | null> | null = null;
   /** The host-skills folder whose skills every `codex exec` disables, or null when they are kept. */
   readonly #suppressedSkillsDir: string | null;
+  /** The opt-in to dynamic tools on the app server (`CodexEngineOptions.codexDynamicTools`). */
+  readonly #dynamicTools: boolean;
+  /** Set once this CLI's app server refused the tools: every later turn goes straight to exec. */
+  #dynamicToolsRefused = false;
 
   constructor(options: CodexEngineOptions) {
+    this.#dynamicTools = options.codexDynamicTools === true;
     this.#suppressedSkillsDir =
       options.hostSkills === HostSkills.Suppress
         ? (options.hostSkillsDir ?? path.join(os.homedir(), HOST_SKILLS_DIR))
@@ -705,19 +701,21 @@ export class CodexEngine implements Engine {
     // it write is the studio's bridge — the build it is judging stays untouchable. A lead that is
     // its chat's own session is resumed from there by id (a Codex session is found by its id,
     // wherever it is started), and the chat resumes it from the game folder after the run.
-    const { scratch, bridge } = await this.#openRunDir(request, cwd, locks);
+    const dir = await this.#openRunDir(request, { cwd, locks, run, model, signal: controller.signal });
+    const { scratch, bridge, turn } = dir;
     const runDir = scratch ?? cwd;
-    // Interview tools are read off the bridge's own record — the authoritative list of what the
-    // contractor asked the studio to do, in the order it asked. Read for every ending, not only
-    // a clean one: the bridge told the contractor "the studio launches this when your reply
-    // ends", and a deadline or a late error notice must not turn that promise into silence.
+    // Interview tools are read off the session's own record of calls (the bridge's, or the app
+    // server turn's) — the authoritative list of what the contractor asked the studio to do, in
+    // the order it asked. Read for every ending, not only a clean one: the contractor was told
+    // "the studio launches this when your reply ends", and a deadline or a late error notice must
+    // not turn that promise into silence.
     const partialState = (): PartialDelegateState => ({
       ...runPartialState(run, startedAt, model),
-      studioToolCalls: recordedCalls(bridge, request),
+      studioToolCalls: recordedCalls(toolCalls(dir), request),
     });
 
     const stills = await writeDelegateStills(request.images ?? []);
-    const prompt = await this.#delegatePrompt(request, { cwd, scratch, locks, bridge });
+    const prompt = await this.#delegatePrompt(request, { cwd, scratch, locks, bridge, turn });
     const deadline = request.timeoutMs
       ? setTimeout(() => {
           run.deadlineHit = true;
@@ -727,7 +725,10 @@ export class CodexEngine implements Engine {
     const metadata = this.#watchSessionMetadata(request, run, startedAt, model);
     try {
       const argv = await this.#delegateArgv(request, model, runDir, stills.paths);
-      await this.#readStream(request, run, { argv, runDir, prompt, cwd, locks, model, signal: controller.signal });
+      const signal = controller.signal;
+      const delivery = toolDelivery(dir);
+      const source = { argv, runDir, prompt, turn, images: stills.paths, delivery };
+      await this.#readStream(request, run, { ...source, cwd, locks, model, signal });
       await metadata.refresh();
     } catch (err) {
       await metadata.refresh();
@@ -735,6 +736,7 @@ export class CodexEngine implements Engine {
     } finally {
       await metadata.stop();
       if (deadline) clearTimeout(deadline);
+      turn?.close();
       await bridge?.close().catch(() => {});
       await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
       if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
@@ -748,7 +750,7 @@ export class CodexEngine implements Engine {
     if (run.failure) return this.#failedEnding(run.failure, run, partialState);
 
     this.#authFailure = null;
-    return completedResult(this.id, run, { startedAt, model }, recordedCalls(bridge, request));
+    return completedResult(this.id, run, { startedAt, model }, recordedCalls(toolCalls(dir), request));
   }
 
   /**
@@ -789,38 +791,103 @@ export class CodexEngine implements Engine {
     return { ...completedResult(this.id, run, asked, []), compacted: true };
   }
 
-  /** The app server Compact Now runs on: the binary, sign-in and profile this engine's exec turns use. */
-  async #appServer(cwd: string, signal: AbortSignal): Promise<CodexAppServerConnection> {
+  /**
+   * The app server Compact Now and dynamic-tool turns run on: the binary, sign-in and profile this
+   * engine's exec turns use, plus a turn's own flags and a reader for its stderr.
+   */
+  async #appServer(
+    cwd: string,
+    signal: AbortSignal,
+    turn: { args: string[]; onStderr: (chunk: string) => void } | null = null,
+  ): Promise<CodexAppServerConnection> {
     const { home, env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
-    const argv = [APP_SERVER_COMMAND, ...(await codexProfileArgs(home))];
-    if (this.#appServerFn) return this.#appServerFn({ argv, cwd, env, signal });
+    const argv = [APP_SERVER_COMMAND, ...(await codexProfileArgs(home)), ...(turn?.args ?? [])];
+    const invocation = { argv, cwd, env, signal, ...(turn ? { onStderr: turn.onStderr } : {}) };
+    if (this.#appServerFn) return this.#appServerFn(invocation);
     if (!installation?.path) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.CliMissing);
-    return spawnCodexAppServer(installation.path)({ argv, cwd, env, signal });
+    return spawnCodexAppServer(installation.path)(invocation);
   }
 
-  /** The studio's bridge for this delegation's tools, when it grants any. */
   /**
-   * Where the session runs and its bridge. A read-only session is started somewhere of its own,
-   * so the only folder its sandbox lets it write is the studio's bridge. The locks and the scratch
+   * Where the session runs, and how its studio tools reach it: a thread on the app server with
+   * dynamic tools, else the file bridge. A read-only session is started somewhere of its own, so
+   * the only folder its sandbox lets it write is the studio's bridge. The locks and the scratch
    * folder are this call's: a bridge that cannot open (a planted `.studio`) must not leave the
    * game read-only until the next delegation.
    */
-  async #openRunDir(
-    request: DelegateRequest,
-    cwd: string,
-    locks: Awaited<ReturnType<typeof lockUnowned>> | null,
-  ): Promise<{ scratch: string | null; bridge: StudioBridge | null }> {
+  async #openRunDir(request: DelegateRequest, ctx: RunDirContext): Promise<RunDir> {
     let scratch: string | null = null;
+    let turn: CodexDynamicTurn | null = null;
     try {
       if (startsElsewhere(request)) scratch = await mkdtemp(path.join(os.tmpdir(), "studio-playtest-"));
-      return { scratch, bridge: await this.#openBridge(request, scratch ?? cwd) };
+      turn = await this.#openDynamicTurn(request, scratch ?? ctx.cwd, ctx);
+      const bridge = turn ? null : await this.#openBridge(request, scratch ?? ctx.cwd);
+      return { scratch, bridge, turn };
     } catch (err) {
-      await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
+      turn?.close();
+      await releaseLocks(ctx.cwd, ctx.locks, this.#lockRecovery).catch(() => {});
       if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
       throw err;
     }
   }
 
+  /**
+   * A thread on Codex's app server whose studio tools are dynamic tools, or null when this turn
+   * keeps `codex exec` and the bridge: not opted in, no live tools, a resumed session, an older
+   * CLI, or a server that refused them (remembered for this engine's lifetime). A server that
+   * cannot be started is left to the exec path, which reports why.
+   */
+  async #openDynamicTurn(
+    request: DelegateRequest,
+    runDir: string,
+    ctx: RunDirContext,
+  ): Promise<CodexDynamicTurn | null> {
+    const tools = await this.#dynamicToolSpecs(request, ctx.signal);
+    if (!tools) return null;
+    const onStderr = (chunk: string) => keepStderr(ctx.run, request, chunk);
+    const args = await this.#turnServerArgs(request, runDir);
+    const server = await this.#appServer(runDir, ctx.signal, { args, onStderr }).catch(() => null);
+    if (!server) return null;
+    const bypass = chatMode(request) === PermissionMode.Bypass;
+    const opening = await openCodexTurn(server, {
+      thread: threadStartParams({ cwd: runDir, model: ctx.model, bypass, tools }),
+      tools: new Set(tools.map((tool) => tool.name)),
+      signal: ctx.signal,
+    });
+    if (opening.ok) return opening.turn;
+    if (!ctx.signal.aborted) this.#dynamicToolsRefused = true;
+    return null;
+  }
+
+  /** The dynamic tools this delegation declares, when it is one that runs on the app server. */
+  async #dynamicToolSpecs(request: DelegateRequest, signal: AbortSignal): Promise<DynamicToolSpec[] | null> {
+    const live = Boolean(request.onLiveTool && request.liveTools?.length);
+    // A resumed session keeps exec: a thread exec started has no dynamic tools to resume.
+    const eligible = this.#dynamicTools && !this.#dynamicToolsRefused && live && !request.resume;
+    if (!eligible) return null;
+    const tools = dynamicToolSpecs(bridgeTools(request));
+    if (!tools) return null;
+    const cli = await this.#resolveCli(EngineId.Codex, this.#executable, signal).catch(() => null);
+    return meetsMinimumVersion(cli?.status.version, CODEX_DYNAMIC_TOOLS_MIN_VERSION) ? tools : null;
+  }
+
+  /**
+   * The app server's flags for a turn: the config `codex exec` gets for the same request (sandbox
+   * and approvals, effort, service tier, suppressed host skills, the features the studio owns),
+   * plus what stands in for `--ignore-user-config`, which the app server lacks.
+   */
+  async #turnServerArgs(request: DelegateRequest, runDir: string): Promise<string[]> {
+    return [
+      ...(chatMode(request) === PermissionMode.Bypass ? BYPASS_CONFIG_ARGS : sandboxArgs(runDir)),
+      ...effortArgs(request.effort),
+      ...(await this.preferenceArgs(request.model, request.preferences)),
+      ...(await hostSkillArgs(this.#suppressedSkillsDir)),
+      ...STUDIO_OWNED_FEATURE_ARGS,
+      ...APP_SERVER_ISOLATION_ARGS,
+    ];
+  }
+
+  /** The studio's bridge for this delegation's tools, when it grants any. */
   async #openBridge(request: DelegateRequest, runDir: string): Promise<StudioBridge | null> {
     const tools = bridgeTools(request);
     if (!tools.length) return null;
@@ -834,7 +901,13 @@ export class CodexEngine implements Engine {
   /** The brief, plus what Codex can only be told: its tools, its seam, its folder, its limits. */
   async #delegatePrompt(
     request: DelegateRequest,
-    ctx: { cwd: string; scratch: string | null; locks: OwnershipLocks | null; bridge: StudioBridge | null },
+    ctx: {
+      cwd: string;
+      scratch: string | null;
+      locks: OwnershipLocks | null;
+      bridge: StudioBridge | null;
+      turn: CodexDynamicTurn | null;
+    },
   ): Promise<string> {
     // Stills folders the user named, plus the run's own capture output: readable but not writable.
     // Codex's sandbox already grants read of the whole disk, so `extraReads` needs no flag; the
@@ -859,6 +932,7 @@ export class CodexEngine implements Engine {
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
+      ctx.turn ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
       ownershipNote,
       planScratch
         ? planModeNote(ctx.cwd, planScratch)
@@ -889,10 +963,35 @@ export class CodexEngine implements Engine {
     ];
   }
 
-  /** The CLI's event stream, read to the end: the chat's live rows, the lock guard, the log. */
+  /** The turn's event stream, read to the end: the chat's live rows, the lock guard, the log. */
   async #readStream(request: DelegateRequest, run: CodexRun, stream: StreamContext): Promise<void> {
     const streamingItems = new Map<string, string>();
-    const events = await this.#exec({
+    const events = await this.#events(request, run, stream);
+    const init = { model: stream.model, delivery: stream.delivery };
+    for await (const event of events) {
+      streamReplyText(event, streamingItems, request);
+      this.#reportActivity(event, run, request);
+      await this.#guardLocks(event, stream.cwd, stream.locks, request);
+      const translated = translateEvent(event, stream.cwd);
+      if (translated) applyTranslated(translated, run, request, init);
+    }
+  }
+
+  /**
+   * The turn as `codex exec --json` events: from the app server's thread when the tools went there
+   * as dynamic tools (each call answered by the studio's own handler), else from `codex exec`.
+   */
+  async #events(
+    request: DelegateRequest,
+    run: CodexRun,
+    stream: StreamContext,
+  ): Promise<AsyncIterable<Record<string, unknown>>> {
+    if (stream.turn) {
+      const bypass = chatMode(request) === PermissionMode.Bypass;
+      const params = turnStartParams({ cwd: stream.runDir, bypass }, stream.prompt, stream.images);
+      return stream.turn.run(params, (name, args) => answerBridgeCall(name, args, request));
+    }
+    return this.#exec({
       onInstallation: (installation) => {
         run.cliPath = installation.path;
         run.cliVersion = installation.status.version;
@@ -901,18 +1000,8 @@ export class CodexEngine implements Engine {
       cwd: stream.runDir,
       prompt: stream.prompt,
       signal: stream.signal,
-      onStderr: (chunk) => {
-        run.stderrTail = `${run.stderrTail}${chunk}`.slice(-STDERR_TAIL_CHARS);
-        request.onEvent?.({ type: DelegateEventType.Stderr, payload: chunk });
-      },
+      onStderr: (chunk) => keepStderr(run, request, chunk),
     });
-    for await (const event of events) {
-      streamReplyText(event, streamingItems, request);
-      this.#reportActivity(event, run, request);
-      await this.#guardLocks(event, stream.cwd, stream.locks, request);
-      const translated = translateEvent(event, stream.cwd);
-      if (translated) applyTranslated(translated, run, request, stream.model);
-    }
   }
 
   /** The chat's activity line: a tool starting, or the session thinking again after an item. */
@@ -1218,14 +1307,47 @@ function completedResult(
   };
 }
 
-/** The interview calls the bridge recorded: the studio's own tools are not calls to run. */
+/** The interview calls the session recorded: the studio's own tools are not calls to run. */
 function recordedCalls(
-  bridge: StudioBridge | null,
+  calls: ReadonlyArray<{ name: string; args: Record<string, unknown> }>,
   request: DelegateRequest,
 ): NonNullable<DelegateResult["studioToolCalls"]> {
-  return (bridge?.calls ?? [])
+  return calls
     .filter((call) => call.name !== StudioTool.Checkpoint && call.name !== StudioTool.Capture)
     .filter((call) => (request.interviewTools ?? []).some((tool) => tool.name === call.name));
+}
+
+/** What opening a delegation's run folder needs besides the request. */
+interface RunDirContext {
+  cwd: string;
+  locks: OwnershipLocks | null;
+  run: CodexRun;
+  model: string | undefined;
+  signal: AbortSignal;
+}
+
+/** Where a delegation runs and how its studio tools reach it: a dynamic-tool thread, a bridge, or neither. */
+interface RunDir {
+  scratch: string | null;
+  bridge: StudioBridge | null;
+  turn: CodexDynamicTurn | null;
+}
+
+/** Every studio tool call the session made, from whichever carried its tools. */
+function toolCalls(dir: RunDir): ReadonlyArray<{ name: string; args: Record<string, unknown> }> {
+  return dir.turn?.calls ?? dir.bridge?.calls ?? [];
+}
+
+/** How the session's studio tools reached it, for its init event; null when it was granted none. */
+function toolDelivery(dir: RunDir): ToolDelivery | null {
+  if (dir.turn) return ToolDelivery.DynamicTools;
+  return dir.bridge ? ToolDelivery.FileBridge : null;
+}
+
+/** A chunk of the CLI's stderr: its end is kept for a failure's explanation, and it is mirrored. */
+function keepStderr(run: CodexRun, request: DelegateRequest, chunk: string): void {
+  run.stderrTail = `${run.stderrTail}${chunk}`.slice(-STDERR_TAIL_CHARS);
+  request.onEvent?.({ type: DelegateEventType.Stderr, payload: chunk });
 }
 
 /** What the stream reader needs besides the request. */
@@ -1237,6 +1359,11 @@ interface StreamContext {
   locks: OwnershipLocks | null;
   model: string | undefined;
   signal: AbortSignal;
+  /** The app server's thread, when the turn runs there with dynamic tools; null runs `codex exec`. */
+  turn: CodexDynamicTurn | null;
+  /** The stills, saved as files: `-i` for exec, `localImage` inputs on the app server. */
+  images: string[];
+  delivery: ToolDelivery | null;
 }
 
 /** The session-file poller: read now, or stop and wait for the read in flight. */
@@ -1332,12 +1459,7 @@ function isReplySoFar(item: CodexTextItem | undefined): item is Required<CodexTe
 }
 
 /** One translated event, folded into the run and mirrored into the log. */
-function applyTranslated(
-  translated: Translated,
-  run: CodexRun,
-  request: DelegateRequest,
-  model: string | undefined,
-): void {
+function applyTranslated(translated: Translated, run: CodexRun, request: DelegateRequest, init: InitFields): void {
   if (translated.sessionId) run.sessionId = translated.sessionId;
   if (translated.model) run.modelUsed = translated.model;
   if (translated.usage) mergeUsage(run.usage, translated.usage);
@@ -1350,17 +1472,25 @@ function applyTranslated(
   if (translated.completed) run.failure = null;
   if (translated.text) run.summary = translated.text;
   if (translated.turns) run.turns += translated.turns;
-  for (const mirrored of translated.events) request.onEvent?.(withRequestedModel(mirrored, model));
+  for (const mirrored of translated.events) request.onEvent?.(withInitFields(mirrored, init));
+}
+
+/** What the studio adds to a session's init event: what it asked for, and how its tools went. */
+interface InitFields {
+  model: string | undefined;
+  delivery: ToolDelivery | null;
 }
 
 /**
  * Codex's thread.started omits the model. Keep our requested model separate from
- * provider-reported identity so the UI can label it without claiming confirmation.
+ * provider-reported identity so the UI can label it without claiming confirmation. A session
+ * granted studio tools also records how they reached it (`tool_delivery`).
  */
-function withRequestedModel(mirrored: MirroredEvent, model: string | undefined): MirroredEvent {
+function withInitFields(mirrored: MirroredEvent, init: InitFields): MirroredEvent {
   const payload = mirrored.payload as { subtype?: string };
   if (mirrored.type !== DelegateEventType.System || payload.subtype !== "init") return mirrored;
-  return { ...mirrored, payload: { ...payload, requested_model: model ?? DEFAULT_MODEL } };
+  const delivery = init.delivery ? { tool_delivery: init.delivery } : {};
+  return { ...mirrored, payload: { ...payload, requested_model: init.model ?? DEFAULT_MODEL, ...delivery } };
 }
 
 /** The CLI's state for Settings: what discovery found, else whether a binary answers at all. */
@@ -1625,6 +1755,8 @@ function translateItem(item: CodexItemRecord, cwd?: string): Translated {
       return fileChange(item, cwd);
     case CodexItem.McpToolCall:
       return mcpToolCall(item);
+    case CodexItem.DynamicToolCall:
+      return dynamicToolCall(item);
     case CodexItem.WebSearch:
       return {
         events: [toolUse(item, "WebSearch", clip(String(item.query ?? ""), TRACE_TOOL_INPUT_CHARS))],
@@ -1695,6 +1827,33 @@ function mcpToolCall(item: CodexItemRecord): Translated {
     ],
     turns: 1,
   };
+}
+
+/**
+ * A studio tool Codex called as a dynamic tool: it renders as the same `mcp__studio__<tool>` call
+ * the Claude path writes, its answer as the text it carried and a count of its pictures.
+ */
+function dynamicToolCall(item: CodexItemRecord): Translated {
+  const failed = item.status === CodexItemStatus.Failed || item.success === false;
+  const answered = failed || item.status === CodexItemStatus.Completed;
+  const name = studioToolName(String(item.tool ?? "tool"));
+  const text = dynamicResultText(item.content_items);
+  return {
+    events: [
+      toolUse(item, name, clip(JSON.stringify(item.arguments ?? {}), TRACE_TOOL_INPUT_CHARS)),
+      ...(answered ? [toolResult(item, failed, clip(text, TRACE_TOOL_RESULT_CHARS))] : []),
+    ],
+    turns: 1,
+  };
+}
+
+/** A dynamic tool's answer as trace text: its text parts, and how many pictures went with them. */
+function dynamicResultText(items: unknown): string {
+  const parts = Array.isArray(items) ? (items as Array<{ type?: unknown; text?: unknown }>) : [];
+  const texts = parts.filter((part) => part?.type === DynamicContentType.InputText).map((part) => String(part.text));
+  const pictures = parts.filter((part) => part?.type === DynamicContentType.InputImage).length;
+  const note = pictures === 1 ? "[1 picture]" : `[${pictures} pictures]`;
+  return [...texts, ...(pictures ? [note] : [])].join("\n");
 }
 
 function itemError(item: CodexItemRecord): Translated {
@@ -1771,6 +1930,17 @@ function startsElsewhere(request: DelegateRequest): boolean {
  * approvals. Codex then runs as it would in their terminal with the same flag.
  */
 const BYPASS_ARGS = ["--dangerously-bypass-approvals-and-sandbox"];
+
+/** The same bypass as config, for the app server, which has no such flag. */
+const BYPASS_CONFIG_ARGS = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'];
+
+/**
+ * What stands in on the app server for `--ignore-user-config`, which it lacks: where the studio
+ * borrows the person's own sign-in (`CODEX_HOME` is their `~/.codex`), their config.toml is read,
+ * and the MCP servers it names would otherwise join a turn the studio runs. Their other settings
+ * are overridden by the turn's own sandbox, approval, model and feature config.
+ */
+const APP_SERVER_ISOLATION_ARGS = ["-c", "mcp_servers={}"];
 
 /**
  * The contractor's confinement. `workspace-write` keeps every edit inside the folder it was

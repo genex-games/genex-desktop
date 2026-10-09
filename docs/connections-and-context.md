@@ -213,6 +213,21 @@ Codex bridge instructions use JSON for numeric/boolean plugin arguments as well 
 schemas. String-only tools retain simple flags; validation never silently coerces a string into
 an agent's numeric or boolean request.
 
+Codex dynamic tools are an opt-in alternative to the bridge
+(`CodexEngineOptions.codexDynamicTools`, off until a live spike confirms CLI 0.159's experimental
+`dynamicTools`). With it on, a new session with live tools on CLI 0.159.0 or later runs its turn
+on `codex app-server` (`substrate/engines/codex-turns.ts`): `initialize` opts into
+`experimentalApi`, `thread/start` declares every tool the bridge would carry as a function with
+its schema, and each `item/tool/call` goes to the bridge's handler, its pictures sent inline as
+data URLs (`codex-dynamic-tools.ts`: answers capped at 12 MiB; malformed calls, undeclared tools,
+another thread's calls and arguments over 1 MiB are refused in words). Notifications are
+rewritten as `codex exec --json` events, so the log and chat read the same, and the brief is told
+its bridge commands are function tools. The sandbox and approvals are the exec turn's, as `-c`
+config and typed `thread/start`/`turn/start` params; `-c mcp_servers={}` stands in for the
+missing `--ignore-user-config`. A handshake refusal falls back to exec and the bridge for that
+turn and the engine's lifetime; resumed sessions, older CLIs and the default keep exec. The
+session's `system/init` event records `tool_delivery` (`dynamic_tools` or `file_bridge`).
+
 A read-only follow-up that leaves the game's content unchanged does not reload the preview or
 warn about an untouched empty scaffold. The bounded content stamp includes Git-ignored runtime
 assets/build output as well as tracked files. Tool bookkeeping is excluded. An unknown stamp or
