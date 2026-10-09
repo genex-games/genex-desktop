@@ -24,6 +24,7 @@ import {
 import { PageMethod as seedPageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import * as seedJudgeProvenance from "../../src/harness-seed/loop/judge-provenance.ts";
 import { InteractionObjective, InteractionSource } from "../../src/shared/run-summary.ts";
+import * as seedInteractionWords from "../../src/harness-seed/loop/interaction-words.ts";
 import * as seedRunEvents from "../../src/harness-seed/loop/run-events.ts";
 import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
 import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
@@ -396,8 +397,8 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   });
 
   it("names who played and what an interaction rests on as the app does", () => {
-    assert.deepEqual(seedRunEvents.InteractionSource, InteractionSource);
-    assert.deepEqual(seedRunEvents.InteractionObjective, InteractionObjective);
+    assert.deepEqual(seedInteractionWords.InteractionSource, InteractionSource);
+    assert.deepEqual(seedInteractionWords.InteractionObjective, InteractionObjective);
   });
 
   it("stages a lessons suggestion for the file the host lets it write", () => {

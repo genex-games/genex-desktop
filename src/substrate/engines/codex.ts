@@ -1068,9 +1068,9 @@ export class CodexEngine implements Engine {
     // All overrides must be in the leaf command, before the stdin prompt argument.
     const argv = [
       ...invocation.argv.slice(0, -1),
-      ...(await codexProfileArgs(home)),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
       ...STUDIO_OWNED_FEATURE_ARGS,
+      ...(await codexProfileArgs(home)),
       invocation.argv.at(-1) ?? "-",
     ];
     if (this.#execFn) return this.#execFn({ ...invocation, argv, env });
