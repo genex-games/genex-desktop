@@ -43,3 +43,12 @@ export function readOnlyNote(cwd: string, scratch: string | null, leads: string 
 export function planModeNote(cwd: string, scratch: string): string {
   return `\n\nPLAN MODE — the user wants a plan before any change. This game's folder is ${cwd}: read it freely by its full path (start with its AGENTS.md or CLAUDE.md if it has one), but change nothing there or anywhere else. You are running from ${scratch}, which holds only the studio's tools. Find out what you need, then reply with your plan in Markdown: what you will change, where and how. The user approves it before you carry it out.`;
 }
+
+/**
+ * A session whose studio tools are Codex dynamic tools (`codex-turns.ts`): the brief was written
+ * for the file bridge's command syntax, so it is told the same tools are its own function tools.
+ */
+export function dynamicToolsNote(tools: readonly string[]): string {
+  if (!tools.length) return "";
+  return `STUDIO TOOLS — ${tools.join(", ")} are your own function tools in this session; call them directly. Where these instructions say to run \`node .studio/bridge/tool.mjs <tool> ...\`, call the tool <tool> with the same fields as JSON arguments instead: there is no bridge folder to run. A tool that looks at the build answers with the picture itself.`;
+}
