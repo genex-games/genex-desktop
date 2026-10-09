@@ -493,3 +493,40 @@ describe("game bridge source — driven by the computer session", { skip: POSIX_
     assert.deepEqual(spawned, [], "a refused action starts nothing");
   });
 });
+
+describe("a Play Protocol game on the agent's screen", () => {
+  it("each move draws a frame of the game on the worker's screen, as the browser window's do", {
+    skip: process.platform === "win32" ? "starts the fake game from a POSIX script" : false,
+  }, async () => {
+    const { computerTools } = await import("../../src/main/core/computer-tools.ts");
+    const { sandbox } = await recordingSandbox();
+    const frames: Array<{ caption: string | null; bytes: number; width: number | undefined }> = [];
+    const opened: string[] = [];
+    const previews = {
+      openScreen: (screen: { handle: string }) => opened.push(screen.handle),
+      frame: async (
+        port: { screenshot(q?: number): Promise<Buffer>; viewSize?(): { width: number } },
+        _screen: unknown,
+        jpeg: Buffer | null,
+        caption: string | null,
+      ) => {
+        const shot = jpeg ?? (await port.screenshot(60));
+        frames.push({ caption, bytes: shot.length, width: port.viewSize?.().width });
+      },
+    };
+    const sessionPort = { get: async () => ({}), handle: () => "pool-1", loaded: null, release: async () => {} };
+    const tools = computerTools(
+      previews as never,
+      { project: "bridge", role: "builder" } as never,
+      await bridgeProject(),
+      await tmpDir("bridge-screen-"),
+      sessionPort as never,
+      { bridge: { sandbox } },
+    );
+    after(() => tools.release());
+    await tools.onLiveTool("computer", { action: "key", text: "d" });
+    assert.deepEqual(opened, ["pool-1"], "the worker's screen opens with the game");
+    assert.ok(frames.length >= 1, "a move draws a frame");
+    assert.ok(frames.every((f) => f.bytes > 0 && typeof f.width === "number"));
+  });
+});

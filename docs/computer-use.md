@@ -74,8 +74,8 @@ look, act, pause, play, step, reset, state). A project declares it in `studio.js
 (`"runtime": "bridge"`, `"play": {"command", "args"}`, the command resolved by real path inside the
 project); the delegation then gives every role a `GameBridgeTarget`
 ([`src/main/core/game-bridge-target.ts`](../src/main/core/game-bridge-target.ts)) whose game runs in
-the `ProcessSandbox`. The playtest shorthands are not offered there, and a bridge game's frames are
-saved and returned but not yet drawn on the agent screen. Every plugin is held to the shared
+the `ProcessSandbox`. The playtest shorthands are not offered there; its moves are drawn on the
+worker's agent screen like a browser game's (`targetFramePort`). Every plugin is held to the shared
 conformance suite (`tests/conformance/play-protocol.test.ts`, run against
 `tests/fixtures/fake-play-game.mjs`; `PLAY_GAME_COMMAND` points it at another game).
 Window, desktop and VM targets (cua-driver, outside the window) plug into the same interface at a

@@ -19,6 +19,7 @@ import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
+import { CaptureSurface } from "../../shared/preview-contract.ts";
 import type { ProcessSandbox } from "../../substrate/spawn.ts";
 import type { ComputerTarget } from "../../substrate/computer-target.ts";
 import { type BrowserPreviewTarget, browserPreviewTarget } from "./browser-preview-target.ts";
@@ -29,7 +30,7 @@ import {
   type TargetSource,
 } from "./computer-session.ts";
 import { gameBridgeSource } from "./game-bridge-target.ts";
-import type { PreviewService } from "./previews.ts";
+import type { FramePort, PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
 import type { SessionPort } from "./session-port.ts";
 
@@ -99,6 +100,26 @@ function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir
     observeByDefault: PACED_ROLES.has(role),
     ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
     ...(grant.quest ? { quest: grant.quest } : {}),
+  };
+}
+
+/** The quality of a frame a target that is no preview window takes for the agent's screen. */
+const TARGET_FRAME_QUALITY = 60;
+
+/**
+ * A target that is no preview window, read as one by the agent screen: its picture, its size and
+ * its pointer, so a Play Protocol game's moves are drawn on the worker's node as a browser game's are.
+ */
+function targetFramePort(target: ComputerTarget): FramePort {
+  const centre = () => {
+    const size = target.viewSize();
+    return { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
+  };
+  return {
+    screenshot: async (quality = TARGET_FRAME_QUALITY) =>
+      (await target.screenshot({ quality, surface: CaptureSurface.Auto })).jpeg,
+    viewSize: () => target.viewSize(),
+    pointer: () => target.pointer() ?? centre(),
   };
 }
 
@@ -203,7 +224,13 @@ export function computerTools(
   const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : "playtester";
   const observeByDefault = PACED_ROLES.has(role);
   if (options.bridge) {
-    const bridge = gameBridgeSource({ sandbox: options.bridge.sandbox });
+    const bridge = gameBridgeSource({
+      sandbox: options.bridge.sandbox,
+      frame: (target, jpeg, caption, act) => {
+        previews.openScreen(screen());
+        return previews.frame(targetFramePort(target), screen(), jpeg, caption, act);
+      },
+    });
     const session = computerSession(bridge, initialRoot, sessionOptions);
     return toolsOver(session, {
       caps: bridge.caps,

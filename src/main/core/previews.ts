@@ -433,6 +433,15 @@ function invalidStillSize(maxPx: number | undefined): boolean {
   return maxPx !== undefined && (!Number.isInteger(maxPx) || maxPx < 1 || maxPx > STILL_MAX_PX);
 }
 
+/**
+ * What an agent-screen frame reads of a target: a picture, its size and the pointer. Every preview
+ * port is one; a Play Protocol game's target is adapted to it (`computer-tools.ts`).
+ */
+export type FramePort = Pick<
+  PreviewPort,
+  "screenshot" | "screenshotCard" | "screenshotWithStats" | "resizeImage" | "viewSize" | "pointer"
+>;
+
 export class PreviewService {
   readonly #core: StudioCore;
   readonly #x: CoreInternals;
@@ -1072,7 +1081,7 @@ export class PreviewService {
 
   /** A new picture of a worker's window, downscaled for its node, with the cursor and the deed. */
   async frame(
-    port: PreviewPort,
+    port: FramePort,
     screen: AgentScreen,
     jpeg: Buffer | null,
     caption: string | null,
@@ -1114,7 +1123,7 @@ export class PreviewService {
     }
   }
 
-  async #captureFrame(port: PreviewPort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
+  async #captureFrame(port: FramePort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
     const { jpeg } = deed;
     try {
       if (!jpeg && port.screenshotCard) {
@@ -1138,7 +1147,7 @@ export class PreviewService {
     }
   }
 
-  #publishFrame(port: PreviewPort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
+  #publishFrame(port: FramePort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
     const size = port.viewSize?.() ?? COMPUTER_VIEW;
     const cursor = port.pointer?.() ?? { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
     const frame: AgentScreenFrame = {
