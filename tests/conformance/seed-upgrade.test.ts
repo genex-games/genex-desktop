@@ -1870,3 +1870,44 @@ describe("seed upgrade across the review fixes", () => {
     assert.deepEqual(unlinked, []);
   });
 });
+
+/**
+ * Computer use (the judge that plays, vision escalation, routes) changed parts the agent may have
+ * edited: the director's tools and tool specs, the evidence pass, facet scoring, the playtester,
+ * the host method table, the check grammar, and the journal saves of autopilot and the director.
+ * Every new name comes from a module of its own (hands-on-judge.ts, routes.ts, quest.ts,
+ * probe-count.ts, …) or is read by namespace, so one of them kept at its `origin/dev` version
+ * beside the current rest still links.
+ */
+describe("seed upgrade across computer use", () => {
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-computer-use.json", import.meta.url)), "utf8"),
+  ) as { modules: Record<string, string[]> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+
+  it("any one of the parts it changed, kept from before by an agent that edited it, still loads the harness", async () => {
+    const unlinked: string[] = [];
+    for (const [rel, names] of Object.entries(vintage.modules)) {
+      const root = await tmpDir("seed-computer-use-");
+      const ws = path.join(root, "workspace");
+      const manifest = path.join(root, "manifest.json");
+      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
+      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
+      const report = await applySeed({
+        seedDir: shipped,
+        workspaceDir: ws,
+        manifestFile: manifest,
+        backupDir: path.join(root, "backup"),
+      });
+      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
+      try {
+        const main = (await import(pathToFileURL(path.join(ws, "loop", "main.ts")).href)) as { createStudio?: unknown };
+        if (typeof main.createStudio !== "function") unlinked.push(`${rel}: main.ts has no createStudio`);
+      } catch (err) {
+        unlinked.push(`${rel}: ${(err as Error).message}`);
+      }
+    }
+    assert.deepEqual(unlinked, []);
+  });
+});
