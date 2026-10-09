@@ -26,7 +26,7 @@ import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type L
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
-import { OpenCodeAccess, openCodeConfig, parseOpenCodeModels, type OpenCodeModel } from "./opencode-cli.ts";
+import { OpenCodeAccess, openCodeConfig, parseOpenCodeListing, type OpenCodeModel } from "./opencode-cli.ts";
 import { parseOpenCodeLine, translateOpenCodeEvent, type Translated } from "./opencode-events.ts";
 import {
   type CompleteRequest,
@@ -54,7 +54,7 @@ import { ModelCatalogSource } from "../../shared/model-catalog.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
 
-/** How long `opencode models --verbose` may take: it may refresh its catalog from models.dev first. */
+/** How long `opencode api get /api/model` may take: it may refresh its catalog from models.dev first. */
 const MODELS_TIMEOUT_MS = 30 * SECOND_MS;
 /** How long a git probe for a worktree's metadata may take. */
 const GIT_PROBE_TIMEOUT_MS = 5 * SECOND_MS;
@@ -217,7 +217,7 @@ export class OpenCodeEngine implements Engine {
   ): Promise<{ models: EngineModel[]; source: typeof ModelCatalogSource.Provider }> {
     const stdout = this.#listModels ? await this.#listModels() : await listOpenCodeModels(binary);
     // A signed-in provider's models first: the picker starts with the first few it is given.
-    const parsed = parseOpenCodeModels(stdout);
+    const parsed = parseOpenCodeListing(stdout);
     const listed = [...parsed.filter((model) => !model.anonymous), ...parsed.filter((model) => model.anonymous)];
     this.#hosts = new Map(listed.map((model) => [model.row.id, model.hosts]));
     this.#signedIn = listed.some((model) => !model.anonymous);
@@ -711,7 +711,7 @@ async function defaultResolveCli(): Promise<{ ready: boolean; path?: string; ver
   };
 }
 
-/** `opencode models --verbose`, run on the host: a listing, no session and no prompt. */
+/** `opencode api get /api/model`, run on the host: a listing, no session and no prompt. */
 async function listOpenCodeModels(binary: string | undefined): Promise<string> {
   if (!binary) return "";
   const env = childEnv(process.env, {
@@ -719,7 +719,7 @@ async function listOpenCodeModels(binary: string | undefined): Promise<string> {
     vendor: "opencode",
     set: { OPENCODE_DISABLE_AUTOUPDATE: "1" },
   });
-  const result = await runCommand(binary, ["models", "--verbose"], {
+  const result = await runCommand(binary, ["api", "get", "/api/model"], {
     env,
     timeoutMs: Math.max(MODELS_TIMEOUT_MS, CATALOG_DEADLINE_MS),
   });

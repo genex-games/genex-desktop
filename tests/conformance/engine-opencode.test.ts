@@ -17,23 +17,33 @@ import {
   type OpenCodeInvocation,
   openCodeSandbox,
 } from "../../src/substrate/engines/opencode.ts";
-import { OpenCodeAccess, openCodeConfig, parseOpenCodeModels } from "../../src/substrate/engines/opencode-cli.ts";
+import { OpenCodeAccess, openCodeConfig, parseOpenCodeApiModels } from "../../src/substrate/engines/opencode-cli.ts";
 import { translateOpenCodeEvent } from "../../src/substrate/engines/opencode-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "transcripts");
 const fixture = (name: string) => readFile(path.join(FIXTURES, name), "utf8");
+/** Redacted `opencode api get /api/model` capture (v2.0.26): `settings.apiKey` stripped. */
+const apiFixture = async (): Promise<unknown> => JSON.parse(await fixture("opencode-api-model-2.x.json"));
+/** The fixture catalog trimmed to OpenCode's own free models: no sign-in anywhere in it. */
+const freeOnlyListing = async (): Promise<string> => {
+  const value = (await apiFixture()) as { data: Array<{ providerID?: unknown }> };
+  return JSON.stringify({ data: value.data.filter((model) => model.providerID === "opencode") });
+};
 const events = async (name: string) =>
   (await fixture(name))
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 
-const ready = async () => ({ ready: true, path: "/usr/local/bin/opencode", version: "1.18.34", detail: "ok" });
+const ready = async () => ({ ready: true, path: "/usr/local/bin/opencode", version: "2.0.26", detail: "ok" });
 
 /** An engine whose sessions replay `stream`, recording each invocation. */
-async function engineWith(stream: (invocation: OpenCodeInvocation) => AsyncIterable<Record<string, unknown>>) {
+async function engineWith(
+  stream: (invocation: OpenCodeInvocation) => AsyncIterable<Record<string, unknown>>,
+  listing?: string,
+) {
   const root = await tmpDir("opencode-engine-");
   const seen: OpenCodeInvocation[] = [];
   const execFn: OpenCodeExec = (invocation) => {
@@ -46,7 +56,7 @@ async function engineWith(stream: (invocation: OpenCodeInvocation) => AsyncItera
     protectedPaths: [path.join(root, "secrets"), path.join(root, "engine-homes")],
     execFn,
     resolveCli: ready,
-    listModels: () => fixture("opencode-models-1.18.txt"),
+    listModels: async () => listing ?? (await fixture("opencode-api-model-2.x.json")),
   });
   return { engine, seen, root };
 }
@@ -73,69 +83,108 @@ async function game(): Promise<string> {
 }
 
 describe("OpenCode's model list", () => {
-  it("reads `opencode models --verbose`: tool-calling models as provider/model, their limits, price and variants", async () => {
-    const listed = parseOpenCodeModels(await fixture("opencode-models-1.18.txt"));
+  const entry = (fields: Record<string, unknown>) => ({
+    id: "m",
+    modelID: "m",
+    providerID: "p",
+    name: "M",
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    cost: [{ input: 0, output: 0 }],
+    status: "active",
+    enabled: true,
+    limit: { context: 100_000, output: 8_000 },
+    ...fields,
+  });
+  const wrap = (models: unknown) => ({ location: { directory: "/fixture" }, data: models });
+
+  it("reads api/model: provider/model ids, limits, vision, price, variants and hosts", async () => {
+    const listed = parseOpenCodeApiModels(await apiFixture());
     assert.deepEqual(
       listed.map((model) => model.row.id),
-      ["opencode/big-pickle", "opencode/ling-3.0-flash-fin-free"],
+      [
+        "opencode-go/claude-haiku-5-5",
+        "opencode/exo-free",
+        "opencode/ling-3.1-flash-free",
+        "opencode-go/deepseek-v4-flash-vision-exp",
+      ],
     );
-    const [pickle, ling] = listed;
-    assert.equal(pickle?.row.label, "Big Pickle");
-    assert.equal(pickle?.row.contextWindow, 200_000);
-    assert.equal(pickle?.row.maxTokens, 32_000);
-    assert.equal(pickle?.row.supportsThinking, true);
-    assert.equal(pickle?.row.efforts, undefined, "no variants, no dial");
-    assert.equal(pickle?.row.note, "opencode · Free");
-    assert.deepEqual(pickle?.hosts, ["opencode.ai"], "the provider's host, for the sandbox's network");
-    assert.ok(
-      listed.every((model) => model.anonymous),
-      "OpenCode's own free models run with no sign-in at all",
-    );
-    assert.deepEqual(ling?.row.efforts?.slice(0, 1), ["low"]);
-    assert.equal(ling?.row.defaultEffort, "low");
+    const [haiku, exo, ling, deepseek] = listed;
+    assert.equal(haiku?.row.label, "Claude Haiku 5.5");
+    assert.equal(haiku?.row.contextWindow, 1_000_000);
+    assert.equal(haiku?.row.maxTokens, 128_000);
+    assert.equal(haiku?.row.supportsVision, true);
+    assert.equal(haiku?.row.supportsThinking, true);
+    assert.deepEqual(haiku?.row.efforts, ["low", "medium", "high", "xhigh", "max"]);
+    assert.equal(haiku?.row.defaultEffort, "low");
+    assert.equal(haiku?.row.note, "opencode-go · $0.10 in / $0.50 out per M tokens");
+    assert.deepEqual(haiku?.hosts, ["opencode.ai"], "the provider's host, for the sandbox's network");
+    assert.equal(exo?.row.note, "opencode · Free");
+    assert.deepEqual(exo?.row.efforts, ["high"]);
+    assert.equal(exo?.row.defaultEffort, "high");
+    assert.equal(ling?.row.efforts, undefined, "no variants, no dial");
+    assert.equal(ling?.row.supportsVision, false);
+    assert.equal(deepseek?.row.supportsVision, true);
+    assert.ok(exo?.anonymous && ling?.anonymous, "OpenCode's own free models run with no sign-in at all");
+    assert.equal(haiku?.anonymous, false, "a paid model needs its sign-in");
   });
 
-  it("reaches a built-in provider that lists no address on its SDK's hosts, and its browser sign-in's", () => {
-    const builtIn = (provider: string) =>
-      parseOpenCodeModels(
-        `${provider}/m\n${JSON.stringify({ id: "m", providerID: provider, capabilities: { toolcall: true } }, null, 2)}`,
-      )[0]?.hosts;
+  it("falls back honestly when the listing omits pieces, and reaches a custom endpoint by its address", () => {
+    const [bare] = parseOpenCodeApiModels(wrap([entry({ limit: undefined, variants: undefined })]));
+    assert.equal(bare?.row.contextWindow, 200_000);
+    assert.equal(bare?.row.maxTokens, 32_000);
+    assert.equal(bare?.row.contextSource, "unknown");
+    assert.equal(bare?.row.efforts, undefined);
+    const [custom] = parseOpenCodeApiModels(
+      wrap([entry({ providerID: "atelier", settings: { baseURL: "https://models.atelier.example/v1" } })]),
+    );
+    assert.deepEqual(custom?.hosts, ["models.atelier.example"]);
+    const [builtin] = parseOpenCodeApiModels(wrap([entry({ providerID: "openai" })]));
     assert.deepEqual(
-      builtIn("openai"),
+      builtin?.hosts,
       ["api.openai.com", "chatgpt.com", "auth.openai.com"],
       "a ChatGPT sign-in answers on chatgpt.com and refreshes on auth.openai.com",
     );
-    assert.deepEqual(builtIn("anthropic"), ["api.anthropic.com"]);
-    assert.deepEqual(builtIn("unheard-of"), [], "an unknown provider with no address reaches nothing new");
   });
 
   it("skips what it cannot run, and refuses a listing that is not one", () => {
-    const entry = (fields: Record<string, unknown>) =>
-      `p/m\n${JSON.stringify({ id: "m", providerID: "p", capabilities: { toolcall: true }, ...fields }, null, 2)}`;
-    assert.deepEqual(parseOpenCodeModels(entry({ capabilities: { toolcall: false } })), []);
-    assert.deepEqual(parseOpenCodeModels(entry({ status: "deprecated" })), []);
+    assert.deepEqual(parseOpenCodeApiModels(wrap([entry({ capabilities: { tools: false } })])), []);
+    assert.deepEqual(parseOpenCodeApiModels(wrap([entry({ enabled: false })])), []);
+    assert.deepEqual(parseOpenCodeApiModels(wrap([entry({ status: "deprecated" })])), []);
     assert.deepEqual(
-      parseOpenCodeModels(entry({ capabilities: { toolcall: true, output: { text: true, image: true } } })),
+      parseOpenCodeApiModels(wrap([entry({ capabilities: { tools: true, output: ["text", "image"] } })])),
       [],
       "an image generator is no coding model, though it calls tools",
     );
-    assert.equal(
-      parseOpenCodeModels(entry({ capabilities: { toolcall: true, output: { text: true, image: false } } })).length,
-      1,
+    assert.equal(parseOpenCodeApiModels(wrap([entry({})])).length, 1);
+    assert.deepEqual(parseOpenCodeApiModels(wrap([42, null, "x"])), [], "non-object entries are skipped");
+    assert.deepEqual(parseOpenCodeApiModels(wrap([])), [], "an empty listing is nothing signed in, not an error");
+    assert.deepEqual(parseOpenCodeApiModels([]), [], "a bare array reads as the model list");
+    assert.throws(() => parseOpenCodeApiModels(wrap("Error: something broke")), /could not be read/);
+    assert.throws(() => parseOpenCodeApiModels(null), /could not be read/);
+  });
+
+  it("says a deprecated free model failed as a free model, whatever channel reports it", async () => {
+    const { engine } = await engineWith(() =>
+      replay([
+        {
+          type: "error",
+          sessionID: "ses_d",
+          error: {
+            name: "APIError",
+            data: { message: "Model exo-free has been deprecated.", statusCode: 410 },
+          },
+        },
+      ]),
     );
-    assert.deepEqual(parseOpenCodeModels(entry({ api: { url: "http://insecure.example/v1" } }))[0]?.hosts, []);
-    assert.deepEqual(parseOpenCodeModels(entry({ api: { url: "not a url" } }))[0]?.hosts, []);
-    assert.deepEqual(parseOpenCodeModels(""), [], "an empty listing is nothing signed in, not an error");
-    assert.equal(parseOpenCodeModels(entry({}))[0]?.anonymous, false, "another provider's model needs its sign-in");
-    const zen = (cost: Record<string, unknown>) =>
-      `opencode/m\n${JSON.stringify({ id: "m", providerID: "opencode", capabilities: { toolcall: true }, cost }, null, 2)}`;
-    assert.equal(parseOpenCodeModels(zen({ input: 0, output: 0 }))[0]?.anonymous, true);
-    assert.equal(
-      parseOpenCodeModels(zen({ input: 3, output: 15 }))[0]?.anonymous,
-      false,
-      "a paid OpenCode model is listed only once its account is signed in",
-    );
-    assert.throws(() => parseOpenCodeModels("Error: something broke\n"), /could not be read/);
+    await engine.refreshModels(true);
+    const outcome = await engine
+      .delegate({ cwd: await game(), prompt: "x", model: "opencode/exo-free" })
+      .catch((err: unknown) => err);
+    const words =
+      outcome instanceof EngineError ? outcome.message : ((outcome as { errorText?: string }).errorText ?? "");
+    assert.match(words, /OpenCode's free model Exo Free/);
+    assert.match(words, /deprecated/);
   });
 });
 
@@ -156,34 +205,39 @@ describe("OpenCode's status", () => {
     const signedOut = await status(ready);
     assert.equal(signedOut.code, "needs_login");
     assert.match(signedOut.remedy ?? "", /Sign in/);
-    const go = await status(ready, await fixture("opencode-models-1.18.txt"));
+    const go = await status(ready, await fixture("opencode-api-model-2.x.json"));
     assert.equal(go.code, "ready");
   });
 });
 
 describe("OpenCode's account", () => {
-  const signedIn = (listing: string) =>
-    `${listing}\nanthropic/claude-x\n${JSON.stringify(
-      {
-        id: "claude-x",
-        providerID: "anthropic",
-        capabilities: { toolcall: true },
-        cost: { input: 3, output: 15 },
-      },
-      null,
-      2,
-    )}`;
+  const signedIn = async (listing: string) => {
+    const value = JSON.parse(listing) as { data: unknown[] };
+    value.data.unshift({
+      id: "claude-x",
+      modelID: "claude-x",
+      providerID: "anthropic",
+      name: "Claude X",
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: [],
+      cost: [{ input: 3, output: 15 }],
+      status: "active",
+      enabled: true,
+      limit: { context: 200_000, output: 32_000 },
+    });
+    return JSON.stringify(value);
+  };
   const account = async (listing: string) => {
     const root = await tmpDir("opencode-account-");
     return new OpenCodeEngine({ scratchRoot: root, resolveCli: ready, listModels: async () => listing }).account();
   };
 
   it("is no one's while OpenCode lists only its own free models, though they stay ready to run", async () => {
-    const listing = await fixture("opencode-models-1.18.txt");
+    const listing = await freeOnlyListing();
     const anonymous = await account(listing);
     assert.equal(anonymous.source, "none");
     assert.equal(anonymous.afterSignOut, "signed-out");
-    assert.deepEqual(anonymous.cli, { state: "ready", path: "/usr/local/bin/opencode", version: "1.18.34" });
+    assert.deepEqual(anonymous.cli, { state: "ready", path: "/usr/local/bin/opencode", version: "2.0.26" });
     const root = await tmpDir("opencode-account-");
     const status = await new OpenCodeEngine({
       scratchRoot: root,
@@ -194,17 +248,23 @@ describe("OpenCode's account", () => {
   });
 
   it("is OpenCode's own sign-in once it lists a provider's model", async () => {
-    assert.equal((await account(signedIn(await fixture("opencode-models-1.18.txt")))).source, "system");
+    assert.equal((await account(await signedIn(await fixture("opencode-api-model-2.x.json")))).source, "system");
   });
 
   it("lists a signed-in provider's models before its own free ones, so the picker starts with them", async () => {
     const root = await tmpDir("opencode-account-");
-    const listing = signedIn(await fixture("opencode-models-1.18.txt"));
+    const listing = await signedIn(await fixture("opencode-api-model-2.x.json"));
     const engine = new OpenCodeEngine({ scratchRoot: root, resolveCli: ready, listModels: async () => listing });
     await engine.refreshModels(true);
     assert.deepEqual(
       (await engine.models()).map((model) => model.id),
-      ["anthropic/claude-x", "opencode/big-pickle", "opencode/ling-3.0-flash-fin-free"],
+      [
+        "anthropic/claude-x",
+        "opencode-go/claude-haiku-5-5",
+        "opencode-go/deepseek-v4-flash-vision-exp",
+        "opencode/exo-free",
+        "opencode/ling-3.1-flash-free",
+      ],
     );
   });
 });
@@ -220,7 +280,7 @@ describe("OpenCode sessions", () => {
     const result = await engine.delegate({
       cwd,
       prompt: "Write hello to out.txt",
-      model: "opencode/big-pickle",
+      model: "opencode/ling-3.1-flash-free",
       onEvent: (event) => mirrored.push(event),
     });
     assert.equal(result.ok, true);
@@ -238,7 +298,13 @@ describe("OpenCode sessions", () => {
     assert.ok(mirrored.some((event) => event.type === "user" && JSON.stringify(event.payload).includes("tool_result")));
 
     const [invocation] = seen;
-    assert.deepEqual(invocation?.argv.slice(0, 5), ["run", "--format", "json", "--model", "opencode/big-pickle"]);
+    assert.deepEqual(invocation?.argv.slice(0, 5), [
+      "run",
+      "--format",
+      "json",
+      "--model",
+      "opencode/ling-3.1-flash-free",
+    ]);
     assert.ok(!invocation?.argv.includes("--pure"), "v2 has no --pure");
     assert.ok(!invocation?.argv.includes("--variant"), "effort rides --model as #variant, not --variant");
     assert.ok(!invocation?.argv.includes("Write hello to out.txt"), "the brief never rides argv");
@@ -267,17 +333,22 @@ describe("OpenCode sessions", () => {
       cwd,
       prompt: "go on",
       resume: "ses_1",
-      model: "opencode/ling-3.0-flash-fin-free",
+      model: "opencode-go/deepseek-v4-flash-vision-exp",
       effort: "low",
     });
-    await engine.delegate({ cwd, prompt: "go on", model: "opencode/big-pickle", effort: "high" });
+    await engine.delegate({ cwd, prompt: "go on", model: "opencode/ling-3.1-flash-free", effort: "high" });
     await engine.delegate({ cwd, prompt: "go on" });
     const [resumed, plain, picked] = seen.map((invocation) => invocation.argv);
-    assert.deepEqual(resumed?.slice(-4), ["--model", "opencode/ling-3.0-flash-fin-free#low", "--session", "ses_1"]);
+    assert.deepEqual(resumed?.slice(-4), [
+      "--model",
+      "opencode-go/deepseek-v4-flash-vision-exp#low",
+      "--session",
+      "ses_1",
+    ]);
     assert.ok(!plain?.includes("--variant"), "a model with no variants gets no --variant");
     assert.equal(
       plain?.[plain.indexOf("--model") + 1],
-      "opencode/big-pickle",
+      "opencode/ling-3.1-flash-free",
       "an unoffered effort is dropped, not suffixed",
     );
     assert.ok(!picked?.includes("--model"), "with no pick, OpenCode's own default model runs");
@@ -383,9 +454,9 @@ describe("OpenCode sessions", () => {
     for (const status of [400, 404]) {
       const { engine } = await engineWith(() => refusing(status));
       await engine.refreshModels(true);
-      const result = await engine.delegate({ cwd, prompt: "x", model: "opencode/big-pickle" });
+      const result = await engine.delegate({ cwd, prompt: "x", model: "opencode/exo-free" });
       assert.equal(result.stopReason, "error", `${status} is the build's outcome, never a wait`);
-      assert.match(result.errorText ?? "", /Big Pickle/, "the model by its name");
+      assert.match(result.errorText ?? "", /Exo Free/, "the model by its name");
       assert.match(result.errorText ?? "", /Bad Request: not supported/, "the provider's own words");
       assert.match(result.errorText ?? "", /another model/);
     }
@@ -396,17 +467,23 @@ describe("OpenCode sessions", () => {
 
   it("says the sandbox kept OpenCode from a provider whose address it does not know, never to sign in again", async () => {
     const root = await tmpDir("opencode-hosts-");
-    const listing = `unheard-of/m\n${JSON.stringify(
-      {
-        id: "m",
-        name: "Mystery",
-        providerID: "unheard-of",
-        capabilities: { toolcall: true },
-        cost: { input: 1, output: 1 },
-      },
-      null,
-      2,
-    )}`;
+    const listing = JSON.stringify({
+      location: { directory: "/fixture" },
+      data: [
+        {
+          id: "m",
+          modelID: "m",
+          name: "Mystery",
+          providerID: "unheard-of",
+          capabilities: { tools: true, input: ["text"], output: ["text"] },
+          variants: [],
+          cost: [{ input: 1, output: 1 }],
+          status: "active",
+          enabled: true,
+          limit: { context: 100_000, output: 8_000 },
+        },
+      ],
+    });
     const engine = new OpenCodeEngine({
       scratchRoot: path.join(root, "scratch"),
       protectedPaths: [path.join(root, "secrets")],
@@ -441,17 +518,17 @@ describe("OpenCode sessions", () => {
       const { engine } = await engineWith(() => failing(status, "Upstream request failed: Endpoint is unavailable."));
       await engine.refreshModels(true);
       await assert.rejects(
-        engine.delegate({ cwd, prompt: "x", model: "opencode/big-pickle" }),
+        engine.delegate({ cwd, prompt: "x", model: "opencode/exo-free" }),
         (err) =>
           err instanceof EngineError &&
           err.kind === kind &&
-          /OpenCode's free model Big Pickle/.test(err.message) &&
+          /OpenCode's free model Exo Free/.test(err.message) &&
           /Endpoint is unavailable/.test(err.message) &&
           !/^rate limited/.test(err.message),
         `${status}`,
       );
     }
-    const { engine } = await engineWith(() => failing(500, "Unexpected server error"));
+    const { engine } = await engineWith(() => failing(500, "Unexpected server error"), await freeOnlyListing());
     await engine.refreshModels(true);
     await assert.rejects(
       engine.delegate({ cwd, prompt: "x" }),

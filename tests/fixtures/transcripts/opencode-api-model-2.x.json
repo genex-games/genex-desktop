@@ -1,0 +1,273 @@
+{
+  "location": {
+    "directory": "/fixture/game"
+  },
+  "data": [
+    {
+      "id": "claude-haiku-5-5",
+      "modelID": "claude-haiku-5-5",
+      "providerID": "opencode-go",
+      "family": "claude-haiku",
+      "name": "Claude Haiku 5.5",
+      "package": "@opencode/ai/providers/anthropic",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/go/v1"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image",
+          "pdf"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "thinking": {
+              "type": "disabled"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "high"
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "xhigh"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1791331200000
+      },
+      "cost": [
+        {
+          "input": 0.1,
+          "output": 0.5,
+          "cache": {
+            "read": 0.01,
+            "write": 0.125
+          }
+        },
+        {
+          "tier": {
+            "type": "context",
+            "size": 100000
+          },
+          "input": 0.5,
+          "output": 2.5,
+          "cache": {
+            "read": 0.05,
+            "write": 0.625
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      }
+    },
+    {
+      "id": "exo-free",
+      "modelID": "exo-free",
+      "providerID": "opencode",
+      "name": "Exo Free",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        }
+      ],
+      "time": {
+        "released": 1791244800000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "ling-3.1-flash-free",
+      "modelID": "ling-3.1-flash-free",
+      "providerID": "opencode",
+      "family": "ling",
+      "name": "Ling 3.1 Flash Free",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [],
+      "time": {
+        "released": 1790640000000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 32768
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-vision-exp",
+      "modelID": "deepseek-v4-flash-vision-exp",
+      "providerID": "opencode-go",
+      "family": "deepseek-flash",
+      "name": "DeepSeek V4 Flash Vision Exp",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/go/v1",
+        "provider": "opencode-go"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1787270400000
+      },
+      "cost": [
+        {
+          "input": 0.15,
+          "output": 0.6,
+          "cache": {
+            "read": 0.003,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 384000
+      }
+    }
+  ]
+}
