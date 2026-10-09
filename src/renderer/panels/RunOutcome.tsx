@@ -3,15 +3,9 @@ import { ResultButton } from "../ui/ResultButton.tsx";
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { ExecutionStatus } from "../../shared/run-state.ts";
-import {
-  InteractionObjective,
-  InteractionSource,
-  summaryCounts,
-  summaryOutcome,
-  type RunSummary,
-} from "../../shared/run-summary.ts";
+import { InteractionSource, summaryCounts, summaryOutcome, type RunSummary } from "../../shared/run-summary.ts";
 import { plural } from "../../shared/skill-words.ts";
-import { outcomeTitle } from "../words.ts";
+import { OBJECTIVE_WORDS, PLAYED_SOURCE_WORDS, outcomeTitle } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { openBuildGraph } from "../open-build.ts";
@@ -155,19 +149,6 @@ export function coverageWords(summary: RunSummary): string {
     : "";
   return `${passed} structural check${passed === 1 ? "" : "s"} passed.${visual} ${interactionWords(summary, current)}`;
 }
-
-/** Who took a check, for the sources that played the build. */
-const PLAYED_SOURCE_WORDS: Record<InteractionSource, string> = {
-  [InteractionSource.IndependentPlaytester]: "Independent playtester",
-  [InteractionSource.HandsOnJudge]: "Judge who played it",
-  [InteractionSource.RouteReplay]: "Replayed route",
-};
-
-/** What an interaction result rests on: the studio's own check of the game's state, or the player's word. */
-const OBJECTIVE_WORDS: Record<InteractionObjective, string> = {
-  [InteractionObjective.StudioVerified]: "verified by the studio",
-  [InteractionObjective.ModelSaid]: "the player's word",
-};
 
 /** Who took a check: one that played the build, a judge (visual and structural), or a recorded check. */
 function checkSource(e: Evidence): string {

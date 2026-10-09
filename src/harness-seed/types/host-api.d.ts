@@ -926,6 +926,9 @@ export interface CompleteResponse {
 }
 // ↑ src/shared/engine-requests.ts
 
+export type InputRoute = 'browser' | 'bridge' | 'os-background' | 'os-foreground';
+// ↑ src/shared/computer-target.ts
+
 /** What a finished computer session's trace adds up to, as a delegation's result carries it. */
 export interface ComputerTraceSummary {
   /** Where the trace was written; null before the first action. */
@@ -935,6 +938,8 @@ export interface ComputerTraceSummary {
   deterministic: boolean;
   /** The index of the action after which the studio verified the goal was reached, or null. */
   reachedAt: number | null;
+  /** Every route the session's input took: evidence is as strong as the weakest of them. */
+  routes?: InputRoute[];
 }
 // ↑ src/shared/computer-target.ts
 
@@ -1425,13 +1430,7 @@ export interface BuildObservation {
 }
 // ↑ src/shared/preview-contract.ts
 
-/**
- * An agent's screen — the hidden preview window one worker is driving with the computer
- * tool, as the studio window shows it: the last frame, where the cursor is, what the agent
- * just did. Main emits `preview.screen` (opened/closed) and `preview.frame` (a new picture);
- * the Builds graph shows each on the node of the part it works on, the lead's on the lead's.
- */
-export type AgentScreenRole = "builder" | "playtester" | "scout" | "judge" | "director";
+export type AgentScreenRole = 'judge' | 'playtester' | 'builder' | 'scout' | 'director';
 // ↑ src/shared/agent-screen.ts
 
 export interface AgentScreen {
@@ -1744,6 +1743,8 @@ export interface HarnessHostApi {
       handle: string;
       args?: Record<string, unknown>;
       describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
     };
     result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
   };

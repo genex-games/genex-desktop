@@ -6,15 +6,16 @@
  * for a game whose studio.json declares the `bridge` runtime, the Play Protocol source
  * (`game-bridge-target.ts`).
  */
-import { type AgentScreen, type AgentScreenRole, ScreenDeed } from "../../shared/agent-screen.ts";
+import { type AgentScreen, type AgentScreenRole, ScreenDeed, ScreenRole } from "../../shared/agent-screen.ts";
 import {
   BROWSER_CAPABILITIES,
   ComputerPacing,
   type ComputerTraceSummary,
+  StateLevel,
   type TargetCapabilities,
   TargetRuntime,
 } from "../../shared/computer-target.ts";
-import { computerToolDefinition } from "../../substrate/computer-tool.ts";
+import { computerToolDefinition, normalizeSetup } from "../../substrate/computer-tool.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
@@ -32,6 +33,7 @@ import {
 import { gameBridgeSource } from "./game-bridge-target.ts";
 import type { FramePort, PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
+import { markVerified } from "./verified-traces.ts";
 import type { SessionPort } from "./session-port.ts";
 
 /** The tool's own wording for each screen role; a judge (or anything else) is told it plays. */
@@ -47,7 +49,7 @@ const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
  * The roles that play a build to judge it: they take seconds to look and decide, so the game's clock
  * stands still between their moves (golden-boot-glory: one key press ran four match minutes).
  */
-const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester", "judge"]);
+const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set([ScreenRole.Playtester, ScreenRole.Judge]);
 
 /**
  * The roles that meet the game's own title and menu as a player does: the studio never begins
@@ -82,6 +84,11 @@ export interface ComputerTools {
   runtime: TargetRuntime;
   /** Stop what the computer started: a Play Protocol game's process. The browser window is the session's. */
   release: () => Promise<void>;
+  /**
+   * Load the target now and describe the tool from what it says it can do — a Play Protocol game
+   * says so only in its `hello`, so until then the tool is described from what such a game may do.
+   */
+  prepare: () => Promise<void>;
 }
 
 /**
@@ -90,17 +97,35 @@ export interface ComputerTools {
  * see the result of every move without asking; the grant's goal and budget ride along.
  */
 function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir: string): ComputerSessionOptions {
-  const judging = role === "judge";
+  const judging = role === ScreenRole.Judge;
   const pacing = PACED_ROLES.has(role)
     ? (grant.pacing ?? (judging ? ComputerPacing.Stepped : ComputerPacing.Paced))
     : ComputerPacing.Running;
+  const quest = questOf(grant);
   return {
     pacing,
     frameDir,
     observeByDefault: PACED_ROLES.has(role),
+    onReached: markVerified,
+    ...(judging ? JUDGE_VIEW : {}),
     ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
-    ...(grant.quest ? { quest: grant.quest } : {}),
+    ...(quest ? { quest } : {}),
   };
+}
+
+/**
+ * What a judge sees of the game: never its `state` or `console`, which the builder under judgement
+ * wrote — the session still reads the state to check the goal, and the judge answers from playing.
+ */
+const JUDGE_VIEW: Pick<ComputerSessionOptions, "offer" | "showState"> = {
+  offer: (caps) => ({ ...caps, state: StateLevel.None, console: false }),
+  showState: false,
+};
+
+/** The grant's goal, as the host reads it: a plain dotted path and a plain value, or no goal at all. */
+function questOf(grant: ComputerGrant): ComputerSessionOptions["quest"] {
+  const until = grant.quest ? normalizeSetup({ verify: grant.quest.until })?.verify : undefined;
+  return grant.quest && until ? { id: String(grant.quest.id), until } : undefined;
 }
 
 /** The quality of a frame a target that is no preview window takes for the agent's screen. */
@@ -139,15 +164,18 @@ function toolsOver<T extends ComputerTarget>(
     screen: () => AgentScreen;
     portOf: (target: T) => PreviewPort | null;
     release: () => Promise<void>;
+    offer?: (caps: TargetCapabilities) => TargetCapabilities;
   },
 ): ComputerTools {
-  const definition = computerToolDefinition({
-    role: parts.toolRole,
-    capabilities: parts.caps,
-    observeByDefault: parts.observeByDefault,
-  });
+  const describe = (caps: TargetCapabilities) =>
+    computerToolDefinition({
+      role: parts.toolRole,
+      capabilities: parts.offer ? parts.offer(caps) : caps,
+      observeByDefault: parts.observeByDefault,
+    });
+  const liveTools = [describe(parts.caps)];
   return {
-    liveTools: [definition],
+    liveTools,
     onLiveTool: (name, args) => session.run(name, args),
     ensureLoaded: async (force = false) => {
       const loaded = await session.ensureLoaded(force);
@@ -159,6 +187,10 @@ function toolsOver<T extends ComputerTarget>(
     trace: () => session.trace(),
     runtime: parts.caps.runtime,
     release: parts.release,
+    prepare: async () => {
+      const loaded = await session.ensureLoaded();
+      if (!loaded.problem) liveTools[0] = describe(loaded.target.caps);
+    },
   };
 }
 
@@ -239,6 +271,7 @@ export function computerTools(
       screen,
       portOf: () => null,
       release: bridge.release,
+      ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
     });
   }
   const source = browserSource(previews, grant, role, sessionPort, screen);
@@ -251,5 +284,6 @@ export function computerTools(
     screen,
     portOf: (target) => target.port,
     release,
+    ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
   });
 }

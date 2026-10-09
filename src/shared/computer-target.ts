@@ -145,4 +145,6 @@ export interface ComputerTraceSummary {
   deterministic: boolean;
   /** The index of the action after which the studio verified the goal was reached, or null. */
   reachedAt: number | null;
+  /** Every route the session's input took: evidence is as strong as the weakest of them. */
+  routes?: InputRoute[];
 }

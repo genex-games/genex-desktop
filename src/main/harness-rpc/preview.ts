@@ -50,6 +50,7 @@ function computersOf(core: StudioCore, x: CoreInternals): ReturnType<typeof comp
     runs: () => core.layout.runs,
     port: (handle) => x.previews.preview(handle),
     computerTools: (grant, root, outDir, session) => core._computerToolsFor(grant, root, outDir, session),
+    runOfGame: (project, runId) => core._runOfGame(project, runId),
   });
   COMPUTERS.set(x, made);
   return made;
@@ -156,7 +157,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewAcquire]: async (p) => acquire(x, p),
     [HostMethod.PreviewRelease]: async (p) => {
       x.profileSources.delete(p.handle);
-      computersOf(core, x).forget(p.handle);
+      await computersOf(core, x).forget(p.handle);
       await x.previewPool?.release(p.handle);
       return true;
     },

@@ -3,6 +3,7 @@
  * the tools a session is given (computer, director, playtest), and the game-file access they share.
  * Composed by `StudioCore`; its state stays in the core.
  */
+import { ScreenRole } from "../../shared/agent-screen.ts";
 import { uuidv7 } from "../../substrate/ids.ts";
 import { replaceableCover } from "../../shared/game-library.ts";
 import { COVER_TOOL } from "../../shared/cover-recipe.ts";
@@ -469,8 +470,16 @@ export class DelegationService {
     // A build whose studio.json declares the bridge runtime is played as its own process, started
     // in the studio's sandbox; every other build in the session's browser window, as before.
     const shape = await readProjectShape(initialRoot).catch(() => null);
-    const bridge = shape?.runtime === TargetRuntime.Bridge ? { sandbox: this.#core.sandbox } : undefined;
-    return computerTools(this.#x.previews, grant, initialRoot, outDir, session, { bridge });
+    if (shape?.runtime !== TargetRuntime.Bridge)
+      return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
+      bridge: { sandbox: this.#core.sandbox },
+    });
+    // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
+    // session is handed offers only what this game can do. A game that fails to start is said on
+    // the first call.
+    await tools.prepare().catch(() => {});
+    return tools;
   }
 
   /**
@@ -596,7 +605,7 @@ export class DelegationService {
     };
     // A judge plays with the computer alone: the shorthands are a playtester's, and their files
     // land outside the trace a judge's evidence is read from.
-    if (pt.role === "judge") {
+    if (pt.role === ScreenRole.Judge) {
       return { liveTools: computer.liveTools, onLiveTool: computer.onLiveTool, release, trace };
     }
     // The shorthands drive the browser window; a Play Protocol game has none, so they are not
@@ -1104,6 +1113,11 @@ export class DelegationService {
     return this.#startedInGame(project, await this.#runStarts(runId));
   }
 
+  /** Whether this run is this game's by the host's own records: `preview.computer`'s run check. */
+  runOfGame(project: string, runId: string): Promise<boolean> {
+    return this.#runOfGame(project, runId);
+  }
+
   /** This game's run (`#runOfGame`), started in this chat. */
   async #runOfChat(project: string, threadId: string, runId: string): Promise<boolean> {
     const starts = await this.#runStarts(runId);
@@ -1400,14 +1414,16 @@ export class DelegationService {
     grants: DelegationGrants,
     reach: SessionReach,
   ): Promise<{ blindness: { blind?: true }; workCwd: string; extraReads: string[]; denyReads: string[] }> {
-    if (grants.playtest?.role !== "judge") {
+    if (grants.playtest?.role !== ScreenRole.Judge) {
       return { blindness: {}, workCwd: target.workCwd, extraReads: reach.extraReads, denyReads: reach.denyReads };
     }
     return {
       blindness: { blind: true },
       workCwd: await this.#blindCwd(),
       extraReads: grants.playShotsDir ? [grants.playShotsDir] : [],
-      denyReads: [...reach.denyReads, target.workCwd],
+      // The build's path is not named to it: a judge that is never told where the code is has one
+      // reason fewer to look, and Claude Code's blind session cannot read files at all.
+      denyReads: reach.denyReads,
     };
   }
 

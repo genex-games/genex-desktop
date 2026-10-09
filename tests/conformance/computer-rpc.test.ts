@@ -26,7 +26,9 @@ async function hostWith() {
     await mkdir(dir, { recursive: true });
   await writeFile(path.join(outside, "x"), "");
   const built: Array<{ grant: ComputerGrant; root: string }> = [];
+  const released: number[] = [];
   const host: ComputerRpcHost = {
+    runOfGame: async (project, runId) => project === "kart" && runId === "run_1",
     gameDir: (project) => path.join(games, project),
     scratch: () => scratch,
     runs: () => path.join(base, "runs"),
@@ -42,16 +44,19 @@ async function hostWith() {
         retarget: () => {},
         trace: () => ({ path: null, steps: built.length, deterministic: false, reachedAt: null }),
         runtime: "browser",
-        release: async () => {},
+        release: async () => {
+          released.push(built.length);
+        },
+        prepare: async () => {},
       };
     },
   };
-  return { host, built, games, scratch, outside, base };
+  return { host, built, released, games, scratch, outside, base };
 }
 
 describe("preview.computer", () => {
   it("runs on a leased window, keeps one session per window, and answers the schema on describe", async () => {
-    const { host, built, games } = await hostWith();
+    const { host, built, released, games } = await hostWith();
     const rpc = computerRpc(host);
     const grant = { project: "kart", root: path.join(games, "kart"), handle: "pool-1", role: "judge" as const };
     const schema = await rpc.call({ ...grant, describe: true });
@@ -60,11 +65,17 @@ describe("preview.computer", () => {
     assert.equal("answer" in answer && answer.answer, "did key");
     assert.equal(built.length, 1, "one session for the window");
     assert.equal(built[0]!.grant.role, "judge");
-    rpc.forget("pool-1");
+    await rpc.forget("pool-1");
+    assert.equal(released.length, 1, "a released window stops what its computer started");
     await rpc.call({ ...grant, args: { action: "key" } });
     assert.equal(built.length, 2, "a released window starts a new session");
     await rpc.call({ ...grant, role: "playtester", args: { action: "key" } });
     assert.equal(built.length, 3, "another role is another session");
+    assert.equal(released.length, 2, "and the one it replaced is stopped");
+    await rpc.call({ ...grant, role: "playtester", iteration: 2, args: { action: "key" } });
+    assert.equal(built.length, 4, "a new round is a new session: its own budget, goal and trace");
+    await rpc.call({ ...grant, role: "playtester", iteration: 2, fresh: true, args: { action: "key" } });
+    assert.equal(built.length, 5, "fresh asks for a new session on the same round");
   });
 
   it("refuses the person's own window, and any build that is not this game's or this run's", async () => {
@@ -83,6 +94,15 @@ describe("preview.computer", () => {
       [{ ...ok, root: path.join(base, "missing") }, /not this game's folder/],
       [{ ...ok, root: path.join(scratch, "autopilot", "run_1", "wt") }, /not this game's folder/],
       [{ ...ok, root: path.join(scratch, "autopilot", "run_1", "wt"), runId: "run_2" }, /not this game's folder/],
+      [{ ...ok, root: outside, runId: "../.." }, /not this game's folder/],
+      [
+        { ...ok, root: path.join(scratch, "autopilot", "run_1", "wt"), runId: "run_1/../run_1" },
+        /not this game's folder/,
+      ],
+      [
+        { ...ok, project: "other", root: path.join(scratch, "autopilot", "run_1", "wt"), runId: "run_1" },
+        /not this game's folder/,
+      ],
     ];
     for (const [params, why] of hostile) await assert.rejects(rpc.call(params as never), why, JSON.stringify(params));
     assert.equal(built.length, 1, "nothing hostile built a session");

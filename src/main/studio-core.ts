@@ -2079,6 +2079,11 @@ export class StudioCore {
     return this.#delegation._computerToolsFor(...args);
   }
 
+  /** Whether the host's own records say this run is this game's (`preview.computer`'s run check). */
+  _runOfGame(project: string, runId: string): Promise<boolean> {
+    return this.#delegation.runOfGame(project, runId);
+  }
+
   _directorToolsFor(
     ...args: Parameters<DelegationService["_directorToolsFor"]>
   ): ReturnType<DelegationService["_directorToolsFor"]> {

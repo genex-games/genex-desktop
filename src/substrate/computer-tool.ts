@@ -72,6 +72,10 @@ export const COMPUTER_HOST_ACTIONS = [
   "batch",
 ] as const;
 
+/** The actions the session itself treats specially, by name: a wait, a batch and a reload. */
+export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload" } as const;
+export type ComputerVerb = (typeof ComputerVerb)[keyof typeof ComputerVerb];
+
 export type ComputerInputAction = (typeof COMPUTER_INPUT_ACTIONS)[number];
 export type ComputerHostAction = (typeof COMPUTER_HOST_ACTIONS)[number];
 export type ComputerAction = ComputerInputAction | ComputerHostAction;
@@ -698,6 +702,7 @@ function normalizeVerify(raw: unknown): PreviewSetup["verify"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const v = raw as Record<string, unknown>;
   if (typeof v.path !== "string" || !/^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)*$/.test(v.path)) return undefined;
+  if (v.path.split(".").some((key) => MACHINERY_KEYS.has(key))) return undefined;
   return {
     path: v.path,
     ...("equals" in v ? { equals: v.equals } : {}),
@@ -733,10 +738,15 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
   return setup.actions || setup.demo || setup.verify || setup.gesture ? setup : null;
 }
 
+/** Path segments that would read the object machinery rather than the game's own state. */
+const MACHINERY_KEYS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
+
+/** A dotted path read through own fields only: never the prototype chain, never its machinery. */
 function lookupPath(state: unknown, path: string): unknown {
   let current: unknown = state;
   for (const key of path.split(".")) {
-    if (typeof current !== "object" || current === null) return undefined;
+    if (typeof current !== "object" || current === null || MACHINERY_KEYS.has(key)) return undefined;
+    if (!Object.hasOwn(current, key)) return undefined;
     current = (current as Record<string, unknown>)[key];
   }
   return current;
@@ -748,7 +758,8 @@ export function setupReached(verify: PreviewSetup["verify"], state: unknown): bo
   const readable = typeof state === "object" && state !== null && !(state as { __missing?: boolean }).__missing;
   if (!readable) return null;
   const value = lookupPath(state, verify.path);
-  if ("equals" in verify) return value === verify.equals || String(value) === String(verify.equals);
+  if ("equals" in verify)
+    return value !== undefined && (value === verify.equals || String(value) === String(verify.equals));
   if (verify.truthy) return Boolean(value);
   return value !== undefined;
 }

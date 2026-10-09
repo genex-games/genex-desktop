@@ -469,6 +469,8 @@ export interface HarnessHostApi {
       handle: string;
       args?: Record<string, unknown>;
       describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
     };
     result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
   };

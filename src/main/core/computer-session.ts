@@ -20,6 +20,7 @@ import { CaptureSurface, type PreviewSetup, StillMimeType } from "../../shared/p
 import {
   COMPUTER_TOOL_NAME,
   ComputerObserve,
+  ComputerVerb,
   type ComputerHostAction,
   type ComputerRequest,
   computerAct,
@@ -30,11 +31,12 @@ import {
   unsupportedAction,
 } from "../../substrate/computer-tool.ts";
 import { COMPUTER_ARG_PROBLEM } from "../../substrate/computer-tool-prompts.ts";
-import type { ComputerTarget, TargetLoad, TargetShot } from "../../substrate/computer-target.ts";
+import type { ComputerTarget, TargetClock, TargetLoad, TargetShot } from "../../substrate/computer-target.ts";
+import { plannedInputs, steppedPlan } from "../../substrate/computer-steps.ts";
+import { MAX_INPUT_ACTIONS, type PreviewInputAction } from "../../substrate/preview-input.ts";
 import { TRACE_FILE, type TraceRow, type TraceSummary, traceArgs, traceLine } from "../../substrate/computer-trace.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import { ensureDir } from "../../substrate/fsx.ts";
-import { MAX_INPUT_ACTIONS } from "../../substrate/preview-input.ts";
 import { CAMERA_SETTLE_MS, DEFAULT_SHOT_QUALITY, requestedSurface, surfaceWord } from "./capture.ts";
 import { safePathSegment } from "./run-shots.ts";
 
@@ -46,6 +48,12 @@ const STATE_CHARS = { afterAction: 600, default: 1_200, asked: 4_000 } as const;
 const CONSOLE_ERRORS_SHOWN = 12;
 /** Characters of an action's name kept in a frame's file name. */
 const FRAME_NAME_CHARS = 40;
+/** The game time a stepped session gives a key stroke between its down and its up: a few frames. */
+const STEPPED_TAP_MS = 50;
+/** The most game time one step asks of a target at once; a longer wait is stepped in chunks. */
+const STEP_CHUNK_MS = 5 * SECOND_MS;
+/** How many frame folders the numbering remembers before it forgets the oldest. */
+const MAX_NUMBERED_FOLDERS = 500;
 /** The seed a stepped session plants when it was given none, so two runs start from the same dice. */
 const DEFAULT_SEED = 1;
 
@@ -83,6 +91,15 @@ export interface ComputerSessionOptions {
   quest?: ComputerQuest;
   /** The clock trace times are read from; injected in tests. */
   now?: () => number;
+  /**
+   * What the tool offers of what the target can do: a judge is offered neither the game's `state`
+   * nor its `console` (the builder wrote both), though the session still reads state for the goal.
+   */
+  offer?: (caps: TargetCapabilities) => TargetCapabilities;
+  /** Whether answers carry the game's own state after a move; a judge's never do. */
+  showState?: boolean;
+  /** Told once, when the goal is reached: the trace that shows it (the host vouches for it). */
+  onReached?: (tracePath: string) => void;
 }
 
 /** One session on one target: its tool call, its shared load, the build it shows and its trace. */
@@ -100,6 +117,10 @@ interface ActionRecord {
   frame: string | null;
   simMs: number | null;
   reached: boolean;
+  /** Input actions the target took, of those planned; null for an action that sent none. */
+  applied: { taken: number; planned: number } | null;
+  /** Why the action failed, when it did. */
+  failed?: string;
 }
 
 /** Everything an action's handler reads: the request, the target, and the session's helpers. */
@@ -137,8 +158,10 @@ interface SessionHelpers {
   /** Save a frame under the session's folder; a PNG keeps its own extension. */
   readonly saveFrame: (jpeg: Buffer, name: string, mime?: StillMimeType) => Promise<string>;
   readonly frame: (target: ComputerTarget, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
-  /** Run one move and let `ms` of the target's time pass after it, as the session's pacing says. */
-  readonly moving: (target: ComputerTarget, move: () => Promise<void>, ms: number) => Promise<number | null>;
+  /** Let `ms` of the target's time pass, as the session's pacing says: a wait. */
+  readonly waiting: (target: ComputerTarget, ms: number) => Promise<number | null>;
+  /** Carry out an input plan inside the session's pacing; what it took and how much time ran. */
+  readonly inputting: (target: ComputerTarget, actions: PreviewInputAction[]) => Promise<InputOutcome>;
   readonly observeByDefault: boolean;
 }
 
@@ -223,7 +246,7 @@ async function observed(ctx: ActionContext, text: string, hint: boolean): Promis
 
 async function wait(ctx: ActionContext): Promise<LiveToolResult> {
   const seconds = ctx.request.duration ?? 1;
-  ctx.record.simMs = await ctx.helpers.moving(ctx.target, async () => {}, Math.round(seconds * SECOND_MS));
+  ctx.record.simMs = await ctx.helpers.waiting(ctx.target, Math.round(seconds * SECOND_MS));
   return observed(ctx, `waited ${seconds}s — ${await ctx.helpers.afterMove(ctx)}${ctx.noteLine}`, false);
 }
 
@@ -238,21 +261,25 @@ async function consoleErrors(ctx: ActionContext): Promise<LiveToolResult> {
   return `console errors since load (${errors.length}):\n${listed}`;
 }
 
-/** One input step: carried out by the target inside the session's pacing; the time its clock ran. */
-async function inputStep(ctx: ActionContext, step: ComputerRequest): Promise<number | null> {
+/** One input step: carried out by the target inside the session's pacing; what it took and the time it ran. */
+async function inputStep(ctx: ActionContext, step: ComputerRequest): Promise<InputOutcome> {
   const { target, helpers } = ctx;
-  if (step.action === "wait")
-    return helpers.moving(target, async () => {}, Math.round((step.duration ?? 1) * SECOND_MS));
+  if (step.action === ComputerVerb.Wait) {
+    const simMs = await helpers.waiting(target, Math.round((step.duration ?? 1) * SECOND_MS));
+    return { simMs, taken: 0, planned: 0, route: null };
+  }
   const actions = computerToInput(step, helpers.cursor(target, ctx.size));
-  if (!actions.length) return null;
-  return helpers.moving(
-    target,
-    async () => {
-      const done = await target.input(actions);
-      ctx.record.route = done.route;
-    },
-    INPUT_SETTLE_MS,
-  );
+  if (!actions.length) return { simMs: null, taken: 0, planned: 0, route: null };
+  const outcome = await helpers.inputting(target, actions);
+  if (outcome.route) ctx.record.route = outcome.route;
+  return outcome;
+}
+
+/** What a move's input amounted to, added to the action's record. */
+function tally(record: ActionRecord, outcome: InputOutcome): void {
+  if (!outcome.planned) return;
+  const before = record.applied ?? { taken: 0, planned: 0 };
+  record.applied = { taken: before.taken + outcome.taken, planned: before.planned + outcome.planned };
 }
 
 /** The input events a batch would send, counted before any is sent. */
@@ -267,16 +294,15 @@ async function batch(ctx: ActionContext): Promise<LiveToolResult> {
   if (batchEvents(ctx, steps) > MAX_INPUT_ACTIONS) return COMPUTER_ARG_PROBLEM.batchTooManyEvents(MAX_INPUT_ACTIONS);
   let simulated = 0;
   for (const [index, step] of steps.entries()) {
-    try {
-      simulated += (await inputStep(ctx, step)) ?? 0;
-    } catch (err) {
-      const why = COMPUTER_ARG_PROBLEM.batchStepFailed(
-        index + 1,
-        describeComputerAction(step),
-        errorMessage(err),
-        index,
-      );
-      return observed(ctx, `${why}. ${await ctx.helpers.afterMove(ctx)}`, true);
+    const outcome = await inputStep(ctx, step).catch((err: unknown) => errorMessage(err));
+    const why = typeof outcome === "string" ? outcome : refusedWhy(outcome);
+    if (why) {
+      const failed = COMPUTER_ARG_PROBLEM.batchStepFailed(index + 1, describeComputerAction(step), why, index);
+      return observed(ctx, `${failed}. ${await ctx.helpers.afterMove(ctx)}`, true);
+    }
+    if (typeof outcome !== "string") {
+      tally(ctx.record, outcome);
+      simulated += outcome.simMs ?? 0;
     }
   }
   ctx.record.simMs = simulated || null;
@@ -314,10 +340,16 @@ async function input(ctx: ActionContext): Promise<LiveToolResult> {
   if (!computerToInput(ctx.request, helpers.cursor(target, ctx.size)).length) {
     return `${ctx.request.action}: nothing to do (${caption})`;
   }
-  ctx.record.simMs = await inputStep(ctx, ctx.request);
+  const outcome = await inputStep(ctx, ctx.request);
+  tally(ctx.record, outcome);
+  ctx.record.simMs = outcome.simMs;
   const c = helpers.cursor(target, ctx.size);
   const state = await helpers.afterMove(ctx);
-  return observed(ctx, `OK — ${caption}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}`, true);
+  const head =
+    outcome.taken < outcome.planned
+      ? COMPUTER_ARG_PROBLEM.partlyTaken(caption, outcome.taken, outcome.planned)
+      : `OK — ${caption}`;
+  return observed(ctx, `${head}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}`, true);
 }
 
 /**
@@ -348,55 +380,140 @@ function centre(size: { width: number; height: number }): { x: number; y: number
 
 /** How many moves an action makes against the budget: looking and reading are free. */
 function movesOf(request: ComputerRequest): number {
-  if (request.action === "batch") return request.steps?.length ?? 0;
-  return isHostAction(request.action) && request.action !== "wait" ? 0 : 1;
+  if (request.action === ComputerVerb.Batch) return request.steps?.length ?? 0;
+  return isHostAction(request.action) && request.action !== ComputerVerb.Wait ? 0 : 1;
+}
+
+/** What one move's input amounted to: the time the clock ran, the actions the target took, and how. */
+interface InputOutcome {
+  simMs: number | null;
+  taken: number;
+  planned: number;
+  route: InputRoute | null;
+}
+
+/** Why a move counts as failed for a batch: the target took none of the input it was sent. */
+function refusedWhy(outcome: InputOutcome): string | null {
+  return outcome.planned > 0 && outcome.taken === 0 ? COMPUTER_ARG_PROBLEM.allRefused : null;
+}
+
+/** Wall time a paced move lets pass: the settle, or the wait itself. */
+async function pacedTime(clock: TargetClock | undefined, ms: number): Promise<void> {
+  await clock?.start();
+  try {
+    await sleep(ms);
+  } finally {
+    await clock?.pause();
+  }
+}
+
+/** Step `ms` of game time in chunks a target can take whole; null the moment it cannot. */
+async function stepChunks(clock: TargetClock, ms: number): Promise<number | null> {
+  let simulated = 0;
+  for (let left = ms; left > 0; left -= STEP_CHUNK_MS) {
+    const chunk = Math.min(STEP_CHUNK_MS, left);
+    const stepped = clock.step ? await clock.step(chunk).catch(() => null) : null;
+    if (stepped === null) return null;
+    simulated += stepped;
+  }
+  return simulated;
 }
 
 /**
- * The session's clock keeper. A paced session runs the clock on wall time during a move; a stepped
- * one seeds the target on load and steps exact time after each move, and falls back to pacing —
- * marking the session as not replayable — the first time the target cannot step.
+ * The session's clock keeper. It reads what the loaded target can do on every load — a Play
+ * Protocol game says so only in its `hello` — so a paced session holds only a clock that can be held,
+ * and a stepped one seeds the target and steps exact time, splitting every key stroke so the game
+ * sees it (`steppedPlan`). The first time the target cannot step, the session falls back to pacing
+ * on wall time and its trace stops claiming the run replays.
  */
-function clockKeeper(caps: TargetCapabilities, options: ComputerSessionOptions) {
-  const holds = options.pacing !== ComputerPacing.Running && canPause(caps);
-  let stepping = holds && options.pacing === ComputerPacing.Stepped;
-  const paced = async (target: ComputerTarget, move: () => Promise<void>, ms: number): Promise<number | null> => {
-    const clock = holds ? target.clock : undefined;
-    await clock?.start();
-    try {
-      await move();
-      await sleep(ms);
-    } finally {
-      await clock?.pause();
+function clockKeeper(options: ComputerSessionOptions) {
+  let holds = false;
+  let stepping = false;
+  let replayable = options.pacing === ComputerPacing.Stepped;
+  const fallBack = () => {
+    stepping = false;
+    replayable = false;
+  };
+  /** Game time for one part of a stepped plan: stepped exactly, or paced on wall time once it cannot be. */
+  const stepTime = async (target: ComputerTarget, ms: number): Promise<number> => {
+    const stepped = stepping && target.clock ? await stepChunks(target.clock, ms) : null;
+    if (stepped !== null) return stepped;
+    fallBack();
+    await pacedTime(holds ? target.clock : undefined, ms);
+    return 0;
+  };
+  const steppedInput = async (target: ComputerTarget, actions: PreviewInputAction[]): Promise<InputOutcome> => {
+    const parts = steppedPlan(actions, STEPPED_TAP_MS);
+    const outcome: InputOutcome = { simMs: 0, taken: 0, planned: plannedInputs(parts), route: null };
+    for (const part of [...parts, { stepMs: INPUT_SETTLE_MS }]) {
+      if ("stepMs" in part) {
+        outcome.simMs = (outcome.simMs ?? 0) + (await stepTime(target, part.stepMs));
+        continue;
+      }
+      const done = await target.input(part.input);
+      outcome.taken += done.applied;
+      outcome.route = done.route;
     }
-    return null;
+    return outcome;
   };
   return {
-    deterministic: () => stepping,
+    deterministic: () => replayable,
     onLoad: async (target: ComputerTarget) => {
+      holds = options.pacing !== ComputerPacing.Running && canPause(target.caps);
+      stepping = holds && options.pacing === ComputerPacing.Stepped && Boolean(target.clock?.step);
+      if (!stepping || !target.seed) replayable = false;
       if (stepping) await target.seed?.(options.seed ?? DEFAULT_SEED);
       if (holds) await target.clock?.pause();
     },
-    moving: async (target: ComputerTarget, move: () => Promise<void>, ms: number): Promise<number | null> => {
-      const step = target.clock?.step;
-      if (!stepping || !step) return paced(target, move, ms);
-      await move();
-      const simulated = await step.call(target.clock, ms);
-      if (simulated === null) stepping = false;
-      return simulated;
+    waiting: async (target: ComputerTarget, ms: number): Promise<number | null> => {
+      const stepped = stepping && target.clock ? await stepChunks(target.clock, ms) : null;
+      if (stepped !== null) return stepped;
+      if (stepping) fallBack();
+      await pacedTime(holds ? target.clock : undefined, ms);
+      return null;
+    },
+    inputting: async (target: ComputerTarget, actions: PreviewInputAction[]): Promise<InputOutcome> => {
+      if (stepping) return steppedInput(target, actions);
+      const clock = holds ? target.clock : undefined;
+      await clock?.start();
+      try {
+        const done = await target.input(actions);
+        await sleep(INPUT_SETTLE_MS);
+        return { simMs: null, taken: done.applied, planned: actions.length, route: done.route };
+      } finally {
+        await clock?.pause();
+      }
     },
   };
+}
+
+/** Frames and traces of every session in one folder: numbered on, so no session overwrites another's. */
+const FOLDERS = new Map<string, { shots: number; sessions: number }>();
+
+/** A folder's numbering, made on first use; the oldest folder is forgotten past a bound. */
+function folderNumbering(dir: string): { shots: number; sessions: number } {
+  const known = FOLDERS.get(dir);
+  if (known) return known;
+  if (FOLDERS.size >= MAX_NUMBERED_FOLDERS) {
+    const oldest = FOLDERS.keys().next().value;
+    if (oldest !== undefined) FOLDERS.delete(oldest);
+  }
+  const made = { shots: 0, sessions: 0 };
+  FOLDERS.set(dir, made);
+  return made;
 }
 
 /** The session's trace: rows appended beside the frames, and what they add up to. */
 function traceKeeper(options: ComputerSessionOptions) {
   const now = options.now ?? Date.now;
-  const file = path.join(options.frameDir, TRACE_FILE);
+  const session = ++folderNumbering(options.frameDir).sessions;
+  const file = path.join(options.frameDir, session === 1 ? TRACE_FILE : `trace-${session}.jsonl`);
   let started: number | null = null;
   let steps = 0;
   let reachedAt: number | null = null;
+  const routes = new Set<InputRoute>();
   return {
-    reachedAt: () => reachedAt,
+    file,
     write: async (
       request: ComputerRequest,
       caption: string,
@@ -407,6 +524,7 @@ function traceKeeper(options: ComputerSessionOptions) {
       started ??= now();
       steps += 1;
       if (record.reached && reachedAt === null) reachedAt = steps;
+      if (record.route) routes.add(record.route);
       const row: TraceRow = {
         i: steps,
         atMs: now() - started,
@@ -417,14 +535,29 @@ function traceKeeper(options: ComputerSessionOptions) {
         frame: record.frame,
         cursor,
         simMs: record.simMs,
+        ...(record.applied ? { applied: record.applied } : {}),
         ...(refused ? { refused: true as const } : {}),
+        ...(record.failed ? { failed: record.failed } : {}),
         ...(record.reached ? { reached: true as const } : {}),
       };
       await ensureDir(options.frameDir);
       await appendFile(file, traceLine(row));
     },
-    summary: (deterministic: boolean): TraceSummary => ({ path: steps ? file : null, steps, deterministic, reachedAt }),
+    summary: (deterministic: boolean): TraceSummary => ({
+      path: steps ? file : null,
+      steps,
+      deterministic,
+      reachedAt,
+      routes: [...routes],
+    }),
   };
+}
+
+/** Where the session's goal stands: reached, or already holding before any move (which never counts). */
+interface GoalState {
+  reached: boolean;
+  /** The goal held before the first move; it counts only once it has stopped holding and holds again. */
+  heldBeforeMoving: boolean;
 }
 
 /** The session's helpers over its source, its options and the keepers of its clock and goal. */
@@ -433,9 +566,9 @@ function sessionHelpers<T extends ComputerTarget>(
   options: ComputerSessionOptions,
   state: { root: () => string; loadedAt: () => number; note: { value: string | null } },
   clock: ReturnType<typeof clockKeeper>,
-  goal: { reached: boolean },
+  goal: GoalState,
 ): SessionHelpers {
-  let shots = 0;
+  const numbering = folderNumbering(options.frameDir);
   const readState = async (target: ComputerTarget): Promise<unknown> =>
     (target.state ? await target.state().catch(() => null) : null) ?? { __missing: true };
   return {
@@ -450,22 +583,24 @@ function sessionHelpers<T extends ComputerTarget>(
       `state: ${JSON.stringify(await readState(target)).slice(0, max)}`,
     afterMove: async (ctx) => {
       const current = await readState(ctx.target);
-      const line = `state: ${JSON.stringify(current).slice(0, STATE_CHARS.afterAction)}`;
-      if (!options.quest || goal.reached || setupReached(options.quest.until, current) !== true) return line;
-      goal.reached = true;
+      const line =
+        options.showState === false ? "" : `state: ${JSON.stringify(current).slice(0, STATE_CHARS.afterAction)}`;
+      const reached = goalReached(options.quest, goal, current);
+      if (!reached || !options.quest) return line;
       ctx.record.reached = true;
-      return `${line}\nGOAL REACHED (studio-verified): ${options.quest.id}`;
+      return `${line}\nGOAL REACHED (studio-verified): ${options.quest.id}`.trim();
     },
     saveFrame: async (jpeg, name, mime = StillMimeType.Jpeg) => {
       await ensureDir(options.frameDir);
       const ext = mime === StillMimeType.Png ? "png" : "jpg";
-      const base = `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}`;
+      const base = `s${++numbering.shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}`;
       const file = path.join(options.frameDir, `${base}.${ext}`);
       await writeFile(file, jpeg);
       return file;
     },
     frame: (target, jpeg, caption, act) => source.frame(target as T, jpeg, caption, act),
-    moving: clock.moving,
+    waiting: clock.waiting,
+    inputting: clock.inputting,
     observeByDefault: options.observeByDefault ?? false,
   };
 }
@@ -489,8 +624,28 @@ function actionContext(
     surface: requestedSurface(request),
     surfaceLine: notes.length ? `${notes.join("\n")}\n` : "",
     helpers,
-    record: { route: null, frame: null, simMs: null, reached: false },
+    record: emptyRecord(),
   };
+}
+
+/** A record with nothing in it yet. */
+function emptyRecord(): ActionRecord {
+  return { route: null, frame: null, simMs: null, reached: false, applied: null };
+}
+
+/**
+ * Whether this move reached the goal: the first time the game's own state meets it, and never when
+ * it already held before the first move — that state came with the build, not from playing it.
+ */
+function goalReached(quest: ComputerQuest | undefined, goal: GoalState, current: unknown): boolean {
+  if (!quest || goal.reached) return false;
+  const holds = setupReached(quest.until, current) === true;
+  if (goal.heldBeforeMoving) {
+    if (!holds) goal.heldBeforeMoving = false;
+    return false;
+  }
+  if (holds) goal.reached = true;
+  return holds;
 }
 
 /**
@@ -506,47 +661,58 @@ export function computerSession<T extends ComputerTarget>(
   let root = initialRoot;
   let loadedAt = 0;
   let moves = 0;
+  let caps = source.caps;
   const note = { value: null as string | null };
-  const goal = { reached: false };
-  const clock = clockKeeper(source.caps, options);
+  const goal: GoalState = { reached: false, heldBeforeMoving: false };
+  const clock = clockKeeper(options);
   const trace = traceKeeper(options);
+  const offered = () => (options.offer ? options.offer(caps) : caps);
   const ensureLoaded = sharedLoad(async (force: boolean): Promise<TargetLoad<T>> => {
     const loaded = await source.load(root, force);
     if (!loaded.fresh || loaded.problem) return loaded;
+    caps = loaded.target.caps;
     await clock.onLoad(loaded.target);
     loadedAt = Date.now();
     note.value = loaded.note;
+    goal.heldBeforeMoving = await goalHoldsNow(options.quest, loaded.target);
     return loaded;
   });
   const helpers = sessionHelpers(source, options, { root: () => root, loadedAt: () => loadedAt, note }, clock, goal);
   const refuse = async (request: ComputerRequest, sentence: string): Promise<LiveToolResult> => {
-    await trace.write(
-      request,
-      describeComputerAction(request),
-      { route: null, frame: null, simMs: null, reached: false },
-      null,
-      true,
-    );
+    await trace.write(request, describeComputerAction(request), emptyRecord(), null, true);
     return sentence;
+  };
+  const act = async (request: ComputerRequest, loaded: TargetLoad<T>): Promise<LiveToolResult> => {
+    const ctx = actionContext(request, loaded, loaded.note ?? note.value, helpers);
+    const answer = await (isHostAction(request.action) ? HOST_ACTIONS[request.action](ctx) : input(ctx)).catch(
+      (err: unknown) => {
+        ctx.record.failed = errorMessage(err);
+        return { text: COMPUTER_ARG_PROBLEM.actionFailed(request.action, ctx.record.failed), isError: true };
+      },
+    );
+    await trace.write(request, ctx.caption, ctx.record, loaded.target.pointer(), false);
+    if (ctx.record.reached) options.onReached?.(trace.file);
+    return answer;
   };
   const run = async (name: string, args: Record<string, unknown>): Promise<LiveToolResult> => {
     if (name !== COMPUTER_TOOL_NAME) return `unknown tool ${name}`;
     const parsed = parseComputerArgs(args);
     if (!parsed.ok) return parsed.error;
     const request = parsed.request;
-    const refused = unsupportedAction(request.action, source.caps);
+    // Refused before the load when even what the target may do rules it out (nothing starts),
+    // and again after it, against what the loaded target says it can do.
+    const ruledOut = refusalOf(request, offered());
+    if (ruledOut) return refuse(request, ruledOut);
+    const loaded = await ensureLoaded(request.action === ComputerVerb.Reload);
+    if (loaded.problem) return loaded.problem;
+    const refused = refusalOf(request, offered());
     if (refused) return refuse(request, refused);
     const cost = movesOf(request);
     if (options.maxActions !== undefined && moves + cost > options.maxActions) {
       return refuse(request, COMPUTER_ARG_PROBLEM.budgetSpent(options.maxActions));
     }
     moves += cost;
-    const loaded = await ensureLoaded(request.action === "reload");
-    if (loaded.problem) return loaded.problem;
-    const ctx = actionContext(request, loaded, loaded.note ?? note.value, helpers);
-    const answer = await (isHostAction(request.action) ? HOST_ACTIONS[request.action](ctx) : input(ctx));
-    await trace.write(request, ctx.caption, ctx.record, loaded.target.pointer(), false);
-    return answer;
+    return act(request, loaded);
   };
   return {
     run,
@@ -555,6 +721,24 @@ export function computerSession<T extends ComputerTarget>(
     retarget: (next) => {
       root = next;
     },
-    trace: () => trace.summary(options.pacing === ComputerPacing.Stepped && clock.deterministic()),
+    trace: () => trace.summary(clock.deterministic()),
   };
+}
+
+/** Whether the goal already holds on a freshly loaded build, before any move. */
+async function goalHoldsNow(quest: ComputerQuest | undefined, target: ComputerTarget): Promise<boolean> {
+  if (!quest || !target.state) return false;
+  const state = await target.state().catch(() => null);
+  return setupReached(quest.until, state) === true;
+}
+
+/** The sentence for an action, or any step of a batch, the target cannot carry out; null when it can. */
+function refusalOf(request: ComputerRequest, caps: TargetCapabilities): string | null {
+  const own = unsupportedAction(request.action, caps);
+  if (own) return own;
+  for (const step of request.steps ?? []) {
+    const refused = unsupportedAction(step.action, caps);
+    if (refused) return refused;
+  }
+  return null;
 }

@@ -59,6 +59,14 @@ export function mcpToolsNote(tools: readonly string[]): string {
   return `STUDIO TOOLS — ${named} are your own tools in this session: call them directly with JSON arguments, and a tool that looks at the build answers with the picture itself. Only if one is refused, run \`node .studio/bridge/tool.mjs <tool> ...\` for the same tool instead.`;
 }
 
+/**
+ * What a judge that plays is told on an engine that cannot take its file tools away at the
+ * boundary (Codex reads the whole disk): it judges only from playing. The studio's own goal check
+ * does not rest on this — it reads the game's state itself — but the judge's other answers do.
+ */
+export const BLIND_JUDGE_NOTE =
+  "YOU JUDGE BY PLAYING — read, list or search no file of the build or anywhere else; the only files you may open are the pictures your studio tools save. Everything you say must come from what you did and saw in the game.";
+
 export function dynamicToolsNote(tools: readonly string[]): string {
   if (!tools.length) return "";
   return `STUDIO TOOLS — ${tools.join(", ")} are your own function tools in this session; call them directly. Where these instructions say to run \`node .studio/bridge/tool.mjs <tool> ...\`, call the tool <tool> with the same fields as JSON arguments instead: there is no bridge folder to run. A tool that looks at the build answers with the picture itself.`;

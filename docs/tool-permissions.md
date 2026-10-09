@@ -178,12 +178,14 @@ Codex runs Auto as before (`workspace-write` in the game folder, no network, nev
 with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
 as a read-only session) where only the studio's bridge is writable, told it plans
 (`planModeNote`). A pick applies to its next turn. Every Codex launch disables Codex's own
-`computer_use`, `in_app_browser`, `browser_use` and `browser_use_external`: the studio's `computer`
-tool is the only hands an agent has ([computer use](computer-use.md)).
+`computer_use`, `in_app_browser`, `browser_use` and `browser_use_external` (those its `codex features
+list` knows): the studio's `computer` tool is the only hands an agent has ([computer use](computer-use.md)).
 
-A judge that plays (`role: "judge"`) is blind as well as read-only (`DelegateRequest.blind`): Claude
-Code disallows every file, shell, edit and question tool, a local session gets no file tool, and
-every engine starts in the empty `scratch/blind-judge` folder, reading only its own frames.
+A judge that plays (`role: "judge"`) is blind as well as read-only (`DelegateRequest.blind`) where
+the engine can enforce it: Claude Code disallows every file, shell, edit and question tool, OpenCode
+denies every file tool, and a local session gets no file tool. Codex reads the whole disk, so a Codex
+judge is only told to judge by playing. Every engine starts in the empty `scratch/blind-judge`
+folder and is not told the build's path.
 
 A plan on an engine that ends its turn with it (`plansByTurn`: Bonsai, Codex) is approved by the
 host ([`plan-approval.ts`](../src/main/core/plan-approval.ts) `withPlanApproval`): a Plan reply

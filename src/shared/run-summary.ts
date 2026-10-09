@@ -34,7 +34,7 @@ export interface RunTask {
 }
 /**
  * Who established an interaction result (`run_interaction_evidence.source`). Wire values: the
- * seed writes them (`harness-seed/loop/run-events.ts` `InteractionSource`, held equal by
+ * seed writes them (`harness-seed/loop/interaction-words.ts` `InteractionSource`, held equal by
  * `seed-contracts.test.ts`) and the outcome panel names them.
  */
 export const InteractionSource = {
@@ -146,7 +146,13 @@ const OPEN_OR_FAILED_STATES: ReadonlySet<string> = new Set([
   ExecutionStatus.Cancelled,
 ]);
 
-const INTERACTION_STATUSES: ReadonlySet<string> = new Set(["passed", "failed", "incomplete"]);
+/**
+ * How an interaction ended (`run_interaction_evidence.status`): the seed's `InteractionStatus`
+ * (`harness-seed/loop/interaction-evidence.ts`), word for word, held equal by `seed-contracts.test.ts`.
+ */
+export const InteractionStatus = { Passed: "passed", Failed: "failed", Incomplete: "incomplete" } as const;
+export type InteractionStatus = (typeof InteractionStatus)[keyof typeof InteractionStatus];
+const INTERACTION_STATUSES: ReadonlySet<unknown> = new Set(Object.values(InteractionStatus));
 
 const record = (value: unknown): Row =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Row) : {};

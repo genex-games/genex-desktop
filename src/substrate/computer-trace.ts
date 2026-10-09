@@ -28,8 +28,12 @@ export interface TraceRow {
   cursor: { x: number; y: number } | null;
   /** Simulated milliseconds it ran the target's clock, when the clock was stepped. */
   simMs: number | null;
+  /** Input actions the target took, of those planned, when the action sent any. */
+  applied?: { taken: number; planned: number };
   /** Set when the session refused the action (the target cannot do it, the budget is spent). */
   refused?: true;
+  /** Why the action failed, when it threw (the target stopped answering). */
+  failed?: string;
   /** Set on the action after which the studio verified the session's goal was reached. */
   reached?: true;
 }

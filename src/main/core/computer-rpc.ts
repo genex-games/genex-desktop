@@ -9,6 +9,8 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type { HarnessParams, HarnessResult, HostMethod } from "../../shared/harness-api.ts";
 import { isInside } from "../../substrate/paths.ts";
+import { ScreenRole } from "../../shared/agent-screen.ts";
+import { COMPUTER_TOOL_NAME } from "../../substrate/computer-tool.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import type { ComputerGrant, ComputerTools } from "./computer-tools.ts";
 import { ShotKind, runShotsDir } from "./run-shots.ts";
@@ -34,6 +36,8 @@ export interface ComputerRpcHost {
   runs(): string;
   port(handle: string): PreviewPort;
   computerTools(grant: ComputerGrant, root: string, outDir: string, session: SessionPort): Promise<ComputerTools>;
+  /** The host's own records say this run is this game's (`DelegationService.runOfGame`). */
+  runOfGame(project: string, runId: string): Promise<boolean>;
 }
 
 /** One leased window's computer, and the grant it was built for. */
@@ -53,34 +57,66 @@ function leasePort(host: ComputerRpcHost, handle: string): SessionPort {
   return lease;
 }
 
-/** The real path of a build root, if it is this game's folder or under this run's scratch; null otherwise. */
+/** A run id that names one plain folder: no separator, no climbing, nothing but its own characters. */
+const RUN_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * This run's own folder under scratch, checked real, when the run id is a plain name and the host's
+ * records say the run is this game's; null otherwise — a run id never reaches another folder or
+ * another game's run.
+ */
+async function runFolderOf(host: ComputerRpcHost, p: ComputerParams): Promise<string | null> {
+  if (!p.runId || !RUN_ID.test(p.runId)) return null;
+  const autopilot = await realpath(path.join(host.scratch(), "autopilot")).catch(() => null);
+  if (!autopilot) return null;
+  const folder = path.join(autopilot, p.runId);
+  if ((await realpath(folder).catch(() => null)) !== folder) return null;
+  return (await host.runOfGame(p.project, p.runId)) ? folder : null;
+}
+
+/** The real path of a build root, if it is this game's folder or under this game's run folder; null otherwise. */
 async function allowedRoot(host: ComputerRpcHost, p: ComputerParams): Promise<string | null> {
   const root = await realpath(path.resolve(String(p.root))).catch(() => null);
   if (!root) return null;
-  const bases = [host.gameDir(p.project), ...(p.runId ? [path.join(host.scratch(), "autopilot", p.runId)] : [])];
-  for (const base of bases) {
-    const real = await realpath(base).catch(() => null);
-    if (real && (root === real || isInside(real, root))) return root;
-  }
-  return null;
+  const game = await realpath(host.gameDir(p.project)).catch(() => null);
+  if (game && (root === game || isInside(game, root))) return root;
+  const run = await runFolderOf(host, p);
+  return run && isInside(run, root) ? root : null;
 }
 
 /** What makes two calls the same session: the window, the build, and how it was asked to play. */
 function sessionKey(p: ComputerParams, root: string): string {
-  return JSON.stringify([p.handle, root, p.role ?? null, p.pacing ?? null, p.quest ?? null, p.maxActions ?? null]);
+  return JSON.stringify([
+    p.handle,
+    root,
+    p.runId ?? null,
+    p.facetId ?? null,
+    p.iteration ?? null,
+    p.role ?? null,
+    p.pacing ?? null,
+    p.quest ?? null,
+    p.maxActions ?? null,
+  ]);
 }
 
 /** The service: one computer per leased window, rebuilt when the harness asks for another build or role. */
 export function computerRpc(host: ComputerRpcHost) {
   const kept = new Map<string, Kept>();
+  /** Drop a window's computer, stopping what it started (a Play Protocol game's process). */
+  const drop = async (handle: string): Promise<void> => {
+    const current = kept.get(handle);
+    kept.delete(handle);
+    await current?.tools.release().catch(() => {});
+  };
   const toolsFor = async (p: ComputerParams, root: string): Promise<ComputerTools> => {
     const key = sessionKey(p, root);
     const current = kept.get(p.handle);
-    if (current?.key === key) return current.tools;
-    const { handle: _handle, args: _args, describe: _describe, ...grant } = p;
+    if (current && current.key === key && !p.fresh) return current.tools;
+    if (current) await drop(p.handle);
+    const { handle: _handle, args: _args, describe: _describe, fresh: _fresh, ...grant } = p;
     const outDir = runShotsDir(host.runs(), p.runId, p.facetId, ShotKind.Playtest);
     const tools = await host.computerTools(
-      { ...grant, role: p.role ?? "playtester" },
+      { ...grant, role: p.role ?? ScreenRole.Playtester },
       root,
       outDir,
       leasePort(host, p.handle),
@@ -97,12 +133,10 @@ export function computerRpc(host: ComputerRpcHost) {
       const tools = await toolsFor(p, root);
       const [tool] = tools.liveTools;
       if (p.describe && tool) return { tool };
-      const answer = await tools.onLiveTool("computer", p.args ?? {});
+      const answer = await tools.onLiveTool(COMPUTER_TOOL_NAME, p.args ?? {});
       return { answer, trace: tools.trace() };
     },
-    /** Forget a released window's computer. */
-    forget: (handle: string): void => {
-      kept.delete(handle);
-    },
+    /** Forget a released window's computer, stopping what it started. */
+    forget: (handle: string): Promise<void> => drop(handle),
   };
 }

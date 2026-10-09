@@ -432,3 +432,15 @@ describe("computer tool v2 — tolerant names, observing, batching", () => {
     }
   });
 });
+
+describe("computer tool — a goal the host checks cannot be gamed by its own path", () => {
+  it("reads own fields only: nothing on the prototype, no missing value equal to the word undefined", () => {
+    const state = { flow: { phase: "menu" } };
+    assert.equal(setupReached({ path: "constructor", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "__proto__", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "flow.toString", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "missing", equals: "undefined" }, state), false);
+    assert.equal(setupReached({ path: "flow.phase", equals: "menu" }, state), true);
+    assert.equal(normalizeSetup({ verify: { path: "__proto__.x", truthy: true } }), null);
+  });
+});

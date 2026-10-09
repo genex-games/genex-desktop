@@ -82,9 +82,7 @@ function studioVerbLines(caps: TargetCapabilities, cameras: string): string {
   const camera = caps.cameras
     ? `camera text=<name>: jump the view to a studio camera (eye:here is the player's eyes, default the game's own).${cameras} `
     : "";
-  const state = hasState(caps)
-    ? "state: the game's own __studio.state() numbers (a claim — a screenshot is the proof)."
-    : "";
+  const state = hasState(caps) ? "state: the game's own numbers (a claim — a screenshot is the proof)." : "";
   const console = caps.console ? `${state ? " " : ""}console: errors since load.` : "";
   return camera + state + console;
 }
@@ -106,7 +104,7 @@ export function computerToolDescription(options: {
     : " ";
   return (
     `Your hands and eyes on ${whose}, ${WHERE_IT_RUNS[caps.runtime](options.view)}. ` +
-    "Actions — screenshot: what the window shows now (Claude: the image comes back in the result; Codex: it prints a file path, view it). " +
+    "Actions — screenshot: what the window shows now (the picture comes back with the answer). " +
     (caps.zoom ? "zoom region=x0,y0,x1,y1: that part of the last screenshot at full size. " : "") +
     (canPoint(caps) ? POINTER_LINES : "") +
     "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
@@ -170,6 +168,10 @@ export const COMPUTER_ARG_PROBLEM = {
   batchStepFailed: (step: number, caption: string, why: string, done: number) =>
     `step ${step} (${caption}) failed: ${why} — ${done} step${done === 1 ? "" : "s"} before it ran`,
   observeFailed: (why: string) => `(no picture of the result: ${why} — take a screenshot to look)`,
+  partlyTaken: (caption: string, taken: number, planned: number) =>
+    `PARTLY — ${caption}: the game took ${taken} of ${planned} input actions and refused the rest`,
+  allRefused: "the game refused every input of that step",
+  actionFailed: (action: string, why: string) => `${action} failed: ${why} — the game may have stopped answering`,
   budgetSpent: (max: number) =>
     `action budget spent (${max} of ${max} moves) — no more input this session; answer with what you have seen`,
 } as const;

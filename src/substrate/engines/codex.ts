@@ -110,7 +110,14 @@ import {
 } from "./common.ts";
 import { StudioTool, studioToolName } from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
-import { JUDGE_RULES, dynamicToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import {
+  BLIND_JUDGE_NOTE,
+  JUDGE_RULES,
+  dynamicToolsNote,
+  offLimitsNote,
+  planModeNote,
+  readOnlyNote,
+} from "./codex-prompts.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -944,6 +951,7 @@ export class CodexEngine implements Engine {
       request.prompt,
       ctx.bridge?.instructions() ?? "",
       ctx.turn ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
+      request.blind ? BLIND_JUDGE_NOTE : "",
       ownershipNote,
       planScratch
         ? planModeNote(ctx.cwd, planScratch)
@@ -1219,16 +1227,20 @@ export class CodexEngine implements Engine {
 
   /** The feature names `codex features list` prints, one per line, name first. */
   async #readFeatures(binary: string | null, env: Record<string, string>): Promise<Set<string>> {
-    const text = this.#listFeatures
-      ? await this.#listFeatures(binary, env)
-      : (await runCommand(binary ?? "codex", ["features", "list"], { env, timeoutMs: FEATURES_LIST_TIMEOUT_MS }))
-          .stdout;
+    const text = await this.#featureListing(binary, env);
     return new Set(
       text
         .split(/\r?\n/)
         .map((line) => line.trim().split(/\s+/)[0] ?? "")
         .filter((name) => FEATURE_NAME.test(name)),
     );
+  }
+
+  /** What `codex features list` printed: the injected listing in tests, else the CLI's own. */
+  async #featureListing(binary: string | null, env: Record<string, string>): Promise<string> {
+    if (this.#listFeatures) return this.#listFeatures(binary, env);
+    if (!binary) return "";
+    return (await runCommand(binary, ["features", "list"], { env, timeoutMs: FEATURES_LIST_TIMEOUT_MS })).stdout;
   }
 
   #classify(err: Error, extra = ""): EngineError {

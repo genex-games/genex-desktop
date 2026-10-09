@@ -37,34 +37,58 @@ than evidence from inside it.
 - **Budget.** `maxActions` counts moves (input actions, waits, batch steps) on the host; looking is
   free. A spent budget is a refusal sentence.
 - **Pacing.** `running` (builders, scouts, the lead), `paced` (the clock runs only during a move, on
-  wall time: playtesters), `stepped` (seeded on load, then exact `step(ms)` after every move:
-  judges). A target that cannot step falls back to pacing and its trace says `deterministic:false`.
-  A target whose clock cannot be held is never paused, and its paced role is told so.
-- **Quest.** A grant may carry `quest {id, until}`. After every move the session checks the game's
-  own state with `setupReached`; the first time it holds, the answer says `GOAL REACHED
-  (studio-verified)` and the trace row is marked `reached`.
-- **Trace.** `trace.jsonl` beside the session's frames: one row per action with its arguments,
-  route, frame, cursor, simulated milliseconds, and `refused`/`reached` marks. The delegation's
-  result carries the summary (`DelegateResult.trace`).
+  wall time: playtesters), `stepped` (seeded on load, then exact game time: judges). What the target
+  can do is read on every load from the loaded target, so a Play Protocol game is paced by what its
+  `hello` declares. On a stepped clock every key stroke is its down, a few frames of game time and
+  its up (`computer-steps.ts`), a held key holds for that much game time, and a long wait is stepped
+  in chunks. The first time the target cannot step, the session paces on wall time and its trace
+  says `deterministic:false`; a target with no seed is never called replayable. A clock that cannot
+  be held is never paused, and its paced role is told so.
+- **Refusals and partial moves.** An action the target cannot do — or any step of a batch — is
+  refused in a sentence, before the load against what such a target may do and after it against
+  what the loaded one says. A move the target took only in part says `PARTLY` with the count; a
+  batch stops where the game refused everything. An action that throws is answered as an error and
+  still written to the trace.
+- **Quest.** A grant may carry `quest {id, until}`, read by the host (`normalizeSetup`: a plain
+  dotted path, own fields only, never `__proto__`/`constructor`). After every move the session
+  checks the game's own state; the first time it holds, the answer says `GOAL REACHED
+  (studio-verified)` and the trace row is marked `reached`. A goal that already held before the first
+  move never counts until it has stopped holding and holds again.
+- **Trace.** `trace.jsonl` beside the session's frames (a second session in the same folder writes
+  `trace-2.jsonl`, and frames are numbered on, so none overwrites another's): one row per action with
+  its arguments, route, frame, cursor, simulated milliseconds, input taken of planned, and
+  `refused`/`failed`/`reached` marks. The delegation's result carries the summary
+  (`DelegateResult.trace`), including every input route used.
+- **Studio-verified is the host's word.** A session that reaches its goal registers the trace
+  (`verified-traces.ts`); when the harness records an interaction as `studio-verified`,
+  `events.append` keeps that word only for a registered trace and records anything else as
+  `model-said` (`harness-events.ts` `vouchedInteractions`).
 
 ## Who holds it
 
 Builders (unless `computer: false`), the director, playtesters and scouts hold `computer` on a
 pooled window of their own, never Live. A **judge** (`DelegatePlaytestGrant.role: "judge"`) holds
-`computer` alone: it is blind (`DelegateRequest.blind` — Claude Code disallows file, shell, edit and
-question tools; local sessions get no file tools; every engine starts in the empty
-`scratch/blind-judge` folder and reads only its own frames), plays on a stepped clock, and starts
-past the front-end. Its interaction evidence carries `source: hands-on-judge` and
+`computer` alone, is never offered the game's `state` or `console` and reads no state in its
+answers (the builder wrote both), plays on a stepped clock, and meets the game at its first screen.
+It is blind (`DelegateRequest.blind`), enforced where the engine can enforce it: Claude Code
+disallows every file, shell, edit and question tool; OpenCode denies every file tool; local
+sessions get no file tool. Codex reads the whole disk, so a Codex judge is only told to judge by
+playing (`BLIND_JUDGE_NOTE`) — the studio's goal check does not rest on that, but its other
+answers do. Every engine starts in the empty `scratch/blind-judge` folder and is never told the
+build's path. Its interaction evidence carries `source: hands-on-judge` and
 `objective: studio-verified` only when the quest held; a model's "yes" without it is incomplete.
 
 `preview.computer` runs the same session on a window the harness leased, for engines whose tool loop
 is the harness's own (Ollama). It refuses Live and the stand-in, and accepts only the game's folder
-or a build under this run's `scratch/autopilot/<runId>`, checked by real path. One session per leased
-window, forgotten on `preview.release`.
+or a build under this game's run folder: the run id is a plain name, its folder is checked by real
+path, and the host's own records must say the run is this game's. One session per leased window and
+round (run, part, iteration, role, goal); `fresh` starts a new one; a replaced or released session
+stops what it started.
 
 Codex's own computer use and browsers (`computer_use`, `in_app_browser`, `browser_use`,
 `browser_use_external`) are disabled on every launch: they would drive the person's real screen past
-the studio's consent.
+the studio's consent. Only features the installed CLI lists (`codex features list`) are named, since a
+CLI refuses a feature flag it does not know.
 
 ## Game engines and other targets
 
