@@ -15,7 +15,7 @@ import { EngineFailure, outageDelays, withProviderPatience } from "../outage.ts"
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { runPlaytest } from "../playtester.ts";
 import { attemptRef } from "../repo.ts";
-import { RunEvent, SteeringSource } from "../run-events.ts";
+import { InteractionSource, RunEvent, SteeringSource } from "../run-events.ts";
 import { CheckKind, CheckWeight, MoveOwner, normalizeFacetSpec, normalizeMilestone } from "../spec.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { playtestStepWords } from "../facet/beyond.ts";
@@ -914,7 +914,7 @@ async function playIn(
     label: ask,
     status: words.status,
     note: result?.note ?? result?.reason ?? null,
-    source: "independent-playtester",
+    source: InteractionSource.IndependentPlaytester,
   }).catch(() => {});
   if (goalId && loopRun.state.goals && untouched && before.head && target.root === loopRun.integrationWorktree) {
     recordGoalEvidence(loopRun.state.goals, goalId, before.head, result?.pass ?? undefined, scenario);

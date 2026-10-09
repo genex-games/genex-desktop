@@ -3,7 +3,13 @@ import { ResultButton } from "../ui/ResultButton.tsx";
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { ExecutionStatus } from "../../shared/run-state.ts";
-import { summaryCounts, summaryOutcome, type RunSummary } from "../../shared/run-summary.ts";
+import {
+  InteractionObjective,
+  InteractionSource,
+  summaryCounts,
+  summaryOutcome,
+  type RunSummary,
+} from "../../shared/run-summary.ts";
 import { plural } from "../../shared/skill-words.ts";
 import { outcomeTitle } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -150,10 +156,29 @@ export function coverageWords(summary: RunSummary): string {
   return `${passed} structural check${passed === 1 ? "" : "s"} passed.${visual} ${interactionWords(summary, current)}`;
 }
 
-/** Who took a check: the independent playtester, a judge (visual and structural), or a recorded check. */
+/** Who took a check, for the sources that played the build. */
+const PLAYED_SOURCE_WORDS: Record<InteractionSource, string> = {
+  [InteractionSource.IndependentPlaytester]: "Independent playtester",
+  [InteractionSource.HandsOnJudge]: "Judge who played it",
+  [InteractionSource.RouteReplay]: "Replayed route",
+};
+
+/** What an interaction result rests on: the studio's own check of the game's state, or the player's word. */
+const OBJECTIVE_WORDS: Record<InteractionObjective, string> = {
+  [InteractionObjective.StudioVerified]: "verified by the studio",
+  [InteractionObjective.ModelSaid]: "the player's word",
+};
+
+/** Who took a check: one that played the build, a judge (visual and structural), or a recorded check. */
 function checkSource(e: Evidence): string {
-  if (e.source === "independent-playtester") return "Independent playtester";
+  const played = Object.values(InteractionSource).find((source) => source === e.source);
+  if (played) return PLAYED_SOURCE_WORDS[played];
   return e.category === "visual" || e.category === "structural" ? "Reviewer" : "Recorded check";
+}
+
+/** What the check rests on, as the row's last word; nothing for a check that did not play. */
+function objectiveWords(e: Evidence): string {
+  return e.objective ? ` · ${OBJECTIVE_WORDS[e.objective]}` : "";
 }
 
 function EvidenceRow({
@@ -172,6 +197,7 @@ function EvidenceRow({
       <span className="text-micro text-ink-3">
         {e.status} · {e.category} · {e.head?.slice(0, HEAD_CHARS) ?? "revision unknown"}
         {e.head !== head ? " · historical" : ""} · {checkSource(e)}
+        {objectiveWords(e)}
       </span>
       {e.note && <span className="break-words text-ink-3">{e.note}</span>}
       {capture && (

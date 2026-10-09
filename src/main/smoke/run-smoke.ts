@@ -2,6 +2,7 @@
  * The build smoke (`--studio-smoke`): loaded by main with a dynamic import only when that flag is
  * set, so no smoke code runs, or is even evaluated, in a normal launch.
  */
+import { InteractionSource } from "../../shared/run-summary.ts";
 import { type BrowserWindow, app, type WebContents, type WebFrameMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -2132,7 +2133,7 @@ async function seedOutcomeRun(buildSmoke: BuildSmoke): Promise<OutcomeRun> {
     head: "head-6",
     label: "Dialogue walkthrough",
     status: "incomplete",
-    source: "independent-playtester",
+    source: InteractionSource.IndependentPlaytester,
   });
   return { outcomeRun, outcomeEvent };
 }
