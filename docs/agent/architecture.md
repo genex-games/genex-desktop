@@ -807,9 +807,8 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 **Worker windows and computer use.** Every building delegation and every looking read-only session
 gets one pooled preview window for the session
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs; `computer` ([`src/substrate/computer-tool.ts`](../../src/substrate/computer-tool.ts)) is
-the studio's own computer use with Anthropic's action vocabulary plus `camera`, `state`, `reload`
-and `console`. Headless ports render offscreen. Native input is sent and synthetic copies withheld
+photographs; `computer` is the studio's own computer use: one tool, a session referee and
+swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen. Native input is sent and synthetic copies withheld
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
 (`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
