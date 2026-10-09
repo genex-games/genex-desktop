@@ -17,7 +17,15 @@ import {
   StateLevel,
   TargetRuntime,
 } from "../../src/shared/computer-target.ts";
-import { PlayErrorCode, PlayFailure, type PlayHello, PlayOp, readHello } from "../../src/shared/play-protocol.ts";
+import {
+  PLAY_MAX_STEP_MS,
+  PlayErrorCode,
+  PlayFailure,
+  type PlayHello,
+  PlayOp,
+  lackedOps,
+  readHello,
+} from "../../src/shared/play-protocol.ts";
 import { CaptureSurface, StillMimeType } from "../../src/shared/preview-contract.ts";
 import { computerSession } from "../../src/main/core/computer-session.ts";
 import {
@@ -26,7 +34,13 @@ import {
   gameBridgeSource,
   gameBridgeTarget,
 } from "../../src/main/core/game-bridge-target.ts";
-import { type PlayClient, type PlayDeadlines, PlayProtocolError } from "../../src/substrate/play-protocol-client.ts";
+import {
+  PLAY_CALL_TIMEOUT_MS,
+  type PlayClient,
+  type PlayDeadlines,
+  PlayProtocolError,
+} from "../../src/substrate/play-protocol-client.ts";
+import { MAX_HOLD_KEY_MS } from "../../src/substrate/preview-input.ts";
 import { ProcessSandbox, shellQuote } from "../../src/substrate/spawn.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -47,13 +61,17 @@ const HELLO: PlayHello = {
     screenshot: ["png"],
   },
   ops: [],
+  unsupported: [],
+  build: null,
 };
 
-/** A client that records every op and answers each with `answer`'s value, or its rejection. */
+/** A client that records every op (and the deadline it was given) and answers each with `answer`'s value, or its rejection. */
 function recordingClient(answer: (op: string, args: Record<string, unknown>) => unknown = () => ({})) {
   const calls: Array<[string, Record<string, unknown>]> = [];
-  const send = async (op: string, args: Record<string, unknown>) => {
+  const deadlines: Array<[string, number | undefined]> = [];
+  const send = async (op: string, args: Record<string, unknown>, timeoutMs?: number) => {
     calls.push([op, { ...args }]);
+    deadlines.push([op, timeoutMs]);
     const value = answer(op, args);
     if (value instanceof Error) throw value;
     return value;
@@ -61,23 +79,29 @@ function recordingClient(answer: (op: string, args: Record<string, unknown>) => 
   const client: PlayClient = {
     ready: { event: "ready", protocol: 3 },
     exited: false,
-    call: (op, args) => send(op, { ...args }),
-    send: (op, args) => send(op, args),
+    call: (op, args, options) => send(op, { ...args }, options?.timeoutMs),
+    send: (op, args, options) => send(op, args, options?.timeoutMs),
     close: () => {},
+    stderrTail: () => [],
   };
-  return { client, calls };
+  return { client, calls, deadlines };
 }
 
 /** A target over a recording client, with sleeps recorded instead of slept. */
 function recordedTarget(answer?: (op: string, args: Record<string, unknown>) => unknown) {
-  const { client, calls } = recordingClient(answer);
+  const { client, calls, deadlines } = recordingClient(answer);
   const slept: number[] = [];
   const target = gameBridgeTarget(client, HELLO, {
     sleep: async (ms) => {
       slept.push(ms);
     },
   });
-  return { target, calls, slept };
+  return { target, calls, slept, deadlines };
+}
+
+/** A refusal of `op` with the engine's `unsupported` code. */
+function unsupported(op: string): PlayProtocolError {
+  return new PlayProtocolError(PlayErrorCode.Unsupported, op, `${op} refused: not here`);
 }
 
 describe("game bridge target — the studio's input as protocol ops", () => {
@@ -174,6 +198,79 @@ describe("game bridge target — the studio's input as protocol ops", () => {
     assert.equal(done.applied, 1);
   });
 
+  it("counts only the actions whose every op the game accepted, and says which op it refused", async () => {
+    const { target } = recordedTarget((op) => (op === PlayOp.Look ? unsupported(op) : {}));
+    const done = await target.input([
+      { type: "type", text: "a" },
+      { type: "look", dx: 3, dy: 0 },
+      { type: "type", text: "b" },
+    ]);
+    assert.deepEqual(done, { applied: 2, route: InputRoute.Bridge });
+    assert.deepEqual(
+      target.refusals().map((refusal) => [refusal.op, refusal.code]),
+      [[PlayOp.Look, PlayErrorCode.Unsupported]],
+    );
+    assert.deepEqual(target.refusals(), [], "reading the refusals clears them");
+  });
+
+  it("lets go of a click's modifiers when the game refuses the click", async () => {
+    const { target, calls } = recordedTarget((op) => (op === PlayOp.Pointer ? unsupported(op) : {}));
+    const done = await target.input([{ type: "click", x: 1, y: 1, px: true, modifiers: ["shift"] }]);
+    assert.equal(done.applied, 0);
+    assert.deepEqual(calls, [
+      [PlayOp.Key, { code: "ShiftLeft", down: true }],
+      [PlayOp.Pointer, { x: 1, y: 1, button: "left", click: 1 }],
+      [PlayOp.Key, { code: "ShiftLeft", down: false }],
+    ]);
+  });
+
+  it("lets go of a held key when the step that holds it is refused, and does not count the tap", async () => {
+    const { target, calls } = recordedTarget((op) => (op === PlayOp.Step ? unsupported(op) : {}));
+    await target.clock?.pause();
+    const done = await target.input([{ type: "tap", keys: ["d"], stepMs: 32 }]);
+    assert.equal(done.applied, 0);
+    assert.deepEqual(calls, [
+      [PlayOp.Pause, {}],
+      [PlayOp.Key, { code: "KeyD", down: true }],
+      [PlayOp.Step, { ms: 32 }],
+      [PlayOp.Key, { code: "KeyD", down: false }],
+    ]);
+  });
+
+  it("answers a refused step as a clock that cannot step, with the refusal kept for the session", async () => {
+    const { target } = recordedTarget((op) => (op === PlayOp.Step ? unsupported(op) : {}));
+    assert.equal(await target.clock?.step?.(100), null);
+    const [refusal] = target.refusals();
+    assert.equal(refusal?.op, PlayOp.Step);
+    assert.equal(refusal?.code, PlayErrorCode.Unsupported);
+    assert.match(String(refusal?.message), /not here/);
+  });
+
+  it("still fails a step when the game process is gone", async () => {
+    const { target } = recordedTarget(() => new PlayProtocolError(PlayFailure.Exited, PlayOp.Step, "gone"));
+    await assert.rejects(target.clock?.step?.(100) ?? Promise.resolve(), /gone/);
+  });
+
+  it("steps a long hold in pieces the game must accept, each under a deadline that grows with it", async () => {
+    const { target, calls, deadlines } = recordedTarget((op, args) =>
+      op === PlayOp.Step ? { simulatedMs: args.ms } : {},
+    );
+    assert.equal(await target.clock?.step?.(MAX_HOLD_KEY_MS), MAX_HOLD_KEY_MS);
+    const steps = calls.filter(([op]) => op === PlayOp.Step).map(([, args]) => Number(args.ms));
+    assert.ok(steps.length > 1, "a five-minute hold is more than one step");
+    assert.ok(steps.every((ms) => ms > 0 && ms <= PLAY_MAX_STEP_MS));
+    assert.equal(
+      steps.reduce((sum, ms) => sum + ms, 0),
+      MAX_HOLD_KEY_MS,
+    );
+    for (const [, timeoutMs] of deadlines.filter(([op]) => op === PlayOp.Step))
+      assert.ok((timeoutMs ?? 0) > PLAY_MAX_STEP_MS, `a minute's step waits longer than a minute (${timeoutMs})`);
+    deadlines.length = 0;
+    await target.clock?.step?.(16);
+    const short = deadlines.find(([op]) => op === PlayOp.Step)?.[1];
+    assert.ok((short ?? 0) >= PLAY_CALL_TIMEOUT_MS, "a short step keeps at least the usual deadline");
+  });
+
   it("fails the plan when the game process is gone", async () => {
     const { target } = recordedTarget(() => new PlayProtocolError(PlayFailure.Exited, PlayOp.Type, "gone"));
     await assert.rejects(target.input([{ type: "type", text: "a" }]), /gone/);
@@ -240,6 +337,39 @@ describe("game bridge target — capabilities from hello", () => {
     });
   }
 
+  it("reads the build a game names, and drops what is not one", () => {
+    const base = { protocol: 3, view: { width: 10, height: 10 } };
+    assert.deepEqual(readHello({ ...base, build: { id: "b-42", sourceHash: "abc123" } })?.build, {
+      id: "b-42",
+      sourceHash: "abc123",
+    });
+    assert.deepEqual(readHello({ ...base, build: { id: "b-42" } })?.build, { id: "b-42", sourceHash: null });
+    assert.equal(readHello(base)?.build, null);
+    assert.equal(readHello({ ...base, build: { id: 7 } })?.build, null);
+    assert.equal(readHello({ ...base, build: { id: "" } })?.build, null);
+    const hostile = readHello({ ...base, build: { id: `a\u0007b\n${"z".repeat(5_000)}`, sourceHash: 9 } })?.build;
+    assert.ok(hostile);
+    assert.ok(hostile.id.startsWith("abz"), "control characters are dropped");
+    assert.ok(hostile.id.length <= 200, "a runaway id is cut");
+    assert.equal(hostile.sourceHash, null);
+  });
+
+  it("reads the core ops a game says it lacks, beside those its levels rule out", () => {
+    const hello = readHello({
+      protocol: 3,
+      view: { width: 10, height: 10 },
+      capabilities: { pointer: "relative", clock: "freeze", state: "game", seed: false, actions: [] },
+      unsupported: ["type", "screenshot", "teleport"],
+    });
+    assert.ok(hello);
+    assert.deepEqual(
+      [...lackedOps(hello)].sort(),
+      [PlayOp.Act, PlayOp.Pointer, PlayOp.Reset, PlayOp.Step, PlayOp.Type, PlayOp.Wheel].sort(),
+      "screenshot is never optional and an unknown name is ignored",
+    );
+    assert.deepEqual(lackedOps(HELLO), []);
+  });
+
   it("refuses a hello without a protocol version or a view", () => {
     assert.equal(readHello({ view: { width: 1, height: 1 } }), null);
     assert.equal(readHello({ protocol: 3, view: { width: 0, height: 1 } }), null);
@@ -291,6 +421,9 @@ function source(
   after(() => made.release());
   return made;
 }
+
+/** How long a game flooding stderr is given to say ready: plenty when the pipe is read, never enough when it is not. */
+const STDERR_FLOOD_READY_MS = 8_000;
 
 /** How many times, 20 ms apart, a test looks for the pid a booting game writes: a loaded machine boots node slowly. */
 const PID_POLLS = 1_000;
@@ -374,6 +507,41 @@ describe("game bridge source — started through the sandbox, stopped on release
     const loaded = await source(sandbox, { client: { deadlines } }).load(root, false);
     assert.match(String(loaded.problem), /did not say ready/);
     assert.equal(running(await pidIn(pidFile)), false);
+  });
+
+  it("refuses a game that speaks another protocol version, and leaves nothing running", async () => {
+    const { sandbox } = await recordingSandbox();
+    const pidFile = path.join(await tmpDir("bridge-pid-"), "pid");
+    const loaded = await source(sandbox).load(await bridgeProject(["--protocol=2", `--pid-file=${pidFile}`]), false);
+    assert.match(String(loaded.problem), /Play Protocol 2.*studio speaks 3/);
+    assert.equal(running(await pidIn(pidFile)), false);
+    await assert.rejects(loaded.target.screenshot({ quality: 80, surface: CaptureSurface.Auto }));
+  });
+
+  it("names the build it plays in the load's note", async () => {
+    const { sandbox } = await recordingSandbox();
+    const root = await bridgeProject(["--build=b-42", "--source-hash=abc123"]);
+    const loaded = await source(sandbox).load(root, false);
+    assert.equal(loaded.problem, null);
+    assert.deepEqual(loaded.target.hello?.build, { id: "b-42", sourceHash: "abc123" });
+    assert.match(String(loaded.note), /build b-42.*abc123/);
+  });
+
+  it("reads a game that floods stderr before it says ready, instead of blocking it", async () => {
+    const { sandbox } = await recordingSandbox();
+    const root = await bridgeProject(["--stderr-flood=300000"]);
+    const loaded = await source(sandbox, { client: { readyTimeoutMs: STDERR_FLOOD_READY_MS } }).load(root, false);
+    assert.equal(loaded.problem, null);
+    assert.ok(await loaded.target.state?.(), "the game answers once it is up");
+  });
+
+  it("names what the game wrote to stderr when it dies before ready", async () => {
+    const { sandbox } = await recordingSandbox();
+    const loaded = await source(sandbox).load(
+      await bridgeProject(["--stderr=renderer: no Metal device", "--crash"]),
+      false,
+    );
+    assert.match(String(loaded.problem), /renderer: no Metal device/);
   });
 
   it("answers a fatal start with the game's own reason", async () => {

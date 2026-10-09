@@ -2,7 +2,9 @@
  * A game that speaks the Genex Play Protocol (docs/play-protocol.md) as a computer target: the
  * game runs as its own process, started through the ProcessSandbox, and every look, key, click
  * and clock move the `computer` session makes becomes a protocol op on its stdin. What the game
- * can do comes from its `hello`, never assumed; an op it refuses is skipped, never retried.
+ * can do comes from its `hello`, never assumed; a game that speaks another protocol version is
+ * refused at load. An op it refuses ends that action (keys and buttons it pressed are let go),
+ * is not counted as applied and is kept for the session to read (`refusals`), never retried.
  *
  * `gameBridgeSource` is the session's source for such a game: it reads the play command the
  * project's studio.json declares, starts it, hands the session the target, and stops the
@@ -22,11 +24,14 @@ import {
   TargetRefusal,
   TargetRuntime,
 } from "../../shared/computer-target.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import {
+  PLAY_MAX_STEP_MS,
   PLAY_PROTOCOL_CAPABILITIES,
+  PLAY_PROTOCOL_VERSION,
   PlayButton,
+  type PlayErrorCode,
   type PlayHello,
   PlayImageFormat,
   PlayFailure,
@@ -39,6 +44,7 @@ import {
 import { type PreviewInputAction, StillMimeType } from "../../shared/preview-contract.ts";
 import type { ComputerTarget, TargetLoad, TargetShot } from "../../substrate/computer-target.ts";
 import {
+  PLAY_CALL_TIMEOUT_MS,
   type PlayClient,
   type PlayClientOptions,
   type PlayExit,
@@ -70,22 +76,43 @@ const QUIT_GRACE_MS = 2 * SECOND_MS;
 const KILL_WAIT_MS = 2 * SECOND_MS;
 /** How long `hello` may take once the game said ready. */
 const HELLO_TIMEOUT_MS = 5 * SECOND_MS;
+/** What a `step` call is given beyond the time its simulation takes: the usual per-call wait. */
+const STEP_DEADLINE_BASE_MS = PLAY_CALL_TIMEOUT_MS;
+/** Wall milliseconds a game is given per simulated millisecond it is asked to step. */
+const STEP_DEADLINE_PER_SIMULATED_MS = 2;
+/** The longest one `step` call is waited for, however much it simulates. */
+const MAX_STEP_DEADLINE_MS = 3 * MINUTE_MS;
+/** The most refusals kept between two reads, so a session that never reads them holds no more. */
+const MAX_KEPT_REFUSALS = 32;
 
 const MESSAGE = {
   notBridge: "this build does not declare a Play Protocol game: studio.json needs a runtime and a play command",
   noCommand: (why: string) => `the game's play command cannot be used: ${why}`,
   failedStart: (why: string) => `the game failed to start: ${why}`,
   badHello: "the game's hello answer names no protocol version or view size",
+  otherVersion: (version: number) =>
+    `the game speaks Play Protocol ${version} and this studio speaks ${PLAY_PROTOCOL_VERSION}, so it was not played: rebuild it with a version ${PLAY_PROTOCOL_VERSION} engine plugin`,
+  build: (build: NonNullable<PlayHello["build"]>) =>
+    `playing build ${build.id}${build.sourceHash ? ` (source ${build.sourceHash})` : ""}`,
   unreachable: "the game process is not running",
   restarted: (exit: PlayExit) =>
     `the game process had exited (code ${exit.code ?? exit.signal ?? "unknown"}) and was started again`,
   badShot: "the game's screenshot carried no picture the studio can read",
 } as const;
 
+/** One op the game refused: which op, its refusal code, and its own sentence. */
+export interface BridgeRefusal {
+  op: string;
+  code: PlayErrorCode | PlayFailure;
+  message: string;
+}
+
 /** A Play Protocol game as the computer tool's target. */
 export interface GameBridgeTarget extends ComputerTarget {
   /** The game's own `hello`; null on a target that never started. */
   readonly hello: PlayHello | null;
+  /** The ops the game refused since the last read, oldest first; reading clears them. */
+  refusals(): BridgeRefusal[];
 }
 
 /** What a target needs beyond its client: a sleep the tests can replace. */
@@ -127,6 +154,43 @@ interface InputContext {
   hold: (ms: number) => Promise<void>;
 }
 
+/** How long a `step` of `ms` simulated milliseconds may take to answer. */
+function stepDeadlineMs(ms: number): number {
+  return Math.min(MAX_STEP_DEADLINE_MS, STEP_DEADLINE_BASE_MS + ms * STEP_DEADLINE_PER_SIMULATED_MS);
+}
+
+/**
+ * Advance the game `ms` simulated milliseconds, in calls of at most {@link PLAY_MAX_STEP_MS}
+ * (the longest step every game takes), each waited for as long as its simulation may take. The
+ * simulated milliseconds, or null when the game did not say; nothing is sent for `ms` ≤ 0.
+ */
+async function stepGame(client: PlayClient, ms: number): Promise<number | null> {
+  let simulated = 0;
+  for (let left = ms; left > 0; left -= PLAY_MAX_STEP_MS) {
+    const piece = Math.min(left, PLAY_MAX_STEP_MS);
+    const ran = readStep(await client.call(PlayOp.Step, { ms: piece }, { timeoutMs: stepDeadlineMs(piece) }));
+    if (ran === null) return null;
+    simulated += ran;
+  }
+  return simulated;
+}
+
+/** Run `during`, then `release` whether or not it failed; the first failure is the one that is thrown. */
+async function thenRelease(during: () => Promise<void>, release: () => Promise<void>): Promise<void> {
+  let failed: { error: unknown } | null = null;
+  try {
+    await during();
+  } catch (error) {
+    failed = { error };
+  }
+  try {
+    await release();
+  } catch (error) {
+    failed ??= { error };
+  }
+  if (failed) throw failed.error;
+}
+
 /** Send one core op and wait for its answer. */
 async function op<O extends PlayOp>(ctx: InputContext, name: O, args: PlayRequestArgs[O]): Promise<void> {
   await ctx.client.call(name, args);
@@ -145,11 +209,24 @@ function viewPoint(ctx: InputContext, x: unknown, y: unknown, px: boolean | unde
   return pointInView(x, y, ctx.view.width, ctx.view.height, { exact: px === true });
 }
 
+/** Press keys down in order, run `during`, then let go of every key that went down, in reverse — even when something failed. */
+async function holdingKeys(ctx: InputContext, codes: string[], during: () => Promise<void>): Promise<void> {
+  const down: string[] = [];
+  const press = async () => {
+    for (const code of codes) {
+      await op(ctx, PlayOp.Key, { code, down: true });
+      down.push(code);
+    }
+    await during();
+  };
+  await thenRelease(press, async () => {
+    for (const code of down.reverse()) await op(ctx, PlayOp.Key, { code, down: false });
+  });
+}
+
 /** Hold keys down for `ms`, then let them go in reverse order. */
-async function strike(ctx: InputContext, codes: string[], ms: number): Promise<void> {
-  for (const code of codes) await op(ctx, PlayOp.Key, { code, down: true });
-  await ctx.hold(ms);
-  for (const code of [...codes].reverse()) await op(ctx, PlayOp.Key, { code, down: false });
+function strike(ctx: InputContext, codes: string[], ms: number): Promise<void> {
+  return holdingKeys(ctx, codes, () => ctx.hold(ms));
 }
 
 /** A button name the protocol takes. */
@@ -187,22 +264,24 @@ const INPUT: {
     await op(ctx, PlayOp.Wheel, { dx: a.dx ?? 0, dy: a.dy ?? 0 });
   },
   wait: (ctx, a) => ctx.hold(Math.min(MAX_HOLD_KEY_MS, Math.max(0, a.ms))),
-  click: async (ctx, a) => {
+  click: (ctx, a) => {
     const modifiers = (a.modifiers ?? []).flatMap((name) => clickModifiers(name));
     const at = viewPoint(ctx, a.x, a.y, a.px);
-    for (const code of modifiers) await op(ctx, PlayOp.Key, { code, down: true });
-    await point(ctx, { ...at, button: buttonOf(a.button), click: Math.max(1, Math.min(MAX_CLICKS, a.clicks ?? 1)) });
-    for (const code of [...modifiers].reverse()) await op(ctx, PlayOp.Key, { code, down: false });
+    const clicks = Math.max(1, Math.min(MAX_CLICKS, a.clicks ?? 1));
+    return holdingKeys(ctx, modifiers, () => point(ctx, { ...at, button: buttonOf(a.button), click: clicks }));
   },
   move: (ctx, a) => point(ctx, viewPoint(ctx, a.x, a.y, a.px)),
   drag: async (ctx, a) => {
     const button = buttonOf(a.button);
     const to = viewPoint(ctx, a.x, a.y, a.px);
-    await point(ctx, { ...viewPoint(ctx, a.fromX, a.fromY, a.px), button, down: true });
-    await ctx.hold(TAP_HOLD_MS);
-    await point(ctx, to);
-    await ctx.hold(TAP_HOLD_MS);
-    await point(ctx, { ...to, button, down: false });
+    const from = viewPoint(ctx, a.fromX, a.fromY, a.px);
+    await point(ctx, { ...from, button, down: true });
+    const glide = async () => {
+      await ctx.hold(TAP_HOLD_MS);
+      await point(ctx, to);
+      await ctx.hold(TAP_HOLD_MS);
+    };
+    await thenRelease(glide, () => point(ctx, { ...(ctx.state.pointer ?? from), button, down: false }));
   },
   mousedown: (ctx, a) =>
     point(ctx, { ...viewPoint(ctx, undefined, undefined, true), button: buttonOf(a.button), down: true }),
@@ -215,16 +294,24 @@ function codesOf(keys: string[]): string[] {
   return normalizeKeys(keys).map((key) => key.code);
 }
 
-/** Run one studio action; an op the engine refuses ends that action, a dead process ends them all. */
-async function runAction(ctx: InputContext, action: PreviewInputAction): Promise<boolean> {
+/**
+ * Run one studio action: true when the game accepted every op it took. An op the game refuses
+ * ends that action and is handed to `refused`; a dead or silent process ends them all.
+ */
+async function runAction(
+  ctx: InputContext,
+  action: PreviewInputAction,
+  refused: (error: PlayProtocolError) => void,
+): Promise<boolean> {
   // The table is keyed by the action's own type, which TypeScript cannot correlate through a union.
   const handler = INPUT[action.type] as InputHandler;
   try {
     await handler(ctx, action);
     return true;
   } catch (error) {
-    if (error instanceof PlayProtocolError && !isUnreachable(error)) return false;
-    throw error;
+    if (!isRefusal(error)) throw error;
+    refused(error);
+    return false;
   }
 }
 
@@ -233,8 +320,21 @@ function isUnreachable(error: PlayProtocolError): boolean {
   return error.code === PlayFailure.Exited || error.code === PlayFailure.Timeout;
 }
 
-/** The target's clock: pause, play and step, as far as the game declared them. */
-function bridgeClock(client: PlayClient, caps: TargetCapabilities, state: BridgeState): ComputerTarget["clock"] {
+/** A failure of one op the game is still there to have refused (or answered unreadably). */
+function isRefusal(error: unknown): error is PlayProtocolError {
+  return error instanceof PlayProtocolError && !isUnreachable(error);
+}
+
+/**
+ * The target's clock: pause, play and step, as far as the game declared them. A step the game
+ * refuses answers null ("cannot step"), its refusal handed to `refused`; a dead process still throws.
+ */
+function bridgeClock(
+  client: PlayClient,
+  caps: TargetCapabilities,
+  state: BridgeState,
+  refused: (error: PlayProtocolError) => void,
+): ComputerTarget["clock"] {
   if (caps.clock === ClockLevel.None) return undefined;
   const pause = async () => {
     await client.call(PlayOp.Pause, {});
@@ -246,11 +346,32 @@ function bridgeClock(client: PlayClient, caps: TargetCapabilities, state: Bridge
   };
   if (!canPause(caps)) return { pause, start };
   const step = async (ms: number) => {
-    const ran = readStep(await client.call(PlayOp.Step, { ms }));
-    state.held = true;
-    return ran;
+    try {
+      const ran = await stepGame(client, ms);
+      state.held = true;
+      return ran;
+    } catch (error) {
+      if (!isRefusal(error)) throw error;
+      refused(error);
+      return null;
+    }
   };
   return { pause, start, step };
+}
+
+/** The refusals a target keeps for the session: added as they happen, taken (and cleared) on read. */
+function refusalLog() {
+  let kept: BridgeRefusal[] = [];
+  return {
+    add: (error: PlayProtocolError) => {
+      kept = [...kept, { op: error.op, code: error.code, message: error.message }].slice(-MAX_KEPT_REFUSALS);
+    },
+    take: (): BridgeRefusal[] => {
+      const taken = kept;
+      kept = [];
+      return taken;
+    },
+  };
 }
 
 /** The game's picture: JPEG when it can, else its PNG, kept as it is and named as what it is. */
@@ -275,22 +396,25 @@ export function gameBridgeTarget(
 ): GameBridgeTarget {
   const caps = capabilitiesFromHello(hello);
   const state: BridgeState = { pointer: null, held: false };
-  const clock = bridgeClock(client, caps, state);
+  const refusals = refusalLog();
+  const clock = bridgeClock(client, caps, state, refusals.add);
   const pause = options.sleep ?? ((ms: number) => sleep(ms).then(() => {}));
+  // Inside an action a refused step is thrown, so the action counts as not applied.
   const hold = async (ms: number) => {
-    if (state.held && clock?.step) await clock.step(ms);
+    if (state.held && canPause(caps)) await stepGame(client, ms);
     else await pause(ms);
   };
   const ctx: InputContext = { client, view: hello.view, state, hold };
   return {
     hello,
     caps,
+    refusals: refusals.take,
     viewSize: () => hello.view,
     pointer: () => state.pointer,
     screenshot: ({ quality }) => bridgeShot(client, hello, quality),
     input: async (actions) => {
       let applied = 0;
-      for (const action of actions) if (await runAction(ctx, action)) applied++;
+      for (const action of actions) if (await runAction(ctx, action, refusals.add)) applied++;
       return { applied, route: InputRoute.Bridge };
     },
     ...(caps.state === StateLevel.None ? {} : { state: () => client.call(PlayOp.State, {}) }),
@@ -318,6 +442,7 @@ function unreachableTarget(): GameBridgeTarget {
   const refuse = () => Promise.reject(new Error(`${TargetRefusal.Unreachable}: ${MESSAGE.unreachable}`));
   return {
     hello: null,
+    refusals: () => [],
     caps: capabilitiesFromHello(null),
     viewSize: () => ({ width: 1, height: 1 }),
     pointer: () => null,
@@ -391,6 +516,8 @@ export async function launchGameBridge(options: GameBridgeLaunchOptions): Promis
     client = await openPlayClient(streams, options.client);
     const hello = readHello(await client.call(PlayOp.Hello, {}, { timeoutMs: HELLO_TIMEOUT_MS }));
     if (!hello) throw new PlayProtocolError(PlayFailure.BadReply, PlayOp.Hello, MESSAGE.badHello);
+    if (hello.protocol !== PLAY_PROTOCOL_VERSION)
+      throw new PlayProtocolError(PlayFailure.Version, PlayOp.Hello, MESSAGE.otherVersion(hello.protocol));
     const opened = client;
     return {
       target: gameBridgeTarget(opened, hello, options.target),
@@ -430,6 +557,12 @@ async function playCommandAt(root: string): Promise<{ command: string } | { prob
   return { command: [resolved, ...shape.play.args].map(shellQuote).join(" ") };
 }
 
+/** Why a launch gave no target, as the load's problem: a version refusal as it is, anything else as a failed start. */
+function launchProblem(error: unknown): string {
+  const otherVersion = error instanceof PlayProtocolError && error.code === PlayFailure.Version;
+  return otherVersion ? error.message : MESSAGE.failedStart(errorMessage(error));
+}
+
 /** The game a source has running: the build it runs, and how it exited once it has. */
 interface RunningGame {
   root: string;
@@ -459,14 +592,11 @@ export function gameBridgeSource(options: GameBridgeSourceOptions): GameBridgeSo
         current.exit = exit;
       });
       running = current;
-      return { target: launch.target, problem: null, note, fresh: true };
+      const build = launch.target.hello?.build;
+      const notes = [note, build ? MESSAGE.build(build) : null].filter(Boolean);
+      return { target: launch.target, problem: null, note: notes.join("; ") || null, fresh: true };
     } catch (error) {
-      return {
-        target: unreachableTarget(),
-        problem: MESSAGE.failedStart(errorMessage(error)),
-        note: null,
-        fresh: true,
-      };
+      return { target: unreachableTarget(), problem: launchProblem(error), note: null, fresh: true };
     }
   };
   return {
