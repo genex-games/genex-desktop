@@ -76,6 +76,11 @@ export interface ComputerTarget {
   seed?(seed: number): Promise<void>;
   camera?(name: string): Promise<TargetCameraAnswer>;
   console?(sinceMs: number): PreviewConsoleEntry[];
+  /**
+   * What the target refused since this was last asked, and why — the ops a Play Protocol game
+   * answered with an error. Reading it clears it.
+   */
+  refusals?(): Array<{ op: string; code: string; message: string }>;
   /** Named game actions ("jump"), where the target declares `actions`. */
   act?(actions: TargetGameAction[]): Promise<{ applied: number; route: InputRoute }>;
 }

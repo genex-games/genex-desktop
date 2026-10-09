@@ -396,3 +396,20 @@ describe("computer session — named game actions", () => {
     assert.match(text(await plain.s.run("computer", { action: "act", text: "jump" })), /not available/);
   });
 });
+
+describe("computer session — why a game refused", () => {
+  it("names the game's own reason when it took only part of a move", async () => {
+    const { target } = fakeTarget();
+    const pending = [{ op: "key", code: "unsupported", message: "no keyboard in this build" }];
+    const refusing: ComputerTarget = {
+      ...target,
+      input: async () => ({ applied: 0, route: InputRoute.Bridge }),
+      refusals: () => pending.splice(0),
+    };
+    const { s } = await session({ target: refusing });
+    assert.match(
+      text(await s.run("computer", { action: "key", text: "w" })),
+      /PARTLY .*\(key: no keyboard in this build\)/,
+    );
+  });
+});

@@ -364,9 +364,11 @@ async function input(ctx: ActionContext): Promise<LiveToolResult> {
   ctx.record.simMs = outcome.simMs;
   const c = helpers.cursor(target, ctx.size);
   const state = await helpers.afterMove(ctx);
+  const refused = target.refusals?.() ?? [];
+  const why = refused.length ? COMPUTER_ARG_PROBLEM.refusedBecause(refused.map((r) => `${r.op}: ${r.message}`)) : "";
   const head =
     outcome.taken < outcome.planned
-      ? COMPUTER_ARG_PROBLEM.partlyTaken(caption, outcome.taken, outcome.planned)
+      ? `${COMPUTER_ARG_PROBLEM.partlyTaken(caption, outcome.taken, outcome.planned)}${why}`
       : `OK — ${caption}`;
   return observed(ctx, `${head}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}`, true);
 }

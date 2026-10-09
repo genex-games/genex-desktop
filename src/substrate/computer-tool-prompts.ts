@@ -180,6 +180,7 @@ export const COMPUTER_ARG_PROBLEM = {
   partlyTaken: (caption: string, taken: number, planned: number) =>
     `PARTLY — ${caption}: the game took ${taken} of ${planned} input actions and refused the rest`,
   allRefused: "the game refused every input of that step",
+  refusedBecause: (reasons: string[]) => ` (${reasons.slice(0, 3).join("; ")})`,
   actionFailed: (action: string, why: string) => `${action} failed: ${why} — the game may have stopped answering`,
   budgetSpent: (max: number) =>
     `action budget spent (${max} of ${max} moves) — no more input this session; answer with what you have seen`,
