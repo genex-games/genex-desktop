@@ -3,13 +3,20 @@
  * A tiny deterministic game that speaks the Genex Play Protocol v3 on stdin/stdout
  * (docs/play-protocol.md): a dot that runs left and right and jumps, hazards dropped by a seeded
  * RNG that cost health, a step-locked clock in 16 ms ticks, and screenshots drawn as a small PNG.
+ * Clicks count in the simulation; like all input they land at the start of the next tick, so
+ * nothing given while paused moves it before a step. Its state carries the protocol's input echo.
  * The conformance suite drives it through the studio's real client and target.
  *
  * Flags for the hostile rows: --view=WxH, --never-ready, --fatal, --die-on=<op>, --ignore-quit,
  * --noise (garbage before ready and an id-less event after every reply), --pid-file=<path> (its
- * own pid, written first, so a test can prove a stop left nothing running).
+ * own pid, written first, so a test can prove a stop left nothing running), --protocol=<n> (the
+ * version its hello announces), --build=<id> and --source-hash=<hash> (the build it names),
+ * --stderr=<text> (one stderr line before anything else), --stderr-flood=<bytes> (that much
+ * stderr before ready, written the blocking way a native engine writes it), --crash (exit before
+ * ready), and --reduced (a game that declares a relative pointer, a freeze-only clock, no seed,
+ * no actions and no text input, and refuses those ops with `unsupported`).
  */
-import { writeFileSync } from "node:fs";
+import { writeFileSync, writeSync } from "node:fs";
 import { crc32, deflateSync } from "node:zlib";
 
 const TICK_MS = 16;
@@ -26,8 +33,8 @@ const HAZARD_TTL_TICKS = 30;
 
 const flags = new Map(
   process.argv.slice(2).map((arg) => {
-    const [key, value] = arg.replace(/^--/, "").split("=");
-    return [key, value ?? true];
+    const [key, ...value] = arg.replace(/^--/, "").split("=");
+    return [key, value.length ? value.join("=") : true];
   }),
 );
 const [W, H] = String(flags.get("view") ?? "64x40")
@@ -44,27 +51,54 @@ function nextRandom(sim) {
 }
 
 function freshSim(seed) {
-  return { seed, rng: seed >>> 0, tick: 0, x: Math.floor(W / 2), y: H - 6, vy: 0, health: 5, score: 0, hazards: [] };
+  return {
+    seed,
+    rng: seed >>> 0,
+    tick: 0,
+    x: Math.floor(W / 2),
+    y: H - 6,
+    vy: 0,
+    health: 5,
+    score: 0,
+    clicks: 0,
+    hazards: [],
+  };
 }
 
-const game = {
-  sim: freshSim(1),
-  paused: false,
-  keys: new Set(),
-  latched: new Set(),
-  actions: new Map(),
-  pointer: { x: Math.floor(W / 2), y: Math.floor(H / 2), buttons: [] },
-  typed: "",
-  look: { dx: 0, dy: 0 },
-  wheel: { dx: 0, dy: 0 },
-};
+/** Input as it is at launch: nothing held, typed or queued, the pointer in the middle. */
+function freshInput() {
+  return {
+    keys: new Set(),
+    latched: new Set(),
+    actions: new Map(),
+    pointer: { x: Math.floor(W / 2), y: Math.floor(H / 2), buttons: [] },
+    typed: "",
+    look: { dx: 0, dy: 0 },
+    wheel: { dx: 0, dy: 0 },
+    /** Clicks waiting for the next tick. */
+    clicks: [],
+  };
+}
+
+const game = { sim: freshSim(1), paused: false, ...freshInput() };
 
 function inputOn(keys, action) {
   return keys.some((code) => game.keys.has(code) || game.latched.has(code)) || game.actions.has(action);
 }
 
+/** Clicks queued since the last tick land now, at the tick's start (docs/play-protocol.md: queued input). */
+function landClicks(sim) {
+  for (const { x, y, count } of game.clicks) {
+    const onPlayer = x >= sim.x && x < sim.x + PLAYER && y >= sim.y && y < sim.y + PLAYER;
+    if (onPlayer) sim.score += count;
+    sim.clicks += count;
+  }
+  game.clicks = [];
+}
+
 function tick() {
   const sim = game.sim;
+  landClicks(sim);
   const ground = H - 6;
   const dx = (inputOn(RIGHT_KEYS, "right") ? 2 : 0) - (inputOn(LEFT_KEYS, "left") ? 2 : 0);
   sim.x = Math.max(0, Math.min(W - PLAYER, sim.x + dx));
@@ -81,6 +115,7 @@ function tick() {
     }
   }
   sim.hazards = sim.hazards.filter((hazard) => hazard.ttl > 0);
+
   game.latched.clear();
   for (const [name, left] of game.actions) {
     if (left <= 1) game.actions.delete(name);
@@ -111,11 +146,14 @@ function state() {
     simulatedMs: sim.tick * TICK_MS,
     player: { x: sim.x, y: sim.y, health: sim.health, score: sim.score },
     hazards: sim.hazards.length,
-    keys: [...game.keys].sort(),
-    pointer: game.pointer,
-    typed: game.typed,
-    look: game.look,
-    wheel: game.wheel,
+    clicks: sim.clicks,
+    input: {
+      keys: [...game.keys].sort(),
+      pointer: game.pointer,
+      typed: game.typed,
+      look: game.look,
+      wheel: game.wheel,
+    },
     checksum: checksum(),
   };
 }
@@ -172,15 +210,14 @@ function pointer(args) {
   need(finite(args.x) && finite(args.y), "pointer needs numeric x and y");
   const button = args.button ?? "left";
   need(["left", "middle", "right"].includes(button), "unknown button");
+  need(args.down === undefined || typeof args.down === "boolean", "down is true or false");
   game.pointer.x = Math.max(0, Math.min(W - 1, Math.round(args.x)));
   game.pointer.y = Math.max(0, Math.min(H - 1, Math.round(args.y)));
   if (args.down === true && !game.pointer.buttons.includes(button)) game.pointer.buttons.push(button);
   if (args.down === false) game.pointer.buttons = game.pointer.buttons.filter((held) => held !== button);
   if (args.click !== undefined) {
     need(Number.isInteger(args.click) && args.click >= 1 && args.click <= 3, "click is 1, 2 or 3");
-    const { x, y } = game.pointer;
-    const onPlayer = x >= game.sim.x && x < game.sim.x + PLAYER && y >= game.sim.y && y < game.sim.y + PLAYER;
-    if (onPlayer) game.sim.score += args.click;
+    game.clicks.push({ x: game.pointer.x, y: game.pointer.y, count: args.click });
   }
   return { x: game.pointer.x, y: game.pointer.y };
 }
@@ -200,36 +237,43 @@ function act(args) {
 }
 
 function step(args) {
-  need(finite(args.ms) && args.ms >= 0 && args.ms <= MAX_STEP_MS, `ms is 0..${MAX_STEP_MS}`);
+  need(finite(args.ms) && args.ms > 0 && args.ms <= MAX_STEP_MS, `ms is more than 0, at most ${MAX_STEP_MS}`);
   game.paused = true;
-  const ticks = Math.max(args.ms > 0 ? 1 : 0, Math.round(args.ms / TICK_MS));
+  const ticks = Math.max(1, Math.round(args.ms / TICK_MS));
   for (let i = 0; i < ticks; i++) tick();
   return { simulatedMs: ticks * TICK_MS, tick: game.sim.tick };
 }
 
 function reset(args) {
   need(Number.isInteger(args.seed) && args.seed >= 0, "seed is a whole number");
-  game.sim = freshSim(args.seed);
-  game.keys.clear();
-  game.latched.clear();
-  game.actions.clear();
+  Object.assign(game, { sim: freshSim(args.seed), ...freshInput() });
   return { seed: args.seed };
 }
 
+const REDUCED = flags.has("reduced");
+/** The core ops a reduced game lacks: what its hello's levels and `unsupported` list rule out. */
+const LACKED = new Set(REDUCED ? ["pointer", "wheel", "step", "reset", "act", "type"] : []);
+const PROTOCOL = Number(flags.get("protocol") ?? 3);
+
+function build() {
+  if (typeof flags.get("build") !== "string") return undefined;
+  const hash = flags.get("source-hash");
+  return { id: flags.get("build"), ...(typeof hash === "string" ? { sourceHash: hash } : {}) };
+}
+
+const CAPABILITIES = REDUCED
+  ? { pointer: "relative", clock: "freeze", state: "game", seed: false, actions: [], screenshot: ["png"] }
+  : { pointer: "absolute", clock: "replayable", state: "game", seed: true, actions: ACTIONS, screenshot: ["png"] };
+
 const OPS = {
   hello: () => ({
-    protocol: 3,
+    protocol: PROTOCOL,
     name: "fake-play-game",
+    build: build(),
     view: { width: W, height: H },
-    capabilities: {
-      pointer: "absolute",
-      clock: "replayable",
-      state: "game",
-      seed: true,
-      actions: ACTIONS,
-      screenshot: ["png"],
-    },
+    capabilities: CAPABILITIES,
     ops: ["hazards"],
+    unsupported: REDUCED ? ["type"] : [],
   }),
   screenshot: (args) => {
     need(args.format === undefined || ["png", "jpeg"].includes(args.format), "format is png or jpeg");
@@ -238,6 +282,7 @@ const OPS = {
   pointer,
   key: (args) => {
     need(typeof args.code === "string" && args.code.length > 0, "key needs a code");
+    need(args.down === undefined || typeof args.down === "boolean", "down is true or false");
     if (args.down === true) game.keys.add(args.code);
     else if (args.down === false) game.keys.delete(args.code);
     else game.latched.add(args.code);
@@ -285,6 +330,10 @@ function answer(request) {
     say({ id, ok: true, op, result: {} }, () => process.exit(0));
     return;
   }
+  if (LACKED.has(op)) {
+    say({ id, ok: false, op, error: `this game has no ${op}`, code: "unsupported" });
+    return;
+  }
   const handler = Object.hasOwn(OPS, op) ? OPS[op] : null;
   if (!handler) {
     say({ id, ok: false, op, error: `unknown op ${op}`, code: "unknown-op", available: [...Object.keys(OPS), "quit"] });
@@ -324,6 +373,26 @@ process.stdin.on("end", () => {
 });
 
 if (typeof flags.get("pid-file") === "string") writeFileSync(flags.get("pid-file"), String(process.pid));
+
+/** Write to stderr the way a native engine does: blocking until the reader takes it. */
+function blockingStderr(text) {
+  const bytes = Buffer.from(text);
+  for (let at = 0; at < bytes.length; ) {
+    try {
+      at += writeSync(2, bytes, at);
+    } catch (error) {
+      if (error.code !== "EAGAIN") throw error;
+    }
+  }
+}
+
+if (typeof flags.get("stderr") === "string") blockingStderr(`${flags.get("stderr")}\n`);
+if (typeof flags.get("stderr-flood") === "string") {
+  const line = `${"engine log ".repeat(9)}\n`;
+  const lines = Math.ceil(Number(flags.get("stderr-flood")) / line.length);
+  blockingStderr(line.repeat(lines));
+}
+if (flags.has("crash")) process.exit(3);
 
 if (flags.has("fatal")) {
   say({ event: "fatal", error: "fake fatal: no display" }, () => process.exit(1));

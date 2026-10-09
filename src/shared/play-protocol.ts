@@ -8,9 +8,14 @@
  * computer target over it in `main/core/game-bridge-target.ts`.
  */
 import { ClockLevel, PointerLevel, StateLevel, type TargetCapabilities, TargetRuntime } from "./computer-target.ts";
+import { SECOND_MS } from "./duration.ts";
 
-/** The protocol version this studio speaks; `hello` answers the engine's. */
+/** The protocol's major version this studio speaks; a game whose `hello` names another is refused. */
 export const PLAY_PROTOCOL_VERSION = 3;
+/** The longest `step` the studio sends in one call; a longer hold is sent as several. Every game takes this much. */
+export const PLAY_MAX_STEP_MS = 60 * SECOND_MS;
+/** The most characters of a build id or source hash the studio keeps. */
+const MAX_BUILD_FIELD_CHARS = 128;
 
 /** The core ops every engine answers. Game-specific ops are listed in `hello.ops`, never added here. */
 export const PlayOp = {
@@ -53,6 +58,8 @@ export const PlayFailure = {
   Oversize: "oversize",
   /** The reply was not a usable answer to the op that was asked. */
   BadReply: "bad-reply",
+  /** The game's `hello` names a protocol version other than {@link PLAY_PROTOCOL_VERSION}. */
+  Version: "version",
 } as const;
 export type PlayFailure = (typeof PlayFailure)[keyof typeof PlayFailure];
 
@@ -123,14 +130,24 @@ export interface PlayCapabilities {
   screenshot: PlayImageFormat[];
 }
 
+/** Which binary is playing: the game's own build id and, when it knows it, the hash of the source it was built from. */
+export interface PlayBuild {
+  id: string;
+  sourceHash: string | null;
+}
+
 /** `hello`'s answer: who the engine is, what it can do, and the pixel space of its pictures and pointer. */
 export interface PlayHello {
   protocol: number;
   name: string | null;
+  /** The build the game names, or null when it names none. */
+  build: PlayBuild | null;
   view: { width: number; height: number };
   capabilities: PlayCapabilities;
   /** Game-specific ops beyond the core ones. */
   ops: string[];
+  /** Core ops the game says it answers with `unsupported` although its levels allow them. */
+  unsupported: PlayOp[];
 }
 
 /** `screenshot`'s answer: the picture inline, its size and, when the engine measures them, its light. */
@@ -193,6 +210,28 @@ function capabilitiesOf(raw: unknown): PlayCapabilities {
   };
 }
 
+/** A build field as the studio keeps it: printable, cut to length, or null when nothing is left. */
+function buildField(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const kept = raw
+    .replace(/\p{Cc}/gu, "")
+    .trim()
+    .slice(0, MAX_BUILD_FIELD_CHARS);
+  return kept || null;
+}
+
+/** The build a game names, or null when it names none the studio can show. */
+function buildOf(raw: unknown): PlayBuild | null {
+  if (!isRecord(raw)) return null;
+  const id = buildField(raw.id);
+  return id === null ? null : { id, sourceHash: buildField(raw.sourceHash) };
+}
+
+/** The core ops a game may decline in `hello.unsupported`: `hello`, `screenshot` and `quit` are never optional. */
+const OPTIONAL_OPS: readonly PlayOp[] = Object.values(PlayOp).filter(
+  (op) => op !== PlayOp.Hello && op !== PlayOp.Screenshot && op !== PlayOp.Quit,
+);
+
 /** `hello`'s answer as the studio reads it, or null when it names no protocol version or view. */
 export function readHello(value: unknown): PlayHello | null {
   if (!isRecord(value) || typeof value.protocol !== "number") return null;
@@ -200,13 +239,38 @@ export function readHello(value: unknown): PlayHello | null {
   const width = pixels(view.width);
   const height = pixels(view.height);
   if (width === null || height === null) return null;
+  const declined = strings(value.unsupported);
   return {
     protocol: value.protocol,
     name: typeof value.name === "string" ? value.name : null,
+    build: buildOf(value.build),
     view: { width, height },
     capabilities: capabilitiesOf(value.capabilities),
     ops: strings(value.ops),
+    unsupported: OPTIONAL_OPS.filter((op) => declined.includes(op)),
   };
+}
+
+/** Which capability each optional core op needs, as a test of what `hello` declared. */
+const OP_NEEDS: Partial<Record<PlayOp, (caps: PlayCapabilities) => boolean>> = {
+  [PlayOp.Pointer]: (caps) => caps.pointer === PointerLevel.Absolute,
+  [PlayOp.Wheel]: (caps) => caps.pointer === PointerLevel.Absolute,
+  [PlayOp.Look]: (caps) => caps.pointer !== PointerLevel.None,
+  [PlayOp.Act]: (caps) => caps.actions.length > 0,
+  [PlayOp.Pause]: (caps) => caps.clock !== ClockLevel.None,
+  [PlayOp.Play]: (caps) => caps.clock !== ClockLevel.None,
+  [PlayOp.Step]: (caps) => caps.clock === ClockLevel.StepLocked || caps.clock === ClockLevel.Replayable,
+  [PlayOp.Reset]: (caps) => caps.seed,
+  [PlayOp.State]: (caps) => caps.state !== StateLevel.None,
+};
+
+/**
+ * The core ops a game answers with `unsupported`: those its capability levels rule out (no
+ * absolute pointer: no `pointer` or `wheel`; no step-locked clock: no `step`; no seed: no
+ * `reset`…) and those its `hello.unsupported` lists.
+ */
+export function lackedOps(hello: PlayHello): PlayOp[] {
+  return OPTIONAL_OPS.filter((op) => hello.unsupported.includes(op) || OP_NEEDS[op]?.(hello.capabilities) === false);
 }
 
 /** Light measurements an engine sent with a picture, when both numbers are there. */
