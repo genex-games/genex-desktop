@@ -72,7 +72,7 @@ test("a live profile runs native channels", async () => {
   handle("studio:open-url", () => true);
   assert.deepEqual(await listeners.get("studio:open-url")!(studio, {}), { ok: true, value: true });
 });
-test("plugin, connector, terminal and don't-wait channels answer only Studio's main frame", async () => {
+test("plugin, connector, terminal, don't-wait, job and Privacy settings channels answer only Studio's main frame", async () => {
   const { ipc, listeners } = recorder();
   const handle = createIpcHandle(ipc, { fixture: false, isStudioUi });
   let ran = 0;
@@ -96,9 +96,24 @@ test("plugin, connector, terminal and don't-wait channels answer only Studio's m
     ran++;
     return [];
   });
+  handle("studio:jobs.stop", () => {
+    ran++;
+    return null;
+  });
+  handle("studio:app-look.open-settings", () => {
+    ran++;
+    return true;
+  });
   const subframe = { sender: studio.sender, senderFrame: "plugin-panel-frame" },
     other = { sender: "game-webcontents", senderFrame: "game-frame" };
-  for (const channel of ["studio:plugins.list", "studio:mcp.list", "studio:terminal.list", "studio:loop.dontWait"]) {
+  for (const channel of [
+    "studio:plugins.list",
+    "studio:mcp.list",
+    "studio:terminal.list",
+    "studio:loop.dontWait",
+    "studio:jobs.stop",
+    "studio:app-look.open-settings",
+  ]) {
     for (const event of [subframe, other])
       assert.deepEqual(
         await listeners.get(channel)!(event, {}),
@@ -108,7 +123,7 @@ test("plugin, connector, terminal and don't-wait channels answer only Studio's m
     assert.equal((await listeners.get(channel)!(studio, {})).ok, true, channel);
   }
   assert.deepEqual(await listeners.get("studio:games")!(other, {}), { ok: true, value: [] });
-  assert.equal(ran, 5);
+  assert.equal(ran, 7);
 });
 test("a channel is never both fixture-safe and native", () => {
   assert.deepEqual(
@@ -154,6 +169,8 @@ test("native accounts, terminals, plugin installs, external opens and Genex are 
     "studio:genex.approve",
     // Set up creates a Windows user account and network filters, behind an administrator prompt.
     "studio:boot.setup",
+    // Open Privacy settings opens macOS System Settings.
+    "studio:app-look.open-settings",
   ]) {
     assert.equal(classifyChannel(channel), "native", channel);
     assert.throws(() => assertNativeActionAllowed(true, channel), /unsupported-in-fixture/, channel);
@@ -181,6 +198,8 @@ test("fixture-safe channels run in fixtures and an unclassified one is refused t
     // The person's "Don't wait for me" and its state: the profile's own file and the chat's log.
     "studio:loop.dontWait",
     "studio:loop.dontWaitState",
+    // The person's Stop on a job this profile's own agent started.
+    "studio:jobs.stop",
   ]) {
     assert.equal(classifyChannel(channel), "fixture-safe", channel);
     assert.doesNotThrow(() => assertNativeActionAllowed(true, channel), channel);

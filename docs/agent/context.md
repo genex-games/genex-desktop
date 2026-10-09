@@ -13,7 +13,7 @@ game), **Builds** (work and results) and **Assets** (files and generated media).
 
 The prompt bar chooses the model, permissions, Auto or Loop mode, optional planning,
 references and tools. Chat shows replies, real questions, compact work status and results. Detailed tools,
-checks and worker activity expand on demand. Long history loads in portions.
+checks and worker activity expand on demand.
 
 Studio is a separate assistant and Activity feed for reviewing runs and improvements to
 the game-building instructions. Plugins add tools, assets and integrations. Settings owns
@@ -31,8 +31,8 @@ must survive application changes.
 | [Assets and plugins](../product/assets-plugins.md) | Media, asset previews, tools, plugin setup and permissions |
 | [Studio and learning](../product/studio-learning.md) | Studio chat, Activity, instruction proposals and rollback |
 
-Start here, then read only the relevant page and follow its technical links only when the task
-needs them. Product pages describe visible behavior; references describe mechanisms. Code and
+Start here, then read only the relevant page, following its technical links only when
+needed. Product pages describe visible behavior; references describe mechanisms. Code and
 tests resolve discrepancies.
 
 ## For the developer

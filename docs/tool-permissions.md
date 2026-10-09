@@ -371,6 +371,12 @@ registry ([harness runtime](harness-runtime.md)). Each start and end is a host r
 (`job_started`, `job_ended`, which the harness cannot write), and the harness can neither start nor
 stop a job.
 
+The chat shows each job as one line ("In the background: Unreal build · 4 min") whose **Stop** is the
+person's (`studio:jobs.stop`, fixture-safe, Studio's main frame only; `stoppedBy: person`):
+`jobNotice`, `job_status` and the lead's line say the person stopped it, and the notice and the
+lead's line add not to start it again unless asked. A running job's start is a current-state fact of its chat, so the line and Stop stay whatever page
+is loaded; what a rewind keeps of them is in [the coordinator](conversation-coordinator.md).
+
 ## Looking at apps
 
 `app_look {app?, window?}` ([`src/main/core/app-look-tool.ts`](../src/main/core/app-look-tool.ts),
@@ -394,8 +400,9 @@ macOS asks the person for Screen Recording and Accessibility. Genex asks once, a
 finds either missing (`<engine homes>/app-look-access.json` remembers it asked); the first tree read
 also brings macOS's own Automation prompt for System Events. While access is missing the agent is
 told what the person must turn on and not to retry, and the chat gets one `app_look_access` line per
-app session (a host record the harness cannot write). Fixture profiles look at a stub window; other
-systems answer that it works on macOS only for now.
+app session (a host record the harness cannot write), with **Open Privacy settings**
+(`studio:app-look.open-settings`, native), which opens only that System Settings pane. Fixture
+profiles look at a stub window; other systems answer that it works on macOS only for now.
 
 ## Other engines
 

@@ -200,7 +200,10 @@ export class JobService {
   readonly #live = new Map<string, LiveJob>();
   /** Starts in flight per game, counted against its running jobs. */
   readonly #reserved = new Map<string, number>();
-  readonly #starting = new Set<Promise<unknown>>();
+  /** Starts in flight, by whose job each will be. */
+  readonly #starting = new Map<Promise<unknown>, JobOwner>();
+  /** Jobs whose process ended and whose end is still being told (`onEnded`). */
+  readonly #finishing = new Map<string, LiveJob>();
   /** The last end number per game, once read. */
   readonly #seq = new Map<string, number>();
   /** One writer of a game's records at a time. */
@@ -229,7 +232,7 @@ export class JobService {
     const starting = this.#launch(request).finally(() => {
       this.#reserved.set(project, (this.#reserved.get(project) ?? 1) - 1);
     });
-    this.#starting.add(starting);
+    this.#starting.set(starting, request.owner);
     void starting.then(
       () => this.#starting.delete(starting),
       () => this.#starting.delete(starting),
@@ -294,18 +297,28 @@ export class JobService {
     return this.#stopLive(live, { state: JobState.Stopped, by });
   }
 
-  /** Stop every running job of one scope, in one game or (`project` undefined) in all. */
+  /**
+   * Stop every running job of one scope, in one game or (`project` undefined) in all, its starts in
+   * flight included. Answers once each of the scope's ends is told, the ends of jobs that exited by
+   * themselves just before included, with the records of the jobs it stopped.
+   */
   async stopScope(project: string | undefined, scope: JobScope, by: JobStopper): Promise<JobRecord[]> {
-    const matching = [...this.#live.values()].filter(
-      (live) =>
-        (project === undefined || live.record.owner.project === project) && sameScope(live.record.owner.scope, scope),
-    );
-    return Promise.all(matching.map((live) => this.#stopLive(live, { state: JobState.Stopped, by })));
+    const inScope = (owner: JobOwner) =>
+      (project === undefined || owner.project === project) && sameScope(owner.scope, scope);
+    const starts = [...this.#starting].filter(([, owner]) => inScope(owner)).map(([start]) => start);
+    await Promise.allSettled(starts);
+    const finishing = [...this.#finishing.values()].filter((live) => inScope(live.record.owner));
+    const matching = [...this.#live.values()].filter((live) => inScope(live.record.owner));
+    const [stopped] = await Promise.all([
+      Promise.all(matching.map((live) => this.#stopLive(live, { state: JobState.Stopped, by }))),
+      Promise.allSettled(finishing.map((live) => live.ended)),
+    ]);
+    return stopped;
   }
 
   /** Stop every job this app runs, starts in flight included, all within one grace period. */
   async stopAll(by: JobStopper): Promise<JobRecord[]> {
-    await Promise.allSettled([...this.#starting]);
+    await Promise.allSettled([...this.#starting.keys()]);
     const live = [...this.#live.values()];
     return Promise.all(live.map((job) => this.#stopLive(job, { state: JobState.Stopped, by })));
   }
@@ -453,8 +466,13 @@ export class JobService {
     record.endedAt = new Date(this.#clock.now()).toISOString();
     await this.#saveEnd(record);
     this.#live.delete(record.id);
+    this.#finishing.set(record.id, live);
     const ended = copy(record);
-    await this.#tellEnded(ended);
+    try {
+      await this.#tellEnded(ended);
+    } finally {
+      this.#finishing.delete(record.id);
+    }
     return ended;
   }
 

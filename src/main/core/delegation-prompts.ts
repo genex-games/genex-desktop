@@ -4,7 +4,7 @@ import { CallCutOff, type PluginAppliedSet } from "../../shared/plugins.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
 import type { UnsavedFile } from "./unsaved-files.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { type JobRecord, JobState } from "../../shared/jobs.ts";
+import { type JobRecord, JobState, JobStopper } from "../../shared/jobs.ts";
 
 /** Why a call was cut off, as the cut-off notice says it. */
 const MESSAGE = {
@@ -69,14 +69,20 @@ const JOB_ENDED_WORDS = {
   [JobState.Interrupted]: "was stopped when Genex closed",
 } as const satisfies Record<Exclude<JobState, typeof JobState.Running>, string>;
 
-/** One ended job in the jobs notice: its title, command, how it ended and after how long. */
+/**
+ * One ended job in the jobs notice: its title, command, how it ended and after how long. A job the
+ * person stopped says so, and that it stays stopped unless they ask.
+ */
 function endedJobWords(job: JobRecord): string {
   const state = job.state === JobState.Running ? JobState.Interrupted : job.state;
   const exit = typeof job.exitCode === "number" ? ` (exit ${job.exitCode})` : "";
   const ms = Date.parse(job.endedAt ?? "") - Date.parse(job.startedAt);
   const after = Number.isFinite(ms) ? ` after ${Math.max(0, Math.round(ms / MINUTE_MS))} min` : "";
   const read = job.state === JobState.Succeeded ? "" : `: read it with job_tail ${job.id}`;
-  return `${job.title} (\`${job.command}\`) ${JOB_ENDED_WORDS[state]}${exit}${after}${read}`;
+  const byPerson = job.stoppedBy === JobStopper.Person;
+  const by = byPerson ? " by the person" : "";
+  const keepStopped = byPerson ? ", and do not start it again unless the person asks" : "";
+  return `${job.title} (\`${job.command}\`) ${JOB_ENDED_WORDS[state]}${by}${exit}${after}${read}${keepStopped}`;
 }
 
 /**

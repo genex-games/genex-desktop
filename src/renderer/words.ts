@@ -50,7 +50,14 @@ import type { IterationStatus } from "./run-graph.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { plural } from "../shared/skill-words.ts";
-import { JOB_PERMISSION_TOOL } from "../shared/jobs.ts";
+import {
+  APP_LOOK_TOOL_NAME,
+  AppLookAccessKind,
+  JOB_PERMISSION_TOOL,
+  JobState as BackgroundJobState,
+  JobStopper,
+  JobTool,
+} from "../shared/jobs.ts";
 import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { type ConnectorStep, StepAction } from "./chat/connector-steps.ts";
@@ -1614,7 +1621,96 @@ export const TRANSCRIPT_WORDS = {
   /** the tags of a reviewer's and a builder's narration rows */
   checkTag: "Check",
   workerTag: "Worker",
+  /** A job's line (`job_started`): Stop while it runs. */
+  jobStop: "Stop",
+  jobStopTitle: "Stop this background work",
+  /** A missing macOS permission (`app_look_access`): the button opens System Settings, not Genex's own Settings. */
+  openPrivacySettings: "Open Privacy settings",
 } as const;
+
+// ── background work ───────────────────────────────────────────────────────────────────────
+
+/** Minutes in an hour. */
+export const MINUTES_PER_HOUR = HOUR_MS / MINUTE_MS;
+
+/** A span of whole minutes: "9 min", "1 h", "1 h 5 min". */
+export function spanWords(minutes: number): string {
+  if (minutes < MINUTES_PER_HOUR) return `${minutes} min`;
+  const rest = minutes % MINUTES_PER_HOUR;
+  return `${Math.floor(minutes / MINUTES_PER_HOUR)} h${rest ? ` ${rest} min` : ""}`;
+}
+
+/** A job's whole minutes: "4 min", "1 h 5 min", or `short` under a minute. */
+function jobMinutes(minutes: number, short: string): string {
+  const whole = Math.max(0, Math.floor(minutes));
+  return whole < 1 ? short : spanWords(whole);
+}
+
+/** How a stopped job was stopped, by who stopped it; the person's and the agent's Stop read alike. */
+const STOPPED_WORDS = {
+  [JobStopper.Agent]: "stopped",
+  [JobStopper.Person]: "stopped",
+  [JobStopper.Quit]: "stopped when Genex closed",
+  [JobStopper.ScopeEnded]: "stopped when its work ended",
+} as const satisfies Record<JobStopper, string>;
+
+/**
+ * Where a job is, after its title: "4 min" while it runs, "finished · 4 min", "failed · 4 min",
+ * "stopped", "stopped at its time limit", "stopped when Genex closed", "stopped when its work ended";
+ * "ended" for a state this version does not know.
+ */
+export function jobStatusWords(
+  state: BackgroundJobState | undefined,
+  stoppedBy: JobStopper | undefined,
+  minutes: number,
+): string {
+  if (state === BackgroundJobState.Running) return jobMinutes(minutes, "just started");
+  if (state === BackgroundJobState.Succeeded) return `finished · ${jobMinutes(minutes, "under a minute")}`;
+  if (state === BackgroundJobState.Failed) return `failed · ${jobMinutes(minutes, "under a minute")}`;
+  if (state === BackgroundJobState.TimedOut) return "stopped at its time limit";
+  if (state === BackgroundJobState.Interrupted) return STOPPED_WORDS[JobStopper.Quit];
+  if (state === BackgroundJobState.Stopped)
+    return stoppedBy ? STOPPED_WORDS[stoppedBy] : STOPPED_WORDS[JobStopper.Agent];
+  return "ended";
+}
+
+/** A job's line: "In the background: Unreal build · Scene builder · finished · 4 min"; no status while it runs. */
+export function inBackground(title: string, status: string, worker?: string): string {
+  return [`In the background: ${title}`, worker, status].filter(Boolean).join(" · ");
+}
+
+/** A running job's line with the minutes it has run: "In the background: Unreal build · 4 min". */
+export function jobRunningLine(line: string, minutes: number): string {
+  return `${line} · ${jobStatusWords(BackgroundJobState.Running, undefined, minutes)}`;
+}
+
+/** Background work by how much of it runs and how much ended: "1 running · 2 finished", a zero left out. */
+export function backgroundCount(running: number, finished: number): string {
+  const parts = [running ? `${running} running` : "", finished ? `${finished} finished` : ""];
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** The macOS Privacy & Security panes app_look needs, by the names System Settings shows. */
+const PRIVACY_PANE_WORDS = {
+  [AppLookAccessKind.Screen]: "Screen Recording",
+  [AppLookAccessKind.Accessibility]: "Accessibility",
+} as const satisfies Record<AppLookAccessKind, string>;
+
+/** What the person must allow before Genex sees app windows, naming every missing pane. */
+export function appAccessMissing(missing: readonly AppLookAccessKind[]): string {
+  const panes = missing.map((pane) => PRIVACY_PANE_WORDS[pane]).join(" and ");
+  return `Genex can't see app windows yet: allow ${panes} for Genex in System Settings.`;
+}
+
+/** The button for one pane when more than one is missing: "Open Accessibility settings". */
+export function openPaneSettings(pane: AppLookAccessKind): string {
+  return `Open ${PRIVACY_PANE_WORDS[pane]} settings`;
+}
+
+/** The title of a pane's button: it opens macOS System Settings, not Genex's own Settings → Privacy. */
+export function privacySettingsTitle(pane: AppLookAccessKind): string {
+  return `Opens System Settings → Privacy & Security → ${PRIVACY_PANE_WORDS[pane]}`;
+}
 
 /** The snapshot line under a restored workspace. */
 export function snapshotWords(snapshotId: string): string {
@@ -2067,6 +2163,12 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   worker_stop: { icon: "run", label: "stopped a worker" },
   worker_wait: { icon: "think", label: "waited on the workers", active: "Waiting on the workers" },
   worker_mark: { icon: "write", label: "marked a worker's work" },
+  // Background work and the look-only app tool, shared by the chat, leads and workers.
+  [JobTool.Start]: { icon: "run", label: "started background work", active: "Starting background work" },
+  [JobTool.Status]: { icon: "read", label: "checked on background work", active: "Checking on background work" },
+  [JobTool.Tail]: { icon: "read", label: "read background work's output" },
+  [JobTool.Stop]: { icon: "run", label: "stopped background work" },
+  [APP_LOOK_TOOL_NAME]: { icon: "see", label: "looked at an app window", active: "Looking at an app window" },
   wait: { icon: "think", label: "waited", active: "Waiting" },
   judge: { icon: "see", label: "reviewed a build", active: "Reviewing a build" },
   playtest: { icon: "game", label: "had a build playtested", active: "Playtesting a build" },

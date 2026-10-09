@@ -114,6 +114,7 @@ const METHODS = [
   "snapshot",
   "start",
   "stop",
+  "stopJob",
   "stopLive",
   "stopRun",
   "stopThread",

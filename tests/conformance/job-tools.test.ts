@@ -491,6 +491,7 @@ describe("job tools", () => {
     assert.equal(ended?.state, JobState.Succeeded);
     assert.equal(ended?.exitCode, 0);
     assert.equal(ended?.runId, RUN_ID);
+    assert.deepEqual(ended?.worker, { id: "w1", title: "Worker w1" }, "an end names its worker on its own");
     assert.match(ended?.tail ?? "", /built/);
     assert.equal((await chat.core.jobs.get(chat.game, id))?.endLogged, true, "marked recorded");
     const append = chat.api["events.append"];
@@ -503,6 +504,55 @@ describe("job tools", () => {
         }),
         `the harness cannot write ${type}`,
       );
+  });
+
+  it("the person's Stop stops the job and records who stopped it", { ...POSIX, timeout: CASE_TIMEOUT_MS }, async () => {
+    const chat = await jobChat();
+    await chat.core.setPermissionMode(chat.threadId, PermissionMode.Auto);
+    const { answers } = await callsIn(chat, await ownTurn(chat), [[JobTool.Start, { title: "Server", command: LONG }]]);
+    const id = startedId(answers[0] ?? "");
+    const foreign = await chat.core.jobs.start({
+      owner: {
+        project: chat.other.name,
+        chatThreadId: "elsewhere",
+        role: JobRole.Chat,
+        scope: { kind: JobScopeKind.Chat },
+      },
+      title: "Theirs",
+      command: LONG,
+      cwd: await realpath(chat.other.dir),
+      policy: {},
+      mode: PermissionMode.Auto,
+    });
+    for (const [project, jobId] of [
+      [chat.game, foreign.id],
+      [chat.game, "../x"],
+      [chat.game, ""],
+      ["../x", id],
+      ["", id],
+    ])
+      assert.equal(await chat.core.stopJob(project, jobId), null, `${project} ${jobId}`);
+    assert.equal((await chat.core.jobs.get(chat.game, id))?.state, JobState.Running, "nothing was stopped");
+    assert.equal((await chat.core.jobs.get(chat.other.name, foreign.id))?.state, JobState.Running);
+    const stopped = await chat.core.stopJob(chat.game, id);
+    assert.equal(stopped?.state, JobState.Stopped);
+    assert.equal(stopped?.stoppedBy, JobStopper.Person);
+    await untilEndRecorded(chat, id);
+    const [ended] = await jobRows<JobEndedPayload>(chat, "job_ended");
+    assert.equal(ended?.stoppedBy, JobStopper.Person, "its end row says the person stopped it");
+    assert.equal(ended?.worker, undefined, "the chat's own job names no worker");
+    const next = await callsIn(chat, await ownTurn(chat), [[JobTool.Status, { id }]]);
+    assert.match(
+      next.request?.prompt ?? "",
+      /Jobs since your last turn: Server \(`[^`]+`\) was stopped by the person after \d+ min: read it with job_tail [^;.]+, and do not start it again unless the person asks/,
+      "the chat's agent is told the person stopped it",
+    );
+    assert.match(
+      next.answers[0] ?? "",
+      /· Server · stopped by the person after \d+ min/,
+      "job_status says who stopped it",
+    );
+    await chat.core.jobs.stop(chat.other.name, foreign.id, JobStopper.Person);
   });
 
   it("the harness reads a run's job ends and cannot start or stop one", {

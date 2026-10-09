@@ -691,9 +691,13 @@ export class ChatRewindService {
     await this.#core.host.dispatch({ type: DispatchActionType.QueueResume, threadId });
   }
 
-  /** The build is still closing: running in the log, held by the harness, or its work still in flight. */
+  /**
+   * The build is still closing: running in the log, held by the harness, its work still in flight,
+   * or its jobs not yet ended (so their ends are in the log the rewind reads, and leave with it).
+   */
   async #stillStopping(threadId: string, project: string | null, runId: string): Promise<boolean> {
-    if (this.#x.activeRunIds.has(runId) || this.#chatBusy(threadId, project)) return true;
+    const runClosing = this.#x.activeRunIds.has(runId) || this.#x.runJobStops.has(runId);
+    if (runClosing || this.#chatBusy(threadId, project)) return true;
     return (await this.#runningBuild(threadId)) !== null;
   }
 

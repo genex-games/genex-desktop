@@ -25,7 +25,8 @@ The [design specification](../agent/design.md#chat-reading-and-activity) owns ex
 
 Replies get current plugin, account, MCP and template facts each turn; asking about plugins
 never resumes a build. A reply may start workers in the chat's mode (Plan holds writers); they
-stop with the reply. Agents may look at app windows, never clicking, in any mode.
+stop with the reply. Agents may look at app windows, never clicking, in any mode; background
+work they start is one line with Stop, ending when Genex quits.
 
 - An `ask_user` question opens the question panel: options and a typed-answer row; Send answer
   confirms a choice. Chat about this puts it aside for the composer; any reply settles it.
@@ -60,8 +61,7 @@ the folder to before that message, off at first if files changed outside the
 chat; otherwise one line says why only the conversation rewinds. Files too large to save stay,
 named in the dialog and the chat. Outside Unreal projects' changes stay.
 
-History is paged. Streamed replies grow until saved; reading older
-messages stops following live output.
+History is paged; reading older messages stops following live output.
 
 ## Where to work
 

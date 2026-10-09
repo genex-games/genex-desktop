@@ -1,6 +1,6 @@
 /** What the job tools say to a model: their descriptions and their answers (`job-tools.ts`). Model-facing text. */
 import type { LiveToolSpec } from "../../shared/engine-requests.ts";
-import { JobState, JobTool } from "../../shared/jobs.ts";
+import { JobState, JobStopper, JobTool } from "../../shared/jobs.ts";
 import { JobRefusalCode } from "../../substrate/jobs.ts";
 
 /** What every job can and cannot do, told with its start. */
@@ -87,14 +87,16 @@ export interface JobLine {
   exitCode?: number | null | undefined;
   minutes: number;
   worker?: string | undefined;
+  stoppedBy?: JobStopper | undefined;
 }
 
-/** A job's status line: its id, title, how it stands and for how long. */
+/** A job's status line: its id, title, how it stands (and who stopped it, when the person did) and for how long. */
 function statusLine(job: JobLine): string {
   const exit = job.exitCode === undefined || job.exitCode === null ? "" : ` (exit ${job.exitCode})`;
   const by = job.worker ? ` · by ${job.worker}` : "";
+  const byPerson = job.stoppedBy === JobStopper.Person ? " by the person" : "";
   const time = job.state === JobState.Running ? `for ${job.minutes} min` : `after ${job.minutes} min`;
-  return `${job.id} · ${job.title}${by} · ${STATE_WORDS[job.state]}${exit} ${time}`;
+  return `${job.id} · ${job.title}${by} · ${STATE_WORDS[job.state]}${byPerson}${exit} ${time}`;
 }
 
 /** What a job tool answers. */

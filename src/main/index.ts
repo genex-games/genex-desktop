@@ -97,6 +97,7 @@ import { registerBootIpc } from "./ipc/boot.ts";
 import { registerUpdateIpc } from "./ipc/update.ts";
 import { registerGamesIpc } from "./ipc/games.ts";
 import { registerGameHistoryIpc } from "./ipc/game-history.ts";
+import { registerJobsIpc } from "./ipc/jobs.ts";
 import { registerLearningIpc } from "./ipc/learning.ts";
 import { registerLoginIpc } from "./ipc/login.ts";
 import { registerCliInstallIpc } from "./ipc/cli-install.ts";
@@ -1090,6 +1091,30 @@ function feedbackSources(studio: StudioCore): FeedbackSources {
   };
 }
 
+/** The coding-CLI installs Settings offers: busy while a sign-in, a run or a turn is under way. */
+function cliInstalls(studio: StudioCore) {
+  return createCliInstalls({
+    // Electron's fetch, so the installer download goes through the system proxy.
+    install: (provider) => installCodingCli(provider, { fetch: net.fetch }),
+    busy: () => {
+      const signingIn = isClaudeLoginActive(claudeLogin.snapshot()) || isCodexLoginActive(codexLogin.snapshot());
+      return keepAwake.held || studio.budget.userInFlight > 0 || signingIn;
+    },
+    update: async (provider) => {
+      const engine = studio.engines.get(provider);
+      const selected = await engine.account?.();
+      return studio.engines.maintain(provider, () => updateCodingCli(provider, selected?.cli.path));
+    },
+    found: async (provider) => {
+      await subscription(provider)?.recheckLogin();
+      await studio.engines.get(provider).refreshModels?.(true);
+      return (await resolveCodingCli(provider, undefined, undefined, true)).status.state === CodingCliState.Ready;
+    },
+    pushUiEvent,
+    log: (line) => studioLog.write("main", line),
+  });
+}
+
 /** Every IPC channel, registered once per launch by its domain's registrar in `./ipc/`. */
 function registerIpc(studio: StudioCore): void {
   const handle = createIpcHandle(ipcMain, {
@@ -1120,6 +1145,7 @@ function registerIpc(studio: StudioCore): void {
   });
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerGameHistoryIpc(handle, { core: studio });
+  registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
   registerModelsIpc(handle, { core: studio, subscription, pushUiEvent });
   registerPreviewIpc(handle, {
     core: studio,
@@ -1158,29 +1184,7 @@ function registerIpc(studio: StudioCore): void {
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
   });
-  registerCliInstallIpc(
-    handle,
-    createCliInstalls({
-      // Electron's fetch, so the installer download goes through the system proxy.
-      install: (provider) => installCodingCli(provider, { fetch: net.fetch }),
-      busy: () => {
-        const signingIn = isClaudeLoginActive(claudeLogin.snapshot()) || isCodexLoginActive(codexLogin.snapshot());
-        return keepAwake.held || studio.budget.userInFlight > 0 || signingIn;
-      },
-      update: async (provider) => {
-        const engine = studio.engines.get(provider);
-        const selected = await engine.account?.();
-        return studio.engines.maintain(provider, () => updateCodingCli(provider, selected?.cli.path));
-      },
-      found: async (provider) => {
-        await subscription(provider)?.recheckLogin();
-        await studio.engines.get(provider).refreshModels?.(true);
-        return (await resolveCodingCli(provider, undefined, undefined, true)).status.state === CodingCliState.Ready;
-      },
-      pushUiEvent,
-      log: (line) => studioLog.write("main", line),
-    }),
-  );
+  registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel });
   registerNotificationsIpc(handle, {
     notifications: { isSupported: () => Notification.isSupported(), create: (options) => new Notification(options) },

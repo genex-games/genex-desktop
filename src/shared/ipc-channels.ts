@@ -50,6 +50,8 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game.history": "gameHistory",
   "studio:game.history.clear": "clearGameHistory",
   "studio:game.engine.undo": "undoEngineLink",
+  "studio:jobs.stop": "stopJob",
+  "studio:app-look.open-settings": "openPrivacySettings",
   "studio:engines": "engines",
   "studio:provider-usage": "providerUsage",
   "studio:hardware": "hardware",
@@ -240,6 +242,8 @@ export interface StudioInvokePayloads {
   "studio:game.history": { project: string };
   "studio:game.history.clear": { project: string };
   "studio:game.engine.undo": Arg<"undoEngineLink", 0>;
+  "studio:jobs.stop": { project: string; jobId: string };
+  "studio:app-look.open-settings": { pane: Arg<"openPrivacySettings", 0> };
   "studio:engines": undefined;
   "studio:provider-usage": undefined;
   "studio:hardware": undefined;

@@ -286,6 +286,10 @@ export interface StudioApi {
   clearGameHistory(project: string): Promise<import("./game-history.ts").GameHistoryCleared>;
   /** Takes back a game's engine link from its chat line; refused once the link has changed since. */
   undoEngineLink(request: import("./game-engine.ts").EngineLinkUndo): Promise<boolean>;
+  /** The person's Stop on a job's chat line: the job's record, or null for a job the game never had. */
+  stopJob(project: string, jobId: string): Promise<import("./jobs.ts").JobRecord | null>;
+  /** Opens macOS System Settings at the Privacy & Security pane that grants what app_look needs. */
+  openPrivacySettings(pane: import("./jobs.ts").AppLookAccessKind): Promise<boolean>;
   engines(): Promise<EngineDescriptor[]>;
   /** Plan limits of each signed-in subscription; reading them never starts a turn. */
   providerUsage(): Promise<ProviderUsageReport[]>;

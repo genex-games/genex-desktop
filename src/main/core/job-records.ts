@@ -72,6 +72,7 @@ async function jobEndedPayload(core: StudioCore, record: JobRecord): Promise<Job
     endedAt,
     durationMs,
     ...(record.stoppedBy ? { stoppedBy: record.stoppedBy } : {}),
+    ...(record.owner.worker ? { worker: { ...record.owner.worker } } : {}),
     ...runOf(record),
     ...(tail ? { tail } : {}),
   };

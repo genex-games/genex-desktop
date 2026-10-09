@@ -32,10 +32,12 @@ function howItEnded(job: Pick<JobView, "state" | "exitCode" | "stoppedBy">): str
 
 /**
  * One job of the run that ended, for its lead: "Unreal build (`make`, started by worker Scene
- * builder) failed (exit 2) after 4 min; read it with job_tail <id>."
+ * builder) failed (exit 2) after 4 min; read it with job_tail <id>." A job the person stopped stays
+ * stopped unless they ask.
  */
 export function jobEndLine(job: JobView): string {
   const ran = typeof job.durationMs === "number" ? ` after ${minutes(job.durationMs)} min` : "";
   const command = clipMarked(job.command, CLIP_QUOTE);
-  return `${job.title} (\`${command}\`, ${starter(job)}) ${howItEnded(job)}${ran}; read it with job_tail ${job.id}.`;
+  const keepStopped = job.stoppedBy === JobStopper.Person ? " Do not start it again unless the person asks." : "";
+  return `${job.title} (\`${command}\`, ${starter(job)}) ${howItEnded(job)}${ran}; read it with job_tail ${job.id}.${keepStopped}`;
 }

@@ -209,6 +209,8 @@ export interface JobEndedPayload {
   endedAt: string;
   durationMs: number;
   stoppedBy?: JobStopper;
+  /** The worker that started it, so an end whose start is not on the page still names it. */
+  worker?: { id: string; title: string };
   runId?: string;
   tail?: string;
 }

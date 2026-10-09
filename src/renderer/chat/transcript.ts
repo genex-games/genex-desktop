@@ -77,6 +77,20 @@ function pendingConsents(stateEvents: readonly EventEnvelope[]): Map<string | un
   return pending;
 }
 
+/** Background work still running in this thread: its start, so its line and Stop stay reachable. */
+function runningJobs(threadEvents: readonly EventEnvelope[]): Map<string, EventEnvelope> {
+  const running = new Map<string, EventEnvelope>();
+  for (const event of threadEvents) {
+    const started = customEvent(event, CustomEvent.JobStarted);
+    const ended = started ? null : customEvent(event, CustomEvent.JobEnded);
+    const jobId = (started ?? ended)?.jobId;
+    if (typeof jobId !== "string") continue;
+    if (started) running.set(`job:${jobId}`, event);
+    else running.delete(`job:${jobId}`);
+  }
+  return running;
+}
+
 /** Does this record answer an open intake question: a user message, or a build that started? */
 function endsInterview(event: EventEnvelope): boolean {
   if (event.data.type === EventKind.Messages) return event.data.messages.some((m) => m.role === "user");
@@ -107,7 +121,8 @@ function isRunningWorkerTrace(event: EventEnvelope, activeRunId: string | null):
 
 /**
  * The transcript: the loaded page, plus what must stay reachable whatever page is loaded (a
- * plugin's pending question, an intake question not yet answered), in delivery order.
+ * plugin's pending question, an intake question not yet answered, background work still
+ * running), in delivery order.
  */
 export function transcriptEntries(input: {
   /** The loaded page and its live tail. */
@@ -126,6 +141,7 @@ export function transcriptEntries(input: {
   // Current-state context keeps an intake question reachable even when its history page is unloaded.
   const interview = openInterview(input.threadEvents);
   if (interview) pending.set("interview", interview);
+  for (const [key, start] of runningJobs(input.threadEvents)) pending.set(key, start);
   const loadedIds = new Set(input.events.map((event) => event.id));
   // Waiting input keeps its bubble whatever page is loaded: queued, or being handed to the running turn.
   for (const message of input.queued) if (isWaiting(message) && message.eventId) loadedIds.add(message.eventId);

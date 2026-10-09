@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   autopilotStartWords,
+  backgroundCount,
   checkCounts,
   checkReplanWords,
   circuitBreakWords,
@@ -55,6 +56,7 @@ import { endedWords } from "../../src/renderer/round-status.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
 import { WorkerTool } from "../../src/shared/workers.ts";
+import { APP_LOOK_TOOL_NAME, JobTool } from "../../src/shared/jobs.ts";
 import { connectorStep, showsPlayView, StepAction } from "../../src/renderer/chat/connector-steps.ts";
 import type { RunSummary } from "../../src/shared/run-summary.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
@@ -130,6 +132,14 @@ function rendererFiles(): string[] {
   walk(path.join(root, "src/renderer"));
   return out;
 }
+
+describe("background work", () => {
+  it("counts background work as running and finished, leaving out a zero", () => {
+    assert.equal(backgroundCount(1, 2), "1 running · 2 finished");
+    assert.equal(backgroundCount(0, 2), "2 finished");
+    assert.equal(backgroundCount(1, 0), "1 running");
+  });
+});
 
 describe("statusWords", () => {
   it("says what the lead is doing, never which run it is doing it in", () => {
@@ -914,6 +924,9 @@ describe("tools", () => {
       ...Object.values(DirectorTool).filter((name) => name !== DirectorTool.ResolveRoot),
       // Every lead's and the chat's worker tools, the same six everywhere.
       ...Object.values(WorkerTool),
+      // The background-work tools and the look-only app tool the chat, leads and workers share.
+      ...Object.values(JobTool),
+      APP_LOOK_TOOL_NAME,
       "capture",
       "checkpoint",
       "continue_build",

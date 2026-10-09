@@ -4,6 +4,8 @@ import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
 import type { DontWaitOfferPayload } from "../shared/dont-wait.ts";
 import { dontWaitSetLine, parseDontWaitOffer } from "./chat/dont-wait-offer.ts";
+import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
+import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
 /**
  * The chat transcript as entries: the thread's event log read once, oldest first, into the
  * bubbles, tool-chip groups, narration lines and cards the chat draws. Pure — `chat/transcript.ts`
@@ -42,6 +44,7 @@ import { type ConnectorStep, connectorStep, endsPlay, showsPlayView, startsPlay 
 import {
   A_PLUGIN,
   GAME_ENGINE_WORDS,
+  appAccessMissing,
   autopilotStartWords,
   checkReplanWords,
   checkpointSkippedWords,
@@ -118,6 +121,10 @@ export const EntryAction = {
   Permission: "permission",
   /** A game now builds in an engine project: one line, with Undo while it is the newest link. */
   EngineLink: "engine-link",
+  /** Background work an agent started (`job_started`): one line, with Stop while it runs. */
+  Job: "job",
+  /** Genex can't see app windows yet (`app_look_access`): one line, with Open Privacy settings per pane. */
+  AppAccess: "app-access",
 } as const;
 export type EntryAction = (typeof EntryAction)[keyof typeof EntryAction];
 
@@ -189,6 +196,10 @@ export type Entry =
       snapshotId?: string;
       /** action "engine-link": what Undo takes back; absent once taken back or replaced by a newer link. */
       engineLink?: { project: string; pluginId: string; linkedAt: string };
+      /** action "job": what Stop reaches, and when the job started; absent once its end is read. */
+      job?: JobHandle;
+      /** action "app-access": the Privacy & Security panes still to allow. */
+      appAccess?: AppLookAccessKind[];
     }
   /**
    * The morning: what the run amounts to, in one card. It replaces the line that read
@@ -338,6 +349,11 @@ const CHIP_ARGUMENT_KEYS = [
   "keys",
   "key",
 ] as const;
+/**
+ * Tools whose chip names an argument of their own: a job's start reads by its title, never its
+ * command. A map, so a tool named like an object's own member (`constructor`) finds nothing here.
+ */
+const TOOL_CHIP_KEYS: ReadonlyMap<string, readonly string[]> = new Map([[JobTool.Start, ["title"]]]);
 /** How much of a tool's result a chip keeps. */
 const TOOL_RESULT_MAX_CHARS = 12000;
 /** How far back a build report looks for the contractor bubble it restates, and how much of it must match. */
@@ -348,10 +364,11 @@ const CONTRACTOR_STOPPED = /^Contractor stopped after \d+ turns \(stopped\)/;
 /** The system message the studio writes into a conversation it restarted. */
 const RESTART_MESSAGE_PREFIX = "You were restarted (";
 
-function chipFor(args: unknown): string | undefined {
+/** The argument a tool's chip names, by the tool's name. */
+function chipFor(name: string, args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const record = args as Record<string, unknown>;
-  for (const key of CHIP_ARGUMENT_KEYS) {
+  for (const key of TOOL_CHIP_KEYS.get(pluginToolKey(name)) ?? CHIP_ARGUMENT_KEYS) {
     const value = record[key];
     if (Array.isArray(value) && value.length) return value.map(String).join("+");
     if (typeof value === "string" && value) return value;
@@ -360,9 +377,9 @@ function chipFor(args: unknown): string | undefined {
 }
 
 /** A mirrored call's chip: its input when that is text, else the argument it names. */
-function inputChip(input: unknown): { chip?: string } {
+function inputChip(name: string, input: unknown): { chip?: string } {
   if (typeof input === "string") return { chip: input };
-  const chip = chipFor(input);
+  const chip = chipFor(name, input);
   return chip ? { chip } : {};
 }
 
@@ -442,6 +459,10 @@ interface ChatDraft {
   group: ToolsEntry | null;
   /** Each game's engine-link lines by the link's time, with the game's title, so Undo lands on its line. */
   engineLinks: Map<string, { entry: ActionEntry; title?: string; game: string }>;
+  /** Each job's line by its id, with how it was named, so its end rewrites that line. */
+  jobs: Map<string, { entry: ActionEntry; start: JobStart }>;
+  /** The jobs whose end is on this page: an end recorded again (after a crash) draws nothing more. */
+  endedJobs: Set<string>;
 }
 
 export function toEntries(events: EventEnvelope[]): Entry[] {
@@ -469,6 +490,8 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     ),
     entries: [],
     engineLinks: new Map(),
+    jobs: new Map(),
+    endedJobs: new Set(),
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
     directTurns: new Map(),
@@ -715,7 +738,7 @@ function requestTool(
   }
   const group = toolGroup(chat, event.id);
   const style = toolWords(data.request.name);
-  const chip = chipFor(data.request.arguments);
+  const chip = chipFor(data.request.name, data.request.arguments);
   const row: ToolChipRow = {
     key: data.tool_call_id,
     input: data.request.arguments,
@@ -910,7 +933,7 @@ function addDelegatedToolRow(
     icon: did.icon,
     label: did.label,
     activeLabel: did.active ?? toolActivityWords(did.icon),
-    ...inputChip(part.input),
+    ...inputChip(part.name ?? "", part.input),
   };
   toolGroup(chat, eventId).rows.push(row);
   chat.rowByCall.set(row.key, row);
@@ -1048,6 +1071,69 @@ function narrateEngineLink(chat: ChatDraft, event: EventEnvelope): void {
   closeGroup(chat);
   chat.entries.push(entry);
   if (link.linkedAt) chat.engineLinks.set(link.linkedAt, { entry, game, ...(link.title ? { title: link.title } : {}) });
+}
+
+/** "In the background: Unreal build": a job's line, with Stop while it runs; one without a title draws nothing. */
+function narrateJobStarted(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.JobStarted);
+  const start = payload ? jobStart(payload) : null;
+  if (!start) return;
+  const entry: ActionEntry = {
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Engine,
+    action: EntryAction.Job,
+    text: start.line,
+    ...(start.job ? { job: start.job } : {}),
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  if (start.jobId) chat.jobs.set(start.jobId, { entry, start });
+}
+
+/**
+ * A job's end rewrites its line with the outcome; with its start not on this page, it is a line of
+ * its own. Only a job's first end counts.
+ */
+function narrateJobEnded(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.JobEnded);
+  if (!payload) return;
+  const jobId = typeof payload.jobId === "string" ? payload.jobId : "";
+  if (jobId && chat.endedJobs.has(jobId)) return;
+  const started = chat.jobs.get(jobId);
+  const line = jobEndLine(payload, started?.start);
+  if (!line) return;
+  if (jobId) chat.endedJobs.add(jobId);
+  if (started) {
+    started.entry.text = line;
+    delete started.entry.job;
+    chat.jobs.delete(jobId);
+    return;
+  }
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Engine,
+    action: EntryAction.Job,
+    text: line,
+  });
+}
+
+/** Genex can't see app windows yet: one line naming what to allow, with a button per pane. */
+function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.AppLookAccess);
+  const missing = payload ? missingPanes(payload) : [];
+  if (missing.length === 0) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.AppAccess,
+    text: appAccessMissing(missing),
+    appAccess: missing,
+  });
 }
 
 /** A session's turn-it-on card for a Genex plugin; an old or partial record draws nothing. */
@@ -1633,6 +1719,9 @@ const NARRATORS: readonly Narrator[] = [
   narrateCompaction,
   narrateEngineLink,
   narrateEngineUndone,
+  narrateJobStarted,
+  narrateJobEnded,
+  narrateAppAccess,
   narratePluginSuggested,
   narrateDontWaitOffer,
   narrateDontWaitSet,

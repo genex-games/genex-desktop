@@ -89,9 +89,10 @@ const MAX_UNCOMMITTED_TAIL = 64;
 const READ_CONCURRENCY = 32;
 /**
  * The chat-context checkpoint's format; a checkpoint of another version is rebuilt. Raise it
- * whenever the fold keeps different facts (6: context readings kept per session role).
+ * whenever the fold keeps different facts (6: context readings kept per session role; 7:
+ * background work still running).
  */
-const CHAT_CONTEXT_VERSION = 6;
+const CHAT_CONTEXT_VERSION = 7;
 /** Events folded into the chat context per read while it is rebuilt. */
 const CHAT_CONTEXT_BATCH = 256;
 /** How much of a refused id an error message quotes. */

@@ -14,7 +14,7 @@
  *
  * Pure: no DOM, no window. `panels/RunGraph.tsx` draws it and the tests read it directly.
  */
-import { HOUR_MS, MINUTE_MS } from "../shared/duration.ts";
+import { MINUTE_MS } from "../shared/duration.ts";
 import { comparedWithNothing, ExecutionStatus, type RunWorked, VerdictPass, workedMs } from "../shared/run-state.ts";
 import { type RunSummary, UNKNOWN_EXECUTION } from "../shared/run-summary.ts";
 import { plural } from "../shared/skill-words.ts";
@@ -35,7 +35,7 @@ import {
   type VerdictRecord,
   WorkerState,
 } from "./run-graph.ts";
-import { savedByLead, stoppedWords, verdictSentence } from "./words.ts";
+import { MINUTES_PER_HOUR, savedByLead, spanWords, stoppedWords, verdictSentence } from "./words.ts";
 
 // ── the model ─────────────────────────────────────────────────────────────────────────────
 
@@ -634,15 +634,6 @@ export function leadWorking(graph: RunGraph, summary: RunSummary | null, rows: P
   const base = graph.nodes.find((node) => node.kind === GraphNodeKind.Base);
   if (base?.kind === GraphNodeKind.Base && !base.done) return false;
   return !rows.some((row) => row.working) && !checkingBuild(graph, summary);
-}
-
-const MINUTES_PER_HOUR = HOUR_MS / MINUTE_MS;
-
-/** A span of whole minutes: "9 min", "1 h", "1 h 5 min". */
-function spanWords(minutes: number): string {
-  if (minutes < MINUTES_PER_HOUR) return `${minutes} min`;
-  const rest = minutes % MINUTES_PER_HOUR;
-  return `${Math.floor(minutes / MINUTES_PER_HOUR)} h${rest ? ` ${rest} min` : ""}`;
 }
 
 /** How far a run is into the time it was given: "9 of 30 min", "1 h 5 min of 2 h". */

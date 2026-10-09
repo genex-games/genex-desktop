@@ -125,6 +125,8 @@ export interface WorkInFlight {
   readonly gameChanges: Map<string, number>;
   /** Runs currently holding keep-awake (run.keepawake → run.settled) — idle means none. */
   readonly activeRunIds: Set<string>;
+  /** Settled runs whose jobs are still stopping, until each job's end is in its chat. */
+  readonly runJobStops: Set<string>;
   readonly openTurns: Map<string, TurnHandle>;
   /**
    * Bumped whenever the harness stops being ready (a planned restart too): a `turn.begin` from an
@@ -308,6 +310,7 @@ export function idleWork(): WorkInFlight {
     activeDelegations: new Map(),
     gameChanges: new Map(),
     activeRunIds: new Set(),
+    runJobStops: new Set(),
     openTurns: new Map(),
     harnessGeneration: 0,
     pluginCallAttribution: new WeakMap(),

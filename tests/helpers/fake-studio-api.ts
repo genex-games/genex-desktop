@@ -85,6 +85,8 @@ const METHODS = [
   "gameHistory",
   "clearGameHistory",
   "undoEngineLink",
+  "stopJob",
+  "openPrivacySettings",
   "engines",
   "providerUsage",
   "hardware",

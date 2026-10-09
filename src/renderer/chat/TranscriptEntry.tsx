@@ -18,6 +18,8 @@ import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
+import { JobLine } from "./JobLine.tsx";
+import { AppAccessLine } from "./AppAccessLine.tsx";
 import { PermissionOutcome } from "./PermissionRequest.tsx";
 import { PluginSuggestionCard } from "./PluginSuggestionCard.tsx";
 import { DontWaitOfferCard } from "./DontWaitOfferCard.tsx";
@@ -242,6 +244,18 @@ function ConsentOutcome({ entry }: { entry: Extract<Entry, { kind: typeof EntryK
   );
 }
 
+/** The action entries that are one quiet line with a button: an engine link, a job, a missing permission. */
+function quietLine(
+  entry: Extract<Entry, { kind: typeof EntryKind.Action }>,
+  context: TranscriptContext,
+): JSX.Element | null {
+  if (entry.action === EntryAction.EngineLink)
+    return <EngineLinkLine entry={entry} threadId={context.threadId} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Job) return <JobLine entry={entry} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.AppAccess) return <AppAccessLine entry={entry} onNotice={context.onNotice} />;
+  return null;
+}
+
 function ActionEntry({
   entry,
   context,
@@ -279,8 +293,8 @@ function ActionEntry({
       </ChatDisclosure>
     );
   }
-  if (entry.action === EntryAction.EngineLink)
-    return <EngineLinkLine entry={entry} threadId={context.threadId} onNotice={context.onNotice} />;
+  const line = quietLine(entry, context);
+  if (line) return line;
   if (entry.action === EntryAction.Live) {
     return (
       <div data-build-updated className="flex min-w-0 items-center gap-3 text-chat text-ink-3">

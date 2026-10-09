@@ -19,6 +19,7 @@ import { latestRun } from "../../src/shared/coordinator.ts";
 import { seedRewindChat } from "../../src/main/dev/fixture-chat.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { applyEvents } from "../../src/renderer/notifications.ts";
+import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import {
   REWIND_WORDS,
   restoresByDefault,
@@ -161,6 +162,32 @@ test("a rewind crosses a build: the build's rows leave with the message, an earl
   const run = latestRun(withoutRewound(earlier, [across.rewind]));
   assert.equal(run?.runId, "r0");
   assert.equal(run?.state, "finished");
+});
+
+test("a rewind keeps a job's end whose start stays, and the start of a job still running", () => {
+  const events = conversation();
+  const job = (jobId: string, title: string) => ({ jobId, project: "p", title, startedAt: "2026-01-01T12:00:00.000Z" });
+  const end = (jobId: string, title: string) => ({ ...job(jobId, title), state: "succeeded", durationMs: 240_000 });
+  const withJobs = [
+    ...events.slice(0, 8),
+    between("000008a", "job_started", job("j-before", "Unreal build")),
+    ...events.slice(8, 13),
+    between("000013a", "job_ended", end("j-before", "Unreal build")),
+    between("000013b", "job_started", job("j-running", "Asset bake")),
+    between("000013c", "job_started", job("j-done", "Shader compile")),
+    between("000013d", "job_ended", end("j-done", "Shader compile")),
+    ...events.slice(13),
+  ];
+  const planned = planRewind(withJobs, [], "b");
+  assert.ok(planned.ok);
+  assert.deepEqual(planned.rewind.keep, ["000013a", "000013b"]);
+  const lines = toEntries(withoutRewound(withJobs, [planned.rewind])).flatMap((entry) =>
+    entry.kind === EntryKind.Action && entry.action === EntryAction.Job ? [[entry.text, entry.job?.jobId]] : [],
+  );
+  assert.deepEqual(lines, [
+    ["In the background: Unreal build · finished · 4 min", undefined],
+    ["In the background: Asset bake", "j-running"],
+  ]);
 });
 
 test("a rewind is refused while a message is being answered or handed in, for waiting input, and once gone", () => {

@@ -36,7 +36,7 @@ import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } fr
 import { type ExportReview, type PluginBinding, PluginCapability } from "../shared/plugins.ts";
 import type { EngineLinkUndo } from "../shared/game-engine.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
-import { JobScopeKind, JobStopper } from "../shared/jobs.ts";
+import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
 import type { DontWaitState } from "../shared/dont-wait.ts";
 import {
@@ -690,11 +690,14 @@ export class StudioCore {
       .catch((error) => this.options.onLog?.(`[core] closing left jobs failed: ${errorMessage(error)}`, "stderr"));
   }
 
-  /** Stop a settled run's jobs, in every game. */
+  /** Stop a settled run's jobs, in every game; the run stays in `runJobStops` until their ends are recorded. */
   #stopRunJobs(runId: string): void {
+    if (!this.jobs) return;
+    this.#x.runJobStops.add(runId);
     void this.jobs
-      ?.stopScope(undefined, { kind: JobScopeKind.Run, runId }, JobStopper.ScopeEnded)
-      .catch((error) => this.options.onLog?.(`[core] stopping a run's jobs failed: ${errorMessage(error)}`, "stderr"));
+      .stopScope(undefined, { kind: JobScopeKind.Run, runId }, JobStopper.ScopeEnded)
+      .catch((error) => this.options.onLog?.(`[core] stopping a run's jobs failed: ${errorMessage(error)}`, "stderr"))
+      .finally(() => this.#x.runJobStops.delete(runId));
   }
 
   /**
@@ -1698,6 +1701,11 @@ export class StudioCore {
    * Folder files remain on disk; a building project cannot be archived under its contractor.
    * The sidebar uses removeGame instead, preserving the active state of its conversations.
    */
+  /** The person's Stop on a job's chat line: the job's record, or null for a job this game never had. */
+  async stopJob(project: string, jobId: string): Promise<JobRecord | null> {
+    return this.jobs.stop(project, jobId, JobStopper.Person);
+  }
+
   /** The chat line's Undo of a game's engine link (`engineLinks.undo`); a link that changed since is refused. */
   async undoEngineLink(request: EngineLinkUndo): Promise<boolean> {
     const { project, pluginId, linkedAt, threadId } = request;

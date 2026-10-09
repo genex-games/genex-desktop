@@ -109,6 +109,8 @@ function gameCalls(bridge: BridgeCalls) {
     gameHistory: (project) => invoke("studio:game.history", { project }),
     clearGameHistory: (project) => invoke("studio:game.history.clear", { project }),
     undoEngineLink: (request) => invoke("studio:game.engine.undo", request),
+    stopJob: (project, jobId) => invoke("studio:jobs.stop", { project, jobId }),
+    openPrivacySettings: (pane) => invoke("studio:app-look.open-settings", { pane }),
     createGame: (title, options) =>
       invoke("studio:game.create", { title, ...(options?.parent === undefined ? {} : { parent: options.parent }) }),
     nameGame: (request) => invoke("studio:game.name", request),

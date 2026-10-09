@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, it } from "node:test";
+import { spawn } from "node:child_process";
 import { access, readdir, readFile, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startRig, waitForLog, customEvents, type Rig } from "../helpers/studio-rig.ts";
@@ -7,9 +8,12 @@ import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
 import { CHECKPOINT_FILE_MAX_BYTES, CheckpointPhase, chatCheckpointRef } from "../../src/main/chat-checkpoints.ts";
 import { SkippedBy } from "../../src/shared/chat-rewind.ts";
-import { CustomEvent } from "../../src/shared/custom-events.ts";
+import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { latestRun } from "../../src/shared/coordinator.ts";
 import { git } from "../../src/substrate/snapshots.ts";
+import type { JobSpawn } from "../../src/substrate/jobs.ts";
+import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 
 const rigs: Rig[] = [];
@@ -595,6 +599,99 @@ it("rewinding over a running build stops it first; the build leaves the chat and
     assert.equal(chatTurns.length, 2);
     assert.equal(chatTurns[1]!.resume, undefined);
     assert.equal(await exists(dir), true);
+  } finally {
+    await rig.core.stopThread(thread).catch(() => {});
+    await running.catch(() => {});
+  }
+});
+
+it("a rewind over a running build waits for the build's jobs to end, and their lines leave with it", {
+  skip: process.platform === "win32" && "process groups and /bin/sh are POSIX",
+}, async () => {
+  // The job winds down a second after its Stop, as a real build tool does.
+  const jobSpawn: JobSpawn = async (request) => ({
+    child: spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" }),
+    sandboxed: false,
+  });
+  const rig = await startRig({}, { jobSpawn });
+  rigs.push(rig);
+  const project = "rewind-running-job";
+  await rig.core.games.scaffold(project);
+  const thread = await rig.core.createGameThread(project);
+  const workerStarted = deferred();
+  let building = false;
+  rig.core.engines.register({
+    id: "codex",
+    label: "codex",
+    kind: "delegated",
+    status: async () => ({ code: "ready", detail: "" }),
+    models: async () => [],
+    complete: async () => ({
+      message: { role: "assistant", content: '{"pick":"A","reason":"fixture"}' },
+      usage: {},
+      model: "fixture",
+      engine: "codex",
+      stopReason: "stop",
+    }),
+    delegate: async (request) => {
+      const answer = (summary: string) => ({
+        ok: true,
+        summary,
+        sessionId: request.resume ?? "session",
+        turns: 1,
+        usage: {},
+        durationMs: 1,
+        engine: "codex",
+      });
+      if (request.coordinator || !building) return answer("Answered.");
+      workerStarted.resolve();
+      await new Promise<void>((resolve) => request.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      return answer("Stopped.");
+    },
+  });
+  await rig.core.sendUserMessage("Make a village", { thread, engine: "codex" });
+  await waitForLog(rig.core, handled(thread, 1), 20000, "the chat's answer");
+  building = true;
+  const runId = "running-job-run";
+  const running = rig.core.host.dispatch({
+    type: "run_start",
+    threadId: thread,
+    run: {
+      runId,
+      project,
+      engine: "codex",
+      goal: "Build a village",
+      reference: { name: "village", shots: [] },
+      budgets: { wallClockMs: 7200000, maxIterations: 5 },
+    },
+  });
+  try {
+    await workerStarted.promise;
+    const job = await rig.core.jobs.start({
+      owner: { project, chatThreadId: thread, role: JobRole.Lead, scope: { kind: JobScopeKind.Run, runId } },
+      title: "Unreal build",
+      command: "trap 'sleep 1; exit 0' TERM; sleep 30 & wait",
+      cwd: rig.core.games.dirFor(project),
+      policy: {},
+      mode: PermissionMode.Bypass,
+    });
+    const village = bubble(await rig.core.store.listEvents(thread), "Make a village");
+    await rig.core.rewindChat(thread, village.eventId, village.messageId, { files: true });
+    const raw = await rig.core.store.listEvents(thread);
+    const jobEnd = raw.find((e) => {
+      const custom = customRecord(e.data);
+      return custom?.event_type === CustomEvent.JobEnded && custom.payload.jobId === job.id;
+    });
+    const rewound = raw.findLast((e) => customRecord(e.data)?.event_type === CustomEvent.ConversationRewound);
+    assert.ok(jobEnd && rewound, "the job ended and the chat went back");
+    assert.ok(jobEnd.id < rewound.id, "the job's end is in the log the rewind read");
+    const view = await harnessEvents(rig, thread);
+    assert.deepEqual(
+      [...customEvents(view, "job_started"), ...customEvents(view, "job_ended")],
+      [],
+      "the build's job left the chat with the build",
+    );
+    await running;
   } finally {
     await rig.core.stopThread(thread).catch(() => {});
     await running.catch(() => {});

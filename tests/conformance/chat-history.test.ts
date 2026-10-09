@@ -194,6 +194,47 @@ test("a chat checkpoint saved before readings were kept per role is rebuilt, and
   }
 });
 
+test("a chat checkpoint saved before running jobs were kept is rebuilt, and an older job's start stays in reach", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-chat-context-"));
+  try {
+    const store = await EventStore.open(root);
+    const thread = await store.createThread();
+    const jobId = "0f3c9a52-7d41-4c1e-9b8e-2a6f1d0c4b17";
+    await store.appendEvents(thread, [
+      {
+        type: EventKind.Custom,
+        event_type: CustomEvent.JobStarted,
+        payload: { jobId, project: "game", title: "Server", command: "serve", startedAt: new Date(0).toISOString() },
+      },
+    ]);
+    await store.appendEvents(
+      thread,
+      Array.from({ length: CHAT_PAGE_SIZE + 40 }, (_, i) => ({
+        type: EventKind.Messages,
+        messages: [{ role: "assistant" as const, content: `Step ${i}` }],
+      })),
+    );
+    const all = await store.listEvents(thread, {});
+    // What the app saved before (format 6): no running job among the facts.
+    await fs.writeFile(
+      path.join(store.threadDir(thread), "chat-context.json"),
+      JSON.stringify({ version: 6, head: all.at(-1)?.id, rewinds: 0, events: [] }),
+    );
+    const page = await store.chatPage(thread);
+    assert.ok(
+      !page.events.some((e) => customPayload(e.data, CustomEvent.JobStarted)),
+      "the start is older than the loaded page",
+    );
+    assert.deepEqual(
+      page.context.flatMap((e) => customPayload(e.data, CustomEvent.JobStarted)?.jobId ?? []),
+      [jobId],
+      "the running job's start is in the chat's facts, so its line keeps Stop",
+    );
+  } finally {
+    await removeTree(root);
+  }
+});
+
 test("a reading with no role and a planner's are the main session's: the newer replaces the older in the facts", () => {
   const planner = reading(1, SessionActivityRole.Planner, 40_000);
   const unnamed = reading(2, undefined, 45_000);

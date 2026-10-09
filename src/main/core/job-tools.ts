@@ -252,6 +252,7 @@ function lineOf(record: JobRecord, now = Date.now()): JobLine {
     exitCode: record.exitCode,
     minutes: Number.isFinite(minutes) ? minutes : 0,
     worker: record.owner.worker?.title,
+    stoppedBy: record.stoppedBy,
   };
 }
 

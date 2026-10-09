@@ -545,15 +545,17 @@ chats, a note to a build) by its own event id. `rewindChat` refuses while the ch
 a plan being written, or, with no build running, a turn, delegation or completion, and while a
 message is `processing` or `steering`. A running build is stopped first as the composer's Stop
 does (plus `run_stop`), without resuming the queue; the rewind waits up to two minutes for it to
-close (`run.settled`, nothing of the chat or the project in flight; the limit and clock are the
-`rewindBuildStop` test seam), keeps the files, and resumes the queue afterwards, or as soon as the
+close (`run.settled`, its jobs ended, nothing of the chat or the project in flight; the limit and
+clock are the `rewindBuildStop` test seam), keeps the files, and resumes the queue afterwards, or as soon as the
 rewind fails. `resumeAutopilot` and every send wait for a chat being rewound. It
 withdraws everything from the message's first `coordinator_message_processing` (a delivered or
 queue-less message: its bubble) through the head, plus the earlier rows of that message and of
 input sent after it, and every row of a plan review reaching into that range. Rows in the range
 that settle something begun before it stay (`keep`): queue records of messages that stay, the
-`turn_ended` of a turn begun before it, the lifecycle of a build started before it and the answer
-to a question asked before it. Builds started after it leave the chat with it, so routing
+`turn_ended` of a turn begun before it, the lifecycle of a build started before it, the answer
+to a question asked before it, a job's `job_ended` whose start stays, and the `job_started` of a
+job with no end yet (a rewind stops only a build's jobs; another job goes on, and withdrawn it
+would run with no line and no Stop). Builds started after it leave the chat with it, so routing
 (`latestRun` over `events.list`) and the coordinator's run tools, the lead, plan review
 (`continuingRun`), a graph note's steer and the files a chat names no longer reach them; the Builds panel still has them. Queue holds, build
 observations, bookkeeping and the `conversation_rewound` marker stay. The

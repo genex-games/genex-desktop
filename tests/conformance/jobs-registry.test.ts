@@ -456,6 +456,72 @@ it("stopping all jobs reaches only job processes", async () => {
   killGroup(stray.pid ?? 0);
 });
 
+/** A promise the test resolves when it chooses. */
+function gate<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/** Whether `promise` has settled after the jobs' own work has had a moment to run. */
+async function settledSoon(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void promise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await sleep(LOOK_AGAIN_MS);
+  return settled;
+}
+
+it("stopping a scope waits until every one of its jobs' ends is told, finishing and starting ones too", async () => {
+  const runScope = { kind: JobScopeKind.Run, runId: "run-1" } as const;
+  const inRun = (h: Harness, command: string) => ({
+    ...startRequest(h, command),
+    owner: { ...owner(), scope: runScope },
+  });
+  const telling = gate<void>();
+  const told: string[] = [];
+  const entered = gate<string>();
+  const h = await harness({
+    onEnded: async (record) => {
+      entered.resolve(record.id);
+      await telling.promise;
+      told.push(record.id);
+    },
+  });
+  const exited = await h.service.start(inRun(h, "exit 0"));
+  assert.equal(await entered.promise, exited.id, "the job exited by itself and its end is being told");
+  const finishing = h.service.stopScope(undefined, runScope, JobStopper.ScopeEnded);
+  assert.equal(await settledSoon(finishing), false, "the stop waits for the end that is still being told");
+  telling.resolve();
+  await finishing;
+  assert.deepEqual(told, [exited.id], "its end was told before the stop answered");
+
+  const spawning = gate<void>();
+  const slow = await harness({
+    spawn: async (request) => {
+      await spawning.promise;
+      const child = spawn("/bin/sh", ["-c", request.command], { cwd: request.cwd, detached: true, stdio: "pipe" });
+      return { child, sandboxed: false };
+    },
+  });
+  const starting = slow.service.start(inRun(slow, "sleep 30"));
+  const stopping = slow.service.stopScope(undefined, runScope, JobStopper.ScopeEnded);
+  assert.equal(await settledSoon(stopping), false, "the stop waits for the start in flight");
+  spawning.resolve();
+  const job = await starting;
+  await stopping;
+  assert.equal(slow.ended.find((record) => record.id === job.id)?.stoppedBy, JobStopper.ScopeEnded, "it was stopped");
+  assert.equal(running(job.pid ?? 0), false, "the job is gone");
+});
+
 it("answers nothing for an id or a game it does not hold", async () => {
   const h = await harness();
   const job = await h.service.start(startRequest(h, "true"));

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { EventData, EventEnvelope } from "../../src/shared/event-log.ts";
 import type { RunSummary } from "../../src/shared/run-summary.ts";
+import { CHAT_PAGE_SIZE, chatContext, mergeChatEvents } from "../../src/shared/chat-history.ts";
 import type { ActivityItem, ConversationEntry } from "../../src/renderer/chat/conversation-entries.ts";
 import {
   currentWorkItems,
@@ -141,6 +142,41 @@ describe("transcriptEntries: what stays reachable whatever page is loaded", () =
     ];
     assert.deepEqual(questions(entries({ threadEvents: askedAgain, events: [] })), [
       { text: "How long?", pending: true },
+    ]);
+  });
+
+  it("keeps a running job's line and Stop when its start is older than the loaded page", () => {
+    const job = (n: number, event_type: string, jobId: string, extra: Record<string, unknown> = {}) =>
+      custom(n, event_type, {
+        jobId,
+        project: "game",
+        title: `Build ${jobId}`,
+        startedAt: "2026-01-01T12:00:00.000Z",
+        ...extra,
+      });
+    const replies = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) =>
+        event(from + index, {
+          type: "messages",
+          messages: [{ role: "assistant", content: `step ${index}` }],
+        } as EventData),
+      );
+    const log = [
+      job(1, "job_started", "a"),
+      job(2, "job_started", "b"),
+      job(3, "job_started", "c"),
+      job(4, "job_ended", "c", { state: "succeeded", durationMs: 60_000 }),
+      ...replies(5, CHAT_PAGE_SIZE + 40),
+      job(500, "job_ended", "b", { state: "failed", durationMs: 240_000 }),
+    ];
+    const page = log.slice(-CHAT_PAGE_SIZE);
+    const threadEvents = mergeChatEvents(chatContext([], log), page);
+    const jobs = entries({ threadEvents, events: page, stateEvents: threadEvents }).flatMap((e) =>
+      e.kind === "action" && e.action === "job" ? [[e.text, e.job?.jobId]] : [],
+    );
+    assert.deepEqual(jobs, [
+      ["In the background: Build a", "a"],
+      ["In the background: Build b · failed · 4 min", undefined],
     ]);
   });
 

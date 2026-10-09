@@ -71,6 +71,8 @@ const NATIVE_CHANNELS = [
   "studio:update.restart",
   // Download opens the waiting release's page in the person's real browser.
   "studio:update.download",
+  // Open Privacy settings opens macOS System Settings.
+  "studio:app-look.open-settings",
 ] as const satisfies readonly StudioInvokeChannel[];
 /**
  * Native steps inside a handler, asserted by name with `assertNativeActionAllowed`; no channel of
@@ -156,6 +158,8 @@ const FIXTURE_SAFE = [
   "studio:game.history",
   "studio:game.history.clear",
   "studio:game.engine.undo",
+  // Stops a process this profile's own agent started; nothing outside the profile changes.
+  "studio:jobs.stop",
   "studio:game.create",
   // Naming a new game is one completion on the picked engine, like a chat message (`studio:send`).
   "studio:game.name",

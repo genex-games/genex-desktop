@@ -50,6 +50,14 @@ function permissionFact(facts: Facts, event: EventEnvelope, p: Payload): void {
   else if (!facts.has(key)) facts.set(key, event);
 }
 
+/** Background work still running: its line and Stop stay reachable whatever page is loaded. */
+function jobFact(facts: Facts, event: EventEnvelope, event_type: string, p: Payload): void {
+  if (typeof p.jobId !== "string") return;
+  const key = `job:${p.jobId}`;
+  if (event_type === CustomEvent.JobStarted) facts.set(key, event);
+  else facts.delete(key);
+}
+
 function queuedFact(facts: Facts, event: EventEnvelope, data: CustomData, p: Payload): void {
   // Preserve identity across page/batch boundaries without keeping settled message bodies.
   const user = facts.get("queue:last-user");
@@ -154,6 +162,10 @@ function customFact(facts: Facts, event: EventEnvelope, data: CustomData): void 
     case CustomEvent.CoordinatorQueuePaused:
     case CustomEvent.CoordinatorQueueResumed:
       facts.set("queue:gate", event);
+      break;
+    case CustomEvent.JobStarted:
+    case CustomEvent.JobEnded:
+      jobFact(facts, event, event_type, p);
       break;
     case CustomEvent.ConversationRewound:
       // Permanent: an older page loaded later still needs every rewind to hide its withdrawn rows.

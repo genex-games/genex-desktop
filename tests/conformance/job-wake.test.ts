@@ -76,6 +76,18 @@ describe("a job's end wakes the lead", () => {
     assert.match(finished, /^Unreal build \(`make build`, started by you\) finished \(exit 0\) after 4 min; read it/);
     const timedOut = jobEndLine(ended({ state: JobState.TimedOut, exitCode: null, durationMs: 2 * HOUR_MS }));
     assert.match(timedOut, /was stopped at its time limit after 120 min/);
+    const byPerson = jobEndLine(ended({ state: JobState.Stopped, exitCode: null, stoppedBy: JobStopper.Person }));
+    assert.match(
+      byPerson,
+      /^Unreal build \(`make build`, started by worker Scene builder\) was stopped by the person after 4 min/,
+    );
+    assert.match(
+      byPerson,
+      /; read it with job_tail [^.]+\. Do not start it again unless the person asks\.$/,
+      "the person's stop is not undone",
+    );
+    const byAgent = jobEndLine(ended({ state: JobState.Stopped, exitCode: null, stoppedBy: JobStopper.Agent }));
+    assert.doesNotMatch(byAgent, /by the person|start it again/, "only the person's stop says so");
     const long = jobEndLine(ended({ command: `run ${"x".repeat(1_000)}` }));
     assert.ok(long.length < 400, `a long command is clipped: ${long.length} chars`);
   });

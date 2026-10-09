@@ -25,7 +25,8 @@ export interface ChatRewind {
   hide: string[];
   /**
    * Rows in the range that stay: each settles something begun before it (a message's answer, a
-   * turn, a build, a question), which would otherwise read as open for good. Absent on rewinds
+   * turn, a build, a question, a background job) or starts a job still running, which would
+   * otherwise read as open for good. Absent on rewinds
    * made before a rewind could cross a build.
    */
   keep?: string[];
@@ -470,14 +471,37 @@ interface Begun {
   turns: Set<string>;
   runs: Set<string>;
   questions: Set<string>;
+  jobs: Set<string>;
+  /** Every job the log records an end for, in the range or not. */
+  endedJobs: ReadonlySet<string>;
+}
+
+/** A job row's id, or null for any other row. */
+function jobIdOf(eventType: string, payload: Record<string, unknown>): string | null {
+  if (eventType !== CustomEvent.JobStarted && eventType !== CustomEvent.JobEnded) return null;
+  return typeof payload.jobId === "string" ? payload.jobId : null;
+}
+
+/** The jobs the log records an end for. */
+function endedJobs(events: readonly EventEnvelope[]): Set<string> {
+  const ended = new Set<string>();
+  for (const event of events) {
+    const custom = customRecord(event.data);
+    const jobId = custom?.event_type === CustomEvent.JobEnded ? jobIdOf(custom.event_type, custom.payload) : null;
+    if (jobId) ended.add(jobId);
+  }
+  return ended;
 }
 
 /**
  * The rows of the range that settle something begun before it, and stay: the queue records of
  * messages that stay (the answer a withdrawn message joined), the end of a turn begun before it,
- * a build's lifecycle from before it (the close a rewind's Stop wrote), and the answer to a
- * question asked before it. Withdrawn, each would read as open for good: a message the harness
- * answers again, a turn still running, a build running forever, a card waiting on nobody.
+ * a build's lifecycle from before it (the close a rewind's Stop wrote), the answer to a question
+ * asked before it, and a background job's end whose start stays. Withdrawn, each would read as
+ * open for good: a message the harness answers again, a turn still running, a build running
+ * forever, a card waiting on nobody, a job's Stop on work that ended. The start of a job that is
+ * still running stays too: a rewind stops only a build's jobs (and waits for their ends), so any
+ * other job goes on, and withdrawn it would run with no line and no Stop.
  */
 function keptInRange(
   events: readonly EventEnvelope[],
@@ -485,7 +509,13 @@ function keptInRange(
   from: string,
   leaving: ReadonlySet<string>,
 ): string[] {
-  const begun: Begun = { turns: new Set(), runs: new Set(), questions: new Set() };
+  const begun: Begun = {
+    turns: new Set(),
+    runs: new Set(),
+    questions: new Set(),
+    jobs: new Set(),
+    endedJobs: endedJobs(events),
+  };
   return events
     .filter((event) => event.id >= from && !isRewound(event, rewinds) && settlesEarlier(event, leaving, begun))
     .map((event) => event.id);
@@ -500,7 +530,16 @@ function settlesEarlier(event: EventEnvelope, leaving: ReadonlySet<string>, begu
   const message = queueRecordOf(event);
   if (message !== null) return !leaving.has(message);
   if (isExecutionEvent(custom)) return stepsEarlierRun(custom.event_type, custom.payload, begun);
+  const jobId = jobIdOf(custom.event_type, custom.payload);
+  if (jobId) return settlesJob(custom.event_type, jobId, begun);
   return answersEarlierQuestion(custom.event_type, custom.payload, begun);
+}
+
+/** A job's end whose start came before the range, or the start of a job with no end yet. */
+function settlesJob(eventType: string, jobId: string, begun: Begun): boolean {
+  if (eventType === CustomEvent.JobEnded) return !begun.jobs.has(jobId);
+  begun.jobs.add(jobId);
+  return !begun.endedJobs.has(jobId);
 }
 
 /** A turn's end whose start came before the range. */
