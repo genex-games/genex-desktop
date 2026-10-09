@@ -26,7 +26,8 @@ import { coordinatorTools, isRunControl, runControlTools } from "../../shared/co
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { ensureDir, realpathNearest } from "../../substrate/fsx.ts";
-import { isImageFile } from "../../substrate/game-workspace.ts";
+import { isImageFile, readProjectShape } from "../../substrate/game-workspace.ts";
+import { TargetRuntime } from "../../shared/computer-target.ts";
 import type { HostMethod, HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import { git } from "../../substrate/snapshots.ts";
@@ -94,6 +95,8 @@ const MESSAGE = {
   foreignCwd: (cwd: string) => `delegation cwd must be the project folder or a scratch worktree: ${cwd}`,
   outsideProject: (file: string) => `path is outside this project's folder: ${file}`,
   symlink: (file: string) => `refused: ${file} is a symlink`,
+  noPlaytestWindow: (tool: string) =>
+    `${tool} drives the studio's browser window, and this game runs as its own process — use the computer tool instead`,
   directEngine: (engineId: string) => `${engineId} is a direct engine; use engine.complete`,
   cannotCompact: (engineId: string) => `${engineId} has no compaction of its own, or no session was named to compact`,
   coordinatorOnCandidate: "coordinator cannot edit an optimization candidate",
@@ -136,6 +139,11 @@ const DIRECTOR_LOOK: LiveTool = {
   },
 };
 
+/** A playtest's or judge's result, with what its computer's trace adds up to. */
+function withPlayTrace(result: DelegateResult, tools: SessionTools): DelegateResult {
+  return tools.playtest ? { ...result, trace: tools.playtest.trace() } : result;
+}
+
 /** The scratch folder a blind judge starts in: empty, shared, and never a build. */
 const BLIND_JUDGE_FOLDER = "blind-judge";
 
@@ -151,6 +159,8 @@ interface DirectorTools {
   liveTools: NonNullable<DelegateRequest["liveTools"]>;
   onLiveTool: OnLiveTool;
   onCapture: NonNullable<DelegateRequest["onCapture"]>;
+  /** Stop what the director's computer started (a Play Protocol game); its window is released apart. */
+  release: () => Promise<void>;
 }
 
 /** Where a delegation runs, with what, and under which budget class. */
@@ -456,7 +466,11 @@ export class DelegationService {
     outDir: string,
     session: SessionPort,
   ): Promise<ComputerTools> {
-    return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    // A build whose studio.json declares the bridge runtime is played as its own process, started
+    // in the studio's sandbox; every other build in the session's browser window, as before.
+    const shape = await readProjectShape(initialRoot).catch(() => null);
+    const bridge = shape?.runtime === TargetRuntime.Bridge ? { sandbox: this.#core.sandbox } : undefined;
+    return computerTools(this.#x.previews, grant, initialRoot, outDir, session, { bridge });
   }
 
   /**
@@ -491,7 +505,12 @@ export class DelegationService {
       if (name === DirectorTool.Look) return this.#directorLook(d, computer, forward, args);
       return forward(name, args);
     };
-    return { liveTools: [...computer.liveTools, DIRECTOR_LOOK, ...forwarded], onLiveTool, onCapture };
+    return {
+      liveTools: [...computer.liveTools, DIRECTOR_LOOK, ...forwarded],
+      onLiveTool,
+      onCapture,
+      release: () => computer.release(),
+    };
   }
 
   /** A run tool, answered by the harness process that owns the loops and the merge. */
@@ -571,26 +590,30 @@ export class DelegationService {
       },
     };
     const trace = () => computer.trace();
+    const release = async () => {
+      await computer.release().catch(() => {});
+      await session.release();
+    };
     // A judge plays with the computer alone: the shorthands are a playtester's, and their files
     // land outside the trace a judge's evidence is read from.
     if (pt.role === "judge") {
-      return {
-        liveTools: computer.liveTools,
-        onLiveTool: computer.onLiveTool,
-        release: () => session.release(),
-        trace,
-      };
+      return { liveTools: computer.liveTools, onLiveTool: computer.onLiveTool, release, trace };
     }
+    // The shorthands drive the browser window; a Play Protocol game has none, so they are not
+    // offered there, and a call by name anyway is answered with the tool that does work.
+    const browserWindow = computer.runtime === TargetRuntime.Browser;
     const onLiveTool: OnLiveTool = async (name, args) => {
       if (name === COMPUTER_TOOL_NAME) return computer.onLiveTool(name, args);
+      if (!browserWindow) return MESSAGE.noPlaytestWindow(name);
       const { port: live, problem } = await computer.ensureLoaded();
       if (problem) return problem;
+      if (!live) return MESSAGE.noPlaytestWindow(name);
       return runPlaytestTool(name, args, live, context);
     };
     return {
-      liveTools: [...computer.liveTools, ...PLAYTEST_TOOLS],
+      liveTools: [...computer.liveTools, ...(browserWindow ? PLAYTEST_TOOLS : [])],
       onLiveTool,
-      release: () => session.release(),
+      release,
       trace,
     };
   }
@@ -827,7 +850,7 @@ export class DelegationService {
       });
       await this.#settled(p, engineId, session, result, tools);
       this.#core.budget.recordUsage(workClass, result.usage, engineId);
-      return tools.playtest ? { ...result, trace: tools.playtest.trace() } : result;
+      return withPlayTrace(result, tools);
     } catch (err) {
       throw await this.#failed(engineId, session, err);
     } finally {
@@ -838,6 +861,8 @@ export class DelegationService {
       await releasePlugins().catch((error) => this.#logCleanupFailure("plugin lease", error));
       await releaseMcp().catch((error) => this.#logCleanupFailure("connector lease", error));
       if (tools.playtest) await tools.playtest.release().catch(() => {});
+      if (tools.builder) await tools.builder.release().catch(() => {});
+      if (tools.director) await tools.director.release().catch(() => {});
       if (windows.self) await windows.self.release().catch(() => {});
       if (windows.director) await windows.director.release().catch(() => {});
       this.#core.budget.endWork(workClass);

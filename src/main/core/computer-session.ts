@@ -16,7 +16,7 @@ import type { ScreenAct } from "../../shared/agent-screen.ts";
 import { ComputerPacing, canPause, type InputRoute, type TargetCapabilities } from "../../shared/computer-target.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { CaptureSurface, type PreviewSetup } from "../../shared/preview-contract.ts";
+import { CaptureSurface, type PreviewSetup, StillMimeType } from "../../shared/preview-contract.ts";
 import {
   COMPUTER_TOOL_NAME,
   ComputerObserve,
@@ -134,7 +134,8 @@ interface SessionHelpers {
   readonly stateText: (target: ComputerTarget, max?: number) => Promise<string>;
   /** The state after a move, as the answer shows it, with the goal checked against it. */
   readonly afterMove: (ctx: ActionContext) => Promise<string>;
-  readonly saveFrame: (jpeg: Buffer, name: string) => Promise<string>;
+  /** Save a frame under the session's folder; a PNG keeps its own extension. */
+  readonly saveFrame: (jpeg: Buffer, name: string, mime?: StillMimeType) => Promise<string>;
   readonly frame: (target: ComputerTarget, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
   /** Run one move and let `ms` of the target's time pass after it, as the session's pacing says. */
   readonly moving: (target: ComputerTarget, move: () => Promise<void>, ms: number) => Promise<number | null>;
@@ -146,7 +147,9 @@ async function look(ctx: ActionContext): Promise<LiveToolResult> {
   const warning = request.action === "camera" ? await switchCamera(target, request.text) : "";
   const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface: ctx.surface });
   const { jpeg, stats } = shot;
-  const file = await helpers.saveFrame(jpeg, request.action === "camera" ? `cam-${request.text}` : "screen");
+  const mimeType = shot.mime ?? StillMimeType.Jpeg;
+  const name = request.action === "camera" ? `cam-${request.text}` : "screen";
+  const file = await helpers.saveFrame(jpeg, name, mimeType);
   ctx.record.frame = file;
   await helpers.frame(target, jpeg, ctx.caption, ctx.act);
   const c = helpers.cursor(target, ctx.size);
@@ -156,7 +159,7 @@ async function look(ctx: ActionContext): Promise<LiveToolResult> {
   const measured = stats ? `, litFraction ${stats.litFraction.toFixed(2)}, meanLuma ${Math.round(stats.meanLuma)}` : "";
   return {
     text: `${ctx.surfaceLine}${file} — ${ctx.size.width}×${ctx.size.height}${tookText}, cursor at ${c.x},${c.y}${measured}${warning}${ctx.noteLine}`,
-    images: [{ mimeType: "image/jpeg", data: jpeg.toString("base64"), label: ctx.caption }],
+    images: [{ mimeType, data: jpeg.toString("base64"), label: ctx.caption }],
   };
 }
 
@@ -208,12 +211,13 @@ async function observed(ctx: ActionContext, text: string, hint: boolean): Promis
     await helpers.frame(target, null, ctx.caption, ctx.act);
     return `${ctx.surfaceLine}${text}\n${COMPUTER_ARG_PROBLEM.observeFailed(errorMessage(shot))}`;
   }
-  const file = await helpers.saveFrame(shot.jpeg, `after-${request.action}`);
+  const mimeType = shot.mime ?? StillMimeType.Jpeg;
+  const file = await helpers.saveFrame(shot.jpeg, `after-${request.action}`, mimeType);
   ctx.record.frame = file;
   await helpers.frame(target, shot.jpeg, ctx.caption, ctx.act);
   return {
     text: `${ctx.surfaceLine}${text}\n${file}`,
-    images: [{ mimeType: "image/jpeg", data: shot.jpeg.toString("base64"), label: ctx.caption }],
+    images: [{ mimeType, data: shot.jpeg.toString("base64"), label: ctx.caption }],
   };
 }
 
@@ -452,9 +456,11 @@ function sessionHelpers<T extends ComputerTarget>(
       ctx.record.reached = true;
       return `${line}\nGOAL REACHED (studio-verified): ${options.quest.id}`;
     },
-    saveFrame: async (jpeg, name) => {
+    saveFrame: async (jpeg, name, mime = StillMimeType.Jpeg) => {
       await ensureDir(options.frameDir);
-      const file = path.join(options.frameDir, `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}.jpg`);
+      const ext = mime === StillMimeType.Png ? "png" : "jpg";
+      const base = `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}`;
+      const file = path.join(options.frameDir, `${base}.${ext}`);
       await writeFile(file, jpeg);
       return file;
     },

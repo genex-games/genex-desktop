@@ -41,6 +41,8 @@ async function hostWith() {
         root: () => root,
         retarget: () => {},
         trace: () => ({ path: null, steps: built.length, deterministic: false, reachedAt: null }),
+        runtime: "browser",
+        release: async () => {},
       };
     },
   };

@@ -2,17 +2,33 @@
  * The computer on a delegation's pooled window: who holds it (the role), which build it shows, and
  * how the studio's own browser window loads that build. Everything an action does — parsing,
  * refusing what the target cannot do, pacing the clock, looking, input — is the generic
- * {@link computerSession}; this module is its browser source (`browser-preview-target.ts`).
+ * {@link computerSession}; this module is its browser source (`browser-preview-target.ts`), or,
+ * for a game whose studio.json declares the `bridge` runtime, the Play Protocol source
+ * (`game-bridge-target.ts`).
  */
 import { type AgentScreen, type AgentScreenRole, ScreenDeed } from "../../shared/agent-screen.ts";
-import { BROWSER_CAPABILITIES, ComputerPacing, type ComputerTraceSummary } from "../../shared/computer-target.ts";
+import {
+  BROWSER_CAPABILITIES,
+  ComputerPacing,
+  type ComputerTraceSummary,
+  type TargetCapabilities,
+  TargetRuntime,
+} from "../../shared/computer-target.ts";
 import { computerToolDefinition } from "../../substrate/computer-tool.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
+import type { ProcessSandbox } from "../../substrate/spawn.ts";
+import type { ComputerTarget } from "../../substrate/computer-target.ts";
 import { type BrowserPreviewTarget, browserPreviewTarget } from "./browser-preview-target.ts";
-import { type ComputerSessionOptions, computerSession, type TargetSource } from "./computer-session.ts";
+import {
+  type ComputerSession,
+  type ComputerSessionOptions,
+  computerSession,
+  type TargetSource,
+} from "./computer-session.ts";
+import { gameBridgeSource } from "./game-bridge-target.ts";
 import type { PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
 import type { SessionPort } from "./session-port.ts";
@@ -41,9 +57,12 @@ const FRONT_END_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester"]);
 /** Who holds the computer, and on which build: a playtest grant with any screen role. */
 export type ComputerGrant = Omit<NonNullable<DelegateRequest["playtest"]>, "role"> & { role?: AgentScreen["role"] };
 
-/** A load of the build into the window: the port, and what went wrong or is worth saying. */
+/**
+ * A load of the build: the browser window's port (null for a Play Protocol game, which has no
+ * window the playtest shorthands could drive), and what went wrong or is worth saying.
+ */
 export interface ComputerLoad {
-  port: PreviewPort;
+  port: PreviewPort | null;
   problem: string | null;
   note: string | null;
 }
@@ -58,6 +77,10 @@ export interface ComputerTools {
   retarget: (root: string) => void;
   /** What the session's trace adds up to so far. */
   trace: () => ComputerTraceSummary;
+  /** How the game runs: the browser window, or its own Play Protocol process. */
+  runtime: TargetRuntime;
+  /** Stop what the computer started: a Play Protocol game's process. The browser window is the session's. */
+  release: () => Promise<void>;
 }
 
 /**
@@ -76,6 +99,45 @@ function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir
     observeByDefault: PACED_ROLES.has(role),
     ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
     ...(grant.quest ? { quest: grant.quest } : {}),
+  };
+}
+
+/** What else a computer may need: a sandbox to start a Play Protocol game in, when the build is one. */
+export interface ComputerToolsOptions {
+  /** Set when the build's studio.json declares the `bridge` runtime: its game is started here. */
+  bridge?: { sandbox: Pick<ProcessSandbox, "spawnLongLived"> };
+}
+
+/** The tools over one session, whatever its target: the tool definition, its calls, its load and its trace. */
+function toolsOver<T extends ComputerTarget>(
+  session: ComputerSession<T>,
+  parts: {
+    caps: TargetCapabilities;
+    toolRole: ComputerToolRole;
+    observeByDefault: boolean;
+    screen: () => AgentScreen;
+    portOf: (target: T) => PreviewPort | null;
+    release: () => Promise<void>;
+  },
+): ComputerTools {
+  const definition = computerToolDefinition({
+    role: parts.toolRole,
+    capabilities: parts.caps,
+    observeByDefault: parts.observeByDefault,
+  });
+  return {
+    liveTools: [definition],
+    onLiveTool: (name, args) => session.run(name, args),
+    ensureLoaded: async (force = false) => {
+      const loaded = await session.ensureLoaded(force);
+      return { port: parts.portOf(loaded.target), problem: loaded.problem, note: loaded.note };
+    },
+    screen: parts.screen,
+    root: () => session.root(),
+    retarget: (next: string) => session.retarget(next),
+    trace: () => session.trace(),
+    runtime: parts.caps.runtime,
+    release: parts.release,
   };
 }
 
@@ -125,6 +187,7 @@ export function computerTools(
   initialRoot: string,
   outDir: string,
   sessionPort: SessionPort,
+  options: ComputerToolsOptions = {},
 ): ComputerTools {
   const role: AgentScreen["role"] = grant.role ?? "builder";
   const label = grant.label ?? grant.facetId ?? grant.project;
@@ -136,26 +199,30 @@ export function computerTools(
     facetId: grant.facetId ?? null,
     role,
   });
-  const source = browserSource(previews, grant, role, sessionPort, screen);
-  const session = computerSession(
-    source,
-    initialRoot,
-    sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration)),
-  );
-  const ensureLoaded = async (force = false): Promise<ComputerLoad> => {
-    const loaded = await session.ensureLoaded(force);
-    return { port: loaded.target.port, problem: loaded.problem, note: loaded.note };
-  };
+  const sessionOptions = sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration));
   const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : "playtester";
-  return {
-    liveTools: [
-      computerToolDefinition({ role: toolRole, capabilities: source.caps, observeByDefault: PACED_ROLES.has(role) }),
-    ],
-    onLiveTool: (name, args) => session.run(name, args),
-    ensureLoaded,
+  const observeByDefault = PACED_ROLES.has(role);
+  if (options.bridge) {
+    const bridge = gameBridgeSource({ sandbox: options.bridge.sandbox });
+    const session = computerSession(bridge, initialRoot, sessionOptions);
+    return toolsOver(session, {
+      caps: bridge.caps,
+      toolRole,
+      observeByDefault,
+      screen,
+      portOf: () => null,
+      release: bridge.release,
+    });
+  }
+  const source = browserSource(previews, grant, role, sessionPort, screen);
+  const session = computerSession(source, initialRoot, sessionOptions);
+  const release = async () => {};
+  return toolsOver(session, {
+    caps: source.caps,
+    toolRole,
+    observeByDefault,
     screen,
-    root: () => session.root(),
-    retarget: (next: string) => session.retarget(next),
-    trace: () => session.trace(),
-  };
+    portOf: (target) => target.port,
+    release,
+  });
 }

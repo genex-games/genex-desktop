@@ -6,7 +6,12 @@
  * Electron-free: implementations live beside what they wrap (`main/core/browser-preview-target.ts`,
  * `main/core/game-bridge-target.ts`); tests satisfy it with a plain object.
  */
-import type { CaptureSurface, PreviewConsoleEntry, PreviewPixelStats } from "../shared/preview-contract.ts";
+import type {
+  CaptureSurface,
+  PreviewConsoleEntry,
+  PreviewPixelStats,
+  StillMimeType,
+} from "../shared/preview-contract.ts";
 import type { InputRoute, TargetCapabilities } from "../shared/computer-target.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 
@@ -14,7 +19,10 @@ export type { TargetCapabilities };
 
 /** One picture of the target, in the tool's view space. */
 export interface TargetShot {
+  /** The picture's bytes: a JPEG unless `mime` says otherwise. */
   jpeg: Buffer;
+  /** How the bytes are encoded, when not JPEG: a Play Protocol game may only draw PNG. */
+  mime?: StillMimeType;
   stats: PreviewPixelStats | null;
   /** What was photographed, when the target can tell; null when it cannot say. */
   surface: CaptureSurface | null;
