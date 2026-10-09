@@ -388,8 +388,14 @@ test("a game chat links its own files, newer build files and files anywhere on t
     "a link is judged by what it points at",
   );
   assert.deepEqual(await resolve(`${game}/assets`), { open: "folder", path: "~/AI Games/rift/assets" });
-  assert.deepEqual(await resolve("~/Movies/trailer.mov"), { open: "app", path: "~/Movies/trailer.mov" });
-  assert.deepEqual(await resolve(`file://${encodeURI(outside)}`), { open: "app", path: "~/Movies/trailer.mov" });
+  assert.deepEqual(await resolve("~/Movies/trailer.mov"), {
+    open: "app",
+    path: path.join("~", "Movies", "trailer.mov"),
+  });
+  assert.deepEqual(await resolve(`file://${encodeURI(outside)}`), {
+    open: "app",
+    path: path.join("~", "Movies", "trailer.mov"),
+  });
   assert.deepEqual(await resolve("~/Tools/Thing.app"), { open: "finder", path: "~/Tools/Thing.app" });
   assert.deepEqual(
     await resolve(path.join(worktree, "docs", "DESIGN.md")),
@@ -430,7 +436,7 @@ test("Studio and a chat without a game resolve only what they can reach", async 
   const draft = scope({ game: null });
   assert.deepEqual(await chat.resolve(draft, [{ name: "docs/DESIGN.md" }, { name: "~/Movies/trailer.mov" }]), [
     null,
-    { open: "app", path: "~/Movies/trailer.mov" },
+    { open: "app", path: path.join("~", "Movies", "trailer.mov") },
   ]);
 });
 

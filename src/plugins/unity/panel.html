@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; font: 14px/1.5 system-ui, sans-serif; color: var(--studio-fg, #ddd); background: var(--studio-bg, #222); }
+    h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.03em; }
+    h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+    p { margin: 8px 0; }
+    .muted { opacity: .7; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .badge { font-size: 12px; padding: 3px 9px; border: 1px solid currentColor; border-radius: 99px; white-space: nowrap; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    button, input, select { font: inherit; color: inherit; border: 1px solid color-mix(in srgb, var(--studio-fg, #ddd) 22%, transparent); border-radius: 7px; background: transparent; }
+    button { padding: 7px 11px; cursor: pointer; text-align: start; }
+    button:hover:enabled { background: color-mix(in srgb, var(--studio-fg, #ddd) 8%, transparent); }
+    button:disabled { opacity: .4; cursor: default; }
+    button.primary { background: var(--studio-accent, #607767); color: var(--studio-bg, #222); border-color: transparent; }
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--studio-accent, #9eafa3); outline-offset: 3px; }
+    input, select { width: 100%; padding: 8px 10px; min-width: 0; }
+    select option { color: var(--studio-fg, #ddd); background: var(--studio-bg, #222); }
+    label { display: block; font-size: 12px; margin-bottom: 5px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+    section, details { margin-top: 24px; }
+    details { border-top: 1px solid color-mix(in srgb, var(--studio-fg, #ddd) 16%, transparent); padding-top: 12px; }
+    summary { cursor: pointer; font-weight: 600; }
+    .path, pre { overflow-wrap: anywhere; white-space: pre-wrap; }
+    .path { font: 12px/1.5 ui-monospace, monospace; opacity: .75; }
+    pre { margin: 8px 0; font: 12px/1.6 ui-monospace, monospace; }
+    #error:empty { display: none; }
+    #error { padding: 10px 0; border-top: 1px solid currentColor; }
+    #hierarchy, #assets { display: grid; gap: 2px; max-height: 360px; overflow: auto; }
+    #hierarchy button { border: 0; border-radius: 4px; padding-block: 5px; width: 100%; }
+    #hierarchy button[aria-pressed="true"] { background: color-mix(in srgb, var(--studio-accent, #9eafa3) 20%, transparent); }
+    #console { max-height: 280px; overflow: auto; }
+    figure { margin: 12px 0; }
+    figure img { display: block; width: 100%; max-height: 500px; object-fit: contain; background: #000; border-radius: 5px; }
+    figcaption { font-size: 12px; opacity: .7; margin-top: 5px; }
+    .job { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--studio-fg, #ddd) 12%, transparent); }
+    [hidden] { display: none !important; }
+    @media (max-width: 440px) { body { padding: 14px; } .fields { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header><h1>Unity</h1><span id="badge" class="badge">Checking</span></header>
+  <p id="status" role="status">Checking the selected project…</p>
+  <p id="project" class="path"></p>
+  <div class="actions">
+    <button id="refresh">Check connection</button>
+    <button id="connect" class="primary">Connect Unity</button>
+    <button id="disconnect" hidden>Disconnect</button>
+  </div>
+  <div id="setup" hidden>
+    <p class="muted">Set Project folder in plugin settings, or open a Unity game. Install the Editor bridge, then open that project in Unity.</p>
+    <label for="editor">Installed Unity Editor</label><select id="editor"></select>
+    <div class="actions"><button id="install">Install Editor bridge</button><button id="open">Open in Unity</button></div>
+    <details><summary>Create a project</summary>
+      <label for="new-path">New project folder</label><input id="new-path" placeholder="Absolute path to a new folder" autocomplete="off">
+      <p class="muted">Uses the selected installed Editor version. Unity licensing and build modules are managed in Unity Hub.</p>
+      <div class="actions"><button id="create">Create Unity project</button></div>
+    </details>
+  </div>
+  <pre id="error" role="alert"></pre>
+  <main id="workspace" hidden>
+    <div class="actions">
+      <button id="play">Play</button><button id="stop">Stop</button><button id="pause">Pause</button><button id="step">Step frame</button><button id="verify">Check project</button>
+    </div>
+    <p id="verification" role="status"></p>
+    <section aria-label="Scene hierarchy">
+      <header><h2>Scene hierarchy</h2><button id="load-hierarchy">Refresh hierarchy</button></header>
+      <p id="scenes" class="muted"></p>
+      <div id="hierarchy"></div><button id="more" hidden>Load more objects</button>
+      <pre id="selection"></pre>
+      <div class="actions"><button id="capture" disabled>Capture selected camera</button></div>
+      <figure id="capture-result" hidden><img id="image" alt="Unity camera capture"><figcaption>Captured from the selected Unity camera</figcaption></figure>
+    </section>
+    <details><summary>Assets</summary>
+      <label for="asset-query">Search project Assets</label><input id="asset-query" autocomplete="off" placeholder="Name or Unity filter, e.g. t:Prefab">
+      <div class="actions"><button id="search-assets">Search Assets</button><button id="more-assets" hidden>Load more assets</button></div>
+      <div id="assets"></div><pre id="asset-detail"></pre>
+    </details>
+    <details id="console-panel"><summary>Console</summary>
+      <div class="actions"><button id="read-console">Read recent messages</button></div><pre id="console">Read the console to inspect warnings and errors.</pre>
+    </details>
+    <details><summary>Tests and builds</summary>
+      <div class="fields">
+        <div><label for="test-mode">Test mode</label><select id="test-mode"><option>EditMode</option><option>PlayMode</option></select></div>
+        <div><label for="assembly">Test assembly (optional)</label><input id="assembly" autocomplete="off" placeholder="Assembly name"></div>
+      </div>
+      <div class="actions"><button id="tests">Run tests</button></div>
+      <label for="target">Installed build target</label><select id="target"></select>
+      <p class="muted">Save scenes and configure build scenes. Select the platform in Unity Build Profiles and wait for compilation first. The player uses a new output folder.</p>
+      <div class="actions"><button id="build">Build player</button></div>
+      <label for="job-id">Existing job ID</label><input id="job-id" autocomplete="off" placeholder="Paste an accepted job ID">
+      <div class="actions"><button id="read-job">Read job</button></div><div id="jobs" role="status"></div>
+    </details>
+  </main>
+  <!-- STUDIO_PANEL_SDK -->
+  <script>
+    const api = window.studioPlugin, element = id => document.getElementById(id);
+    let closed = false, refreshing = false, busy = false, selected = null, nextOffset = null, ready = false;
+    let activeEditor = null, currentRoot = null, targetsLoaded = false, assetsOffset = null, assetQuery = '', generation = 0, refreshAgain = false;
+    const jobs = new Map();
+    const call = async (name, args = {}) => {
+      const started = generation, result = await api.call('action', name, args);
+      if (started !== generation) throw new Error('The project changed while the request was pending. Inspect its original project before retrying any change.');
+      return result;
+    };
+    function fail(error) { if (!closed) element('error').textContent = error instanceof Error ? error.message : String(error); }
+    function editorChoice() { return element('editor').selectedOptions[0]; }
+    function stateLabel(editor) {
+      if (!editor) return 'Setup';
+      if (editor.isBuilding) return 'Building';
+      if (editor.isCompiling) return 'Compiling';
+      if (editor.isUpdating) return 'Importing';
+      if (editor.isPlaying) return 'Playing';
+      return 'Connected';
+    }
+    async function run(operation) {
+      if (busy || closed) return;
+      busy = true; element('error').textContent = ''; controls();
+      try { await operation(); } catch (error) { fail(error); } finally { busy = false; if (!closed) await refresh(); }
+    }
+    function controls() {
+      const blocked = busy || activeEditor?.isCompiling || activeEditor?.isUpdating || activeEditor?.isChangingPlayMode || activeEditor?.isBuilding;
+      for (const id of ['play','stop','pause','step','verify','load-hierarchy','read-console','tests','build','capture','more','search-assets','more-assets']) element(id).disabled = !ready || blocked;
+      element('play').disabled ||= !!activeEditor?.isPlaying;
+      element('stop').disabled ||= !activeEditor?.isPlaying;
+      element('pause').disabled ||= !activeEditor?.isPlaying;
+      element('pause').textContent = activeEditor?.isPaused ? 'Resume' : 'Pause';
+      element('step').disabled ||= !activeEditor?.isPlaying || !activeEditor?.isPaused;
+      element('capture').disabled ||= !selected;
+      const nativeJobBusy = [...jobs.values()].some(job => ['tests','build'].includes(job.kind) && ['queued','running'].includes(job.state));
+      for (const id of ['play','stop','pause','step']) element(id).disabled ||= nativeJobBusy;
+      element('build').disabled ||= !element('target').value || !!activeEditor?.isPlaying || nativeJobBusy;
+      element('tests').disabled ||= !!activeEditor?.isPlaying || nativeJobBusy;
+      for (const id of ['connect','disconnect','refresh','install','read-job']) element(id).disabled = busy;
+      for (const id of ['open','create']) element(id).disabled = busy || !element('editor').options.length;
+      for (const button of element('hierarchy').querySelectorAll('button')) button.disabled = blocked;
+      for (const button of element('assets').querySelectorAll('button')) button.disabled = blocked;
+      for (const button of element('jobs').querySelectorAll('button')) button.disabled = busy;
+    }
+    async function loadTargets() {
+      const build = await call('build-scenes');
+      const previous = element('target').value;
+      element('target').replaceChildren(...build.supportedTargets.map(target => { const option = document.createElement('option'); option.value = target; option.textContent = target; return option; }));
+      element('target').value = build.supportedTargets.includes(previous) ? previous : build.activeTarget;
+      targetsLoaded = true;
+    }
+    function drawEditors(editors) {
+      const old = element('editor').value;
+      element('editor').replaceChildren(...editors.map(editor => {
+        const option = document.createElement('option'); option.value = editor.executable; option.textContent = 'Unity ' + editor.version; option.dataset.version = editor.version; return option;
+      }));
+      if (editors.some(editor => editor.executable === old)) element('editor').value = old;
+      element('open').disabled = !editors.length; element('create').disabled = !editors.length;
+    }
+    function drawState(state) {
+        ready = state.ready; drawEditors(state.editors || []);
+        const editor = state.editor; activeEditor = editor;
+        if (state.projectRoot && state.projectRoot !== currentRoot) {
+          currentRoot = state.projectRoot; selected = null; targetsLoaded = false; jobs.clear(); drawJobs();
+          element('hierarchy').replaceChildren(); element('selection').textContent = ''; element('assets').replaceChildren(); element('asset-detail').textContent = ''; element('capture-result').hidden = true;
+        }
+        element('badge').textContent = ready ? stateLabel(editor) : 'Setup';
+        element('status').textContent = ready ? 'Unity ' + editor.unityVersion + ' · ' + (editor.activeScene?.name || 'No active scene') : state.detail;
+        element('project').textContent = state.projectRoot || '';
+        element('setup').hidden = ready; element('workspace').hidden = !ready;
+        element('connect').hidden = ready; element('disconnect').hidden = !ready;
+    }
+    async function pollJobs() {
+      if (!ready) return;
+      for (const job of [...jobs.values()]) {
+        if (job.state !== 'queued' && job.state !== 'running') continue;
+        try { await updateJob(job.id); } catch (error) { fail(error); }
+      }
+    }
+    async function restoreEditorJobs(editor) {
+      for (const summary of editor.jobs || []) {
+        const previous = jobs.get(summary.id);
+        if (!previous || previous.state !== summary.state) await updateJob(summary.id);
+      }
+      if (!targetsLoaded && !editor.isCompiling && !editor.isUpdating && !editor.isBuilding) await loadTargets();
+    }
+    async function refresh() {
+      if (closed) return;
+      if (refreshing) { refreshAgain = true; return; }
+      refreshing = true;
+      try {
+        // Job snapshots remain readable while synchronous Unity BuildPlayer owns the Editor thread.
+        await pollJobs();
+        const state = await call('status'); if (closed) return;
+        drawState(state);
+        if (ready) await restoreEditorJobs(state.editor);
+      } catch (error) { fail(error); } finally { refreshing = false; controls(); if (refreshAgain && !closed) { refreshAgain = false; void refresh(); } }
+    }
+    function drawObject(item) {
+      const button = document.createElement('button');
+      button.textContent = item.name + (item.active ? '' : ' · inactive');
+      button.style.paddingInlineStart = (10 + Math.min(item.depth, 8) * 14) + 'px';
+      button.setAttribute('aria-pressed', String(selected === item.id));
+      button.onclick = () => run(async () => {
+        selected = item.id;
+        for (const sibling of element('hierarchy').children) sibling.setAttribute('aria-pressed', String(sibling === button));
+        const object = await call('inspect-object', {id: item.id});
+        element('selection').textContent = object.name + '\nPosition: ' + object.position.join(', ') + '\n' + object.components.map(component => component.type || 'Missing script').join('\n');
+      });
+      return button;
+    }
+    async function loadHierarchy(append = false) {
+      const page = await call('hierarchy', {offset: append ? nextOffset : 0, limit: 100, depth: 40});
+      if (!append) { element('hierarchy').replaceChildren(); selected = null; element('selection').textContent = ''; }
+      if (!page.items.length && !append) { const empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = 'This scene has no objects. Create them from the game chat.'; element('hierarchy').append(empty); }
+      else element('hierarchy').append(...page.items.map(drawObject));
+      nextOffset = page.nextOffset; element('more').hidden = nextOffset == null;
+      const scenes = await call('scenes'); element('scenes').textContent = scenes.scenes.map(scene => scene.name + (scene.dirty ? ' · unsaved changes' : '')).join(' / ');
+      await loadTargets();
+    }
+    async function searchAssets(append = false) {
+      if (!append) assetQuery = element('asset-query').value.trim();
+      const page = await call('assets', {query: assetQuery, offset: append ? assetsOffset : 0, limit: 50});
+      if (!append) { element('assets').replaceChildren(); element('asset-detail').textContent = ''; }
+      if (!page.items.length && !append) { const empty = document.createElement('p'); empty.textContent = 'No matching assets in this project.'; element('assets').append(empty); }
+      for (const asset of page.items) {
+        const button = document.createElement('button'); button.className = 'path'; button.textContent = asset.path;
+        button.onclick = () => run(async () => { element('asset-detail').textContent = JSON.stringify(await call('inspect-asset', {path: asset.path}), null, 2); });
+        element('assets').append(button);
+      }
+      assetsOffset = page.nextOffset; element('more-assets').hidden = assetsOffset == null;
+    }
+    function drawJobs() {
+      element('jobs').replaceChildren(...[...jobs.values()].reverse().map(job => {
+        const row = document.createElement('div'); row.className = 'job';
+        const title = document.createElement('p'); title.textContent = (job.kind || 'Job') + ' · ' + job.state;
+        const id = document.createElement('p'); id.className = 'path'; id.textContent = job.id;
+        row.append(title, id);
+        if (job.result || job.error) { const detail = document.createElement('pre'); detail.textContent = JSON.stringify(job.result || job.error, null, 2); row.append(detail); }
+        if (job.state === 'completed' && job.kind === 'build' && job.result?.result === 'Succeeded' && job.result.outputPath) {
+          const label = document.createElement('label'); label.textContent = 'Completed build output';
+          const path = document.createElement('input'); path.readOnly = true; path.value = currentRoot.replace(/\\/g, '/') + '/' + job.result.outputPath; path.setAttribute('aria-label', 'Completed build output path'); path.onclick = () => path.select();
+          const copy = document.createElement('button'); copy.textContent = 'Copy output path'; copy.onclick = async () => { try { await navigator.clipboard.writeText(path.value); copy.textContent = 'Path copied'; } catch { path.focus(); path.select(); copy.textContent = 'Select path to copy'; } };
+          row.append(label, path, copy);
+        }
+        if ((job.state === 'queued' || job.state === 'running') && job.cancelSupported) {
+          const cancel = document.createElement('button'); cancel.textContent = 'Cancel job'; cancel.onclick = () => run(async () => { jobs.set(job.id, await call('cancel-job', {id: job.id})); drawJobs(); }); row.append(cancel);
+        }
+        return row;
+      }));
+    }
+    async function updateJob(id) { const job = await call('job-status', {id}); jobs.set(id, job); drawJobs(); }
+    async function accepted(name, params) { const job = await call(name, params); jobs.set(job.id, job); element('job-id').value = job.id; drawJobs(); }
+    element('refresh').onclick = () => run(() => refresh());
+    element('connect').onclick = () => run(() => call('connect'));
+    element('disconnect').onclick = () => run(() => call('disconnect'));
+    element('install').onclick = () => run(() => call('install-bridge'));
+    element('open').onclick = () => run(() => call('open-editor', {editor: editorChoice()?.value || ''}));
+    element('create').onclick = () => run(async () => { const result = await call('create-project', {path: element('new-path').value, version: editorChoice()?.dataset.version || ''}); element('error').textContent = 'Created ' + result.projectRoot + '. Set this folder in plugin settings, then open it in Unity.'; });
+    for (const id of ['play','stop','pause','step']) element(id).onclick = () => run(() => call(id, id === 'pause' ? {paused: !activeEditor?.isPaused} : {}));
+    element('verify').onclick = () => run(async () => { const result = await call('verify'); element('verification').textContent = result.healthy ? 'Compilation and loaded scenes passed structural checks.' : 'Checks need attention: ' + JSON.stringify(result); });
+    element('load-hierarchy').onclick = () => run(() => loadHierarchy());
+    element('more').onclick = () => run(() => loadHierarchy(true));
+    element('search-assets').onclick = () => run(() => searchAssets());
+    element('more-assets').onclick = () => run(() => searchAssets(true));
+    element('read-console').onclick = () => run(async () => { const result = await call('console', {limit: 100, tail: true}); element('console').textContent = result.entries.length ? result.entries.map(entry => '[' + entry.type + '] ' + entry.message).join('\n\n') : 'No messages recorded since the bridge loaded.'; });
+    element('capture').onclick = () => run(async () => { const result = await call('capture-camera', {id: selected, width: 960, height: 540}); element('image').src = 'data:image/png;base64,' + result.base64; element('capture-result').hidden = false; });
+    element('tests').onclick = () => run(() => accepted('run-tests', {mode: element('test-mode').value, ...(element('assembly').value.trim() ? {assemblyNames: [element('assembly').value.trim()]} : {})}));
+    element('build').onclick = () => run(() => accepted('build-player', {target: element('target').value}));
+    element('read-job').onclick = () => run(() => updateJob(element('job-id').value.trim()));
+    const unsubscribe = api.onContextChanged(() => { generation++; ready = false; activeEditor = null; jobs.clear(); selected = null; targetsLoaded = false; currentRoot = null; element('workspace').hidden = true; element('capture-result').hidden = true; drawJobs(); controls(); void refresh(); });
+    void api.call('context').then(context => {
+      document.body.style.setProperty('--studio-bg', context.theme.background);
+      document.body.style.setProperty('--studio-fg', context.theme.foreground);
+      document.body.style.setProperty('--studio-accent', context.theme.accent);
+    });
+    void refresh();
+    const timer = setInterval(() => { if (ready && !busy) void refresh(); }, 3000);
+    window.addEventListener('pagehide', () => { closed = true; clearInterval(timer); unsubscribe(); });
+  </script>
+</body>
+</html>

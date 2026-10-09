@@ -89,7 +89,9 @@ export function setupFailed(state: BootStoreState, error: string): BootStoreStat
 
 /** Whether the setup screen offers Set up: a Windows sandbox that has not been installed yet. */
 export function canSetUp(state: Pick<BootStoreState, "platform" | "problem">): boolean {
-  return state.platform === StudioPlatform.Windows && state.problem?.code === SandboxProblemCode.NotProvisioned;
+  const code = state.problem?.code;
+  const installable = code === SandboxProblemCode.NotProvisioned || code === SandboxProblemCode.GitMissing;
+  return state.platform === StudioPlatform.Windows && installable;
 }
 
 /** The screen the state calls for. */
@@ -129,6 +131,7 @@ export function createBoot(
 ): Boot {
   const store = createStore<BootStoreState>()(() => initialBoot());
   let started = false;
+  let automaticallyAttempted = false;
   const startOnce = (boot: BootState): void => {
     // The studio's stores start before the view changes, so the studio mounts over started stores.
     if (boot.phase === BootPhase.Ready && !started) {
@@ -147,6 +150,11 @@ export function createBoot(
       .bootState()
       .catch((): BootState => ({ platform: store.getState().platform ?? "", phase: BootPhase.Ready, sandbox: null }));
     answered(boot);
+    const automatic = boot.automaticSetup && canSetUp(store.getState()) && !automaticallyAttempted;
+    if (automatic) {
+      automaticallyAttempted = true;
+      await setUp();
+    }
   };
   const runRetry = async (): Promise<void> => {
     store.setState(retryStarted, true);
@@ -166,5 +174,6 @@ export function createBoot(
       store.setState((state) => setupFailed(state, errorMessage(error)), true);
     }
   };
-  return { store, load, retry: shared(runRetry), setUp: shared(runSetUp) };
+  const setUp = shared(runSetUp);
+  return { store, load, retry: shared(runRetry), setUp };
 }

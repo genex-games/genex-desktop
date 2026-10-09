@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TITLEBAR_HEIGHT, windowChrome } from "../../src/main/window-chrome.ts";
+import { TITLEBAR_HEIGHT, studioWindowSize, windowChrome } from "../../src/main/window-chrome.ts";
 
 describe("window chrome", () => {
   it("macOS keeps the inset traffic lights, centred on the headers' line, and no overlay", () => {
@@ -35,5 +35,31 @@ describe("window chrome", () => {
       titleBarStyle: "hidden",
       titleBarOverlay: { color: "#fafafa", symbolColor: "#111111", height: TITLEBAR_HEIGHT },
     });
+  });
+});
+
+describe("Windows window size in device-independent pixels", () => {
+  for (const [width, height] of [
+    [1366, 728],
+    [1092, 574],
+    [960, 500],
+    [640, 360],
+    [3840, 2080],
+  ]) {
+    it(`initial and minimum sizes fit the ${width} by ${height} work area`, () => {
+      const size = studioWindowSize("win32", { width, height });
+      assert.ok(size.width <= width, `width ${size.width} exceeds ${width}`);
+      assert.ok(size.height <= height, `height ${size.height} exceeds ${height}`);
+      assert.ok(size.minWidth <= size.width);
+      assert.ok(size.minHeight <= size.height);
+      assert.ok(size.minWidth <= width);
+      assert.ok(size.minHeight <= height);
+    });
+  }
+  it("large displays and fixed acceptance retain the established size", () => {
+    const expected = { width: 1440, height: 900, minWidth: 1080, minHeight: 680 };
+    assert.deepEqual(studioWindowSize("win32", { width: 3840, height: 2080 }), expected);
+    assert.deepEqual(studioWindowSize("win32"), expected);
+    assert.deepEqual(studioWindowSize("darwin", { width: 960, height: 500 }), expected);
   });
 });

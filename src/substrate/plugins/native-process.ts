@@ -7,6 +7,9 @@ import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { killProcessTree } from "../process-tree.ts";
+import { runWindowsNativeProcess } from "./windows-native-process.ts";
+import { NativeEndReason, type NativeProcessRequest, type NativeProcessResult } from "./native-process-contract.ts";
+export { NativeEndReason, type NativeProcessRequest, type NativeProcessResult } from "./native-process-contract.ts";
 const quote = (s: string) => JSON.stringify(s);
 const exec = promisify(execFile);
 /**
@@ -232,34 +235,6 @@ async function descendants(root: number): Promise<number[]> {
   }
   return found;
 }
-/** Why a native process ended (`NativeProcessResult.reason`); a signal at exit replaces `exit` with its name. */
-export const NativeEndReason = { Exit: "exit", Cancelled: "cancelled", Timeout: "timeout" } as const;
-export type NativeEndReason = (typeof NativeEndReason)[keyof typeof NativeEndReason];
-
-/** One confined native run: what it runs, what it may read and write, and its limits. */
-export interface NativeProcessRequest {
-  binary: string;
-  binaryRoot?: string;
-  args: string[];
-  cwd: string;
-  scratch: string;
-  reads: string[];
-  writes: string[];
-  denyRead: string[];
-  gpu?: boolean;
-  signal: AbortSignal;
-  timeoutMs: number;
-  maxOutputBytes: number;
-}
-export interface NativeProcessResult {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-  reason: string;
-  pid: number | null;
-}
-
 /** System folders every job may read: the OS, its tools, fonts and device nodes. */
 const SYSTEM_READS = [
   "/System",
@@ -406,6 +381,7 @@ function superviseJob(
 
 export async function runNativeProcess(p: NativeProcessRequest): Promise<NativeProcessResult> {
   p.signal.throwIfAborted();
+  if (process.platform === StudioPlatform.Windows) return runWindowsNativeProcess(p);
   const { profile, home } = await prepareSandbox(p);
   return new Promise<NativeProcessResult>((resolve, reject) => {
     const child = spawn("/usr/bin/sandbox-exec", ["-f", profile, p.binary, ...p.args], {

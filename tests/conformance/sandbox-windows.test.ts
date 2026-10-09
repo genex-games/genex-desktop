@@ -77,7 +77,7 @@ before(async () => {
     writableRoots: [workspace],
     scratchDir: scratch,
     secretPaths: [secrets],
-    readableRoots: [electronInstall],
+    readableRoots: [electronInstall, path.dirname(BOOTSTRAP)],
   });
 });
 
@@ -245,6 +245,25 @@ describe("Windows sandbox: environment", { skip: SKIP, timeout: TEST_TIMEOUT_MS 
     assert.match(git.stdout, /first/);
   });
 
+  it("Git checks out a file beyond MAX_PATH without changing its bytes", async () => {
+    const root = path.join(workspace, "long-git");
+    const relative = `${"x".repeat(100)}/${"y".repeat(100)}/probe.js`;
+    const file = path.join(root, relative);
+    assert.ok(file.length > 260);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "export const value = 1;\n");
+    const committed = await inside(
+      `git init -q && git add -- ${q(relative)} && git -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm baseline`,
+      { cwd: root },
+    );
+    assert.equal(committed.code, 0, committed.stderr);
+    assert.equal(committed.sandboxed, true);
+    await rm(file);
+    const checkedOut = await inside(`git checkout -- ${q(relative)}`, { cwd: root });
+    assert.equal(checkedOut.code, 0, checkedOut.stderr);
+    assert.equal(await readFile(file, "utf8"), "export const value = 1;\n");
+  });
+
   it("boots an Electron-as-Node entry installed under %LOCALAPPDATA%, which spawns Git", {
     skip: existsSync(ELECTRON_DIST) ? false : "no Electron binary in node_modules",
   }, async () => {
@@ -375,7 +394,15 @@ async function beatsReach(file: string, count: number): Promise<number> {
 
 describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
   /** A Node process in the workspace that appends a line to `name` five times a second. */
-  const heartbeat = (name: string) => `node -e 'setInterval(()=>require("fs").appendFileSync("${name}", "b\\n"),200)'`;
+  const heartbeat = (name: string) =>
+    `node -e 'require("fs").writeFileSync("${name}.pid",String(process.pid));setInterval(()=>require("fs").appendFileSync("${name}", "b\\n"),200)'`;
+
+  /** Windows has no POSIX zombie state: signal 0 checks the owned descendant's active process. */
+  async function assertStopped(file: string): Promise<void> {
+    const pid = Number(await readFile(`${file}.pid`, "utf8"));
+    assert.ok(Number.isInteger(pid) && pid > 0, "the owned heartbeat published its process id");
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the descendant stopped before the command returned");
+  }
 
   it("a timeout ends the whole tree", async () => {
     const file = path.join(workspace, "timeout.hb");
@@ -383,6 +410,7 @@ describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () =
     assert.ok((await beatsReach(file, 3)) >= 3, "the heartbeat started");
     const result = await run;
     assert.equal(result.timedOut, true);
+    await assertStopped(file);
     const atKill = await beats(file);
     await sleep(KILL_SETTLE_MS);
     assert.equal(await beats(file), atKill, "nothing keeps beating after the kill");
@@ -394,10 +422,13 @@ describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () =
     const exited = new Promise((resolve) => child.once("close", resolve));
     try {
       assert.ok((await beatsReach(file, 3)) >= 3, "the heartbeat started");
+      const pid = Number(await readFile(`${file}.pid`, "utf8"));
+      assert.doesNotThrow(() => process.kill(pid, 0), "the process probe can see the live descendant");
     } finally {
       killChild(child);
     }
     await exited;
+    await assertStopped(file);
     const atKill = await beats(file);
     await sleep(KILL_SETTLE_MS);
     assert.equal(await beats(file), atKill, "the grandchild went with it");

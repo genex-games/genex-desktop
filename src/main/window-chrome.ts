@@ -23,6 +23,29 @@ const TRAFFIC_LIGHTS = { x: 12, y: (TITLEBAR_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2 } 
 /** The dark fallback theme's canvas and ink (`theme.css` `:root`), until the renderer sends its own. */
 const FALLBACK_COLORS: WindowControlColors = { color: "#0e0d0f", symbolColor: "#dee0e2" };
 
+/** The studio's initial and minimum outer size, in Electron's device-independent pixels. */
+export interface StudioWindowSize {
+  width: number;
+  height: number;
+  minWidth: number;
+  minHeight: number;
+}
+
+const STUDIO_WINDOW_SIZE: StudioWindowSize = { width: 1440, height: 900, minWidth: 1080, minHeight: 680 };
+
+/** The studio size for this display; an omitted area preserves fixed-size acceptance launches. */
+export function studioWindowSize(platform: string, workArea?: { width: number; height: number }): StudioWindowSize {
+  if (platform !== StudioPlatform.Windows || !workArea) return { ...STUDIO_WINDOW_SIZE };
+  const width = Math.min(STUDIO_WINDOW_SIZE.width, workArea.width);
+  const height = Math.min(STUDIO_WINDOW_SIZE.height, workArea.height);
+  return {
+    width,
+    height,
+    minWidth: Math.min(STUDIO_WINDOW_SIZE.minWidth, width),
+    minHeight: Math.min(STUDIO_WINDOW_SIZE.minHeight, height),
+  };
+}
+
 /** What the window's options say about its title bar. */
 export type WindowChrome =
   | { titleBarStyle: "hiddenInset"; trafficLightPosition: { x: number; y: number } }

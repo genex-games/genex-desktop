@@ -9,9 +9,19 @@ name: Check
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Fork feature pushes can produce reviewable checks before upstream approves fork PR runs.
+  # The gate below preserves upstream's dev/main push policy.
   push:
-    branches: [dev, main]
   workflow_dispatch:
+    inputs:
+      fast:
+        description: Also run the macOS fast suite (disable for a Linux-only fork check)
+        type: boolean
+        default: true
+      base:
+        description: Exact comparison commit for a manual run (defaults to the previous commit)
+        required: false
+        default: ""
 permissions:
   contents: read
 concurrency:
@@ -19,6 +29,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   gate:
+    if: >-
+      github.event_name != 'push' || github.ref == 'refs/heads/dev' ||
+      github.ref == 'refs/heads/main' || github.event.repository.fork
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -42,6 +55,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: node scripts/check-test-style.ts
+      - name: Shared vocabulary contracts
+        run: node scripts/check-vocabulary.ts
       # Public cases only; `--with-holdouts` is for the owner's machine and never runs in CI.
       - name: Eval case isolation
         run: node scripts/evals/check-isolation.ts
@@ -49,7 +64,7 @@ jobs:
         run: node scripts/test.mjs tests/conformance/seed-upgrade.test.ts tests/conformance/child-env.test.ts tests/conformance/words.test.ts tests/conformance/check-grammar.test.ts
       - name: Change base
         env:
-          STUDIO_TEST_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          STUDIO_TEST_BASE: ${{ github.event.pull_request.base.sha || inputs.base || github.event.before }}
         run: |
           if [ -z "$STUDIO_TEST_BASE" ] || ! git cat-file -e "$STUDIO_TEST_BASE^{commit}" 2>/dev/null; then
             if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
@@ -59,6 +74,8 @@ jobs:
             fi
           fi
           echo "STUDIO_TEST_BASE=$STUDIO_TEST_BASE" >> "$GITHUB_ENV"
+      - name: Changed script syntax
+        run: node scripts/affected-tests.mjs --check-syntax --base "$STUDIO_TEST_BASE"
       - name: Affected behavior tests
         run: node scripts/affected-tests.mjs --tier L1 --run --base "$STUDIO_TEST_BASE"
       # The harness's own behavior (harness-incidents and the scoreboard) before a loop or seed
@@ -72,7 +89,10 @@ jobs:
             echo "No change reaches the harness gate."
           fi
   fast:
-    if: github.event_name == 'workflow_dispatch' || github.base_ref == 'main' || github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.fast) ||
+      (github.event_name != 'workflow_dispatch' &&
+       (github.base_ref == 'main' || github.ref == 'refs/heads/main'))
     runs-on: macos-26
     timeout-minutes: 30
     steps:

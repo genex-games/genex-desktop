@@ -4,12 +4,14 @@
 import { createRequire } from "node:module";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { buildWindowsSandboxHelper } from "./build-windows-sandbox.mjs";
 const require = createRequire(import.meta.url);
 export async function patchSandboxRuntime() {
   const pkg = require.resolve("@anthropic-ai/sandbox-runtime/package.json");
   const metadata = JSON.parse(await readFile(pkg, "utf8"));
   if (metadata.version !== "0.0.73")
     throw new Error("Review the sandbox absolute-executable patch before changing sandbox-runtime version");
+  await buildWindowsSandboxHelper(path.dirname(pkg));
   const file = path.join(path.dirname(pkg), "dist/utils/which.js");
   const original = await readFile(file, "utf8");
   if (original.includes("// Studio: absolute executable lookup")) return;

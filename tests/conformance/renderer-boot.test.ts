@@ -138,9 +138,9 @@ const WINDOWS_SETUP: BootState = {
 const WINDOWS_READY: BootState = { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null };
 
 /** A Windows window on the setup screen whose Set up answers `results` in turn. */
-function windowsBoot(results: Array<SandboxSetupResult | Error>) {
+function windowsBoot(results: Array<SandboxSetupResult | Error>, automaticSetup = false) {
   const fake = fakeStudioApi();
-  fake.stub("bootState", async () => WINDOWS_SETUP);
+  fake.stub("bootState", async () => ({ ...WINDOWS_SETUP, automaticSetup }));
   fake.stub("retrySandboxSetup", async () => WINDOWS_READY);
   fake.stub("setUpSandbox", async () => {
     const next = results.shift() ?? { outcome: SandboxSetupOutcome.Installed, state: WINDOWS_READY };
@@ -157,6 +157,32 @@ function windowsBoot(results: Array<SandboxSetupResult | Error>) {
 }
 
 describe("Set up on Windows", () => {
+  it("normal Windows first launch sets up automatically and starts once", async () => {
+    const { controller, fake, started } = windowsBoot([], true);
+    await controller.load();
+    assert.equal(fake.callsOf("setUpSandbox").length, 1);
+    assert.equal(started(), 1);
+    assert.equal(bootView(controller.store.getState()), BootView.Studio);
+  });
+
+  for (const result of [{ outcome: SandboxSetupOutcome.Cancelled, state: WINDOWS_SETUP }, new Error("setup failed")]) {
+    it(`automatic setup never repeats after cancellation or failure (${String(result)})`, async () => {
+      const { controller, fake, started } = windowsBoot([result], true);
+      await controller.load();
+      await controller.load();
+      assert.equal(fake.callsOf("setUpSandbox").length, 1);
+      assert.equal(started(), 0);
+      await controller.setUp();
+      assert.equal(fake.callsOf("setUpSandbox").length, 2, "explicit retry remains available");
+    });
+  }
+
+  it("fixture and developer launches do not request automatic setup", async () => {
+    const { controller, fake } = windowsBoot([]);
+    await controller.load();
+    assert.equal(fake.callsOf("setUpSandbox").length, 0);
+  });
+
   it("is offered only for a Windows sandbox that has not been set up", () => {
     const state = (boot: BootState) => ({ platform: boot.platform, problem: boot.sandbox });
     assert.equal(canSetUp(state(WINDOWS_SETUP)), true);
@@ -164,7 +190,11 @@ describe("Set up on Windows", () => {
     assert.equal(canSetUp(state(WINDOWS_READY)), false);
     assert.equal(canSetUp({ platform: StudioPlatform.Linux, problem: NOT_PROVISIONED }), false);
     const gitMissing = { ...NOT_PROVISIONED, code: SandboxProblemCode.GitMissing };
-    assert.equal(canSetUp({ platform: StudioPlatform.Windows, problem: gitMissing }), false, "Git installs by hand");
+    assert.equal(
+      canSetUp({ platform: StudioPlatform.Windows, problem: gitMissing }),
+      true,
+      "Genex installs private Git",
+    );
   });
 
   it("shows it is waiting for approval, then starts the studio once installed", async () => {

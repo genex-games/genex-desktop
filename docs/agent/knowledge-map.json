@@ -78,6 +78,7 @@
         "docs/conversation-coordinator.md",
         "docs/plugins.md",
         "docs/PLUGIN_GUIDE.md",
+        "docs/unity.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",
         "docs/performance.md"

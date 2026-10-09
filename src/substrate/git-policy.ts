@@ -17,6 +17,8 @@ const ATTACHED_MAINTENANCE = { "maintenance.autoDetach": "false", "gc.autoDetach
 /** Highest-precedence settings shared by host Git callers and sandboxed Git tools. */
 export const HOST_GIT_CONFIG = [
   "-c",
+  "core.longpaths=true",
+  "-c",
   "core.fsmonitor=",
   "-c",
   "core.hooksPath=/dev/null",

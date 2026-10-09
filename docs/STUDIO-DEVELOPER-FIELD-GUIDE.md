@@ -202,7 +202,11 @@ paths remain unavailable. Paid account acceptance remains a separate live gate. 
 logs even when an isolated retry passes: sandbox-runtime's one-second executable lookup has
 intermittently reported a missing bash during loaded test runs.
 
-Unity retirement: the active app supports browser games only. The CLI, editor, bridge, Unity templates, tools and UI are archived in `archive/unity/`; no feature flag enables them. There is no Unity-specific compatibility or migration path. Ordinary browser-project validation remains. Historical Unity plans describe archived behavior; existing user work and the source archive remain preserved.
+Unity 6 source projects use the new bundled Editor plugin and native workspace
+([integration](unity.md)); adoption preserves their source. Browser-scored Auto/Loop remains
+browser-only and refuses Unity before engine work. The old Unity implementation remains in
+`archive/unity/`; historical plans describe that archive. Native acceptance requires an activated
+Editor, disposable project, real tests, captures and builds; C# compilation alone is insufficient.
 
 Full regression coverage: `npm run typecheck`, `npm test`, `npm run test:e2e` (real sandbox, scripted
 Ollama wire, Chromium and CSS), `npm run test:build-ui` (build/history fixture, and since M1.8

@@ -562,8 +562,50 @@ describe("the env file", () => {
       'printf "%s|%s|%s|%s=%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_1"',
       pre,
     );
-    assert.equal(out, "2|safe.directory|C:/ws|credential.helper=");
-    assert.equal(await sourced(file, 'printf "%s=%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0"'), "1=credential.helper");
+    assert.equal(out, "3|safe.directory|C:/ws|credential.helper=");
+    assert.equal(await sourced(file, 'printf "%s=%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0"'), "2=credential.helper");
+    assert.equal(await sourced(file, "git config core.longpaths", pre), "true\n");
+  });
+
+  it("ignores ambient Git line-ending conversion and honors the repository's own setting", async () => {
+    const dir = await tmpDir("windows-git-bytes-");
+    const game = path.join(dir, "game");
+    await mkdir(game);
+    const system = path.join(dir, "system.gitconfig");
+    await writeFile(system, "[core]\n  autocrlf = true\n");
+    const env = { ...process.env, GIT_CONFIG_SYSTEM: system, GIT_CONFIG_GLOBAL: system };
+    const git = (args: string[]) => execFileSync("git", ["-c", "core.autocrlf=false", ...args], { cwd: game, env });
+    git(["init", "-q"]);
+    const probe = path.join(game, "probe.js");
+    await writeFile(probe, "export const value = 1;\n");
+    git(["add", "probe.js"]);
+    git([
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-qm",
+      "baseline",
+    ]);
+    const file = path.join(dir, "run.env");
+    const vars = windowsRunEnv({
+      env: { GIT_CONFIG_SYSTEM: system, GIT_CONFIG_GLOBAL: system, TEST_REPO: game.replaceAll("\\", "/") },
+      own: {},
+      scratch: dir,
+      curlHome: dir,
+    });
+    await writeFile(file, renderEnvFile({ vars, toolPath: "" }));
+    const checkout = async () => {
+      await writeFile(probe, "dirty\n");
+      await sourced(file, 'git -C "$TEST_REPO" checkout -- probe.js');
+      return readFile(probe, "utf8");
+    };
+    assert.equal(await checkout(), "export const value = 1;\n", "ambient config does not change delivered bytes");
+    git(["config", "core.autocrlf", "true"]);
+    assert.equal(await checkout(), "export const value = 1;\r\n", "the repository's explicit setting still applies");
   });
 
   it("spells Windows paths the way Git Bash does", () => {
@@ -593,6 +635,8 @@ describe("the env file", () => {
       TEMP: "C:/Users/Ann/AppData/Roaming/Genex/scratch",
       CURL_HOME: "C:/s/.curl",
       GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
       NODE_USE_ENV_PROXY: "1",
       MSYS_NO_PATHCONV: "1",
       HARNESS_WS: "C:\\ws",
@@ -690,6 +734,98 @@ const WS = at("AppData", "Roaming", "Genex", "workspaces");
 const LATE = "D:\\Elsewhere\\Pong";
 
 describe("the grant session", () => {
+  it("grants the broker helper before its sandbox-user egress probe and revokes it on dispose", async () => {
+    const calls: string[] = [];
+    let readable = false;
+    const runtime = fakeSessionRuntime();
+    runtime.runtime.initialize = async () => {
+      calls.push("initialize");
+      assert.equal(readable, true, "the probe must execute the helper from a private user install");
+    };
+    const helper = {
+      grant: async () => {
+        calls.push("helper-grant");
+        readable = true;
+      },
+      revoke: async () => {
+        calls.push("helper-revoke");
+        readable = false;
+      },
+    };
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      helper,
+    });
+    await value.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(calls, ["helper-grant", "initialize"]);
+    await value.dispose();
+    assert.equal(readable, false);
+    assert.deepEqual(calls, ["helper-grant", "initialize", "helper-revoke"]);
+  });
+
+  for (const failure of ["grant", "initialize", "ancestors"] as const) {
+    it(`revokes the helper when ${failure} fails and never marks the session ready`, async () => {
+      let held = false;
+      let revoked = 0;
+      const runtime = fakeSessionRuntime();
+      const ancestorFake = fakeAncestors();
+      const ancestors = ancestorFake.ancestors;
+      if (failure === "initialize") runtime.failInitialize("wfp_verify_unparseable");
+      if (failure === "ancestors")
+        ancestors.sync = async () => {
+          throw new Error("ancestor refused");
+        };
+      const helper = {
+        grant: async () => {
+          held = true;
+          if (failure === "grant") throw new Error("partial helper grant");
+        },
+        revoke: async () => {
+          held = false;
+          revoked++;
+        },
+      };
+      const value = new WindowsSandboxSession({ runtime: runtime.runtime, profile: PROFILE, ancestors, helper });
+      await assert.rejects(value.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG }));
+      assert.equal(value.applied, null);
+      assert.equal(held, false, "failed startup leaves no helper access");
+      assert.equal(revoked, 1);
+      assert.equal(ancestorFake.revoked(), 1, "failed startup releases partial ancestor access too");
+      if (failure === "grant") assert.deepEqual(runtime.calls, [], "no runtime launch after a refused grant");
+    });
+  }
+
+  for (const failure of ["runtime", "helper"] as const) {
+    it(`attempts all cleanup when ${failure} cleanup fails`, async () => {
+      const runtime = fakeSessionRuntime();
+      const ancestors = fakeAncestors();
+      let helperReleases = 0;
+      const helper = {
+        grant: async () => {},
+        revoke: async () => {
+          helperReleases++;
+          if (failure === "helper") throw new Error("helper cleanup refused");
+        },
+      };
+      const value = new WindowsSandboxSession({
+        runtime: runtime.runtime,
+        profile: PROFILE,
+        ancestors: ancestors.ancestors,
+        helper,
+      });
+      await value.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });
+      if (failure === "runtime")
+        runtime.runtime.reset = async () => {
+          throw new Error("runtime cleanup refused");
+        };
+      await assert.rejects(value.dispose(), /cleanup refused/);
+      assert.equal(helperReleases, 1);
+      assert.equal(ancestors.revoked(), 1, "one cleanup failure must not prevent the other cleanup");
+    });
+  }
+
   it("initializes once, on the first join, with the member's grants and the folders above them", async () => {
     const s = session();
     await s.session.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });

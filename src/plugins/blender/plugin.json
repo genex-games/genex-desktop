@@ -1,10 +1,10 @@
 {
   "apiVersion": 3,
   "id": "blender",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "name": "Local Blender",
   "publisher": "Studio",
-  "description": "Model 3D assets with Blender on this Mac. No account or credits.",
+  "description": "Model 3D assets with Blender locally. No account or credits.",
   "icon": "icon.png",
   "backend": "backend.mjs",
   "capabilities": ["native-runtime", "project.read", "project.write", "jobs", "observe"],
@@ -19,7 +19,7 @@
     },
     {
       "name": "model",
-      "description": "Run a bpy script from assets/src in local Blender; export GLB and two renders. The script builds the scene and must not export or render. Returns exact asset paths and mesh/material stats. Load the returned GLB and verify visible use in the game. To import an existing GLB, pass model and use bpy.ops.import_scene.gltf(filepath=ASSET_INPUTS[\"model\"]).",
+      "description": "Run a bpy script from assets/src in local Blender; export GLB and two renders. Optional format fbx also exports model.fbx for Unity, without an importer package. The script builds the scene and must not export or render. Returns exact asset paths and mesh/material stats. Integrate the model and verify visible use. To transform an existing GLB, pass model and import ASSET_INPUTS[\"model\"].",
       "parameters": {
         "type": "object",
         "properties": {
@@ -32,6 +32,10 @@
           "model": {
             "type": "string",
             "description": "Optional project-relative GLB to transform. It is staged and available as ASSET_INPUTS[\"model\"]. Do not use absolute paths."
+          },
+          "format": {
+            "type": "string",
+            "description": "Optional glb (default) or fbx (also retains GLB and two renders). Choose fbx for native Unity projects."
           }
         },
         "required": ["name"]
@@ -54,7 +58,7 @@
   "skills": [
     {
       "name": "local-modeling",
-      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; only declared inputs are readable. Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly."
+      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; only declared inputs are readable. Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly. For a native Unity source project pass format fbx. The host delivers outputs into Assets/Generated/blender/<job>; import model.fbx through Unity asset tools and instantiate it in a saved scene. Verify scale, materials and camera capture; FBX material conversion may require explicit material setup. Keep the companion GLB for browser use. No glTF importer package is installed implicitly."
     }
   ],
   "panels": [
@@ -74,7 +78,7 @@
     {
       "name": "install",
       "label": "Download Blender 5.2.1",
-      "confirmation": "Download the pinned Blender 5.2.1 runtime (about 346 MB) into this plugin\u2019s storage. Studio verifies its digest. Existing external Blender installations stay unchanged."
+      "confirmation": "Download the pinned Blender 5.2.1 runtime for this computer (up to 405 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged."
     },
     {
       "name": "cancel-install",
@@ -105,7 +109,69 @@
         "entry": "Blender.app",
         "executable": "Blender.app/Contents/MacOS/Blender",
         "notices": ["Blender.app/Contents/Resources/text/copyright.txt"]
-      }
+      },
+      "platforms": [
+        {
+          "arch": "arm64",
+          "candidates": [
+            "/Applications/Blender.app/Contents/MacOS/Blender",
+            "home:Applications/Blender.app/Contents/MacOS/Blender",
+            "studio:tools/Blender.app/Contents/MacOS/Blender"
+          ],
+          "install": {
+            "action": "install",
+            "url": "https://download.blender.org/release/Blender5.2/blender-5.2.1-macos-arm64.dmg",
+            "sha256": "6409e21de80994db5f4c4a34486b6fd43cea21085b912f7491c53e923acb65a3",
+            "bytes": 346264899,
+            "unpackedBytes": 1500000000,
+            "format": "dmg",
+            "entry": "Blender.app",
+            "executable": "Blender.app/Contents/MacOS/Blender",
+            "notices": ["Blender.app/Contents/Resources/text/copyright.txt"]
+          },
+          "platform": "darwin"
+        },
+        {
+          "arch": "x64",
+          "candidates": [
+            "program-files:Blender Foundation/Blender */blender.exe",
+            "home:Applications/Blender/blender.exe",
+            "studio:tools/Blender/blender.exe"
+          ],
+          "install": {
+            "format": "zip",
+            "executable": "blender-5.2.1-windows-x64/blender.exe",
+            "bytes": 404851964,
+            "notices": ["blender-5.2.1-windows-x64/copyright.txt"],
+            "sha256": "0e631dad7d0cad6d5d18abdd2e2550f6c0213215334eda00ddbd3d22b96ecb2c",
+            "action": "install",
+            "url": "https://download.blender.org/release/Blender5.2/blender-5.2.1-windows-x64.zip",
+            "unpackedBytes": 1500000000,
+            "entry": "blender-5.2.1-windows-x64"
+          },
+          "platform": "win32"
+        },
+        {
+          "arch": "arm64",
+          "candidates": [
+            "program-files:Blender Foundation/Blender */blender.exe",
+            "home:Applications/Blender/blender.exe",
+            "studio:tools/Blender/blender.exe"
+          ],
+          "install": {
+            "format": "zip",
+            "executable": "blender-5.2.1-windows-arm64/blender.exe",
+            "bytes": 274046853,
+            "notices": ["blender-5.2.1-windows-arm64/copyright.txt"],
+            "sha256": "62047464d21ea954b997db94bf5518eac9240b900d98bb324bc02416ad892860",
+            "action": "install",
+            "url": "https://download.blender.org/release/Blender5.2/blender-5.2.1-windows-arm64.zip",
+            "unpackedBytes": 1500000000,
+            "entry": "blender-5.2.1-windows-arm64"
+          },
+          "platform": "win32"
+        }
+      ]
     }
   ],
   "nativeJobs": [
@@ -198,6 +264,110 @@
         }
       },
       "outputs": ["model.glb", "render.png", "render-front.png"],
+      "timeoutMs": 120000,
+      "maxOutputBytes": 64000,
+      "maxAssetBytes": 104857600,
+      "gpu": true
+    },
+    {
+      "id": "model-fbx",
+      "runtime": "blender",
+      "args": [
+        "-b",
+        "--factory-startup",
+        "-noaudio",
+        "--python-exit-code",
+        "1",
+        "--python",
+        {
+          "source": "package",
+          "name": "wrapper.py"
+        },
+        "--",
+        {
+          "source": "input",
+          "name": "script"
+        },
+        {
+          "source": "output",
+          "name": "model.glb"
+        },
+        {
+          "source": "output",
+          "name": "render.png"
+        },
+        {
+          "source": "value",
+          "name": "name"
+        },
+        "--fbx",
+        {
+          "source": "output",
+          "name": "model.fbx"
+        }
+      ],
+      "inputs": ["script"],
+      "values": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "maxLength": 40
+        }
+      },
+      "outputs": ["model.glb", "model.fbx", "render.png", "render-front.png"],
+      "timeoutMs": 120000,
+      "maxOutputBytes": 64000,
+      "maxAssetBytes": 104857600,
+      "gpu": true
+    },
+    {
+      "id": "transform-fbx",
+      "runtime": "blender",
+      "args": [
+        "-b",
+        "--factory-startup",
+        "-noaudio",
+        "--python-exit-code",
+        "1",
+        "--python",
+        {
+          "source": "package",
+          "name": "wrapper.py"
+        },
+        "--",
+        {
+          "source": "input",
+          "name": "script"
+        },
+        {
+          "source": "output",
+          "name": "model.glb"
+        },
+        {
+          "source": "output",
+          "name": "render.png"
+        },
+        {
+          "source": "value",
+          "name": "name"
+        },
+        {
+          "source": "input",
+          "name": "model"
+        },
+        "--fbx",
+        {
+          "source": "output",
+          "name": "model.fbx"
+        }
+      ],
+      "inputs": ["script", "model"],
+      "values": {
+        "name": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "maxLength": 40
+        }
+      },
+      "outputs": ["model.glb", "model.fbx", "render.png", "render-front.png"],
       "timeoutMs": 120000,
       "maxOutputBytes": 64000,
       "maxAssetBytes": 104857600,

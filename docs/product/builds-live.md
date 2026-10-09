@@ -2,7 +2,7 @@
 
 ## From a request to a game
 
-Auto edits directly; Loop can delegate workers (four by default; a chosen number stays) while the chat leads.
+Auto edits directly; Loop can delegate workers (default four, unless chosen), with chat leading.
 Parts grow boldly within the ask; an art director regularly reviews the whole game, names what
 must not regress and, from the finish mark, sends defects back for polish, never a veto.
 Timed builds use their window; until-satisfied ones finish on verified required outcomes, time
@@ -21,11 +21,12 @@ closed, with Show in Finder for game-folder files.
 **Live** plays the browser game in a native view (WebGL and WebGPU); hidden unobserved previews
 pause. The strip holds Live/Builds/Assets, Play/Stop, Reload, the sound switch (⌥⌘M; only a shown
 Live in front is heard), Full screen (hold Esc to leave) and plugin actions such as Publish (accent
-until listed). Stop halts the game until Play or Reload. Slow loads show a halftone loader and
-shimmering “Loading game”. An empty scaffold shows “Ready for your first idea” (a computer), or
-“Building your game” (a crane) with Watch progress while a run works, Play latest once a build is
-ready; the first healthy build then shows itself. Otherwise only the user changes Live (opening a
-game, Reload, Play, Make live, a chat request while Live is hidden). A newer healthy build, a
+until listed). Stop waits for pending loads, then halts the game until Play or Reload; Unity
+stops the browser preview. Slow loads show a halftone loader and shimmering “Loading game”.
+Empty scaffolds show “Ready for your first idea” (computer) or “Building your game” (crane), with
+Watch progress during runs and Play latest when ready; the first healthy build appears automatically.
+Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request
+while Live is hidden). A newer healthy build, a
 changed game folder (checkpoint, landing, rewind), a chat's show or landing, or a shown build found
 broken lights Reload (accent dot, a tooltip naming it), which brings it in. While Live is hidden and
 not stopped, all but a new build go in at once. A loaded page alone is not a successful build. The

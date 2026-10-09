@@ -20,6 +20,8 @@ import { isPluginId } from "../shared/plugin-id.ts";
 import { genexRef } from "../shared/genex-ref.ts";
 import { isImageFile } from "../substrate/game-workspace.ts";
 import {
+  ASSET_FOLDERS,
+  ASSET_PREFIXES,
   type AssetAvailability,
   type AssetKind,
   type AssetSource,
@@ -31,9 +33,10 @@ import type { EventEnvelope } from "../substrate/types.ts";
 import { CustomEvent } from "../shared/custom-events.ts";
 import { EventKind } from "../shared/event-log.ts";
 import type { AssetDeliveryRecord } from "./asset-checkpoints.ts";
+import { isUnityProject } from "../substrate/unity-project.ts";
 
 /** The folders a game keeps generated and dropped-in assets in. `public/assets` is the bundled shape. */
-const ASSET_ROOTS = ["assets", "public/assets"] as const;
+const BROWSER_ASSET_ROOTS = [ASSET_FOLDERS.Browser, ASSET_FOLDERS.BrowserBuild] as const;
 /** Blender scripts live in `assets/src`; they are inputs, not assets. */
 const EXCLUDED_PREFIX = "assets/src/";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -112,12 +115,13 @@ async function visitAssetEntry(state: WalkState, child: string, childRel: string
     state.skipped.push({ file: childRel, why: "not a regular file" });
     return;
   }
-  if (/\.md$/i.test(childRel)) return;
+  const unityMetadata = childRel.startsWith(`${ASSET_FOLDERS.UnityGenerated}/`) && /\.meta$/i.test(childRel);
+  if (/\.md$/i.test(childRel) || unityMetadata) return;
   state.entries.push({ file: childRel, bytes: st.size, mtime: new Date(st.mtimeMs).toISOString() });
 }
 
 /**
- * Every regular file under `assets/` and `public/assets/`, capped. Dotfiles, `*.md` and
+ * Every regular file in the browser asset trees, or Unity's Assets/Generated tree, capped. Dotfiles, `*.md` and
  * `assets/src/**` are left out; a symlink anywhere — the asset roots themselves included — is
  * listed in `skipped` and the walk carries on past it, because one hostile link must not hide
  * the rest of a folder.
@@ -127,21 +131,28 @@ export async function walkGameAssets(
   { maxEntries = WALK_MAX_ENTRIES, maxDepth = WALK_MAX_DEPTH }: { maxEntries?: number; maxDepth?: number } = {},
 ): Promise<AssetWalk> {
   const state: WalkState = { entries: [], skipped: [], truncated: false, maxEntries, maxDepth };
-  for (const base of ASSET_ROOTS) {
-    const dir = path.join(root, ...base.split("/"));
-    // The root itself is lstat-ed like every entry under it: a symlinked `assets/` is reported and
-    // left alone, never walked, so a link cannot make another folder read as this game's.
-    const st = await lstat(dir).catch(() => null);
-    if (!st) continue;
-    if (st.isSymbolicLink()) {
-      state.skipped.push({ file: base, why: "symlink" });
-      continue;
-    }
-    if (!st.isDirectory()) continue;
-    await walkAssetDir(state, dir, base, 1);
-  }
+  const roots = (await isUnityProject(root)) ? [ASSET_FOLDERS.UnityGenerated] : BROWSER_ASSET_ROOTS;
+  for (const base of roots) await walkAssetRoot(state, root, base);
   state.entries.sort((a, b) => byText(a.file, b.file));
   return { entries: state.entries, truncated: state.truncated, skipped: state.skipped };
+}
+
+/** Check each parent of a fixed asset root too, so a linked Assets or public folder is never followed. */
+async function walkAssetRoot(state: WalkState, root: string, base: string): Promise<void> {
+  let directory = root;
+  const parts: string[] = [];
+  for (const part of base.split("/")) {
+    parts.push(part);
+    directory = path.join(directory, part);
+    const info = await lstat(directory).catch(() => null);
+    if (!info) return;
+    if (info.isSymbolicLink()) {
+      state.skipped.push({ file: parts.join("/"), why: "symlink" });
+      return;
+    }
+    if (!info.isDirectory()) return;
+  }
+  await walkAssetDir(state, directory, base, 1);
 }
 
 /** A plugin job record as this module reads it — the durable part, never the approval images. */
@@ -404,13 +415,15 @@ function applyBlenderModel(asset: ProjectAsset, model: Record<string, unknown>):
 }
 
 /**
- * The shape a delivery leaves behind: `assets/<plugin id>/<job uuid>/…`. Inference, and
+ * The shape a delivery leaves inside its host-owned asset tree: `<plugin id>/<job uuid>/…`. Inference, and
  * the card must not claim a job status it never read.
  */
 function inferredOrigin(file: string): { source: string; jobId: string } | null {
-  const parts = file.replace(/^public\//, "").split("/");
-  const [top, pluginId = "", jobId = ""] = parts;
-  if (top !== "assets" || parts.length <= 3) return null;
+  const folder = Object.values(ASSET_FOLDERS).find((root) => file.startsWith(`${root}/`));
+  if (!folder) return null;
+  const parts = file.slice(folder.length + 1).split("/");
+  const [pluginId = "", jobId = ""] = parts;
+  if (parts.length <= 2) return null;
   if (!isPluginId(pluginId) || !UUID.test(jobId)) return null;
   return { source: pluginId, jobId };
 }
@@ -524,7 +537,7 @@ export async function readContainedImage(
   base: string,
   file: string,
   {
-    prefixes = ["assets/", "public/assets/"],
+    prefixes = ASSET_PREFIXES,
     maxBytes = IMAGE_MAX_BYTES,
     resize,
   }: { prefixes?: readonly string[]; maxBytes?: number; resize?: (data: Buffer) => Promise<Buffer> } = {},

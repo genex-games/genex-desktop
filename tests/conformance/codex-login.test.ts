@@ -35,7 +35,9 @@ async function fixture(
     findBinary: async () => binary,
     spawn: ((command: string, args: string[], opts: SpawnOptions) => {
       invocations.push({ binary: command, args, options: opts });
-      const child = spawn(process.execPath, [file], opts);
+      // This seam records cmd.exe's launch, then runs Node with different arguments. Node needs
+      // its normal quoting even when the recorded cmd.exe invocation deliberately used verbatim.
+      const child = spawn(process.execPath, [file], { ...opts, windowsVerbatimArguments: false });
       children.push(child);
       return child;
     }) as typeof spawn,

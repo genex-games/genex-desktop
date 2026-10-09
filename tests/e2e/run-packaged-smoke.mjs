@@ -15,6 +15,7 @@ import { readdir, readFile } from "node:fs/promises";
  *   STUDIO_PACKAGE_DIR=<out/Genex-<platform>-<arch>> overrides the package folder.
  */
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -22,6 +23,7 @@ import { listPackage, extractFile } from "@electron/asar";
 import { FuseState, FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp, posixEntries } from "./packaged-app.mjs";
+import { verifyPackagedPluginResources } from "./packaged-plugin-resources.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const target = `${process.platform}-${process.arch}`;
@@ -126,6 +128,28 @@ report.checks.push({
 if (privateEntries.length) report.failed++;
 const forbidden = /(?:^|\/)node_modules\/(?:@openai\/codex(?:-[^/]+)?|@anthropic-ai\/claude-agent-sdk-[^/]+)(?:\/|$)/;
 const unpacked = posixEntries(await readdir(`${archive}.unpacked`, { recursive: true }));
+if (process.platform === "win32") {
+  const relative = path.join("node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win", process.arch);
+  const bundled = path.join(`${archive}.unpacked`, relative);
+  const built = path.join(root, relative);
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const provenance = await readFile(path.join(bundled, "PROVENANCE.md"), "utf8");
+  const licenses = await readFile(path.join(bundled, "licenses/NOTICE.txt"), "utf8");
+  addCheck(
+    "package ships the corrected Windows broker with its provenance and native licenses",
+    digest(await readFile(path.join(bundled, "srt-win.exe"))) ===
+      digest(await readFile(path.join(built, "srt-win.exe"))) &&
+      provenance === (await readFile(path.join(root, "native/srt-win/PROVENANCE.md"), "utf8")) &&
+      (await readFile(path.join(bundled, "licenses/LICENSE-srt-win"), "utf8")) ===
+        (await readFile(path.join(root, "native/srt-win/LICENSE"), "utf8")) &&
+      licenses.includes("windows@0.62.2:"),
+  );
+}
+for (const check of await verifyPackagedPluginResources({
+  root,
+  resources: path.join(`${archive}.unpacked`, "dist", "resources"),
+}))
+  addCheck(check.name, check.ok, check.detail);
 const codingBinaries = [...entries, ...unpacked].filter((entry) => forbidden.test(entry));
 report.checks.push({
   name: "archive and unpacked resources contain no coding CLI packages",

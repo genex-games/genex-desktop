@@ -129,6 +129,12 @@ export interface UpdateRecord {
   error?: string;
 }
 
+/** Injectable heartbeat scheduling; production uses Node's interval and unchanged deadlines. */
+export interface HarnessHeartbeatTimers {
+  every(callback: () => void, ms: number): ReturnType<typeof setInterval>;
+  cancel(timer: ReturnType<typeof setInterval>): void;
+}
+
 export interface HarnessHostOptions {
   /** Directory of the agent-editable harness workspace. */
   workspace: string;
@@ -147,6 +153,8 @@ export interface HarnessHostOptions {
   onStateChange?: (state: HarnessState) => void;
   /** No heartbeat for this long ⇒ the harness is wedged. */
   heartbeatTimeoutMs?: number;
+  /** Test seam for suspend/resume and startup timing without wall-clock sleeps. */
+  heartbeatTimers?: HarnessHeartbeatTimers;
   /** Crash-loop threshold (default ≥3 in 5 min). */
   crashLoop?: { count: number; windowMs: number };
   /** Called when the harness dies repeatedly — the watchdog's escalation hook. */
@@ -324,10 +332,10 @@ export class HarnessHost {
       this.options.onLog?.(`[host] stdin write failed (child dying): ${err.message}`, "stderr"),
     );
 
+    await this.#waitForReady();
+    // Startup owns its own deadline. Booting a workspace is not a silent, ready harness.
     this.#lastHeartbeat = this.#now();
     this.#startHeartbeatMonitor();
-
-    await this.#waitForReady();
     if (notice) await this.dispatch(notice);
   }
 
@@ -656,7 +664,8 @@ export class HarnessHost {
     );
     this.#stopHeartbeatMonitor();
     let lastTick = this.#now();
-    this.#heartbeatTimer = setInterval(() => {
+    const everyTick = this.options.heartbeatTimers?.every ?? setInterval;
+    this.#heartbeatTimer = everyTick(() => {
       const now = this.#now();
       // A tick this late means the app itself was suspended — the Mac slept, or App Nap held
       // its timers — and the harness's heartbeats were held back just as long. That gap is
@@ -678,7 +687,7 @@ export class HarnessHost {
   }
 
   #stopHeartbeatMonitor(): void {
-    if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+    if (this.#heartbeatTimer) (this.options.heartbeatTimers?.cancel ?? clearInterval)(this.#heartbeatTimer);
     this.#heartbeatTimer = null;
   }
 

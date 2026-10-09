@@ -1,4 +1,45 @@
 import { ReferenceKind } from "../../src/harness-seed/loop/run-events.ts";
+
+describe("Unity native project routing", () => {
+  it("UNITY1. blocks browser-scored unattended runs before registering or billing any engine work", async () => {
+    const { createStudio, loopRunRefusal } = await import("../../src/harness-seed/loop/main.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const recorder = ctxRecorder({
+      workspace: await tmpDir("unity-native-run-"),
+      unknown: { value: [] },
+      handlers: {
+        "game.list": () => [{ name: "unity-game", shape: { kind: "unity" } }],
+        "events.append": () => true,
+      },
+    });
+    const studio = await createStudio({ ...recorder.ctx.host, heartbeat: () => {} } as never);
+    try {
+      await studio.dispatch({
+        type: "run_start",
+        threadId: "unity-thread",
+        run: {
+          runId: "unity-run",
+          project: "unity-game",
+          goal: "Improve this Unity scene",
+          mode: "autopilot",
+          engine: "codex",
+        },
+      } as never);
+      assert.deepEqual(recorder.paramsOf("engine.describe"), []);
+      assert.deepEqual(recorder.paramsOf("engine.complete"), []);
+      assert.deepEqual(recorder.paramsOf("engine.delegate"), []);
+      assert.deepEqual(recorder.paramsOf("preview.load"), []);
+      const records = recorder.paramsOf("events.append").flatMap((entry) => entry.batch as Array<Record<string, any>>);
+      assert.equal(records.filter((entry) => entry.event_type === "run_registered").length, 0);
+      const blocked = records.find((entry) => entry.event_type === "run_start_blocked");
+      assert.match(String(blocked?.payload?.reason), /Unity.*chat|chat.*Unity/);
+      assert.match(String(blocked?.payload?.reason), /browser/i);
+      assert.equal(loopRunRefusal({ name: "web-game", shape: { kind: "three-vite" } }, []), null);
+    } finally {
+      await studio.shutdown();
+    }
+  });
+});
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { gitFile } from "../helpers/git.ts";

@@ -118,7 +118,7 @@ module.exports = {
     ...(windowsSign ? { windowsSign } : {}),
   },
   // Windows uses node-pty's own N-API prebuilds (conpty and winpty included) rather than
-  // compiling it: nothing else native ships, and no Visual Studio is needed to package.
+  // compiling it. The pinned SRT broker is built separately with Rust and MSVC before packaging.
   rebuildConfig: process.platform === "win32" ? { ignoreModules: ["node-pty"] } : {},
   hooks: {
     // Before anything is copied: a linked node_modules would be pruned in place.

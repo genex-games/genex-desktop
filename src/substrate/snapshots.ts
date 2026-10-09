@@ -48,6 +48,8 @@ export type SnapshotRefusal = (typeof SnapshotRefusal)[keyof typeof SnapshotRefu
 
 /** git output a host call may buffer before it fails. */
 const GIT_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+/** Git for Windows checks its absolute worktree `/.git` against PATH_MAX - 40 (UTF-8 bytes). */
+const WINDOWS_WORKTREE_PATH_BYTES = 260 - 40 - "/.git".length;
 
 const MESSAGE = {
   UnknownWorkspace: (name: string) => `unknown workspace: ${name}`,
@@ -61,7 +63,27 @@ const MESSAGE = {
   NotDescendant: "the folder's HEAD no longer descends from the snapshot",
   ForeignCommits: "the branch holds commits since the snapshot that the studio did not make",
   RescueReason: (snapshotId: string) => `pre-restore rescue before ${snapshotId}`,
+  WindowsWorktreePath: (target: string) =>
+    `Windows Git cannot create a worktree at this data-folder path (${target}). Use a shorter data-folder path and try again.`,
 } as const;
+
+/** A worktree Windows Git cannot create, refused before it changes the game or scratch. */
+export class WindowsWorktreePathError extends Error {
+  readonly code = "windows-worktree-path-too-long";
+  readonly target: string;
+  constructor(target: string) {
+    super(MESSAGE.WindowsWorktreePath(target));
+    this.name = "WindowsWorktreePathError";
+    this.target = target;
+  }
+}
+
+/** Refuse Windows Git's unsupported worktree-directory length before removing or creating anything. */
+export function assertWorktreePath(target: string): void {
+  if (process.platform !== "win32") return;
+  const bytes = Buffer.byteLength(path.resolve(target).replaceAll("\\", "/"), "utf8");
+  if (bytes > WINDOWS_WORKTREE_PATH_BYTES) throw new WindowsWorktreePathError(target);
+}
 
 /** A refusal with a typed `code`; the folder was left exactly as it was. */
 export class SnapshotRefusedError extends Error {
@@ -385,6 +407,7 @@ export class SnapshotEngine {
     targetDir: string,
     options: { versionNested?: boolean } = {},
   ): Promise<string> {
+    assertWorktreePath(targetDir);
     const dir = this.dirFor(workspace);
     const resolved = await resolveCommit(dir, commit);
     await git(dir, ["worktree", "add", "--detach", "-f", "--end-of-options", targetDir, resolved]);

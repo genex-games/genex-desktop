@@ -47,6 +47,7 @@ import { useStageControls } from "./stage/live-run.ts";
 import { useNativeViewBounds } from "./stage/native-bounds.ts";
 import { EmptyGame, LiveLoading, NoGame, PlanningBuild, StoppedGame } from "./stage/StageBody.tsx";
 import { StageStrip } from "./stage/StageStrip.tsx";
+import { UnityStage } from "./UnityStage.tsx";
 
 const EMPTY_WORKER_EVENTS: EventEnvelope[] = [];
 
@@ -438,7 +439,14 @@ function StageContents({
   );
 }
 
-export function PreviewPanel({
+/** Native Unity projects use their Editor workspace; browser projects retain the existing stage. */
+export function PreviewPanel(props: Props): JSX.Element {
+  const game = props.games.find((candidate) => candidate.name === props.project);
+  if (game?.shape.kind === "unity") return <UnityStage game={game} {...props} />;
+  return <BrowserPreviewPanel {...props} />;
+}
+
+function BrowserPreviewPanel({
   games,
   project,
   engines,

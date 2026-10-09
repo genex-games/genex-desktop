@@ -13,10 +13,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
-import { HarnessHost, UpdateJournal } from "../../src/substrate/harness-host.ts";
+import { HarnessHost, UpdateJournal, type HarnessHeartbeatTimers } from "../../src/substrate/harness-host.ts";
+import { DAY_MS, MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { SnapshotEngine } from "../../src/substrate/snapshots.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { closeBeforeCleanup, tmpDir } from "../helpers/tmp.ts";
 
 const BOOTSTRAP = fileURLToPath(new URL("../../src/harness-boot/bootstrap.mjs", import.meta.url));
 const FIXTURE_OK = fileURLToPath(new URL("../fixtures/harness-ok", import.meta.url));
@@ -41,6 +42,10 @@ before(async () => {
   root = await tmpDir("studio-host-");
   sandbox = await ProcessSandbox.create({
     writableRoots: [root],
+    readableRoots: [
+      path.dirname(BOOTSTRAP),
+      fileURLToPath(new URL("../../node_modules/electron/dist", import.meta.url)),
+    ],
     scratchDir: path.join(root, "scratch"),
     secretPaths: [path.join(root, "secrets")],
   });
@@ -53,6 +58,7 @@ async function rig(
   name: string,
   extraApi: Record<string, (params: never) => Promise<unknown>> = {},
   now?: () => number,
+  heartbeatTimers?: HarnessHeartbeatTimers,
 ): Promise<Rig> {
   const base = path.join(root, name);
   const workspace = path.join(base, "workspaces", "harness");
@@ -105,11 +111,78 @@ async function rig(
       state.wedges++;
     },
     ...(now ? { now } : {}),
+    ...(heartbeatTimers ? { heartbeatTimers } : {}),
   });
+  closeBeforeCleanup(() => state.host.stop(200));
   return state;
 }
 
+function heartbeatClock() {
+  let now = 0;
+  const callbacks = new Map<ReturnType<typeof setInterval>, () => void>();
+  const timers: HarnessHeartbeatTimers = {
+    every(callback) {
+      const timer = setInterval(() => {}, DAY_MS);
+      callbacks.set(timer, callback);
+      return timer;
+    },
+    cancel(timer) {
+      callbacks.delete(timer);
+      clearInterval(timer);
+    },
+  };
+  return {
+    timers,
+    now: () => now,
+    active: () => callbacks.size,
+    tick(ms: number) {
+      now += ms;
+      for (const callback of [...callbacks.values()]) callback();
+    },
+  };
+}
+
 describe("harness host: boot & RPC", () => {
+  it("the boot deadline owns startup; heartbeat silence is monitored only after ready", async () => {
+    const clock = heartbeatClock();
+    const r = await rig("slow-boot", {}, clock.now, clock.timers);
+    await writeFile(
+      path.join(r.workspace, "loop", "main.mjs"),
+      `
+      import { existsSync } from "node:fs";
+      import { setTimeout as delay } from "node:timers/promises";
+      export async function createStudio(host) {
+        host.notify("boot.waiting", null);
+        while (!existsSync("ready.flag")) await delay(10);
+        return { status: () => "idle", dispatch: async () => {} };
+      }
+    `,
+    );
+    let reportWaiting = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      reportWaiting = resolve;
+    });
+    const notify = r.host.options.onNotify;
+    r.host.options.onNotify = (type, payload) => {
+      notify?.(type, payload);
+      if (type === "boot.waiting") reportWaiting();
+    };
+    const started = r.host.start();
+    await Promise.race([
+      waiting,
+      started.then(() => {
+        throw new Error("fixture did not wait");
+      }),
+    ]);
+    for (let tick = 0; tick < 4; tick++) clock.tick(SECOND_MS);
+    assert.equal(r.wedges, 0, "a starting harness is covered by the boot deadline, not the heartbeat watchdog");
+    await writeFile(path.join(r.workspace, "ready.flag"), "ready");
+    await started;
+    assert.equal(clock.active(), 1);
+    await r.host.stop(200);
+    assert.equal(clock.active(), 0);
+  });
+
   it("boots the workspace harness inside the sandbox and answers dispatches", async () => {
     const r = await rig("boot");
     await r.host.start();
@@ -361,17 +434,18 @@ describe("harness host: self-modification", () => {
     await r.host.stop(200);
   });
 
-  it("a Mac that slept is not a wedged harness", async () => {
+  it("host sleep is not a wedge, but subsequent heartbeat silence still is", async () => {
     // Asleep, neither the harness's drumbeat nor the watchdog's own ticks run; on waking the
     // wall clock has jumped for both of them, and that jump is not silence.
-    let slept = 0;
-    const r = await rig("slept", {}, () => Date.now() + slept);
+    const clock = heartbeatClock();
+    const r = await rig("slept", {}, clock.now, clock.timers);
     await r.host.start();
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    slept = 20 * 60_000;
-    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    clock.tick(20 * MINUTE_MS);
     assert.equal(r.wedges, 0, "twenty minutes asleep are not twenty minutes of silence");
+    for (let tick = 0; tick < 4; tick++) clock.tick(SECOND_MS);
+    assert.equal(r.wedges, 1, "ordinary silence after waking is still bounded by the original deadline");
     await r.host.stop(200);
+    assert.equal(clock.active(), 0);
   });
 });
 

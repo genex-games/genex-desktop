@@ -1,4 +1,4 @@
-import { deliverAssetFiles } from "../genex-delivery.ts";
+import { AssetDeliveryLayout, deliverAssetFiles } from "../genex-delivery.ts";
 import path from "node:path";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import {
@@ -18,6 +18,9 @@ import { SecretStore } from "../secrets.ts";
 import { atomicWriteJson } from "../fsx.ts";
 import { createHash } from "node:crypto";
 import { assertRelativePath, containedReal, isBelow, isInside, toPosixRelative } from "../paths.ts";
+import { readProjectShape } from "../project-shape.ts";
+import { UNITY_PROJECT_SHAPE } from "../unity-project.ts";
+import { ASSET_FOLDERS } from "../../shared/game-assets.ts";
 
 const MAX_CREDENTIAL_CHARS = 65536;
 const MAX_PROJECT_WRITE_CHARS = 2_000_000;
@@ -141,6 +144,22 @@ async function directoryBytes(dir: string, fileLimit: number | undefined): Promi
     } else throw new Error(MESSAGE.NotRegular);
   }
   return bytes;
+}
+
+/** Count one fixed asset tree, refusing links in its parent directories before looking inside. */
+async function deliveryBytes(root: string, segments: string[]): Promise<number> {
+  let directory = root;
+  for (const segment of segments) {
+    directory = path.join(directory, segment);
+    const info = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+      if (isMissing(error)) return null;
+      throw error;
+    });
+    if (!info) return 0;
+    if (info.isSymbolicLink()) throw new Error(MESSAGE.Symlink);
+    if (!info.isDirectory()) throw new Error(MESSAGE.NotRegular);
+  }
+  return directoryBytes(directory, undefined);
 }
 
 /** The delivery roots recorded for this project, so a quota counts every workspace it delivered to. */
@@ -276,9 +295,12 @@ export class PluginServices {
     const canonicalTarget = await realpath(target);
     const canonicalGame = await realpath(binding.directory);
     if (!isInside(canonicalGame, canonicalTarget)) throw new Error(MESSAGE.TargetEscapes);
+    const shape = await readProjectShape(canonicalGame);
+    const layout = shape.kind === UNITY_PROJECT_SHAPE.kind ? AssetDeliveryLayout.Unity : AssetDeliveryLayout.Browser;
     const beforeCopy = limits ? await projectQuota(id, root, binding, source, canonicalTarget, limits) : undefined;
     const delivered = await deliverAssetFiles(source, canonicalTarget, args.jobId, id, {
       reuseExisting: true,
+      layout,
       beforeCopy,
     });
     const files = delivered.map((file) =>
@@ -342,7 +364,10 @@ async function projectQuota(
   const roots = [...new Set([...(await savedDeliveryRoots(rootFile)), canonicalTarget])];
   await directoryBytes(source, limits.fileBytes);
   let existing = 0;
-  for (const directory of roots) existing += await directoryBytes(path.join(directory, "assets", id), undefined);
+  for (const directory of roots) {
+    existing += await deliveryBytes(directory, [...ASSET_FOLDERS.Browser.split("/"), id]);
+    existing += await deliveryBytes(directory, [...ASSET_FOLDERS.UnityGenerated.split("/"), id]);
+  }
   return async (newBytes) => {
     if (existing + newBytes > limits.projectBytes) throw new Error(MESSAGE.ProjectTooLarge(limits.projectBytes));
     await atomicWriteJson(rootFile, roots);

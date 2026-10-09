@@ -26,11 +26,15 @@ export interface SandboxInstall {
 export interface BootGateOptions {
   /** Install the Windows sandbox (one administrator prompt); throws when the install fails. */
   installSandbox?: () => Promise<SandboxInstall>;
+  /** Start setup once in a normal Windows renderer, never in fixture or smoke runs. */
+  automaticSetup?: boolean;
 }
 
 /** The boot state main answers `studio:boot` with, and the Retry behind `studio:boot.retry`. */
 export interface BootGate {
   state(): BootState;
+  /** Publish Ready before creating the replacement renderer after successful core initialization. */
+  open(): void;
   /** Show the setup screen for `problem`; `attempt` re-runs startup and throws while the sandbox is still unavailable. */
   hold(problem: SandboxProblem, attempt: () => Promise<void>): void;
   /** Run the held attempt; the state after it. */
@@ -45,7 +49,9 @@ const MESSAGE = {
 
 /** Held on the problem Set up fixes: a sandbox that has not been provisioned yet. */
 function waitsOnInstall(state: BootState): boolean {
-  return state.phase === BootPhase.SandboxSetup && state.sandbox?.code === SandboxProblemCode.NotProvisioned;
+  const code = state.sandbox?.code;
+  const installable = code === SandboxProblemCode.NotProvisioned || code === SandboxProblemCode.GitMissing;
+  return state.phase === BootPhase.SandboxSetup && installable;
 }
 
 /** A gate for this launch's `platform`, starting Ready. */
@@ -82,7 +88,11 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
   };
 
   return {
-    state: () => state,
+    state: () => (options.automaticSetup ? { ...state, automaticSetup: true } : state),
+    open() {
+      attempt = null;
+      state = { platform, phase: BootPhase.Ready, sandbox: null };
+    },
     hold(problem, next) {
       state = { platform, phase: BootPhase.SandboxSetup, sandbox: problem };
       attempt = next;

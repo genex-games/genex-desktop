@@ -1,13 +1,12 @@
 # Architecture
 
-Technical reference for the external developer. Start with the [product overview](context.md) and
-the affected product page, then read only the section you need here. Each section states the
-current contract and names the code that owns it; history lives in Git and PR descriptions, not
-here. When code and this page disagree, fix the one that is wrong in the same change.
+Technical reference: start with the [product overview](context.md), then read the relevant
+contract here. Update its owning code and documentation together; history stays in Git.
 
-The active app builds browser games only. The Unity CLI, editor, bridge, templates, tools and UI
-are archived in [`archive/unity/`](../../archive/unity/); no flag enables them and there is no
-migration path.
+Browser games retain their existing build and preview paths. Unity 6 source projects use a new
+bundled Editor plugin and native stage; browser-scored unattended runs refuse them before
+engine work. The retired implementation remains in [`archive/unity/`](../../archive/unity/).
+See [Unity integration](../unity.md) for project adoption, connection, jobs and native acceptance.
 
 ## Processes and trust boundaries
 
@@ -1168,4 +1167,3 @@ Scope and commands are in [verification](verification.md). Suites that hold the 
 | Renderer stores and words | `renderer-state.test.ts`, `words.test.ts` |
 | Harness loop incidents | `harness-incidents.test.ts` (`npm run verify:harness`) |
 | Boundaries and import cycles | `npm run verify:architecture` |
-

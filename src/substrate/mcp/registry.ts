@@ -600,17 +600,15 @@ export class McpRegistry {
    * Close one idle connection. Only that key goes: its cached tool names stay for planning, and
    * the next call reconnects through `#connection` as it would after a restart.
    */
-  #closeIdle(id: string, key: string | null): void {
+  async #closeIdle(id: string, key: string | null): Promise<void> {
     this.#idleTimers.get(id)?.delete(key);
     const scoped = this.#connections.get(id);
     const connection = scoped?.get(key);
     if (!scoped || !connection || !this.#idle(id, key)) return;
     scoped.delete(key);
     if (!scoped.size) this.#connections.delete(id);
-    void connection
-      .close()
-      .catch(() => {})
-      .finally(() => this.#fire(id));
+    await connection.close().catch(() => {});
+    this.#fire(id);
   }
 
   #toolCount(id: string): number {

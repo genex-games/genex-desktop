@@ -45,6 +45,8 @@ import { childEnv, windowsBaseEnv } from "./child-env.ts";
 import { credentialHomes, sandboxedCliHomes } from "./credential-homes.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
+import { runWindowsNativeProcess } from "./plugins/windows-native-process.ts";
+import type { NativeProcessRequest, NativeProcessResult } from "./plugins/native-process-contract.ts";
 import {
   SRT_WIN_EXEC_FAILED_EXIT,
   type WindowsGrants,
@@ -228,6 +230,7 @@ function runtimeHold(runtime: SandboxRuntime): RuntimeHold {
 }
 
 const MESSAGE = {
+  NativeWindowsOnly: "Native command isolation requires an enabled Windows sandbox",
   NotInitialized: "sandbox-runtime is not initialized",
   EmptyArgv: "sandbox-runtime returned an empty command",
 } as const;
@@ -406,6 +409,7 @@ export class ProcessSandbox {
   readonly #platform: NodeJS.Platform;
   #seams: WindowsSeams = {};
   #windows: WindowsBackend | null = null;
+  #nativeJobs = new Map<AbortController, Promise<NativeProcessResult>>();
 
   private constructor(policy: SandboxPolicy, enabled: boolean, scratchDir: string, platform: NodeJS.Platform) {
     this.policy = policy;
@@ -484,6 +488,9 @@ export class ProcessSandbox {
    * process alive. Safe to call twice.
    */
   async dispose(): Promise<void> {
+    const jobs = [...this.#nativeJobs];
+    for (const [controller] of jobs) controller.abort();
+    await Promise.allSettled(jobs.map(([, result]) => result));
     if (this.#windows) {
       this.#windows.session.leave(this);
       return;
@@ -496,6 +503,23 @@ export class ProcessSandbox {
       if (hold.holders.size === 0) await runtime.reset().catch(() => {});
     });
     await hold.released;
+  }
+
+  /** A host-selected Windows executable in a private, offline AppContainer rather than the shared account. */
+  async runNative(request: NativeProcessRequest): Promise<NativeProcessResult> {
+    if (!this.enabled || this.#platform !== StudioPlatform.Windows) throw new Error(MESSAGE.NativeWindowsOnly);
+    const controller = new AbortController();
+    const result = runWindowsNativeProcess({
+      ...request,
+      signal: AbortSignal.any([request.signal, controller.signal]),
+      denyRead: [...new Set([...this.policy.denyRead, ...request.denyRead])].filter(existsSync),
+    });
+    this.#nativeJobs.set(controller, result);
+    try {
+      return await result;
+    } finally {
+      this.#nativeJobs.delete(controller);
+    }
   }
 
   async #initialize(): Promise<void> {

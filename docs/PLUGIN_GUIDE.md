@@ -387,6 +387,12 @@ recipe, not Studio internals. Keep credentials, process launch parameters and pe
 out of agent tool schemas. Tools receive relative input references and return delivered relative
 file paths plus durable job IDs. Installation belongs to a separate confirmed action.
 
+For multiple operating systems, declare `nativeRuntimes[].platforms` variants with exact
+`platform`, `arch`, `candidates` and optional `install` pins. Unsupported pairs remain unsupported.
+Windows Local Blender uses an official pinned ZIP (`format: "zip"`), a per-job LPAC file identity
+and CPU-rendered thumbnails; macOS keeps its DMG and Seatbelt path. See
+[managed-native services](plugins.md#api-3-managed-native-services) for archive and isolation limits.
+
 For a custom panel, inline the distributed `plugin-sdk/panel.js`. Studio's bundled plugin build
 replaces `<!-- STUDIO_PANEL_SDK -->` with that script; external authors must do equivalent inlining
 in their own build. Referencing an external script URL or assuming `window.studioPlugin` exists

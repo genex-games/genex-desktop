@@ -1029,7 +1029,7 @@ test("watch reloads a local plugin from the folder it was loaded from, defers un
       await until(
         async () =>
           ((await f.registry.tool("watched__greet", { name: "Ada" }, f.binding)) as { text: string }).text ===
-          "Reloaded Ada",
+            "Reloaded Ada" && changes.some((c) => c.id === "watched" && c.reason === "reloaded"),
         5000,
         touch(path.join(dir, "backend.mjs")),
       ),

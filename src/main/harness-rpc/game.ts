@@ -24,7 +24,7 @@ import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts
 import { git } from "../../substrate/snapshots.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { attachReport, noAttachment, str } from "../core/page-report.ts";
-import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
+import { isBelow, samePath, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
 
 /** The largest image `game.read` hands back. */
 const MAX_IMAGE_READ_MB = 8;
@@ -79,9 +79,15 @@ async function integrationWorkspace(core: StudioCore, project: string, runId: st
   await core.assertProjectAllowed(core.games.dirFor(project));
   const workspace = await realpath(path.join(core.layout.scratch, "autopilot", runId, "integration"));
   // Git's registration ties this host-derived worktree to the authorized game.
-  const listing = await git(core.games.dirFor(project), ["worktree", "list", "--porcelain"]);
-  if (!listing.split("\n").includes(`worktree ${workspace}`)) throw new Error(MESSAGE.foreignWorkspace);
-  return workspace;
+  // NUL fields preserve Unicode and newlines without Git's display quoting. Canonical paths
+  // also reconcile Git for Windows' forward slashes with the filesystem's native spelling.
+  const listing = await git(core.games.dirFor(project), ["worktree", "list", "--porcelain", "-z"]);
+  for (const field of listing.split("\0")) {
+    if (!field.startsWith("worktree ")) continue;
+    const registered = await realpath(field.slice("worktree ".length)).catch(() => null);
+    if (registered !== null && samePath(registered, workspace)) return workspace;
+  }
+  throw new Error(MESSAGE.foreignWorkspace);
 }
 
 /**

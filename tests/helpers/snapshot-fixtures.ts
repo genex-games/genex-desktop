@@ -20,6 +20,8 @@ const IDENTITY = [
   "commit.gpgsign=false",
   "-c",
   "core.hooksPath=/dev/null",
+  "-c",
+  "core.autocrlf=false",
 ];
 
 export async function fixtureGit(dir: string, args: string[]): Promise<string> {

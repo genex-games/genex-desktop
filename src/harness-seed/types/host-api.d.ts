@@ -1071,6 +1071,7 @@ export type ProjectKind =
   | "canvas2d"
   | "phaser"
   | "engine-export"
+  | "unity"
   | "own-script";
 // ↑ src/shared/game-project.ts
 
@@ -1081,9 +1082,9 @@ export type ProjectKind =
  * (served raw, `/src/main.ts` is refused by the browser and every critic judges a black frame).
  */
 export interface ProjectShape {
-  /** The page the preview serves, relative to the project — inside the build output when there is a build. */
+  /** Browser page relative to the project, or Unity's ProjectVersion.txt marker, which is never served. */
   entry: string;
-  /** The game's real entry module: what the main owner edits and other facets wire into. */
+  /** The game's real entry module; native Unity projects name their Assets directory. */
   main: string;
   /** Shell command that produces `entry` from the sources; null when the game runs as written. */
   build: string | null;
@@ -1126,7 +1127,7 @@ export interface GameProject {
   pathLabel: string;
   /** False when this folder is not a child of the default library. */
   library: boolean;
-  /** How the game runs — the studio's own no-build shape, or a project with its own build. */
+  /** How the game runs — the studio template, its own browser build, or a native Unity project. */
   shape: ProjectShape;
   /** `shape.own`: the folder brought its own game, so the studio builds it and serves its output. */
   built: boolean;

@@ -6,7 +6,7 @@ button:hover{background:#ffffff24}button:disabled{opacity:.5;cursor:default}butt
 pre{white-space:pre-wrap;overflow-wrap:anywhere}#jobs{display:grid;gap:8px}#path{overflow-wrap:anywhere}progress{width:100%}
 </style></head><body>
 <h2>Local Blender</h2>
-<p>Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.</p>
+<p>Model assets on this computer. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.</p>
 <p id="status" role="status">Checking runtime…</p><p id="path"></p>
 <button id="recheck">Recheck</button> <button id="install" hidden>Download pinned Blender</button> <button id="cancel" hidden>Cancel download</button>
 <p id="installation" role="status"></p><progress id="progress" hidden></progress>
@@ -15,12 +15,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}#jobs{display:grid;gap:8px}#path
 <script>
 const api=window.studioPlugin,$=id=>document.getElementById(id);
 let busy=false,refreshing=false,last='',closed=false;
+function installButton(runtime, installation){
+  const externalReady=runtime.state==='ready'&&runtime.managed===false;
+  $('install').hidden=!runtime.install||(runtime.state==='ready'&&!externalReady);
+  $('install').disabled=busy||!!installation?.active;
+  $('install').textContent=externalReady?'Install private Blender copy':'Download pinned Blender';
+}
 async function refresh(){
   if(refreshing||closed)return;refreshing=true;
   try{
     const s=await api.call('action','status',{});if(closed)return;
     $('status').textContent=s.runtime.detail;$('path').textContent=s.runtime.path||'';
-    $('install').hidden=s.runtime.state==='ready';$('install').disabled=busy||!!s.installation?.active;
+    installButton(s.runtime,s.installation);
     const job=s.installation;
     $('cancel').hidden=!job?.active;$('progress').hidden=!job?.active;
     if(job){

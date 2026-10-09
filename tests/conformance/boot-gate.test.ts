@@ -120,6 +120,27 @@ describe("boot gate", () => {
 });
 
 describe("Set up (Windows)", () => {
+  it("opens before replacement renderer creation so it cannot repeat provisioning", async () => {
+    const gate = createBootGate(StudioPlatform.Windows, { automaticSetup: true });
+    gate.hold(NOT_PROVISIONED, async () => {
+      gate.open();
+      assert.equal(gate.state().phase, BootPhase.Ready);
+      assert.equal(gate.state().sandbox, null);
+    });
+    assert.equal(gate.state().automaticSetup, true);
+    await gate.retry();
+    assert.equal(gate.state().phase, BootPhase.Ready);
+  });
+
+  it("missing Git uses the same built-in prerequisite setup", async () => {
+    const { gate, counts } = windowsGate(async () => ({ cancelled: false }));
+    gate.hold({ ...NOT_PROVISIONED, code: SandboxProblemCode.GitMissing }, async () => {
+      counts.attempts++;
+    });
+    assert.equal((await gate.setUp()).state.phase, BootPhase.Ready);
+    assert.deepEqual(counts, { installs: 1, attempts: 1 });
+  });
+
   it("installs the sandbox, then re-runs startup and opens the studio", async () => {
     const { gate, counts } = windowsGate(async () => ({ cancelled: false }));
     assert.deepEqual(await gate.setUp(), {

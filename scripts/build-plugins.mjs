@@ -77,6 +77,7 @@ async function buildGenex(root, resources, { dependencies }) {
   for (const file of ["plugin.json", "icon.png", "publish.html"])
     await cp(path.join(root, "src/plugins/genex", file), path.join(target, file));
   await cp(path.join(root, "src/genex-host/preload.mjs"), path.join(target, "preload.mjs"));
+  await cp(path.join(root, "src/genex-host/stdio-fetch.mjs"), path.join(target, "stdio-fetch.mjs"));
   // The vendored skills ship even in a dependency-free build: each SKILL.md already holds its preface.
   await cp(path.join(root, "src/plugins/genex/skills"), path.join(target, "skills"), {
     recursive: true,
@@ -118,12 +119,32 @@ async function buildBlender(root, resources, sdk) {
   });
 }
 
+/** Unity's SDK backend and reviewed local UPM package ship as one plugin. */
+async function buildUnity(root, resources, sdk) {
+  const unity = path.join(resources, "plugins/unity");
+  const source = path.join(root, "src/plugins/unity");
+  await mkdir(unity, { recursive: true });
+  for (const file of ["plugin.json", "icon.svg"]) await cp(path.join(source, file), path.join(unity, file));
+  for (const directory of ["skills", "editor-package"])
+    await cp(path.join(source, directory), path.join(unity, directory), { recursive: true });
+  await writeFile(
+    path.join(unity, "panel.html"),
+    await inlinePanelSdk(await readFile(path.join(source, "panel.html"), "utf8"), sdk),
+  );
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(source, "backend.ts")],
+    outfile: path.join(unity, "backend.mjs"),
+  });
+}
+
 /** Copies the SDK and builds the bundled plugins (and the example) into the app's resources. */
 export async function buildPlugins(root, resources, { dependencies = true } = {}) {
   await cp(path.join(root, "src/plugin-sdk"), path.join(resources, "plugin-sdk"), { recursive: true });
   await buildGenex(root, resources, { dependencies });
   const sdk = path.join(root, "src/plugin-sdk");
   await buildBlender(root, resources, sdk);
+  await buildUnity(root, resources, sdk);
   await mkdir(path.join(resources, "examples"), { recursive: true });
   await cp(path.join(root, "src/plugins/example"), path.join(resources, "examples/example"), { recursive: true });
   const examplePanel = path.join(resources, "examples/example/panel.html");

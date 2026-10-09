@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { genexCliEnv, genexCliPath, runGenexCli } from "../../src/plugins/genex/cli.ts";
 import { type GenexFixtureApi, type GenexRequest, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
@@ -78,7 +79,17 @@ function runPreloaded(run: PreloadedRun): Promise<{ code: number | null; out: st
   if (run.pinned === undefined) delete env.GENEX_API_URL;
   if (run.fd !== undefined) env.STUDIO_GENEX_CREDENTIAL_FD = run.fd;
   const viaStdin = run.fd === "0";
-  const args = ["--import", PRELOAD, genexCliPath(), "budget", "--env", VIRTUAL_ENV, "--api-url", run.flag, "--json"];
+  const args = [
+    "--import",
+    pathToFileURL(PRELOAD).href,
+    genexCliPath(),
+    "budget",
+    "--env",
+    VIRTUAL_ENV,
+    "--api-url",
+    run.flag,
+    "--json",
+  ];
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: run.cwd,

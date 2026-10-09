@@ -33,6 +33,13 @@ from mathutils import Vector
 t0 = time.time()
 argv = sys.argv[sys.argv.index("--") + 1:]
 script, out_glb, out_png, name = argv[0], argv[1], argv[2], argv[3]
+extra = argv[4:]
+out_fbx = None
+if "--fbx" in extra:
+    flag = extra.index("--fbx")
+    out_fbx = extra[flag + 1]
+    del extra[flag:flag + 2]
+model_input = extra[0] if extra else None
 out_front = out_png[:-4] + "-front.png" if out_png.lower().endswith(".png") else out_png + "-front.png"
 MARGIN = 1.15         # the framed box fills ~87 % of its tightest axis (its corners; the mesh itself less)
 VOLUME_SHARE = 0.95   # meshes are framed by volume until this share is in frame
@@ -43,11 +50,14 @@ def result(payload):
     sys.stdout.flush()
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
+if sys.platform == "win32":
+    # The trusted wrapper lives in this job's scratch folder, which remains inside its sandbox.
+    bpy.context.preferences.filepaths.temporary_directory = os.path.dirname(os.path.abspath(__file__))
 scene = bpy.context.scene
 
 src = open(script, encoding="utf-8").read()
 try:
-    exec(compile(src, script, "exec"), {"__name__": "__main__", "bpy": bpy, "math": math, "ASSET_NAME": name, "ASSET_INPUTS": ({"model": argv[4]} if len(argv) > 4 else {})})
+    exec(compile(src, script, "exec"), {"__name__": "__main__", "bpy": bpy, "math": math, "ASSET_NAME": name, "ASSET_INPUTS": ({"model": model_input} if model_input else {})})
 except Exception:
     result({"ok": False, "error": traceback.format_exc()[-1500:]})
     sys.exit(1)
@@ -137,9 +147,34 @@ bpy.ops.export_scene.gltf(
     export_materials="EXPORT",
     export_image_format="AUTO",
 )
+if out_fbx:
+    # Unity imports FBX without a glTF package. Export the same selected, evaluated meshes.
+    bpy.ops.export_scene.fbx(
+        filepath=out_fbx,
+        use_selection=True,
+        object_types={"MESH"},
+        use_mesh_modifiers=True,
+        axis_forward="-Z",
+        axis_up="Y",
+        apply_unit_scale=True,
+        add_leaf_bones=False,
+        bake_anim=False,
+        path_mode="COPY",
+        embed_textures=True,
+    )
 
-# "What did I make" thumbnails: Workbench, studio light, the camera fitted to the framed box.
-scene.render.engine = "BLENDER_WORKBENCH"
+# "What did I make" thumbnails, with the camera fitted to the framed box.
+if sys.platform == "win32":
+    # Windows LPAC jobs render on CPU: vendor OpenGL drivers require broader OS access.
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 16
+    scene.world = bpy.data.worlds.new("studio-world")
+    scene.world.use_nodes = True
+    scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.6, 0.6, 0.6, 1)
+    scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 1
+else:
+    scene.render.engine = "BLENDER_WORKBENCH"
 scene.display.shading.light = "STUDIO"
 scene.display.shading.color_type = "MATERIAL"
 scene.render.resolution_x, scene.render.resolution_y = 512, 384
@@ -184,6 +219,7 @@ result({
     "framedSize": [fx1 - fx0, fy1 - fy0, fz1 - fz0],
     "materials": material_names[:MAX_LISTED],
     "glbBytes": os.path.getsize(out_glb),
+    **({"fbxBytes": os.path.getsize(out_fbx)} if out_fbx else {}),
     "renders": [out_png, out_front],
     "seconds": round(time.time() - t0, 2),
 })

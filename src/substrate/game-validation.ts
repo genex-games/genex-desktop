@@ -22,6 +22,7 @@ import {
 } from "./game-page.ts";
 import { isInside, toPosixRelative } from "./paths.ts";
 import { readProjectShape } from "./project-shape.ts";
+import { validateUnityProject } from "./unity-project.ts";
 
 /** The most modules the reachable-source walk opens; a larger game is judged on its first ones. */
 const MAX_REACHABLE_SOURCES = 400;
@@ -59,6 +60,8 @@ const MESSAGE = {
   PredatesInspect:
     "src/studio.js predates the v2 contract (no inspect()) — scene checks and eye cameras are unavailable",
   NoPlayer: "installStudio() is called without scene/camera/player — scene checks fail and eye cameras do not exist",
+  UnityEditor:
+    "Unity source project: connect Unity Editor through the Unity plugin to inspect compilation, play mode, tests and builds. Browser preview and browser scoring do not apply.",
 } as const;
 
 /** What `validateGameDir` found: the problems that stop a judged build, the warnings, and the contract's word. */
@@ -278,6 +281,17 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   const problems: string[] = [];
   const warnings: string[] = [];
   const shape = await readProjectShape(dir);
+  if (shape.kind === "unity") {
+    const nativeProblems = await validateUnityProject(dir);
+    return {
+      ok: nativeProblems.length === 0,
+      problems: nativeProblems,
+      warnings: [MESSAGE.UnityEditor],
+      contract: ContractWord.Missing,
+      reach: "none",
+      shape,
+    };
+  }
   const indexExists = await pathExists(path.join(dir, "index.html"));
   if (!indexExists) problems.push(MESSAGE.MissingFile("index.html"));
   if (!(await pathExists(path.join(dir, shape.main)))) problems.push(MESSAGE.MissingFile(shape.main));

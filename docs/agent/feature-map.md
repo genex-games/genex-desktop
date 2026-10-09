@@ -1,10 +1,11 @@
 # Feature Map
 
-Technical reference: start with the [product overview](context.md) and affected product page.
-Search this file for the specific implementation contract or selector; do not load it in full
-as startup context.
+Start with the [product overview](context.md) and affected product page. Search here for the
+relevant contract or selector; avoid loading the whole file at startup.
 
-Browser games only: Unity's CLI, editor, bridge, templates, tools and UI are archived in `archive/unity/`, with no flag, compatibility or migration path.
+Unity uses `[data-unity-stage]` and a native Editor panel. Chat/tools edit, test and build;
+browser-scored Auto/Loop refuses it before engine work ([Unity](../unity.md)). Previous code
+stays in `archive/unity/`.
 
 Inspect `[data-studio-state]` for observed room, active thread and project. The stage exposes
 `data-stage-view` and `data-selected-run`. These are observations, not state-restoration APIs.

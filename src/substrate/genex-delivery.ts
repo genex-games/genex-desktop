@@ -5,11 +5,15 @@ import { openNoFollow } from "./fsx.ts";
 import { toPosixRelative } from "./paths.ts";
 import { createHash } from "node:crypto";
 import { isPluginId } from "../shared/plugin-id.ts";
+import { ASSET_FOLDERS } from "../shared/game-assets.ts";
 
 /** A Studio delivery job id: a UUID, so it names a folder and never a path. */
 const JOB_ID = /^[a-f0-9-]{36}$/;
 /** The Genex plugin's delivery namespace: `assets/genex/<job>`. */
 const GENEX_NAMESPACE = "genex";
+/** Browser assets keep their layout; native Unity assets live in the Editor's import tree. */
+export const AssetDeliveryLayout = { Browser: "browser", Unity: "unity" } as const;
+export type AssetDeliveryLayout = (typeof AssetDeliveryLayout)[keyof typeof AssetDeliveryLayout];
 
 const MESSAGE = {
   NotRegular: "Asset is not a regular file",
@@ -36,6 +40,8 @@ async function fileDigest(file: string): Promise<string> {
 }
 
 export interface DeliveryOptions {
+  /** A host-selected layout, never an arbitrary path supplied by a plugin. */
+  layout?: AssetDeliveryLayout;
   /** Explicit SDK retrieval: accept identical bytes, never overwrite changed game files. */
   reuseExisting?: boolean;
   /** Quota admission runs before copying and counts only files not already present. */
@@ -108,7 +114,9 @@ export async function deliverAssetFiles(
   if (!JOB_ID.test(jobId)) throw new Error(MESSAGE.InvalidJob);
   const allowed = await realpath(root);
   let target = allowed;
-  for (const part of ["assets", namespace, jobId]) {
+  const folder = options.layout === AssetDeliveryLayout.Unity ? ASSET_FOLDERS.UnityGenerated : ASSET_FOLDERS.Browser;
+  const folders = folder.split("/");
+  for (const part of [...folders, namespace, jobId]) {
     target = path.join(target, part);
     await containedDirectory(target);
   }

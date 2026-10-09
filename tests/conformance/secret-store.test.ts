@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import { SecretStorageIssue } from "../../src/shared/secret-storage.ts";
 import type { McpConnector } from "../../src/shared/mcp.ts";
 import { McpRegistry } from "../../src/substrate/mcp/registry.ts";
@@ -20,6 +20,18 @@ import {
   type SafeStorage,
   safeStorageBackend,
 } from "../../src/substrate/secrets.ts";
+
+// Every encryption backend below is a stand-in; the one default-backend call explicitly
+// tests the process gate before Electron is imported. Ambient fixture isolation must not
+// replace the fake backend's own NoKeyring/EncryptionUnavailable answers.
+const previousOsCredentials = process.env.STUDIO_DISABLE_OS_CREDENTIALS;
+before(() => {
+  delete process.env.STUDIO_DISABLE_OS_CREDENTIALS;
+});
+after(() => {
+  if (previousOsCredentials === undefined) delete process.env.STUDIO_DISABLE_OS_CREDENTIALS;
+  else process.env.STUDIO_DISABLE_OS_CREDENTIALS = previousOsCredentials;
+});
 
 /** A stand-in for Electron's safeStorage: reversible "encryption", and the Linux backend it reports. */
 function fakeSafeStorage(options: { available?: boolean; backend?: string } = {}): SafeStorage {

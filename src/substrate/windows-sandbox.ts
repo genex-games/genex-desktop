@@ -33,6 +33,7 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { windowsHelperAccess, type WindowsHelperAccess } from "./windows-helper-access.ts";
 import {
   editFolderAces,
   editFolderAcesSync,
@@ -99,6 +100,10 @@ const SANDBOX_OWNED = new Set([
 const FIXED_ENV = {
   // Git never waits for a password nobody can type.
   GIT_TERMINAL_PROMPT: "0",
+  // Match host Git: ambient configuration must not rewrite bytes or select external programs.
+  // Repository configuration and .gitattributes still apply.
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
   // Node's fetch goes through srt's proxy like curl and git do.
   NODE_USE_ENV_PROXY: "1",
   // Windows paths reach native programs unchanged.
@@ -106,6 +111,8 @@ const FIXED_ENV = {
 } as const;
 /** curl's schannel revocation check cannot reach its CRL servers through the proxy. */
 const CURLRC = "ssl-revoke-best-effort\n";
+/** Git defaults added after srt-win's safe-directory and CA entries, without replacing them. */
+const WINDOWS_GIT_DEFAULTS = { "credential.helper": "", "core.longpaths": "true" } as const;
 
 const MESSAGE = {
   BadEnvName: (name: string) => `refusing to write the environment variable ${JSON.stringify(name)}`,
@@ -313,7 +320,7 @@ export interface EnvFileInput {
  * The env file a Git Bash command sources first (`. file`): every variable exported under its
  * own single quotes, the toolchain PATH put after Git's `/usr/bin` (so the POSIX tools beat
  * `System32`'s `find` and `sort`), and Git's credential helper switched off by appending to the
- * `GIT_CONFIG_*` list srt already set (its `safe.directory` entries stay).
+ * `GIT_CONFIG_*` list srt already set (its `safe.directory` entries stay). Long paths are enabled.
  */
 export function renderEnvFile(input: EnvFileInput): string {
   const lines: string[] = [];
@@ -323,12 +330,14 @@ export function renderEnvFile(input: EnvFileInput): string {
   }
   const tools = msysPathList(input.toolPath);
   lines.push(`export PATH=${quote(tools ? `/usr/bin:${tools}` : "/usr/bin")}":$PATH"`);
-  lines.push(
-    "__genex_n=${GIT_CONFIG_COUNT:-0}",
-    'export "GIT_CONFIG_KEY_${__genex_n}=credential.helper" "GIT_CONFIG_VALUE_${__genex_n}="',
-    "export GIT_CONFIG_COUNT=$((__genex_n + 1))",
-    "unset __genex_n",
-  );
+  lines.push("__genex_n=${GIT_CONFIG_COUNT:-0}");
+  for (const [key, value] of Object.entries(WINDOWS_GIT_DEFAULTS)) {
+    lines.push(
+      `export "GIT_CONFIG_KEY_\${__genex_n}=${key}" "GIT_CONFIG_VALUE_\${__genex_n}=${value}"`,
+      "__genex_n=$((__genex_n + 1))",
+    );
+  }
+  lines.push("export GIT_CONFIG_COUNT=$__genex_n", "unset __genex_n");
   return `${lines.join("\n")}\n`;
 }
 
@@ -662,6 +671,8 @@ export interface WindowsSessionDeps {
   /** The real user's profile folder (`USERPROFILE`). */
   profile: string;
   ancestors: AncestorGrants;
+  /** The broker must be readable before its sandbox-user egress probe, including per-user installs. */
+  helper?: Pick<WindowsHelperAccess, "grant" | "revoke">;
   /** Filters deny paths before they reach srt-win ({@link keepWindowsDenies}). */
   keepDenies?: (paths: readonly string[], scope: DenyScope) => string[];
 }
@@ -786,9 +797,7 @@ export class WindowsSandboxSession {
   async dispose(): Promise<void> {
     await this.#applying?.catch(() => {});
     this.#queued = false;
-    if (this.#applied) await this.#deps.runtime.reset();
-    this.#applied = null;
-    await this.#deps.ancestors.revokeAll();
+    await this.#release();
   }
 
   /** Initialize, again when srt-win only ran out of time; any other failure is final. */
@@ -829,8 +838,14 @@ export class WindowsSandboxSession {
       this.#applied = null;
       if (wasApplied) await this.#deps.runtime.reset();
       const denies = [...this.#members.values()].flatMap(memberDenies);
-      await this.#initialize(this.#config(grants));
-      await this.#grantAncestors(grants);
+      try {
+        await this.#deps.helper?.grant();
+        await this.#initialize(this.#config(grants));
+        await this.#grantAncestors(grants);
+      } catch (error) {
+        await this.#revokeAccess();
+        throw error;
+      }
       this.#applied = grants;
       this.#appliedDenies = new Set(denies.map(pathKey));
       if (this.#networkChanged) this.#deps.runtime.updateConfig(this.#config(grants));
@@ -850,8 +865,20 @@ export class WindowsSandboxSession {
     const wasApplied = this.#applied;
     this.#applied = null;
     this.#appliedDenies = new Set();
-    if (wasApplied) await this.#deps.runtime.reset();
-    await this.#deps.ancestors.revokeAll();
+    try {
+      if (wasApplied) await this.#deps.runtime.reset();
+    } finally {
+      await this.#revokeAccess();
+    }
+  }
+
+  /** Attempt both cleanup steps even when the helper is gone or its journal refuses cleanup. */
+  async #revokeAccess(): Promise<void> {
+    try {
+      await this.#deps.helper?.revoke();
+    } finally {
+      await this.#deps.ancestors.revokeAll();
+    }
   }
 
   /**
@@ -933,8 +960,15 @@ export function windowsSessionFor(
   if (existing) return existing;
   const holders = windowsGrantHolders(options.profile);
   const ancestors = ancestorGrants(holders, { sid: () => srtSandboxSid(options.srtWin) });
-  const session = new WindowsSandboxSession({ runtime, profile: options.profile, ancestors });
-  process.once("exit", () => ancestors.revokeAllSync());
+  const helper = windowsHelperAccess(options.srtWin);
+  const session = new WindowsSandboxSession({ runtime, profile: options.profile, ancestors, helper });
+  process.once("exit", () => {
+    try {
+      helper.revokeSync();
+    } finally {
+      ancestors.revokeAllSync();
+    }
+  });
   sessions.set(runtime, session);
   return session;
 }

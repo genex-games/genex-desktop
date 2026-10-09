@@ -28,6 +28,7 @@ import {
   net,
   protocol,
   powerSaveBlocker,
+  screen,
   shell,
   utilityProcess,
 } from "electron";
@@ -129,13 +130,14 @@ import type { SmokeReadGates } from "./smoke/read-gates.ts";
 import type { EvalCoreOptions, EvalLaunch } from "./smoke/eval-lane.ts";
 import { StudioCore } from "./studio-core.ts";
 import { TerminalService, type TerminalHost } from "./terminal-service.ts";
-import { TITLEBAR_HEIGHT, windowChrome } from "./window-chrome.ts";
+import { TITLEBAR_HEIGHT, studioWindowSize, windowChrome } from "./window-chrome.ts";
 import { appUserModelId, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
 import { BootPhase, StudioPlatform, type SandboxProblem } from "../shared/boot.ts";
 import type { WindowControlColors } from "../shared/studio-api.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { longPath } from "../substrate/windows-sandbox.ts";
-import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
+import { installWindowsPrerequisites } from "../substrate/windows-sandbox-setup.ts";
+import { activateWindowsGit, windowsGit } from "../substrate/windows-git.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { SECOND_MS } from "../shared/duration.ts";
@@ -152,8 +154,6 @@ import {
 } from "./dev/launch-flags.ts";
 import { EventKind } from "../shared/event-log.ts";
 
-/** The studio window: its first size and the least it shrinks to. */
-const MAIN_WINDOW = { width: 1440, height: 900, minWidth: 1080, minHeight: 680 } as const;
 /**
  * The window's own colour before the page paints and while it resizes: the Genex page colour of the
  * system's light or dark, which a first launch's theme follows too (renderer/appearance/first-paint.ts).
@@ -374,7 +374,12 @@ let gameScreen: GameFullScreen | null = null;
 /** Where startup stands for the window: Ready, or the sandbox setup screen with its Retry. */
 const bootGate = createBootGate(
   process.platform,
-  process.platform === StudioPlatform.Windows ? { installSandbox: installWindowsSandbox } : {},
+  process.platform === StudioPlatform.Windows
+    ? {
+        installSandbox: () => installWindowsPrerequisites(userDataRoot),
+        automaticSetup: !isSmoke && !dev && !fixtureProviders,
+      }
+    : {},
 );
 /** The theme's colours for the Windows and Linux window controls, as the renderer last sent them. */
 let windowControls: WindowControlColors | undefined;
@@ -599,6 +604,10 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
 }
 
 async function createCore(userData: string): Promise<StudioCore> {
+  if (process.platform === StudioPlatform.Windows) {
+    const git = await windowsGit(userData);
+    if (git) activateWindowsGit(git);
+  }
   const studio = new StudioCore({
     renderGameCover,
     paths: { userData, resources },
@@ -691,7 +700,7 @@ function parkedWindowOptions(): Electron.BrowserWindowConstructorOptions {
 /** The studio window's options: its size, its platform's title bar, the preload and the sandboxed renderer. */
 function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
   return {
-    ...MAIN_WINDOW,
+    ...studioWindowSize(process.platform, isSmoke ? undefined : screen.getPrimaryDisplay().workAreaSize),
     backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light,
     ...windowChrome(process.platform, windowControls),
     show: false,
@@ -1383,6 +1392,7 @@ async function openSandboxSetup(problem: SandboxProblem): Promise<void> {
  */
 async function retryStartup(): Promise<void> {
   const studio = await createCore(userDataRoot);
+  bootGate.open();
   const setup = window;
   await launchStudio(studio);
   if (setup && setup !== window && !setup.isDestroyed()) setup.destroy();

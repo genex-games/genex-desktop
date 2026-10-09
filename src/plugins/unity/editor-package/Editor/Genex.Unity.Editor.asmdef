@@ -1,0 +1,7 @@
+{
+  "name": "Genex.Unity.Editor",
+  "rootNamespace": "Genex.Unity",
+  "references": ["Unity.Newtonsoft.Json", "UnityEditor.TestRunner", "UnityEngine.TestRunner"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

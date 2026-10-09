@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { ensureDir } from "../../substrate/fsx.ts";
 import { EventKind, SnapshotScope } from "../../shared/event-log.ts";
 import { HostMethod, type HarnessHostHandlers, type HarnessParams } from "../../shared/harness-api.ts";
-import { resolveCommit, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
+import { assertWorktreePath, resolveCommit, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { isBelow } from "../../substrate/paths.ts";
 
@@ -30,7 +30,9 @@ function worktreeDir(scratch: string, p: HarnessParams<typeof HostMethod.Snapsho
   const runId = String(p.runId ?? SHARED_RUN);
   const plainSlugs = WORKTREE_NAME.test(name) && WORKTREE_RUN_ID.test(runId);
   if (!plainSlugs) throw new Error(MESSAGE.notPlainSlug);
-  return path.join(scratch, "autopilot", runId, name);
+  const target = path.join(scratch, "autopilot", runId, name);
+  assertWorktreePath(target);
+  return target;
 }
 
 /** The commit a worktree is detached at: the one named (resolved as a commit), or the live HEAD. */

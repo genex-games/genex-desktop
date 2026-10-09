@@ -1,5 +1,5 @@
 /**
- * The app's keyboard: ⌘K search, ⌘B sidebar, ⌘N new game, ⌘1 the last game, ⌘2 Studio, ⌘I the
+ * The app's keyboard: Cmd/Ctrl+K search, +B sidebar, +N new game, +1 the last game, +2 Studio, +I the
  * game's composer, ⌥↑/↓ through the rail, Escape closes the compact drawer. A sheet, dialog or
  * menu that is asking a question owns the keyboard: a second folder dialog opened behind it, or
  * the room changing underneath it, is the app talking over itself.
@@ -37,11 +37,20 @@ function shortcutAction(event: KeyboardEvent, on: AppShortcuts): (() => void) | 
       requestAnimationFrame(on.focusComposer);
     },
   };
-  const key = event.key.toLowerCase();
+  const logicalKey = event.key.toLowerCase();
+  const nonLatinLetter = /^\p{Letter}$/u.test(logicalKey) && !/^[a-z]$/.test(logicalKey);
+  const numberRow = /^Digit[12]$/.test(event.code);
+  // Physical fallback supports non-Latin letters and number-row symbols without taking Ctrl+C
+  // away from a Latin layout whose C happens to occupy the physical I key.
+  const physicalKey = nonLatinLetter || numberRow ? event.code.replace(/^(Key|Digit)/, "").toLowerCase() : logicalKey;
+  const key = Object.hasOwn(withMeta, logicalKey) ? logicalKey : physicalKey;
   const command = event.metaKey || event.ctrlKey;
-  if (command && Object.hasOwn(withMeta, key)) return withMeta[key];
+  if (command) {
+    if (event.altKey || event.shiftKey || event.repeat) return undefined;
+    return Object.hasOwn(withMeta, key) ? withMeta[key] : undefined;
+  }
   const railKey = event.key === "ArrowUp" || event.key === "ArrowDown";
-  if (!event.altKey || !railKey) return undefined;
+  if (!event.altKey || event.shiftKey || !railKey) return undefined;
   return () => on.stepRail(event.key === "ArrowDown" ? 1 : -1);
 }
 

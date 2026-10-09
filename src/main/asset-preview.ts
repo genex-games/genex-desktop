@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { assertRelativePath } from "../substrate/paths.ts";
 import { ASSET_PREVIEW_MIME, assetExtension } from "../shared/asset-preview.ts";
 import { StudioPlatform } from "../shared/boot.ts";
+import { ASSET_PREFIXES } from "../shared/game-assets.ts";
 
 /** The largest file previewed in memory (the message below names it: 100 MiB). */
 const PREVIEW_MAX_BYTES = 100 * 1024 * 1024;
@@ -32,7 +33,7 @@ const MESSAGE = {
 export async function readAssetPreview(
   base: string,
   file: string,
-  prefixes: readonly string[] = ["assets/", "public/assets/"],
+  prefixes: readonly string[] = ASSET_PREFIXES,
   maxBytes = PREVIEW_MAX_BYTES,
 ): Promise<{ mimeType: string; data: Uint8Array<ArrayBuffer> }> {
   assertPreviewLimit(maxBytes);

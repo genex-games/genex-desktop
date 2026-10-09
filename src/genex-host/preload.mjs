@@ -62,7 +62,8 @@ function pinnedOrigin(raw) {
   return secure && bare ? url.origin : null;
 }
 
-const token = tokenFrom(await readCredential(credentialFd()));
+const transport = process.env.STUDIO_GENEX_HOST_IO === "stdio" ? await import("./stdio-fetch.mjs") : null;
+const token = tokenFrom(transport ? transport.credential : await readCredential(credentialFd()));
 const origin = pinnedOrigin(process.env.GENEX_API_URL);
 if (token && origin) {
   const key = createHash("sha256").update(origin).digest("hex");

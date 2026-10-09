@@ -35,17 +35,27 @@ const BlenderAction = { Status: "status", Install: "install", CancelInstall: "ca
 /** The agent tools plugin.json declares. */
 const BlenderTool = { Status: "status", Retrieve: "retrieve", Model: "model" } as const;
 /** The native jobs plugin.json declares: a new model from a script, or a transform of an existing one. */
-const BlenderJob = { Model: "model", Transform: "transform" } as const;
+const BlenderJob = {
+  Model: "model",
+  Transform: "transform",
+  ModelFbx: "model-fbx",
+  TransformFbx: "transform-fbx",
+} as const;
+/** GLB is the existing default; FBX adds an importable model for native Unity projects. */
+const BlenderFormat = { Glb: "glb", Fbx: "fbx" } as const;
 
 const MESSAGE = {
   UnknownAction: "Unknown Blender action",
   UnknownOperation: "Unknown Blender operation",
   NoRecordedJob: "No recorded job in this project",
   BadSlug: "Use a lowercase asset name with digits and dashes.",
+  BadFormat: "Use format glb or fbx.",
   JobFailed: (id: string, reason: string) => `Blender job ${id}: ${reason}`,
   NoExport: "no completed export",
   Guidance:
     "Files are relative to the game workspace. Load model.glb with GLTFLoader at its returned asset path (omit public/ in a built app URL). Inspect these renders, integrate the mesh into the scene, then use the preview to verify visible use. A delivered file alone is not integration proof.",
+  FbxGuidance:
+    "Files are relative to the game workspace. Import the returned model.fbx with the Unity asset tools, instantiate it in a saved scene, inspect its scale and materials, then capture the Unity camera to verify visible use. GLB and two inspection renders are also retained. A delivered file alone is not integration proof.",
 } as const;
 
 type ToolArgs = Record<string, PluginScalar>;
@@ -86,12 +96,20 @@ async function renderImages(job: PluginNativeResult) {
   return images;
 }
 
+/** Choose only the reviewed recipe for the requested export format and staged inputs. */
+function modelRecipe(args: ToolArgs): string {
+  const format = args.format ?? BlenderFormat.Glb;
+  if (format === BlenderFormat.Glb) return args.model ? BlenderJob.Transform : BlenderJob.Model;
+  if (format === BlenderFormat.Fbx) return args.model ? BlenderJob.TransformFbx : BlenderJob.ModelFbx;
+  throw new Error(MESSAGE.BadFormat);
+}
+
 /** Run a model or transform job, deliver its files into the game and record the delivery. */
 async function model(args: ToolArgs, ctx: PluginContext) {
   const slug = String(args.name ?? "");
   if (!ASSET_SLUG.test(slug)) throw new Error(MESSAGE.BadSlug);
   const job = await ctx.host(HostService.NativeRun, {
-    job: args.model ? BlenderJob.Transform : BlenderJob.Model,
+    job: modelRecipe(args),
     inputs: {
       script: String(args.script || `assets/src/${slug}.py`),
       ...(args.model ? { model: String(args.model) } : {}),
@@ -117,7 +135,7 @@ async function model(args: ToolArgs, ctx: PluginContext) {
     stats,
     images,
     ...derivedFrom(args, job),
-    guidance: MESSAGE.Guidance,
+    guidance: args.format === BlenderFormat.Fbx ? MESSAGE.FbxGuidance : MESSAGE.Guidance,
   };
 }
 

@@ -2224,7 +2224,7 @@ export const SANDBOX_SETUP_WORDS = {
       "This system can’t run the protected workspace. Studio needs macOS, Windows, or Linux (not WSL 1).",
     "not-provisioned": "Windows needs a one-time setup of the protected workspace, approved by an administrator.",
     "git-missing":
-      "Agents run their commands in Git Bash, which comes with Git for Windows. Install it from git-scm.com, then retry.",
+      "Genex will download Git Bash for this app. An internet connection is needed for this one-time setup.",
   } satisfies Record<SandboxProblemCode, string>,
   installThenRetry: "Install them in a terminal, then retry:",
   /** Who each install command is for, by `PackageManager`. */
@@ -2236,9 +2236,10 @@ export const SANDBOX_SETUP_WORDS = {
   retrying: "Checking…",
   /** Windows: install it now, behind one administrator prompt. */
   setUp: "Set up",
-  settingUp: "Waiting for approval…",
-  setUpHint: "Windows will ask an administrator to approve the setup once.",
-  setupCancelled: "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.",
+  settingUp: "Setting up…",
+  setUpHint:
+    "Genex installs what it needs. Approve the Windows prompt to finish setup; no terminal commands are needed.",
+  setupCancelled: "The Windows prompt was cancelled. Choose Set up again when you’re ready to approve it.",
   stillFailing: "Studio still couldn’t start:",
   details: "Details",
 } as const;
@@ -2335,6 +2336,7 @@ export const PLUGINS_WORDS = {
       `Download Blender ${version} (about ${size}) for Studio. The Blender you have stays as it is.`,
     failedTitle: "Blender couldn’t start",
     download: "Download Blender",
+    privateCopy: "Install private Blender copy",
     downloading: (version: string) => `Downloading Blender ${version}`,
     installing: (version: string) => `Installing Blender ${version}`,
     progress: (done: string, total: string) => `${done} of ${total}`,

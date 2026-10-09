@@ -4,7 +4,7 @@
   "version": "0.1.5",
   "private": true,
   "license": "MIT",
-  "description": "Self-improving AI game studio for macOS on Apple Silicon",
+  "description": "Self-improving AI game studio",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/genex-games/genex-desktop.git"
@@ -33,6 +33,7 @@
     "test:fast": "node scripts/test.mjs --group fast",
     "test:rig": "node scripts/test.mjs --group rig",
     "test:windows": "node scripts/test-windows.mjs",
+    "test:windows-ui": "node tests/e2e/run-windows-ui.mjs",
     "test:coverage": "node scripts/check-node.mjs && mkdir -p .studio-dev/coverage && node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include='src/**' --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=.studio-dev/coverage/lcov.info 'tests/**/*.test.ts'",
     "test:ui": "node tests/e2e/run-ui.mjs",
     "test:e2e": "node scripts/build.mjs && node tests/e2e/run-electron-e2e.mjs",

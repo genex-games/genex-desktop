@@ -28,6 +28,7 @@ interface Props {
   onRename: (title: string) => void;
   onReveal?: () => void;
   onExport?: () => void;
+  exportLabel?: string;
   exporting?: boolean;
   sidebarHidden: boolean;
   onToggleSidebar: () => void;
@@ -183,16 +184,18 @@ function ChatTitle({
   );
 }
 
-/** The ⋯ menu: export the game, rename the chat. Closing it returns focus to the rename field. */
+/** The ⋯ menu: the game's build/export action and chat rename. Closing returns focus to the rename field. */
 function ChatActions({
   input,
   exporting,
   onExport,
+  exportLabel = "Export game…",
   onRename,
 }: {
   input: RefObject<HTMLInputElement | null>;
   exporting?: boolean;
   onExport?: () => void;
+  exportLabel?: string;
   onRename: () => void;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -220,7 +223,7 @@ function ChatActions({
       >
         <DropdownMenuItem data-chat-action="export" disabled={!onExport || exporting} onSelect={() => onExport?.()}>
           <Icon name="export" />
-          {exporting ? "Exporting…" : "Export game…"}
+          {exporting ? "Exporting…" : exportLabel}
         </DropdownMenuItem>
         <DropdownMenuItem data-chat-action="rename" onSelect={onRename}>
           <Icon name="rename" />
@@ -243,6 +246,7 @@ export function ChatHeader({
   onRename,
   onReveal,
   onExport,
+  exportLabel,
   exporting,
   sidebarHidden,
   onToggleSidebar,
@@ -322,7 +326,13 @@ export function ChatHeader({
         onClick={() => window.dispatchEvent(new Event(TOGGLE_TERMINAL_EVENT))}
       />
       {!isStudio && (
-        <ChatActions input={inputRef} exporting={exporting} onExport={onExport} onRename={() => setEditing(true)} />
+        <ChatActions
+          input={inputRef}
+          exporting={exporting}
+          onExport={onExport}
+          exportLabel={exportLabel}
+          onRename={() => setEditing(true)}
+        />
       )}
     </div>
   );

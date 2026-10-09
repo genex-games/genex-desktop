@@ -291,7 +291,9 @@ describe("hostile names and hashes on the loop's command lines (M3)", () => {
 
   it("the merge-ownership functions read names git quotes (non-ASCII, quotes, backslashes) as the files they are", async () => {
     const accented = "src/café.js";
-    const quoted = 'src/say "hi" \\ back.js';
+    // NTFS cannot hold a quote or a literal backslash in a filename. Keep its valid shell-hostile
+    // names covered here; the POSIX run still exercises Git's quote/backslash decoding.
+    const quoted = process.platform === "win32" ? "src/say 'hi' `back`.js" : 'src/say "hi" \\ back.js';
     const worktree = await repoWith({ [accented]: "base\n", [quoted]: "base\n" });
     await fixtureGit(worktree, ["checkout", "-q", "-b", "theirs"]);
     await writeFile(path.join(worktree, accented), "theirs\n");

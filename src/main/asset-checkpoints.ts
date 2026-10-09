@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { atomicWriteJson } from "../substrate/fsx.ts";
 import { GIT_ENV, HOST_GIT_CONFIG } from "../substrate/snapshots.ts";
 import { assertRelativePath } from "../substrate/paths.ts";
+import { ASSET_PREFIXES } from "../shared/game-assets.ts";
 const exec = promisify(execFile);
 
 /** The most output one git command of a checkpoint may print. */
@@ -40,7 +41,10 @@ export interface AssetDeliveryRecord {
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 async function checkedFile(root: string, relative: string) {
   assertRelativePath(relative);
-  if (!/^(public\/)?assets\//.test(relative) || relative.split("/").some((p) => p.startsWith(".")))
+  if (
+    !ASSET_PREFIXES.some((prefix) => relative.startsWith(prefix)) ||
+    relative.split("/").some((p) => p.startsWith("."))
+  )
     throw new Error(MESSAGE.notDelivered);
   const base = await realpath(root),
     file = path.join(base, relative),

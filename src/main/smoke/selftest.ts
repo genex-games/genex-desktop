@@ -170,6 +170,7 @@ async function bootStudio(resources: string, userData: string, uiEvents: UiEvent
     engines: [new OllamaEngine({ host: ollamaHost })],
     executionPolicy: { runBackgroundImprovement: false },
     onUiEvent: (event) => uiEvents.push(event),
+    onLog: (line, stream) => process.stderr.write(`[selftest:${stream}] ${line}\n`),
   });
   owned.core = core;
   await core.init();

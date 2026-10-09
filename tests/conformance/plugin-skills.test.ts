@@ -24,6 +24,7 @@ import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
 import { inspectPackage, pluginSkillDigests, validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { PluginConsentDeclined, PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { copyOfExample, pluginFixture } from "../helpers/plugins.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 const source = path.resolve("src/plugins/example");
 const KIB = 1024;
@@ -470,7 +471,9 @@ const HOSTILE_READS: Array<[string, Record<string, unknown>, RegExp, ((copy: str
     /escapes/,
     async (copy) => {
       await rm(path.join(copy, "skills", "a.md"));
-      await symlink("/etc/hosts", path.join(copy, "skills", "a.md"));
+      const outside = path.join(await tmpDir("plugin-skill-escape-"), "private.txt");
+      await writeFile(outside, "synthetic host-only file");
+      await symlink(outside, path.join(copy, "skills", "a.md"));
     },
   ],
   [

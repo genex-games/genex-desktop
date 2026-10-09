@@ -31,6 +31,7 @@ import { type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.
 import type { BuildProblem, InstallResult } from "../shared/build-problem.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GENEX_GAME_PACKAGES, isGenexGamePackage } from "../shared/genex.ts";
+import { UNITY_EDITOR_REQUIRED } from "../shared/unity.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -161,6 +162,7 @@ export class GameBuilds {
    * tree that builds fine. Whoever arrives second waits for the answer the first is getting.
    */
   async ensure(source: BuildSource): Promise<BuildOutcome> {
+    if (source.shape.kind === "unity") throw new Error(UNITY_EDITOR_REQUIRED);
     const dir = path.resolve(source.dir);
     const running = this.#inFlight.get(dir);
     if (running) return await running;

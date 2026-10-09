@@ -205,7 +205,8 @@ function sourceTarget(root: string, p: string): string | undefined {
   }
   const tail = p.slice(p.lastIndexOf(UNKNOWN) + 1);
   const prefix = p.slice(0, cut);
-  const folder = repoPath(root, prefix.endsWith("/") ? prefix : path.dirname(prefix));
+  const endsAtFolder = prefix.endsWith("/") || prefix.endsWith(path.sep);
+  const folder = repoPath(root, endsAtFolder ? prefix : path.dirname(prefix));
   if (path.isAbsolute(prefix) && folder.startsWith("src/")) return folderTarget(root, folder, tail);
   const named = tail.replace(/^\/+/, "");
   return named.startsWith("src/") && SOURCE.test(named) && fs.existsSync(path.join(root, named)) ? named : undefined;

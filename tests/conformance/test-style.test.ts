@@ -69,6 +69,27 @@ test("flags each way a test reads studio source as text, and nothing else", (t) 
   assert.deepEqual(sourceReads(root, "tests/conformance/clean.test.ts"), []);
 });
 
+test("dynamic filenames keep the entire known folder when paths use native separators", (t) => {
+  const root = fixture(t, {
+    "walk.test.ts": `import { readFileSync } from 'node:fs';
+import path from 'node:path';
+const root = path.resolve(import.meta.dirname, '../..');
+const sources = path.join(root, 'src', 'renderer');
+const cards = path.join(root, 'src', 'plugin-sdk', 'skills');
+declare const filename: string;
+readFileSync(path.join(sources, filename), 'utf8');
+readFileSync(path.join(cards, filename), 'utf8');
+`,
+  });
+  const cards = path.join(root, "src", "plugin-sdk", "skills");
+  fs.mkdirSync(cards, { recursive: true });
+  fs.writeFileSync(path.join(cards, "SKILL.md"), "# A markdown-only payload\n");
+
+  assert.deepEqual(sourceReads(root, "tests/conformance/walk.test.ts"), [
+    { file: "tests/conformance/walk.test.ts", line: 7, target: "src/renderer/…" },
+  ]);
+});
+
 test("a new offender fails; the allowlist admits frozen files and may only shrink", (t) => {
   const root = fixture(t, { "offender.test.ts": OFFENDER, "clean.test.ts": CLEAN });
   const fresh = checkTestStyle(root, { allowlist: [] });

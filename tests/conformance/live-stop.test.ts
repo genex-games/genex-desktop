@@ -4,12 +4,14 @@
  * a time with its loads, and never the harness's stand-in.
  */
 import assert from "node:assert/strict";
+import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerPreviewIpc } from "../../src/main/ipc/preview.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { createUnityProject } from "../../src/plugins/unity/project-setup.ts";
 
 /** A live view that records loads, stops and resumes; `stoppable: false` is a port without them. */
 function livePort({ stoppable = true } = {}) {
@@ -84,5 +86,23 @@ describe("Stop and Play", () => {
     const stopping = ipc("studio:preview.stop");
     await Promise.all([loading, stopping]);
     assert.deepEqual(port.calls, ["load", "stop"]);
+  });
+
+  it("switching to Unity stops the browser inside the same queue, without waiting on itself", {
+    timeout: 10_000,
+  }, async () => {
+    const port = livePort();
+    const { lite, ipc } = await stage(port);
+    const dir = path.join(await tmpDir("studio-live-unity-"), "unity-game");
+    await createUnityProject(dir, "6000.5.5f1");
+    const project = await lite.core.games.adopt(dir);
+    port.calls.length = 0;
+    const switching = lite.core.loadPreview({ project: project.name });
+    const stopping = ipc("studio:preview.stop");
+    assert.equal(await switching, `unity:${encodeURIComponent(project.name)}`);
+    assert.deepEqual(await stopping, { ok: true, value: true });
+    assert.deepEqual(port.calls, ["stop", "stop"]);
+    assert.equal(await lite.core.loadPreview({ project: "pong" }), "game://pong/index.html");
+    assert.deepEqual(port.calls, ["stop", "stop", "load"]);
   });
 });

@@ -816,6 +816,7 @@ export class StudioCore {
   #genexCli(): GenexCliService {
     return new GenexCliService({
       run: (request) => this.sandbox.run(request),
+      runNative: (request) => this.sandbox.runNative(request),
       credentialFile: () => this.plugins.hostCredentialFile(GENEX_PLUGIN_ID),
       heldCredentials: () => this.plugins.heldCredentials(),
       runsRoot: path.join(this.options.paths.userData, "genex-cli"),

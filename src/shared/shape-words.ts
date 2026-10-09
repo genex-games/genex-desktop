@@ -17,6 +17,7 @@ const KINDS: Record<ProjectKind, { phrase: string; chip: string }> = {
   canvas2d: { phrase: "a 2D canvas game", chip: "2D canvas" },
   phaser: { phrase: "a Phaser game", chip: "Phaser" },
   "engine-export": { phrase: "a game exported from a game engine", chip: "engine export" },
+  unity: { phrase: "a Unity source project", chip: "Unity" },
   "own-script": { phrase: "a game with its own scripts", chip: "own scripts" },
 };
 
@@ -32,6 +33,7 @@ export function kindChip(kind: ProjectKind): string {
 
 /** How the studio will run it: the build it runs first, or nothing at all. */
 export function runsWords(shape: ProjectShape): string {
+  if (shape.kind === "unity") return "opens in the connected Unity Editor";
   if (!shape.build) return `opens ${shape.entry.split("?")[0]} directly, with no build step`;
   return `built with ${shape.build}, then shown from ${shape.serve === "." ? "the folder" : `${shape.serve}/`}`;
 }
@@ -52,7 +54,7 @@ export const ENGINE_EXPORT_REFUSAL =
 
 /** Whether an unattended build can be started on this shape at all. */
 export function canBuildUnattended(kind: ProjectKind): boolean {
-  return kind !== "engine-export";
+  return kind !== "engine-export" && kind !== "unity";
 }
 
 /** What pressing a row's button asks for — the arguments of `studio.adoptFolder`. */
@@ -138,7 +140,7 @@ export function openOptions(inspection: FolderInspection): OpenOption[] {
       facts,
       problems: preflight.problems,
       writes: preflight.writes,
-      engineExport: !canBuildUnattended(shape.kind),
+      engineExport: shape.kind === "engine-export",
       choice: {
         ...(candidate.rel === "." ? {} : { subdir: candidate.rel }),
         ...(preflight.nested.length > 0 ? { versionNested: true } : {}),

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { lstat, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -26,7 +27,8 @@ import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
 import { PluginHostTool } from "../../src/shared/plugins.ts";
 import { ProcessSandbox, type RunRequest, type RunResult } from "../../src/substrate/spawn.ts";
 import { type GenexFixtureApi, type GenexRequest, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { closeBeforeCleanup, tmpDir } from "../helpers/tmp.ts";
+import { buildPlugins } from "../../scripts/build-plugins.mjs";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 const TOKEN = "tok-synthetic-genex-secret";
@@ -134,7 +136,8 @@ describe("a Studio-run Genex CLI command, through an injected sandbox", () => {
     assert.equal(request.env?.GENEX_NO_BROWSER, "1");
     assert.equal(request.env?.GENEX_API_URL, "https://api.genex.games");
     assert.equal(request.timeoutMs, GENEX_CLI_TIMEOUT_MS);
-    assert.ok(request.command.includes(`'${path.join(p.resources, "plugins/genex/preload.mjs")}'`), request.command);
+    const preload = pathToFileURL(path.join(p.resources, "plugins/genex/preload.mjs")).href;
+    assert.ok(request.command.includes(`'${preload}'`), request.command);
     const cli = path.join(p.resources, "plugins/genex/node_modules/@genex-ai/cli-demo/dist/index.js");
     assert.ok(request.command.includes(`'${cli}'`), request.command);
     assert.ok(
@@ -506,7 +509,7 @@ async function homeFootprint(): Promise<Record<string, string>> {
   return seen;
 }
 
-describe("the real pinned CLI, unsandboxed, against a fixture API", () => {
+describe("the real pinned CLI against a fixture API", () => {
   let api: GenexFixtureApi;
   const requests: GenexRequest[] = [];
   before(async () => {
@@ -514,18 +517,23 @@ describe("the real pinned CLI, unsandboxed, against a fixture API", () => {
   });
   after(async () => api?.close());
 
-  it("runs doctor signed in and leaves the game, its parent and the real HOME byte-identical", {
-    timeout: REAL_CLI_TIMEOUT_MS,
-  }, async () => {
+  async function doctorKeepsProfile(sandboxed: boolean): Promise<void> {
     const p = await profile();
+    const requestsBefore = requests.length;
     // Studio's resources, as the plugin build lays them out: the preload beside the pinned CLI.
     const genex = path.join(p.resources, "plugins/genex");
     await mkdir(path.join(genex, "node_modules/@genex-ai"), { recursive: true });
-    await symlink(path.join(repo, "src/genex-host/preload.mjs"), path.join(genex, "preload.mjs"));
-    await symlink(
-      await realpath(path.join(repo, "node_modules/@genex-ai/cli-demo")),
-      path.join(genex, "node_modules/@genex-ai/cli-demo"),
-    );
+    const preloadSource = path.join(repo, "src/genex-host/preload.mjs");
+    const preloadTarget = path.join(genex, "preload.mjs");
+    const cliSource = await realpath(path.join(repo, "node_modules/@genex-ai/cli-demo"));
+    const cliTarget = path.join(genex, "node_modules/@genex-ai/cli-demo");
+    if (sandboxed) {
+      // The package has real files: a fixture link would need grants to the developer checkout.
+      await buildPlugins(repo, p.resources);
+    } else {
+      await symlink(preloadSource, preloadTarget);
+      await symlink(cliSource, cliTarget);
+    }
     // A game that looks like a Genex remix workspace, and a contract in its parent: exactly what
     // the CLI's skill sync and contract healing rewrite when it runs in a folder.
     await mkdir(path.join(p.game, ".genex"), { recursive: true });
@@ -537,12 +545,21 @@ describe("the real pinned CLI, unsandboxed, against a fixture API", () => {
     const before = { games: await tree(p.gamesRoot), home: await homeFootprint() };
     const sandbox = await ProcessSandbox.create({
       writableRoots: [],
+      readableRoots: [p.resources],
       scratchDir: path.join(p.root, "scratch"),
       secretPaths: [],
-      enabled: false,
+      enabled: sandboxed,
     });
+    closeBeforeCleanup(() => sandbox.dispose());
     const cli = new GenexCliService({
       run: (request) => sandbox.run(request),
+      ...(sandboxed
+        ? {
+            runNative: (
+              request: import("../../src/substrate/plugins/native-process-contract.ts").NativeProcessRequest,
+            ) => sandbox.runNative(request),
+          }
+        : {}),
       credentialFile: async () => `GENEX_TOKEN=${TOKEN}\n`,
       heldCredentials: () => [TOKEN],
       runsRoot: path.join(p.userData, "genex-cli"),
@@ -557,13 +574,33 @@ describe("the real pinned CLI, unsandboxed, against a fixture API", () => {
     };
     assert.equal(answer.output.auth?.state, "ok", JSON.stringify(answer));
     assert.ok(
-      requests.some((r) => r.url === "/api/auth/get-session" && r.authorization === `Bearer ${TOKEN}`),
+      requests
+        .slice(requestsBefore)
+        .some((r) => r.url === "/api/auth/get-session" && r.authorization === `Bearer ${TOKEN}`),
       "the token reached the API through stdin and the preload",
     );
     assert.deepEqual(await tree(p.gamesRoot), before.games, "the game and its parent are untouched");
     assert.deepEqual(await homeFootprint(), before.home, "the real HOME is untouched");
     assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")), [], "the run folder is gone");
-  });
+  }
+
+  it(
+    "runs doctor signed in and leaves the game, its parent and the real HOME byte-identical",
+    {
+      timeout: REAL_CLI_TIMEOUT_MS,
+    },
+    () => doctorKeepsProfile(false),
+  );
+
+  const windowsSandboxReady = process.platform === "win32" && process.env.GENEX_WINDOWS_SANDBOX === "ready";
+  it(
+    "runs the signed-in CLI through the real Windows sandbox and preserves the game and HOME",
+    {
+      timeout: REAL_CLI_TIMEOUT_MS,
+      skip: windowsSandboxReady ? false : "requires provisioned Windows SRT",
+    },
+    () => doctorKeepsProfile(true),
+  );
 });
 
 it("package preflight refuses unsupported projects before approval and starts no installer", async () => {

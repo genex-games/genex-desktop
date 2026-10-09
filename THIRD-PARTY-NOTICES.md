@@ -20,7 +20,38 @@ licenses and terms of included third-party software.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
 
+## Windows sandbox broker backport
+
+`native/srt-win` vendors Anthropic's Apache-2.0-licensed sandbox-runtime v0.0.73 broker
+source, with the parent-only ACL fix and regression tests from lie5860's
+[PR #523](https://github.com/anthropics/sandbox-runtime/pull/523). Exact revisions and
+changed files are recorded in `native/srt-win/PROVENANCE.md`; the original license is
+`native/srt-win/LICENSE`. The build compiles this existing native dependency with a
+static CRT, preserving the SRT protocol. Its provenance, Apache-2.0 license and compiled Rust
+dependency licenses ship under the SDK's `vendor/srt-win/<arch>/` directory. The
+TypeScript application does not adopt a new application framework or language.
+
+## Optional private Git for Windows
+
+Windows first-run setup downloads the unmodified official
+[PortableGit 2.56.0(2) x64 distribution](https://github.com/git-for-windows/git/releases/tag/v2.56.0.windows.2)
+only when Git Bash is missing. It is not bundled into the Genex installer. Git and Bash are
+GPL-licensed; the distribution includes its own `LICENSE.txt` and component notices, which
+Genex preserves. Upstream publishes corresponding source on the same release page.
+Genex's MIT license does not relicense this separately downloaded software.
+
 ## Bundled plugin icons
+
+The new `com.genex.unity-bridge` Editor package is Genex source under MIT, with its own
+`src/plugins/unity/editor-package/LICENSE` carried into installed projects. Its cube icon is
+original Genex artwork. Unity Editor, Hub and build modules are not redistributed by Genex;
+their license and integration terms remain separate. Unity Package Manager resolves the
+declared Newtonsoft JSON and Test Framework dependencies under their own package licenses.
+The bridge's MIT license does not establish permission for automated Editor access.
+
+Local Blender's Windows runtime is downloaded separately from Blender's official archive,
+with pinned size and SHA-256. Genex does not include the executable in its installer; the
+managed archive retains Blender's GPL and third-party license files.
 
 - `src/plugins/blender/icon.png` (shipped as `dist/resources/plugins/blender/icon.png`) is the
   official Blender mark, as Blender's own app icon shows it. The Blender logo is a registered

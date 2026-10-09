@@ -1,0 +1,15 @@
+{
+  "name": "com.genex.unity-bridge",
+  "version": "0.1.0",
+  "displayName": "Genex Unity Bridge",
+  "description": "Authenticated local Editor tools for the Genex Unity plugin.",
+  "unity": "6000.0",
+  "license": "MIT",
+  "author": {
+    "name": "Genex contributors"
+  },
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.unity.test-framework": "1.4.5"
+  }
+}

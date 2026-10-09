@@ -14,6 +14,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { StudioPlatform } from "../../shared/boot.ts";
+import type { NativeProcessRequest, NativeProcessResult } from "../../substrate/plugins/native-process-contract.ts";
+import { runWindowsCli } from "./genex-cli-windows.ts";
 import { genexCliEnv, parseGenexJson, stripAnsi } from "../../plugins/genex/cli.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { type PluginBinding, PluginHostTool } from "../../shared/plugins.ts";
@@ -53,6 +57,8 @@ const MESSAGE = {
 export interface GenexCliDeps {
   /** The process sandbox's `run`. */
   run: (request: RunRequest) => Promise<RunResult>;
+  /** Windows private-folder execution through ProcessSandbox's offline native job. */
+  runNative?: (request: NativeProcessRequest) => Promise<NativeProcessResult>;
   /** `GENEX_TOKEN=…\n` for the unlocked Genex account, or undefined while it is locked. */
   credentialFile: () => Promise<string | undefined>;
   /** Every credential Studio holds, taken out of whatever the CLI prints. */
@@ -103,9 +109,8 @@ export class GenexCliService {
     try {
       const work = await this.#prepare(root, project);
       const denyWrite = await this.#deps.protectedWrites();
-      const result = await this.#deps.run(
-        this.#runRequest(request, { root, work, denyWrite }, credential, options.signal),
-      );
+      const run = this.#runRequest(request, { root, work, denyWrite }, credential, options.signal);
+      const result = await this.#execute(request, run);
       return this.#answer(request, result, credential, options.signal);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -146,14 +151,7 @@ export class GenexCliService {
     signal: AbortSignal | undefined,
   ): RunRequest {
     const { root, work, denyWrite } = folders;
-    const node = this.#deps.execPath ?? process.execPath;
-    const argv = [
-      node,
-      "--import",
-      path.join(this.#deps.resources, PRELOAD_IN_RESOURCES),
-      path.join(this.#deps.resources, CLI_IN_RESOURCES),
-      ...request.argv,
-    ];
+    const argv = this.#nodeArgv(request);
     const hostFlags = `--env ${shellQuote(CREDENTIALS_ENV_FILE)} --api-url ${shellQuote(this.#api)} --no-auth --json`;
     return {
       command: `${argv.map(shellQuote).join(" ")} ${hostFlags}`,
@@ -170,6 +168,30 @@ export class GenexCliService {
       },
       ...(signal ? { signal } : {}),
     };
+  }
+
+  #nodeArgv(request: GenexCliRequest): string[] {
+    return [
+      this.#deps.execPath ?? process.execPath,
+      "--import",
+      pathToFileURL(path.join(this.#deps.resources, PRELOAD_IN_RESOURCES)).href,
+      path.join(this.#deps.resources, CLI_IN_RESOURCES),
+      ...request.argv,
+    ];
+  }
+
+  #execute(request: GenexCliRequest, run: RunRequest): Promise<RunResult> {
+    if (process.platform !== StudioPlatform.Windows || !this.#deps.runNative) return this.#deps.run(run);
+    const argv = [
+      ...this.#nodeArgv(request),
+      "--env",
+      CREDENTIALS_ENV_FILE,
+      "--api-url",
+      this.#api,
+      "--no-auth",
+      "--json",
+    ];
+    return runWindowsCli(run, argv, this.#deps.resources, this.#deps.runNative);
   }
 
   /** The CLI's own environment, with HOME at the run root and the credential on stdin. */

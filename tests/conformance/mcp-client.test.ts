@@ -65,8 +65,12 @@ function manualTimers() {
     },
     pending: () => timers.filter((t) => !t.cancelled).length,
     async fire() {
-      for (const timer of timers.splice(0)) if (!timer.cancelled) timer.run();
-      await new Promise((r) => setTimeout(r, 300));
+      await Promise.all(
+        timers
+          .splice(0)
+          .filter((timer) => !timer.cancelled)
+          .map((timer) => timer.run()),
+      );
     },
   };
 }

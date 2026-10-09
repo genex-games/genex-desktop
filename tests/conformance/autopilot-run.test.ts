@@ -602,7 +602,7 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
       assert.equal(path.resolve(String(request.selfCapture?.root)), path.resolve(request.cwd));
       assert.equal(typeof request.onCapture, "function");
       // The brief was written into the worktree before the build turn, self-ignored by git.
-      assert.match(request.prompt, /READ .*\.studio\/BRIEF\.md FIRST/);
+      assert.ok(request.prompt.includes(`READ ${path.join(request.cwd, ".studio", "BRIEF.md")} FIRST`));
     }
     // The base builder ran in the live folder; the playtester played the integrated build
     // read-only with live tools bound to a pooled preview.

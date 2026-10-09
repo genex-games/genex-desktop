@@ -85,6 +85,8 @@ export interface BootState {
   platform: string;
   phase: BootPhase;
   sandbox: SandboxProblem | null;
+  /** Normal Windows launches start built-in setup once; fixtures and developer launches never do. */
+  automaticSetup?: boolean;
 }
 
 /** How Set up (Windows) ended when it did not fail. */

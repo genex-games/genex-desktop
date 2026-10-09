@@ -16,6 +16,7 @@ import { PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { credentialHomes } from "../credential-homes.ts";
 import { atomicWriteText } from "../fsx.ts";
+import { hostGitEnv } from "../git-policy.ts";
 import { HOST_GIT_CONFIG } from "../snapshots.ts";
 import { ProcessSandbox } from "../spawn.ts";
 import type { Message, ToolCall, Usage } from "../types.ts";
@@ -379,10 +380,13 @@ export class LocalSessions {
   /** The command sandbox: the workspace and a linked worktree's Git metadata are its only writable places. */
   async #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<ProcessSandbox> {
     // A linked worktree's index and objects live outside cwd; authorize only its Git metadata.
+    const executable = process.platform === "win32" ? "git" : "/usr/bin/git";
     const gitMetadata: string[] = [];
     for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
-      const answer = await promisify(execFile)("/usr/bin/git", [...HOST_GIT_CONFIG, "-C", cwd, "rev-parse", flag], {
+      const answer = await promisify(execFile)(executable, [...HOST_GIT_CONFIG, "-C", cwd, "rev-parse", flag], {
         timeout: LOCAL_SESSION_LIMITS.gitProbeTimeoutMs,
+        env: hostGitEnv(),
+        windowsHide: true,
       }).catch(() => null);
       if (answer) gitMetadata.push(await realpath(path.resolve(cwd, answer.stdout.trim())));
     }

@@ -415,8 +415,16 @@ test("on Windows only a PATHEXT name is a CLI: npm's sh launcher and PowerShell 
   for (const name of ["codex", "codex.ps1", "codex.cmd"]) await writeFile(path.join(dir, name), "", { mode: 0o755 });
   const found = await discoverCodingCli("codex", { ...options, loginPath: dir, platform: "win32" });
   assert.equal(found.status.path, path.join(dir, "codex.cmd"));
-  const posix = await discoverCodingCli("codex", { ...options, loginPath: dir, platform: "darwin" });
-  assert.equal(posix.status.path, WINDOWS ? undefined : path.join(dir, "codex"));
+});
+
+test("POSIX discovery selects the extensionless executable", {
+  skip: WINDOWS ? "POSIX PATH syntax and execute bits" : false,
+}, async () => {
+  const dir = path.join(root, "posix-name");
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "codex"), "", { mode: 0o755 });
+  const posix = await discoverCodingCli("codex", { ...options, loginPath: dir });
+  assert.equal(posix.status.path, path.join(dir, "codex"));
 });
 test("the binary resolver names each coding CLI's executable and refuses any other engine", () => {
   assert.equal(codingCliBinary("codex"), "codex");

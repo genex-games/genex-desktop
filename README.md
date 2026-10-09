@@ -24,7 +24,7 @@
 | --- | --- |
 | macOS (Apple Silicon) | [`Genex.dmg`](https://github.com/genex-games/genex-desktop/releases/latest/download/Genex.dmg) |
 | Linux (x64) | `.deb`, `.rpm` or `.zip` from the [latest release](https://github.com/genex-games/genex-desktop/releases/latest) |
-| Windows | Soon |
+| Windows (x64) | Source build; see [Windows setup and validation](docs/windows-sandbox.md) |
 
 Genex is early: expect rough edges, and tell us about them in
 [issues](https://github.com/genex-games/genex-desktop/issues).
@@ -37,7 +37,8 @@ Genex is early: expect rough edges, and tell us about them in
 → Make 3D assets locally with the Blender plugin\
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
-→ Unity and Unreal plugins soon\
+→ Edit Unity 6 scenes, scripts and assets; run native tests and builds with the Unity plugin\
+→ Unreal plugin soon\
 → Native C++ games soon
 
 > [!TIP]
@@ -46,7 +47,7 @@ Genex is early: expect rough edges, and tell us about them in
 
 ### Contributing
 
-You need macOS on Apple Silicon, Git and Node 24.
+You need Git and Node 24. Windows x64 builds also need Rust and MSVC build tools for the sandbox broker; packaged users need none of these tools.
 
 ```bash
 git clone https://github.com/genex-games/genex-desktop.git
@@ -59,6 +60,11 @@ npm run studio:dev -- start --profile first-run --fixture app-basics
 The fixture runs the app with scripted models and sample games, so it needs no account. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request; coding agents start at
 [AGENTS.md](AGENTS.md).
+
+**AI-assisted contribution:** The Windows native runtime and Unity 6 integration in
+[PR #54](https://github.com/genex-games/genex-desktop/pull/54) were developed with assistance
+from OpenAI Codex, as were the Windows desktop and first-run setup improvements. Contributions
+include regression tests and documented validation limits.
 
 ### Build a plugin
 
@@ -79,6 +85,7 @@ npm run plugin:doctor -- ~/studio-plugins/my-plugin      # check it the way Gene
    maintainer reviews it, and it appears in every Genex app's Marketplace.
 
 The [plugin guide](docs/PLUGIN_GUIDE.md) covers tools, panels, settings and accounts.
+The [Unity guide](docs/unity.md) covers the activated Editor requirement and native workflow.
 
 ### Documentation
 

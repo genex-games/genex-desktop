@@ -39,7 +39,7 @@ async function markdown(dir: string, base = dir): Promise<string[]> {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await markdown(full, base)));
-    else if (entry.name.endsWith(".md")) out.push(path.relative(base, full));
+    else if (entry.name.endsWith(".md")) out.push(path.relative(base, full).split(path.sep).join("/"));
   }
   return out.sort();
 }
