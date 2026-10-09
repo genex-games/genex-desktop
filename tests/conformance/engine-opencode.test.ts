@@ -55,6 +55,17 @@ async function* replay(list: Array<Record<string, unknown>>): AsyncGenerator<Rec
   for (const event of list) yield event;
 }
 
+/** Last-match-wins, as OpenCode resolves `permissions`: the final matching rule decides. */
+function configRule(
+  config: { permissions: Array<{ action: string; resource: string; effect: string }> },
+  action: string,
+  resource: string,
+): string | undefined {
+  return config.permissions
+    .filter((r) => (r.action === action || r.action === "*") && (r.resource === resource || r.resource === "*"))
+    .at(-1)?.effect;
+}
+
 async function game(): Promise<string> {
   const dir = await tmpDir("opencode-game-");
   await writeFile(path.join(dir, "main.js"), "export const x = 1;\n");
@@ -235,11 +246,11 @@ describe("OpenCode sessions", () => {
     assert.match(invocation?.prompt ?? "", /OFF LIMITS/);
     assert.equal(invocation?.cwd, await import("node:fs/promises").then((fs) => fs.realpath(cwd)));
     const config = JSON.parse(invocation?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    assert.equal(config.permission.edit, "allow");
-    assert.equal(config.permission.bash, "allow");
-    assert.equal(config.permission.external_directory, "deny");
-    assert.equal(config.permission.webfetch, "deny");
-    assert.equal(config.autoupdate, false);
+    assert.equal(configRule(config, "edit", "*"), "allow");
+    assert.equal(configRule(config, "shell", "*"), "allow");
+    assert.equal(configRule(config, "external_directory", "*"), "deny");
+    assert.equal(configRule(config, "webfetch", "*"), "deny");
+    assert.equal(config.update, "disable");
     assert.equal(invocation?.env.OPENCODE_DISABLE_AUTOUPDATE, "1");
     assert.deepEqual(
       invocation?.domains,
@@ -294,9 +305,16 @@ describe("OpenCode sessions", () => {
       "and never inside a folder the sandbox denies",
     );
     const config = JSON.parse(invocation?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    assert.equal(config.permission.edit, "deny");
-    assert.equal(config.permission.external_directory, "allow", "it reads the game by its full path");
-    assert.deepEqual(config.permission.bash, { "*": "deny", "node .studio/bridge/tool.mjs *": "allow" });
+    assert.equal(configRule(config, "edit", "*"), "deny");
+    assert.equal(configRule(config, "external_directory", "*"), "allow", "it reads the game by its full path");
+    assert.equal(configRule(config, "shell", "*"), "deny");
+    assert.ok(
+      config.permissions.some(
+        (r: { action: string; resource: string; effect: string }) =>
+          r.action === "shell" && r.effect === "allow" && r.resource.includes("tool.mjs"),
+      ),
+      "only the studio bridge runs",
+    );
     assert.match(invocation?.prompt ?? "", /you cannot change it/);
     assert.deepEqual(invocation?.sandbox.writableRoots.slice(0, 1), [invocation?.cwd]);
   });
@@ -313,7 +331,7 @@ describe("OpenCode sessions", () => {
     };
     await engine.delegate({ cwd, prompt: "Plan it", permissions });
     assert.match(seen[0]?.prompt ?? "", /PLAN MODE/);
-    assert.equal(JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission.edit, "deny");
+    assert.equal(configRule(JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}"), "edit", "*"), "deny");
   });
 
   it("throws a failure the run policy acts on by its status, and reports any other as the build's outcome", async () => {
@@ -509,8 +527,8 @@ describe("OpenCode one-shot answers", () => {
     assert.match(invocation?.prompt ?? "", /You judge builds\.[\s\S]*A or B\?[\s\S]*Answer only from what is written/);
     assert.equal(invocation?.argv.filter((arg) => arg === "--file").length, 1);
     const config = JSON.parse(invocation?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-    assert.equal(config.permission.read, "deny");
-    assert.equal(config.permission.bash, "deny");
+    assert.equal(configRule(config, "read", "*"), "deny");
+    assert.equal(configRule(config, "shell", "*"), "deny");
     await assert.rejects(
       engine.complete({
         messages: [{ role: "user", content: "x" }],
@@ -561,22 +579,41 @@ describe("OpenCode's sandbox and config", () => {
     assert.deepEqual(relative.ownHome, [path.join(home, ".local", "share", "opencode")]);
   });
 
-  it("never asks: every permission is allow or deny; only a read-only session reads outside its folder", () => {
+  it("emits V2 permission rules that never ask and start from a closed-world deny", () => {
     for (const access of Object.values(OpenCodeAccess)) {
       for (const bridge of [false, true]) {
         const config = JSON.parse(openCodeConfig(access, bridge));
-        const values = Object.values(config.permission).flatMap((value) =>
-          typeof value === "string" ? [value] : Object.values(value as Record<string, string>),
-        );
+        assert.ok(Array.isArray(config.permissions), `${access} ${bridge} uses permissions[]`);
         assert.ok(
-          values.every((value) => value === "allow" || value === "deny"),
-          `${access} ${bridge}`,
+          config.permissions.every((r: { effect: string }) => r.effect === "allow" || r.effect === "deny"),
+          `${access} ${bridge} never asks`,
         );
-        assert.equal(config.permission.external_directory, access === "read-only" ? "allow" : "deny");
-        if (access !== "build") assert.equal(config.permission.edit, "deny");
-        assert.equal(config.permission.webfetch, "deny");
-        assert.equal(config.share, "disabled");
+        assert.deepEqual(config.permissions.at(0), { action: "*", resource: "*", effect: "deny" });
+        assert.deepEqual(config.plugins, [], "no project plugin runs in a studio session");
+        assert.equal(config.share, "manual");
+        assert.equal(config.update, "disable");
       }
     }
+  });
+
+  it("lets a build edit and run, a read-only session only run the studio bridge, and an answer nothing", () => {
+    const build = JSON.parse(openCodeConfig(OpenCodeAccess.Build, true));
+    assert.equal(configRule(build, "edit", "*"), "allow");
+    assert.equal(configRule(build, "shell", "*"), "allow");
+    assert.equal(configRule(build, "webfetch", "https://example.com"), "deny");
+    assert.equal(configRule(build, "some-future-tool", "*"), "deny", "an action with no rule hits the wildcard");
+    const readOnly = JSON.parse(openCodeConfig(OpenCodeAccess.ReadOnly, true));
+    assert.equal(configRule(readOnly, "edit", "*"), "deny");
+    assert.equal(configRule(readOnly, "read", "*"), "allow");
+    assert.equal(configRule(readOnly, "external_directory", "*"), "allow");
+    assert.ok(
+      readOnly.permissions.some(
+        (r: { action: string; resource: string; effect: string }) =>
+          r.action === "shell" && r.effect === "allow" && r.resource.includes("tool.mjs"),
+      ),
+      "read-only shell allows only the studio bridge",
+    );
+    const answer = JSON.parse(openCodeConfig(OpenCodeAccess.Answer, false));
+    assert.ok(answer.permissions.every((r: { effect: string }) => r.effect === "deny"));
   });
 });

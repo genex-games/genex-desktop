@@ -199,14 +199,25 @@ export const OpenCodeAccess = {
 } as const;
 export type OpenCodeAccess = (typeof OpenCodeAccess)[keyof typeof OpenCodeAccess];
 
-/** The studio bridge's command, as OpenCode's bash permission matches it. */
+/** One V2 permission rule: the last matching rule wins. */
+interface PermissionRule {
+  action: string;
+  resource: string;
+  effect: "allow" | "deny";
+}
+
+/** The studio bridge's command, as OpenCode's shell permission matches it. */
 const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
 
-/** The bash rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
-function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<string, string> {
-  if (access === OpenCodeAccess.Build) return "allow";
-  if (access === OpenCodeAccess.ReadOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
-  return "deny";
+/** The shell rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
+function shellRules(access: OpenCodeAccess, bridge: boolean): PermissionRule[] {
+  if (access === OpenCodeAccess.Build) return [{ action: "shell", resource: "*", effect: "allow" }];
+  if (access === OpenCodeAccess.ReadOnly && bridge)
+    return [
+      { action: "shell", resource: "*", effect: "deny" },
+      { action: "shell", resource: BRIDGE_PATTERN, effect: "allow" },
+    ];
+  return [{ action: "shell", resource: "*", effect: "deny" }];
 }
 
 /**
@@ -214,22 +225,28 @@ function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<str
  * question is ever asked (`run` cannot ask), no web fetch, no sharing and no self-update. A build
  * reaches nothing outside its workspace through OpenCode's own tools; a read-only session, which
  * runs from a scratch folder, may read the game it looks at by its full path, and changes nothing.
- * The studio's sandbox is the boundary either way; these rules keep the model from even trying.
+ * Game-shipped plugins are switched off (`plugins: []`); the studio's sandbox is the boundary
+ * either way, and the leading wildcard denies any action with no rule below it, so a future tool the
+ * rules never heard of is denied rather than asked about.
  */
 export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string {
   const looking = access !== OpenCodeAccess.Answer;
-  const look = looking ? "allow" : "deny";
-  const permission = {
-    edit: access === OpenCodeAccess.Build ? "allow" : "deny",
-    bash: bashRules(access, bridge),
-    read: look,
-    glob: look,
-    grep: look,
-    list: look,
-    webfetch: "deny",
-    websearch: "deny",
-    external_directory: access === OpenCodeAccess.ReadOnly ? "allow" : "deny",
-    doom_loop: "deny",
-  };
-  return JSON.stringify({ permission, autoupdate: false, share: "disabled" });
+  const look: PermissionRule["effect"] = looking ? "allow" : "deny";
+  const edit: PermissionRule["effect"] = access === OpenCodeAccess.Build ? "allow" : "deny";
+  const permissions: PermissionRule[] = [
+    // Closed world first: broad defaults precede exceptions, so an action with no rule below is
+    // denied, never asked.
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "edit", resource: "*", effect: edit },
+    ...shellRules(access, bridge),
+    { action: "read", resource: "*", effect: look },
+    { action: "glob", resource: "*", effect: look },
+    { action: "grep", resource: "*", effect: look },
+    { action: "list", resource: "*", effect: look },
+    { action: "webfetch", resource: "*", effect: "deny" },
+    { action: "websearch", resource: "*", effect: "deny" },
+    { action: "skill", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: "*", effect: access === OpenCodeAccess.ReadOnly ? "allow" : "deny" },
+  ];
+  return JSON.stringify({ permissions, plugins: [], share: "manual", update: "disable" });
 }
