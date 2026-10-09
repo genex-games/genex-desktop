@@ -15,7 +15,8 @@ import { EngineFailure, outageDelays, withProviderPatience } from "../outage.ts"
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { runPlaytest } from "../playtester.ts";
 import { attemptRef } from "../repo.ts";
-import { InteractionSource, RunEvent, SteeringSource } from "../run-events.ts";
+import { RunEvent, SteeringSource } from "../run-events.ts";
+import { InteractionSource } from "../interaction-words.ts";
 import { CheckKind, CheckWeight, MoveOwner, normalizeFacetSpec, normalizeMilestone } from "../spec.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { playtestStepWords } from "../facet/beyond.ts";
