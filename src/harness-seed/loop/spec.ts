@@ -24,6 +24,7 @@ import { hasText } from "./text.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
 import { demoOfFrame, isPassFrame } from "./pass-frames.ts";
 import { ProbeAfter } from "./throttle-bot.ts";
+import { PlayReaches } from "./quest.ts";
 // A namespace for what kinds.ts gained later: a seed upgrade keeps a kinds.ts the agent edited, and
 // a named import it lacks would stop this file loading.
 import * as kinds from "./kinds.ts";
@@ -309,6 +310,10 @@ const CHECK_GRAMMAR: Record<string, { shape: string; says: string; more?: string
   play: {
     shape: `{"kind":"play","ask":"Could you find the bench and sit on it?"}`,
     says: "one yes/no question answered by a playtester who plays the build. At most one per facet.",
+    more: [
+      'Add {"reaches":"setup"} when the question is whether a player reaches the run\'s requested',
+      "state: a blind judge then plays to it, and its yes counts only once the studio saw it.",
+    ],
   },
 };
 
@@ -484,7 +489,13 @@ const KIND_FIELDS: Record<CheckKind, (raw: AnyRecord, camera: string) => AnyReco
       expect: raw.expect === "no" ? "no" : "yes",
     };
   },
-  [CheckKind.Play]: (raw) => ({ ask: askOf(raw), expect: raw.expect === "no" ? "no" : "yes" }),
+  // `reaches` ties the question to the run's requested state: only then may a judge that plays be
+  // sent to that state for it, and only its yes rests on the studio seeing the state reached.
+  [CheckKind.Play]: (raw) => ({
+    ask: askOf(raw),
+    expect: raw.expect === "no" ? "no" : "yes",
+    ...(raw.reaches === PlayReaches.Setup ? { reaches: PlayReaches.Setup } : {}),
+  }),
 };
 
 /** Normalise one check from planner JSON; returns null for something that is not a check at all. */

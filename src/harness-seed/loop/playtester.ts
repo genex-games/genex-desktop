@@ -37,6 +37,7 @@ import { CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import type { CheckResult } from "./checks.ts";
 import { describeComputer, PlayRole, playWithComputer, type ComputerGrant } from "./computer-loop.ts";
 import { COMPUTER_ONLY_LINE } from "./hands-on-prompts.ts";
+import { FacetRole } from "./facet/state.ts";
 
 /** The preview tools a direct play session may call. */
 const PLAY_TOOL_NAMES = ["press_keys", "look", "click", "screenshot", "game_state"];
@@ -336,11 +337,11 @@ async function computerPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promi
     root,
     handle,
     runId: run.runId,
-    facetId: spec?.id ?? "integration",
+    facetId: spec?.id ?? FacetRole.Integration,
     iteration: iteration ?? 0,
     ...(entry ? { entry } : {}),
     setup: { ...(run.setup ?? {}), begin: false },
-    label: "playtester",
+    label: PlayRole.Playtester,
     role: PlayRole.Playtester,
     maxActions,
   };
