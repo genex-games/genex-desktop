@@ -418,15 +418,15 @@ export class OpenCodeEngine implements Engine {
   ): Promise<OpenCodeInvocation> {
     const model = request.model;
     const variant = model && request.effort ? this.#variant(model, request.effort) : null;
+    // v2: effort rides `--model` as `provider/model#variant`; project plugins are neutralized by
+    // config (`openCodeConfig`), since v2 dropped `--pure`.
+    const selected = model && variant ? `${model}#${variant}` : model;
     const argv = [
       "run",
       "--format",
       "json",
-      // Plugins a game folder ships (`.opencode/`) never run inside a studio session.
-      "--pure",
-      ...(model ? ["--model", model] : []),
+      ...(selected ? ["--model", selected] : []),
       ...(request.resume ? ["--session", request.resume] : []),
-      ...(variant ? ["--variant", variant] : []),
       ...ctx.files.flatMap((file) => ["--file", file]),
     ];
     const env = sessionEnv(openCodeConfig(ctx.access, ctx.bridge));

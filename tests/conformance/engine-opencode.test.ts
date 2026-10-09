@@ -227,7 +227,9 @@ describe("OpenCode sessions", () => {
     assert.ok(mirrored.some((event) => event.type === "user" && JSON.stringify(event.payload).includes("tool_result")));
 
     const [invocation] = seen;
-    assert.deepEqual(invocation?.argv.slice(0, 5), ["run", "--format", "json", "--pure", "--model"]);
+    assert.deepEqual(invocation?.argv.slice(0, 5), ["run", "--format", "json", "--model", "opencode/big-pickle"]);
+    assert.ok(!invocation?.argv.includes("--pure"), "v2 has no --pure");
+    assert.ok(!invocation?.argv.includes("--variant"), "effort rides --model as #variant, not --variant");
     assert.ok(!invocation?.argv.includes("Write hello to out.txt"), "the brief never rides argv");
     assert.match(invocation?.prompt ?? "", /^Write hello to out\.txt/);
     assert.match(invocation?.prompt ?? "", /OFF LIMITS/);
@@ -260,8 +262,13 @@ describe("OpenCode sessions", () => {
     await engine.delegate({ cwd, prompt: "go on", model: "opencode/big-pickle", effort: "high" });
     await engine.delegate({ cwd, prompt: "go on" });
     const [resumed, plain, picked] = seen.map((invocation) => invocation.argv);
-    assert.deepEqual(resumed?.slice(-4), ["--session", "ses_1", "--variant", "low"]);
+    assert.deepEqual(resumed?.slice(-4), ["--model", "opencode/ling-3.0-flash-fin-free#low", "--session", "ses_1"]);
     assert.ok(!plain?.includes("--variant"), "a model with no variants gets no --variant");
+    assert.equal(
+      plain?.[plain.indexOf("--model") + 1],
+      "opencode/big-pickle",
+      "an unoffered effort is dropped, not suffixed",
+    );
     assert.ok(!picked?.includes("--model"), "with no pick, OpenCode's own default model runs");
     assert.ok(seen[2]?.domains.includes("opencode.ai"), "and every listed provider is reachable");
   });
