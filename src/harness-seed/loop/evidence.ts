@@ -18,6 +18,9 @@ import { applyPlayScript } from "./play-script.ts";
 // A namespace, not named imports: a seed upgrade may keep an older kinds.ts the agent edited, which
 // has no `cruiseFor` or `startKeysFor`, and a missing named import would stop this file loading.
 import * as kinds from "./kinds.ts";
+// A namespace too: routes.ts is newer than an evidence.ts a workspace may keep, and this pass
+// replays the run's routes only when it is there.
+import * as routes from "./routes.ts";
 import { LOAD_RACE_RETRY_MS, OBSERVATION_RETRY_MS, RACE_RETRY_MS, WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
 import { PageMethod } from "./page-contract.ts";
@@ -863,6 +866,7 @@ const LOOK_PHASES: Array<(look: Look) => Promise<LookEnd>> = [
   runDemos,
   runChallenge,
   weighFrames,
+  replayKeptRoutes,
   readLateStatus,
   readConsole,
   reportLook,
@@ -2093,6 +2097,25 @@ async function weighFrames(look: Look): Promise<LookEnd> {
 }
 
 /**
+ * (8b) the run's kept routes (routes.ts), replayed on this build after every photograph is taken —
+ * a replay seeds the page and moves it — and only on a leased window, never the user's own view. A
+ * deterministic route that no longer reaches its goal is a failed check naming the step; every
+ * divergence is a warning the judge and the next builder read.
+ */
+async function replayKeptRoutes(look: Look): Promise<LookEnd> {
+  const { ctx, handle, labelPrefix, prefix, problems, run, warnings } = look;
+  if (typeof routes.replayRoutes !== "function" || !handle || problems.length > 0) return;
+  try {
+    const replayed = await routes.replayRoutes(ctx, { run, handle, labelPrefix: labelPrefix ?? prefix });
+    if (!replayed) return;
+    look.routeReplays = replayed;
+    warnings.push(...replayed.notes);
+  } catch (err: any) {
+    warnings.push(`the run's routes could not be replayed: ${err?.message ?? err}`);
+  }
+}
+
+/**
  * (9) the window again, at the end of the pass. The OS kills a window at its memory peak (the
  * drive, the cameras, the demos), not at the load, and the status read there said nothing of it:
  * a kill mid-pass would have left every failure after it on the build.
@@ -2240,6 +2263,8 @@ async function reportLook(look: Look): Promise<LookEnd> {
       // The drive's readings: whether the racing line steered it, the corner it photographed, and
       // the throttle-only bot's race (judge-facts.ts words each one; `throttle-bot-loses` reads the race).
       ...drivenReadings(look),
+      // The run's kept routes replayed on this build: only when it keeps any.
+      ...(look.routeReplays ? { routes: look.routeReplays } : {}),
     },
   };
 }

@@ -99,7 +99,9 @@ Ollama, never its workers, because the director hires every worker as a session.
 at screenshots, so an Ollama model without vision is listed but disabled in their menu, and a pick
 that cannot see leaves reviewing to the first installed model that can (or to itself when none
 can). The playtester plays on the reviewers' model when it calls tools and sees, else on the main
-agent's engine with that engine's own model; the scout is skipped under an Ollama main agent. A
+agent's engine with that engine's own model, holding the same `computer` tool as a session engine
+through `preview.computer` on its leased window (an older host keeps its shorthand tools); the
+scout is skipped under an Ollama main agent. A
 build turn on a model that cannot see receives a note instead of the turn's pictures
 (`unseen-pictures-prompts.ts`). A send that crosses a job to or from Ollama needs the
 `local-roles` harness capability, which `main.ts` claims only when `model-roles.ts`,
