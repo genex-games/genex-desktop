@@ -253,37 +253,55 @@ export function computerTools(
     role,
   });
   const sessionOptions = sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration));
-  const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : "playtester";
-  const observeByDefault = PACED_ROLES.has(role);
-  if (options.bridge) {
-    const bridge = gameBridgeSource({
-      sandbox: options.bridge.sandbox,
+  const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : ScreenRole.Playtester;
+  const shared = {
+    toolRole,
+    observeByDefault: PACED_ROLES.has(role),
+    screen,
+    ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
+  };
+  const runtime = options.bridge ? TargetRuntime.Bridge : TargetRuntime.Browser;
+  const deps: SourceDeps = { previews, grant, role, sessionPort, screen, options };
+  return TARGET_SOURCES[runtime](deps, (source, parts) =>
+    toolsOver(computerSession(source, initialRoot, sessionOptions), { ...shared, ...parts }),
+  );
+}
+
+/** What any target source is built from: the previews, the grant, the window and the extras. */
+interface SourceDeps {
+  previews: PreviewService;
+  grant: ComputerGrant;
+  role: AgentScreenRole;
+  sessionPort: SessionPort;
+  screen: () => AgentScreen;
+  options: ComputerToolsOptions;
+}
+
+/** Builds the tools over a source once its runtime-specific parts are known. */
+type ToolsBuilder = <T extends ComputerTarget>(
+  source: TargetSource<T>,
+  parts: { caps: TargetCapabilities; portOf: (target: T) => PreviewPort | null; release: () => Promise<void> },
+) => ComputerTools;
+
+/**
+ * One row per runtime: how its target source is made. A new kind of target — a window, a desktop,
+ * a VM — is a new runtime and a new row here; the session, the tool and every engine stay as they are.
+ */
+const TARGET_SOURCES: Record<TargetRuntime, (deps: SourceDeps, build: ToolsBuilder) => ComputerTools> = {
+  [TargetRuntime.Browser]: (deps, build) => {
+    const source = browserSource(deps.previews, deps.grant, deps.role, deps.sessionPort, deps.screen);
+    return build(source, { caps: source.caps, portOf: (target) => target.port, release: async () => {} });
+  },
+  [TargetRuntime.Bridge]: (deps, build) => {
+    const sandbox = deps.options.bridge?.sandbox;
+    if (!sandbox) return TARGET_SOURCES[TargetRuntime.Browser](deps, build);
+    const source = gameBridgeSource({
+      sandbox,
       frame: (target, jpeg, caption, act) => {
-        previews.openScreen(screen());
-        return previews.frame(targetFramePort(target), screen(), jpeg, caption, act);
+        deps.previews.openScreen(deps.screen());
+        return deps.previews.frame(targetFramePort(target), deps.screen(), jpeg, caption, act);
       },
     });
-    const session = computerSession(bridge, initialRoot, sessionOptions);
-    return toolsOver(session, {
-      caps: bridge.caps,
-      toolRole,
-      observeByDefault,
-      screen,
-      portOf: () => null,
-      release: bridge.release,
-      ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
-    });
-  }
-  const source = browserSource(previews, grant, role, sessionPort, screen);
-  const session = computerSession(source, initialRoot, sessionOptions);
-  const release = async () => {};
-  return toolsOver(session, {
-    caps: source.caps,
-    toolRole,
-    observeByDefault,
-    screen,
-    portOf: (target) => target.port,
-    release,
-    ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
-  });
-}
+    return build(source, { caps: source.caps, portOf: () => null, release: source.release });
+  },
+};
