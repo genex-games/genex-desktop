@@ -60,6 +60,8 @@ const MODELS_TIMEOUT_MS = 30 * SECOND_MS;
 const GIT_PROBE_TIMEOUT_MS = 5 * SECOND_MS;
 /** How long a judge's one-shot answer may take before it is a timeout. */
 const COMPLETE_TIMEOUT_MS = 15 * MINUTE_MS;
+/** How long a server-side compaction may take before it is a timeout. */
+const COMPACT_TIMEOUT_MS = 5 * MINUTE_MS;
 /** How long a stopped session gets to exit politely before it is killed. */
 const KILL_GRACE_MS = 3 * SECOND_MS;
 /** How much of stderr is kept to explain an exit the event stream never explained. */
@@ -82,7 +84,7 @@ const MESSAGE = {
   SignInRemedy: "Sign in to a provider with OpenCode from Settings › Model Providers.",
   Ready: (version: string | undefined, count: number) => `OpenCode ${version ?? ""}, ${count} model(s)`.trim(),
   NoTools: "OpenCode's one-shot answers take no studio tools",
-  NoCompact: "OpenCode compacts its own sessions",
+  NoSessionToCompact: "OpenCode has no session to compact",
   Stopped: (code: number | null) => `OpenCode exited with ${code}`,
   ModelRefused: (model: string, words: string) =>
     `The provider refused ${model} (${words}). Pick another model, then send again.`,
@@ -123,6 +125,8 @@ export interface OpenCodeEngineOptions {
   execFn?: OpenCodeExec;
   /** Test seam: the model listing, instead of asking the CLI. */
   listModels?: () => Promise<string>;
+  /** Test seam: `opencode api …` stdout, instead of asking the CLI. */
+  apiFn?: (args: string[]) => Promise<string>;
   /** Test seam: where the CLI is and whether it works. */
   resolveCli?: () => Promise<{ ready: boolean; path?: string; version?: string; detail: string }>;
   /** Where locks are recovered from after a crash (as Codex's). */
@@ -144,12 +148,15 @@ export class OpenCodeEngine implements Engine {
   readonly label = "OpenCode";
   readonly kind = EngineKind.Delegated;
   readonly supportsSessions = true;
+  /** Compact Now compacts the resumed session through OpenCode's own server-side compaction. */
+  readonly compactsNatively = true;
   readonly #scratchRoot: string;
   readonly #protectedPaths: string[];
   readonly #toolPath: (() => Promise<string>) | undefined;
   readonly #catalog: ModelCatalog;
   readonly #execFn: OpenCodeExec | undefined;
   readonly #listModels: (() => Promise<string>) | undefined;
+  readonly #apiFn: ((args: string[]) => Promise<string>) | undefined;
   readonly #resolveCli: () => Promise<{ ready: boolean; path?: string; version?: string; detail: string }>;
   readonly #lockRecovery: string | undefined;
   #hosts = new Map<string, string[]>();
@@ -165,6 +172,7 @@ export class OpenCodeEngine implements Engine {
     this.#catalog = new ModelCatalog(options.onModelsChanged);
     this.#execFn = options.execFn;
     this.#listModels = options.listModels;
+    this.#apiFn = options.apiFn;
     this.#resolveCli = options.resolveCli ?? defaultResolveCli;
     this.#lockRecovery = options.lockRecovery;
   }
@@ -225,13 +233,15 @@ export class OpenCodeEngine implements Engine {
     return { models: listed.map((model: OpenCodeModel) => model.row), source: ModelCatalogSource.Provider };
   }
 
-  /** OpenCode keeps its own default model; with none picked, `--model` is left out and it uses that. */
+  /** First signed-in model, else the first listed; metered, so the registry never auto-picks it. */
   async defaultModel(): Promise<string | null> {
-    return null;
+    await this.refreshModels().catch(() => {});
+    const models = this.#catalog.models();
+    return models.find((model) => !this.#anonymous.has(model.id))?.id ?? models[0]?.id ?? null;
   }
 
   async delegate(request: DelegateRequest): Promise<DelegateResult> {
-    if (request.compact) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoCompact);
+    if (request.compact) return this.#compact(request);
     const startedAt = Date.now();
     const cwd = await realpath(path.resolve(request.cwd));
     const run = newRun(this.id, request.resume);
@@ -277,6 +287,66 @@ export class OpenCodeEngine implements Engine {
       return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
     if (run.failure) return this.#failedEnding(run.failure, partial, request.model);
     return completed(this.id, run, startedAt, request.model, recordedCalls(bridge, request));
+  }
+
+  /**
+   * Compact Now: the resumed session compacts itself on OpenCode's server and goes on under the
+   * same id. Its summary stays sealed inside the session, so the result carries none.
+   */
+  async #compact(request: DelegateRequest): Promise<DelegateResult> {
+    const startedAt = Date.now();
+    const run = newRun(this.id, request.resume);
+    const controller = abortControllerFor(request.signal);
+    const partial = (): PartialDelegateState => partialState(run, startedAt, request.model, null, request);
+    const interrupted = (): boolean => request.signal?.aborted === true || run.deadlineHit;
+    if (!request.resume) {
+      return metered(
+        partialDelegateResult(
+          this.id,
+          { stopReason: StopReason.Error, errorText: MESSAGE.NoSessionToCompact },
+          partial(),
+        ),
+      );
+    }
+    const deadline = request.timeoutMs
+      ? setTimeout(() => {
+          run.deadlineHit = true;
+          controller.abort();
+        }, request.timeoutMs)
+      : null;
+    try {
+      controller.signal.throwIfAborted();
+      await this.#compactSession(request.resume, Math.max(1, COMPACT_TIMEOUT_MS));
+      controller.signal.throwIfAborted();
+    } catch (err) {
+      if (interrupted())
+        return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
+      const message = err instanceof Error ? err.message : String(err);
+      return metered(partialDelegateResult(this.id, { stopReason: StopReason.Error, errorText: message }, partial()));
+    } finally {
+      if (deadline) clearTimeout(deadline);
+    }
+    if (interrupted()) return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
+    return { ...completed(this.id, run, startedAt, request.model, []), compacted: true };
+  }
+
+  /** One server-side compaction, through `opencode api`; the session id survives it. */
+  async #compactSession(sessionId: string, timeoutMs: number): Promise<void> {
+    const args = ["api", "post", `/api/session/${sessionId}/compact`];
+    if (this.#apiFn) {
+      await this.#apiFn(args);
+      return;
+    }
+    const installation = await resolveCodingCli(EngineId.OpenCode);
+    const binary = installation.status.path;
+    if (!binary) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NotInstalled);
+    const env = childEnv(process.env, {
+      base: "contractor",
+      vendor: "opencode",
+      set: { OPENCODE_DISABLE_AUTOUPDATE: "1" },
+    });
+    const result = await runCommand(binary, args, { env, timeoutMs });
+    if (result.code !== 0) throw new Error(result.stderr.trim() || MESSAGE.Stopped(result.code));
   }
 
   /** A one-shot answer (a judge's verdict): no tools, in an empty folder of its own. */

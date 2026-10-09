@@ -580,12 +580,50 @@ describe("OpenCode sessions", () => {
     await access(path.join(cwd, "main.js"), constants.W_OK);
   });
 
-  it("refuses Compact now: OpenCode compacts its own sessions", async () => {
+  it("picks the first signed-in model as default, else the first listed, else none", async () => {
     const { engine } = await engineWith(() => replay([]));
-    await assert.rejects(
-      engine.delegate({ cwd: await game(), prompt: "", compact: true, resume: "ses_1" }),
-      /compacts its own/,
-    );
+    await engine.refreshModels(true);
+    assert.equal(await engine.defaultModel(), "opencode-go/claude-haiku-5-5");
+    const { engine: freeOnly } = await engineWith(() => replay([]), await freeOnlyListing());
+    await freeOnly.refreshModels(true);
+    assert.equal(await freeOnly.defaultModel(), "opencode/exo-free");
+    const { engine: empty } = await engineWith(() => replay([]), JSON.stringify({ data: [] }));
+    await empty.refreshModels(true);
+    assert.equal(await empty.defaultModel(), null);
+  });
+
+  it("compacts the resumed session on OpenCode's own server and goes on under the same id", async () => {
+    const seen: string[][] = [];
+    const root = await tmpDir("opencode-compact-");
+    const engine = new OpenCodeEngine({
+      scratchRoot: path.join(root, "scratch"),
+      resolveCli: ready,
+      listModels: () => fixture("opencode-api-model-2.x.json"),
+      apiFn: async (args) => {
+        seen.push(args);
+        return "{}";
+      },
+    });
+    const result = await engine.delegate({ cwd: await game(), prompt: "", compact: true, resume: "ses_1" });
+    assert.deepEqual(seen, [["api", "post", "/api/session/ses_1/compact"]]);
+    assert.equal(result.ok, true);
+    assert.equal(result.compacted, true);
+    assert.equal(result.sessionId, "ses_1");
+  });
+
+  it("reports a compaction the server refused as the build's outcome", async () => {
+    const root = await tmpDir("opencode-compact-");
+    const engine = new OpenCodeEngine({
+      scratchRoot: path.join(root, "scratch"),
+      resolveCli: ready,
+      listModels: () => fixture("opencode-api-model-2.x.json"),
+      apiFn: async () => {
+        throw new Error("session not found");
+      },
+    });
+    const result = await engine.delegate({ cwd: await game(), prompt: "", compact: true, resume: "ses_gone" });
+    assert.equal(result.ok, false);
+    assert.match(result.errorText ?? "", /session not found/);
   });
 });
 
