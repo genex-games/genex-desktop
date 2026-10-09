@@ -3,6 +3,7 @@
  * at the boundary: the critic's rules, the folders a builder must not read, and where a
  * read-only session may write.
  */
+import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
 
 /**
  * The critic's two rules, appended to every judge prompt. The Claude critic has its tools,
@@ -48,6 +49,16 @@ export function planModeNote(cwd: string, scratch: string): string {
  * A session whose studio tools are Codex dynamic tools (`codex-turns.ts`): the brief was written
  * for the file bridge's command syntax, so it is told the same tools are its own function tools.
  */
+/**
+ * What a session that has the studio's live tools as an MCP server is told: they are its own tools
+ * under the server's prefix, and the bridge command is the fallback when one is refused.
+ */
+export function mcpToolsNote(tools: readonly string[]): string {
+  if (!tools.length) return "";
+  const named = tools.map((tool) => `${MCP_SERVER_NAME}_${tool}`).join(", ");
+  return `STUDIO TOOLS — ${named} are your own tools in this session: call them directly with JSON arguments, and a tool that looks at the build answers with the picture itself. Only if one is refused, run \`node .studio/bridge/tool.mjs <tool> ...\` for the same tool instead.`;
+}
+
 export function dynamicToolsNote(tools: readonly string[]): string {
   if (!tools.length) return "";
   return `STUDIO TOOLS — ${tools.join(", ")} are your own function tools in this session; call them directly. Where these instructions say to run \`node .studio/bridge/tool.mjs <tool> ...\`, call the tool <tool> with the same fields as JSON arguments instead: there is no bridge folder to run. A tool that looks at the build answers with the picture itself.`;

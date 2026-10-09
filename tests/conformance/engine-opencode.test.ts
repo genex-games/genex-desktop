@@ -294,6 +294,95 @@ describe("OpenCode sessions", () => {
     assert.deepEqual(invocation?.sandbox.writableRoots.slice(0, 1), [invocation?.cwd]);
   });
 
+  it("hands a session its live tools as a local MCP server in its own sandbox, allowed without asking", async () => {
+    const shims: string[] = [];
+    const { engine, seen } = await engineWith(async function* (invocation) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      const command = config.mcp?.studio?.command as string[] | undefined;
+      if (command?.[1]) {
+        await access(command[1], constants.R_OK);
+        shims.push(command[1]);
+      }
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Play it",
+      readOnly: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    assert.equal(config.mcp.studio.type, "local");
+    assert.equal(config.mcp.studio.enabled, true);
+    assert.equal(config.mcp.studio.command[0], "node");
+    assert.equal(shims.length, 1, "the shim was there while the session ran");
+    assert.ok(shims[0]!.startsWith(seen[0]!.cwd), "inside the session's own folder, so inside its sandbox");
+    assert.equal(config.permission["studio_*"], "allow", "OpenCode's run rejects any tool it would ask about");
+    assert.match(seen[0]?.prompt ?? "", /studio_computer/);
+    assert.match(seen[0]?.prompt ?? "", /node \.studio\/bridge\/tool\.mjs/, "the bridge stays the fallback");
+  });
+
+  it("keeps a session on the bridge alone when its MCP tools are switched off, or it has no tool", async () => {
+    const off = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const quiet = new OpenCodeEngine({
+      scratchRoot: path.join(off.root, "scratch2"),
+      protectedPaths: [],
+      execFn: (invocation) => {
+        off.seen.push(invocation);
+        return replay([]);
+      },
+      resolveCli: ready,
+      listModels: () => fixture("opencode-models-1.18.txt"),
+      mcpTools: false,
+    });
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await quiet.delegate({ cwd, prompt: "Play", readOnly: true, liveTools: [computer], onLiveTool: async () => "ok" });
+    await off.engine.delegate({ cwd, prompt: "Build" });
+    for (const invocation of off.seen) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      assert.equal(config.mcp, undefined);
+      assert.equal(config.permission["studio_*"], undefined);
+    }
+  });
+
+  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
+    const { engine, seen } = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Judge by playing",
+      readOnly: true,
+      blind: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
+      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
+    assert.equal(config.permission["studio_*"], "allow");
+  });
+
   it("plans in Plan: read-only, from a folder of its own", async () => {
     const { engine, seen } = await engineWith(() => replay([]));
     const cwd = await game();

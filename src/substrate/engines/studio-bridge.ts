@@ -29,6 +29,7 @@ import { CHECKPOINT_TOOL, CODEX_CAPTURE_TOOL, intakeToolReply, StudioTool } from
 import { captureArgs } from "./capture-args.ts";
 import { openNoFollow, readRegularFile } from "../fsx.ts";
 import { schemaType } from "./tool-schema.ts";
+import { MCP_SHIM_FILE, MCP_SHIM_SOURCE } from "./studio-mcp-shim.ts";
 import { errorMessage } from "../../shared/errors.ts";
 
 /** A request bigger than this is refused unread: arguments, not payloads, travel through req/. */
@@ -92,6 +93,23 @@ export interface BridgeOptions {
   onCall: (name: string, args: Record<string, unknown>) => Promise<LiveToolResult>;
   /** Test seam: how often the studio looks for a new request. */
   pollMs?: number;
+  /**
+   * Also write the MCP shim (`studio-mcp-shim.ts`): a contractor that takes MCP servers in its own
+   * config starts it and reaches the same tools, pictures inline, over this same bridge.
+   */
+  mcp?: boolean;
+}
+
+/** A picture an answer names for the MCP shim: a plain file in `res/`, and its type. */
+interface AnswerImage {
+  file: string;
+  mimeType: string;
+}
+
+/** What an answer carries: the text the shim prints, and the pictures saved beside it. */
+interface Answer {
+  text: string;
+  images: AnswerImage[];
 }
 
 /**
@@ -276,6 +294,7 @@ function schemaLines(tool: BridgeTool): string {
 
 export class StudioBridge {
   readonly dir: string;
+  readonly #mcp: boolean;
   readonly #cwd: string;
   readonly #tools: BridgeTool[];
   readonly #onCall: BridgeOptions["onCall"];
@@ -300,6 +319,7 @@ export class StudioBridge {
         : { ...tool, inputSchema: tool.parameters },
     );
     this.#onCall = options.onCall;
+    this.#mcp = options.mcp === true;
     this.#pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   }
 
@@ -321,6 +341,7 @@ export class StudioBridge {
     bridge.#req = { dev: req.dev, ino: req.ino };
     if (!(await bridge.#intact())) throw new Error(MESSAGE.NotPlainFolder(bridge.dir));
     await writeFile(path.join(bridge.dir, "tool.mjs"), SHIM_SOURCE, "utf8");
+    if (options.mcp) await writeFile(path.join(bridge.dir, MCP_SHIM_FILE), MCP_SHIM_SOURCE, "utf8");
     await writeFile(
       path.join(bridge.dir, "tools.json"),
       JSON.stringify(
@@ -346,6 +367,11 @@ export class StudioBridge {
    * What the contractor is told about its tools, appended to the brief. Written as commands
    * because that is what they are — a model that has been handed a shell needs no new grammar.
    */
+  /** How a contractor starts the MCP shim: `node` and its path; null when this bridge wrote none. */
+  mcpCommand(): string[] | null {
+    return this.#mcp ? ["node", path.join(this.dir, MCP_SHIM_FILE)] : null;
+  }
+
   instructions(): string {
     if (!this.#tools.length) return "";
     const lines = this.#tools.map((tool) => (tool.inputSchema ? schemaLines(tool) : flagLines(tool)));
@@ -441,10 +467,10 @@ export class StudioBridge {
     }
     this.calls.push({ name, args });
     try {
-      const text = await this.#answerText(await this.#onCall(name, args));
+      const answer = await this.#answerOf(await this.#onCall(name, args));
       // The bridge was rerouted while its pictures were being saved: there is nowhere to answer.
-      if (text === null) return;
-      await this.#write(entry, true, text);
+      if (answer === null) return;
+      await this.#write(entry, true, answer.text, answer.images);
     } catch (err) {
       // A broken tool reports as text. It must never end a build that is otherwise going well.
       await this.#write(entry, false, `${name} failed: ${errorMessage(err)}`);
@@ -461,20 +487,23 @@ export class StudioBridge {
    * A tool's result as the text the shim prints. Its pictures are saved into `res/` and named in
    * the answer, so the contractor can open them; null when the bridge stopped being intact.
    */
-  async #answerText(result: LiveToolResult): Promise<string | null> {
-    if (typeof result === "string") return result;
-    if (!result.images?.length) return result.text;
+  async #answerOf(result: LiveToolResult): Promise<Answer | null> {
+    if (typeof result === "string") return { text: result, images: [] };
+    if (!result.images?.length) return { text: result.text, images: [] };
     const imageFiles = [];
+    const images: AnswerImage[] = [];
     for (const image of result.images) {
-      const file = path.join(this.dir, "res", `${randomUUID()}.${imageExtension(image.mimeType)}`);
+      const name = `${randomUUID()}.${imageExtension(image.mimeType)}`;
+      const file = path.join(this.dir, "res", name);
       if (!(await this.#intact())) return null;
       await this.#create(file, Buffer.from(image.data, "base64"));
       imageFiles.push({ path: file, label: image.label ?? DEFAULT_IMAGE_LABEL });
+      images.push({ file: name, mimeType: image.mimeType });
     }
-    return withImageFiles(result.text, imageFiles);
+    return { text: withImageFiles(result.text, imageFiles), images };
   }
 
-  async #write(entry: string, ok: boolean, text: string): Promise<void> {
+  async #write(entry: string, ok: boolean, text: string, images: AnswerImage[] = []): Promise<void> {
     if (this.#closed || !(await this.#intact())) return;
     const target = path.join(this.dir, "res", entry);
     // Same write-then-rename dance as the shim, from the other side of the conversation. The
@@ -483,7 +512,7 @@ export class StudioBridge {
     // still inside this bridge's own `res/`. A lost race leaves at most an orphan temp file.
     const tmp = `${target}.${randomUUID()}.tmp`;
     try {
-      const written = await this.#create(tmp, JSON.stringify({ ok, text }));
+      const written = await this.#create(tmp, JSON.stringify({ ok, text, ...(images.length ? { images } : {}) }));
       const now = await lstat(tmp);
       const sameFile = now.dev === written.dev && now.ino === written.ino;
       if (!sameFile || !(await this.#intact())) return;

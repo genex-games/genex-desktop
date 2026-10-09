@@ -7,6 +7,8 @@
  * whether OpenCode is usable: the studio never reads OpenCode's credentials.
  */
 import { CatalogError } from "./model-catalog.ts";
+import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
+import { SECOND_MS } from "../../shared/duration.ts";
 import type { EngineModel } from "./types.ts";
 import { ModelContextSource } from "./types.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
@@ -194,10 +196,15 @@ export const OpenCodeAccess = {
   Build: "build",
   /** A read-only session (a judge, a lead while its build runs, Plan): looks, and runs only the studio bridge. */
   ReadOnly: "read-only",
+  /** A judge that plays: reads no file at all, and reaches the build only through the studio's tools. */
+  Blind: "blind",
   /** A one-shot answer (`complete`): no tool at all. */
   Answer: "answer",
 } as const;
 export type OpenCodeAccess = (typeof OpenCodeAccess)[keyof typeof OpenCodeAccess];
+
+/** How long OpenCode waits for the studio's MCP server to start and list its tools (its own default is 5 s). */
+const MCP_START_TIMEOUT_MS = 30 * SECOND_MS;
 
 /** The studio bridge's command, as OpenCode's bash permission matches it. */
 const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
@@ -205,9 +212,16 @@ const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
 /** The bash rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
 function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<string, string> {
   if (access === OpenCodeAccess.Build) return "allow";
-  if (access === OpenCodeAccess.ReadOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
+  const looksOnly = access === OpenCodeAccess.ReadOnly || access === OpenCodeAccess.Blind;
+  if (looksOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
   return "deny";
 }
+
+/** OpenCode's permission key for every tool of the studio's MCP server (`<server>_<tool>`). */
+const STUDIO_MCP_PERMISSION = `${MCP_SERVER_NAME}_*`;
+
+/** The accesses whose session may read files: a build and a read-only one, never an answer or a blind judge. */
+const READING_ACCESS: ReadonlySet<OpenCodeAccess> = new Set([OpenCodeAccess.Build, OpenCodeAccess.ReadOnly]);
 
 /**
  * The config every session runs with (`OPENCODE_CONFIG_CONTENT`), over the person's own: no
@@ -216,9 +230,8 @@ function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<str
  * runs from a scratch folder, may read the game it looks at by its full path, and changes nothing.
  * The studio's sandbox is the boundary either way; these rules keep the model from even trying.
  */
-export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string {
-  const looking = access !== OpenCodeAccess.Answer;
-  const look = looking ? "allow" : "deny";
+export function openCodeConfig(access: OpenCodeAccess, bridge: boolean, mcpCommand: string[] | null = null): string {
+  const look = READING_ACCESS.has(access) ? "allow" : "deny";
   const permission = {
     edit: access === OpenCodeAccess.Build ? "allow" : "deny",
     bash: bashRules(access, bridge),
@@ -230,6 +243,15 @@ export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string 
     websearch: "deny",
     external_directory: access === OpenCodeAccess.ReadOnly ? "allow" : "deny",
     doom_loop: "deny",
+    // An MCP tool OpenCode would ask about is rejected in `run`, which has nobody to ask.
+    ...(mcpCommand ? { [STUDIO_MCP_PERMISSION]: "allow" } : {}),
   };
-  return JSON.stringify({ permission, autoupdate: false, share: "disabled" });
+  const mcp = mcpCommand
+    ? {
+        mcp: {
+          [MCP_SERVER_NAME]: { type: "local", command: mcpCommand, enabled: true, timeout: MCP_START_TIMEOUT_MS },
+        },
+      }
+    : {};
+  return JSON.stringify({ permission, autoupdate: false, share: "disabled", ...mcp });
 }
