@@ -3,10 +3,12 @@
  * clock, sent into a build to answer a few yes/no questions by playing — and, given a quest, to
  * reach a goal the studio checks in the game's own state after every move.
  *
- * What makes its "yes" worth more than a playtester's: with a quest, a yes stands only when the
- * studio verified the goal (`trace.reachedAt`) and the frame the judge cites is not blank. A yes
- * without that is incomplete — the model's word, never a pass. No window is no measurement, never
- * a failure.
+ * What makes its "yes" worth more than a playtester's: a quest is set for ONE question (its
+ * `checkId`, or the only question asked). That question's yes stands only when the studio verified
+ * the goal (`trace.reachedAt`) and the frame the judge cites for it was taken at or after that move
+ * and is not blank — read from the frame file itself, never from the words of a tool answer. A yes
+ * without that is incomplete. Every other answer of the session is the model's word, ruled as a
+ * playtester's is. No window is no measurement, never a failure.
  *
  * Two transports, like the playtester's: a session engine is delegated with a `judge` grant; a
  * direct engine plays through `preview.computer` in the harness's own loop (computer-loop.ts).
@@ -25,10 +27,11 @@ import { describeComputer, PlayPacing, PlayRole, playWithComputer, type Computer
 import { HANDS_ON_RUBRIC_FALLBACK, handsOnBrief } from "./hands-on-prompts.ts";
 import { InteractionObjective, InteractionSource } from "./interaction-words.ts";
 import { appendInteraction, interactionStatus } from "./interaction-evidence.ts";
-import type { Quest } from "./quest.ts";
+import { questGrant, type Quest } from "./quest.ts";
 import { readTraceRows, type TraceRow } from "./routes.ts";
 import { CheckKind, CheckWeight, type Check } from "./spec.ts";
 import { unmeasured, type CheckResult } from "./checks.ts";
+import { FacetRole } from "./facet/state.ts";
 import { MINUTE_MS } from "./time.ts";
 import { isRecord } from "./json.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
@@ -45,8 +48,8 @@ const REPORT_CHARS = 4_000;
 const TRANSCRIPT_CHARS = 2_000;
 /** A frame name as a judge cites it and the session saves it: `s<N>_…`. */
 const FRAME_NAME = /^s\d+_[\w.-]*$/;
-/** A lit fraction as a tool answer states it. */
-const LIT_IN_ANSWER = /litFraction (\d+(?:\.\d+)?)/;
+/** The picture a session saves a frame as; a citation may leave it off. */
+const FRAME_EXTENSION = /\.(jpe?g|png)$/i;
 
 /** Why a question came back without a measurement, in the board's words. */
 const MESSAGE = {
@@ -55,6 +58,8 @@ const MESSAGE = {
   notAnswered: "the judge did not answer this question",
   notReached: "the judge said yes, but the studio never saw the goal reached — incomplete, the model's word only",
   blankFrame: "the judge said yes, but the frame it rests on is blank or unreadable — incomplete",
+  earlyFrame:
+    "the judge said yes, but the frame it rests on was taken before the studio saw the goal reached — incomplete",
   answered: (answer: string, note: string) => `judge answered ${answer}${note ? `: ${note}` : ""}`,
 } as const;
 
@@ -66,6 +71,7 @@ export interface HandsOnOptions {
   /** A leased window; without one nothing is measured. */
   handle: string | null | undefined;
   questions: readonly Check[];
+  /** The goal to reach, set for one question (`checkId`, or the only one asked). */
   quest?: Quest | null;
   maxActions?: number;
   deadline?: number | null;
@@ -76,10 +82,13 @@ export interface HandsOnOptions {
   facetId?: string;
 }
 
-/** What it came back with: the board's results, what they rest on, the trace, and its record. */
+/** What it came back with: the board's results, what each rests on, the trace, and its record. */
 export interface HandsOnOutcome {
   results: CheckResult[];
+  /** What the answer to the quest's own question rests on; the model's word without one. */
   objective: InteractionObjective;
+  /** What each answer rests on, by check id: studio-verified only for the quest's own question. */
+  objectives: Record<string, InteractionObjective>;
   trace: ComputerTraceSummary | null;
   /** Each question's cited frames, as files of the session's trace. */
   frames: Record<string, string[]>;
@@ -91,7 +100,6 @@ interface Session {
   actions: number;
   transcript: string;
   trace: ComputerTraceSummary | null;
-  lastAnswer: string;
 }
 
 /** Is the judge that plays on for this run? On unless the run says `handsOnJudges: false`. */
@@ -128,34 +136,68 @@ export function handsOnResults(questions: readonly Check[], raw: AnyRecord | nul
   return questions.map((check) => localPlayResult(check, answers[check.id]));
 }
 
-/** What a yes with a quest must rest on: the move the studio verified the goal after, and a lit frame. */
+/**
+ * The question a quest was set for: the one it names when it is asked, else the only question
+ * asked (a director's `goal_state` asks one); null when it is neither, and then no answer rests
+ * on the goal.
+ */
+export function tiedCheckId(quest: Quest | null | undefined, questions: readonly Check[]): string | null {
+  if (!quest) return null;
+  if (quest.checkId) return questions.some((check) => check.id === quest.checkId) ? quest.checkId : null;
+  return questions.length === 1 ? (questions[0]?.id ?? null) : null;
+}
+
+/** The quest with the question it was set for resolved, or null without one. */
+function tiedQuest(quest: Quest | null | undefined, questions: readonly Check[]): Quest | null {
+  if (!quest) return null;
+  const checkId = tiedCheckId(quest, questions);
+  return { ...questGrant(quest), ...(checkId ? { checkId } : {}) };
+}
+
+/** What the quest's own yes must rest on: the move the studio verified the goal after, and a lit frame from then on. */
 export interface QuestProof {
   reachedAt: number | null;
-  /** Whether the frame the judge's answer rests on is lit; null when it could not be read. */
+  /** Whether the frame that yes rests on is lit, read from the frame file; null when it could not be read. */
   frameLit: boolean | null;
+  /** The move (the trace row's `i`) that saved that frame; null when no frame was found. */
+  frameAt: number | null;
+}
+
+/** Why the quest's own yes is not studio-verified, or null when it is. */
+function unproven(proof: QuestProof): string | null {
+  if (proof.reachedAt === null) return MESSAGE.notReached;
+  if (proof.frameAt === null) return MESSAGE.blankFrame;
+  if (proof.frameAt < proof.reachedAt) return MESSAGE.earlyFrame;
+  return proof.frameLit === true ? null : MESSAGE.blankFrame;
 }
 
 /**
- * The pass rule. Without a quest the results stand as the model gave them, on its word. With one,
- * a pass stands only when the studio verified the goal and the frame it rests on is not blank;
- * any other pass is incomplete. A "no" stands either way: a judge that failed to reach the goal
- * is not overruled by the studio having seen it.
+ * The pass rule. Every answer but the quest's own stands as the model gave it, on its word. The
+ * quest's own yes stands only when the studio verified the goal and the frame it rests on is lit
+ * and from then on; any other yes there is incomplete. A "no" stands either way: a judge that
+ * failed to reach the goal is not overruled by the studio having seen it.
  */
 export function questRuled(
   results: readonly CheckResult[],
   quest: Quest | null | undefined,
   proof: QuestProof,
-): { results: CheckResult[]; objective: InteractionObjective } {
-  if (!quest) return { results: [...results], objective: InteractionObjective.ModelSaid };
-  const reached = proof.reachedAt !== null;
-  const verified = reached && proof.frameLit === true;
-  const why = reached ? MESSAGE.blankFrame : MESSAGE.notReached;
-  const ruled = results.map((result) =>
-    result.pass === true && !verified
-      ? { ...unmeasured(result, why), answer: result.answer, note: result.note }
-      : result,
-  );
-  return { results: ruled, objective: verified ? InteractionObjective.StudioVerified : InteractionObjective.ModelSaid };
+): { results: CheckResult[]; objective: InteractionObjective; objectives: Record<string, InteractionObjective> } {
+  const tied = quest?.checkId ?? null;
+  const why = tied ? unproven(proof) : null;
+  const objectives: Record<string, InteractionObjective> = {};
+  const ruled = results.map((result) => {
+    const own = result.id === tied && result.pass === true;
+    objectives[result.id] = own && why === null ? InteractionObjective.StudioVerified : InteractionObjective.ModelSaid;
+    if (!own || why === null) return result;
+    return { ...unmeasured(result, why), answer: result.answer, note: result.note };
+  });
+  const objective = (tied && objectives[tied]) || InteractionObjective.ModelSaid;
+  return { results: ruled, objective, objectives };
+}
+
+/** Every answer as the model's word: what a session that never played rests on. */
+function modelSaidAll(questions: readonly Check[]): Record<string, InteractionObjective> {
+  return Object.fromEntries(questions.map((check) => [check.id, InteractionObjective.ModelSaid]));
 }
 
 /** Every question unmeasured, for a judge that never got to play. */
@@ -163,9 +205,15 @@ function nothingMeasured(options: HandsOnOptions, questions: readonly Check[], w
   return {
     results: questions.map((check) => unmeasured(check, why)),
     objective: InteractionObjective.ModelSaid,
+    objectives: modelSaidAll(questions),
     trace: null,
     frames: {},
-    report: { facetId: options.facetId ?? "integration", iteration: options.iteration ?? 0, actions: 0, report: why },
+    report: {
+      facetId: options.facetId ?? FacetRole.Integration,
+      iteration: options.iteration ?? 0,
+      actions: 0,
+      report: why,
+    },
   };
 }
 
@@ -205,17 +253,17 @@ function judgeGrant(options: HandsOnOptions, handle: string, maxActions: number)
     root,
     handle,
     runId: run.runId,
-    facetId: facetId ?? "integration",
+    facetId: facetId ?? FacetRole.Integration,
     iteration: iteration ?? 0,
     ...(entry ? { entry } : {}),
     // No setup script: a judge reaches the state it is asked about by playing, and the route it
     // played is the one a later build is replayed along.
     setup: { begin: false },
-    label: "judge",
+    label: PlayRole.Judge,
     role: PlayRole.Judge,
     maxActions,
     pacing: PlayPacing.Stepped,
-    ...(quest ? { quest } : {}),
+    ...(quest ? { quest: questGrant(quest) } : {}),
   };
 }
 
@@ -244,7 +292,7 @@ async function delegatedJudge(
     playtest: grant,
     readOnly: true,
   });
-  return { actions: result.turns ?? 0, transcript: result.summary ?? "", trace: result.trace ?? null, lastAnswer: "" };
+  return { actions: result.turns ?? 0, transcript: result.summary ?? "", trace: result.trace ?? null };
 }
 
 /** The direct session: the computer through `preview.computer`, in the harness's loop; null when the host has none. */
@@ -277,42 +325,50 @@ function framesOfAnswer(entry: unknown): string[] {
   return frames.map((frame) => path.basename(String(frame))).filter((name) => FRAME_NAME.test(name));
 }
 
-/** The frames the judge cited, in the order it wrote them: the last is what its answers rest on. */
+/** The frames the judge cited, in the order it wrote them. */
 export function citedFrames(raw: AnyRecord | null | undefined): string[] {
   const answers = isRecord(raw?.answers) ? Object.values(raw.answers) : [];
   return answers.flatMap(framesOfAnswer);
 }
 
-/** The lit fraction a tool answer stated for the frame it names, or null. */
-function litInAnswer(answer: string, frame: string | null): number | null {
-  if (frame && !answer.includes(frame.replace(/\.jpg$/, ""))) return null;
-  const found = LIT_IN_ANSWER.exec(answer);
-  return found ? Number(found[1]) : null;
+/** A frame file's name without its picture extension. */
+function frameStem(name: string): string {
+  return name.replace(FRAME_EXTENSION, "");
 }
 
-/** The file a cited frame name stands for in the trace; a citation may drop the extension. */
-function frameFile(rows: readonly TraceRow[], cited: string): string | null {
-  const stem = cited.replace(/\.jpg$/, "");
-  return rows.find((row) => row.frame && path.basename(row.frame).startsWith(stem))?.frame ?? null;
+/** The trace row that saved a cited frame; a citation may leave the extension off. */
+function rowOfFrame(rows: readonly TraceRow[], cited: string): TraceRow | null {
+  const stem = frameStem(cited);
+  return rows.find((row) => row.frame && frameStem(path.basename(row.frame)) === stem) ?? null;
 }
 
-/** The file of the frame the answers rest on: the last cited one, else the session's last frame. */
-function restingFrame(rows: readonly TraceRow[], cited: readonly string[]): string | null {
+/** The row an answer rests on: the last frame it cited, else the session's last frame. */
+function restingRow(rows: readonly TraceRow[], cited: readonly string[]): TraceRow | null {
   const last = cited.at(-1);
-  if (last) return frameFile(rows, last);
-  return rows.filter((row) => row.frame).at(-1)?.frame ?? null;
+  if (last) return rowOfFrame(rows, last);
+  return rows.filter((row) => row.frame).at(-1) ?? null;
 }
 
-/** Is the frame the judge's answers rest on lit? Null when no frame can be read. */
-async function frameLit(ctx: HarnessCtx, played: Played, handle: string): Promise<boolean | null> {
-  const cited = citedFrames(played.raw);
-  const stated = litInAnswer(played.session.lastAnswer, cited.at(-1) ?? null);
-  if (stated !== null) return stated >= BLANK_LIT_FRACTION;
-  const file = restingFrame(played.rows, cited);
-  if (!file) return null;
-  const read = await ctx.call(HostMethod.PreviewStatsOf, { path: file, handle }).catch(() => null);
+/** The frame the quest's own answer rests on: the move that saved it, and whether its pixels are lit. */
+async function frameProof(
+  ctx: HarnessCtx,
+  played: Played,
+  handle: string,
+  checkId: string,
+): Promise<Pick<QuestProof, "frameLit" | "frameAt">> {
+  const answers = isRecord(played.raw?.answers) ? played.raw.answers : {};
+  const row = restingRow(played.rows, framesOfAnswer(answers[checkId]));
+  if (!row?.frame) return { frameLit: null, frameAt: null };
+  const read = await ctx.call(HostMethod.PreviewStatsOf, { path: row.frame, handle }).catch(() => null);
   const lit = read?.stats?.litFraction;
-  return typeof lit === "number" ? lit >= BLANK_LIT_FRACTION : null;
+  return { frameLit: typeof lit === "number" ? lit >= BLANK_LIT_FRACTION : null, frameAt: row.i };
+}
+
+/** What the quest's own answer rests on; nothing to read without a quest set for a question. */
+async function questProof(ctx: HarnessCtx, played: Played, handle: string, quest: Quest | null): Promise<QuestProof> {
+  const reachedAt = played.session.trace?.reachedAt ?? null;
+  if (!quest?.checkId) return { reachedAt, frameLit: null, frameAt: null };
+  return { reachedAt, ...(await frameProof(ctx, played, handle, quest.checkId)) };
 }
 
 /** Each question's cited frames, as files of the session's trace. */
@@ -320,7 +376,7 @@ function citedFiles(played: Played, questions: readonly Check[]): Record<string,
   const answers = isRecord(played.raw?.answers) ? played.raw.answers : {};
   const files: Record<string, string[]> = {};
   for (const check of questions) {
-    const found = framesOfAnswer(answers[check.id]).map((name) => frameFile(played.rows, name));
+    const found = framesOfAnswer(answers[check.id]).map((name) => rowOfFrame(played.rows, name)?.frame ?? null);
     files[check.id] = found.filter((file): file is string => file !== null);
   }
   return files;
@@ -333,23 +389,26 @@ interface Played {
   rows: TraceRow[];
 }
 
-/** The record a session leaves: its answers, what they rest on, and its report. */
-function judgeReport(options: HandsOnOptions, played: Played, ruled: HandsOnOutcome): AnyRecord {
+/** The record a session leaves: its answers, what each rests on, and its report. */
+function judgeReport(options: HandsOnOptions, played: Played, ruled: HandsOnOutcome, quest: Quest | null): AnyRecord {
   const { session, raw } = played;
+  const answer = (r: CheckResult) => ({
+    pass: r.pass,
+    answer: r.answer ?? null,
+    note: r.note ?? "",
+    reason: r.reason,
+    frames: ruled.frames[r.id],
+    objective: ruled.objectives[r.id],
+  });
   return {
-    facetId: options.facetId ?? "integration",
+    facetId: options.facetId ?? FacetRole.Integration,
     iteration: options.iteration ?? 0,
     role: PlayRole.Judge,
     actions: session.actions,
-    quest: options.quest ?? null,
+    quest,
     objective: ruled.objective,
     trace: session.trace,
-    answers: Object.fromEntries(
-      ruled.results.map((r) => [
-        r.id,
-        { pass: r.pass, answer: r.answer ?? null, note: r.note ?? "", reason: r.reason, frames: ruled.frames[r.id] },
-      ]),
-    ),
+    answers: Object.fromEntries(ruled.results.map((r) => [r.id, answer(r)])),
     report:
       typeof raw?.report === "string"
         ? raw.report.slice(0, REPORT_CHARS)
@@ -396,23 +455,23 @@ export async function runHandsOnJudge(ctx: HarnessCtx, options: HandsOnOptions):
   const { handle } = options;
   if (!handle) return nothingMeasured(options, questions, MESSAGE.noWindow);
   if (questions.length === 0) return nothingMeasured(options, questions, MESSAGE.notAnswered);
-  const session = await play(ctx, options, questions, handle);
+  const quest = tiedQuest(options.quest, questions);
+  const session = await play(ctx, { ...options, quest }, questions, handle);
   if (!session) return nothingMeasured(options, questions, MESSAGE.noComputer);
   const played: Played = {
     session,
     raw: session.transcript ? parseVerdict(session.transcript) : null,
     rows: await readTraceRows(session.trace?.path),
   };
-  const lit = options.quest ? await frameLit(ctx, played, handle) : null;
-  const proof = { reachedAt: session.trace?.reachedAt ?? null, frameLit: lit };
-  const ruled = questRuled(handsOnResults(questions, played.raw), options.quest, proof);
+  const proof = await questProof(ctx, played, handle, quest);
+  const ruled = questRuled(handsOnResults(questions, played.raw), quest, proof);
   const outcome: HandsOnOutcome = { ...ruled, trace: session.trace, frames: citedFiles(played, questions), report: {} };
-  outcome.report = judgeReport(options, played, outcome);
+  outcome.report = judgeReport(options, played, outcome, quest);
   await fileReport(ctx, options, outcome.report);
   return outcome;
 }
 
-/** Write what a judge that played established to the run's record, once per question. */
+/** Write what a judge that played established to the run's record, once per question, on what each rests on. */
 export async function recordHandsOn(
   ctx: HarnessCtx,
   run: Run,
@@ -427,7 +486,7 @@ export async function recordHandsOn(
       status: interactionStatus(result.pass),
       note: result.note || result.reason || null,
       source: InteractionSource.HandsOnJudge,
-      objective: outcome.objective,
+      objective: outcome.objectives[result.id] ?? InteractionObjective.ModelSaid,
       trace: outcome.trace?.path ?? null,
     });
   }

@@ -73,13 +73,11 @@ export interface ComputerSession {
   runId?: string;
 }
 
-/** What a session came back with: its moves, its final text, its trace, and the last answer the host gave. */
+/** What a session came back with: its moves, its final text, and its trace. */
 export interface ComputerPlayed {
   actions: number;
   transcript: string;
   trace: ComputerTraceSummary | null;
-  /** The text of the last tool answer, which carries the last frame's litFraction and meanLuma. */
-  lastAnswer: string;
 }
 
 /** The loop's own state: the conversation, the moves made, and what the host last said. */
@@ -96,7 +94,7 @@ export async function playWithComputer(ctx: HarnessCtx, session: ComputerSession
     ctx,
     session,
     messages: [{ role: "user", content: session.brief }],
-    played: { actions: 0, transcript: "", trace: null, lastAnswer: "" },
+    played: { actions: 0, transcript: "", trace: null },
   };
   for (let round = 0; round <= session.maxActions; round++) {
     const outOfTime = Boolean(session.deadline && Date.now() > session.deadline);
@@ -177,9 +175,7 @@ async function runCall(
     const answered = await ctx.call(HostMethod.PreviewComputer, { ...session.grant, args });
     if (!answered || !("answer" in answered)) return { text: "", images: [], isError: false };
     played.trace = answered.trace ?? played.trace;
-    const read = readAnswer(answered.answer);
-    played.lastAnswer = read.text;
-    return read;
+    return readAnswer(answered.answer);
   } catch (err: any) {
     return { text: MESSAGE.failed(String(err?.message ?? err)), images: [], isError: true };
   }

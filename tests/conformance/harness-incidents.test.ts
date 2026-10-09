@@ -12033,19 +12033,18 @@ describe("computer use: the judge that plays, escalation and routes", () => {
     assert.equal(typeof evidence.gatherEvidence, "function", "the evidence pass still loads beside it");
   });
 
-  it("CU7. a route is distilled from a verified session: inputs and waits up to the goal, no looks", async () => {
+  it("CU7. a route is distilled from a verified session: the computer calls up to the goal, as they ran, no looks", async () => {
     const { distillRoute, readTraceRows } = await import("../../src/harness-seed/loop/routes.ts");
     const { trace } = await sessionFolder();
     const rows = await readTraceRows(trace);
     const route = distillRoute(rows, quest, { deterministic: true });
     assert.deepEqual(
-      route?.steps.map((step) => [step.input, step.stepMs]),
+      route?.steps.map((step) => [step.args, step.frame]),
       [
-        [{ type: "press", combo: "e", repeat: 1 }, 48],
-        [{ type: "click", x: 400, y: 300, button: "left", clicks: 1, px: true }, 48],
+        [{ action: "key", text: "e", repeat: 1 }, "s2_screen.jpg"],
+        [{ action: "left_click", coordinate: [400, 300] }, "s3_screen.jpg"],
       ],
     );
-    assert.equal(route?.steps.at(-1)?.frame, "s3_screen.jpg");
     assert.equal(
       distillRoute(
         rows.map(({ reached: _reached, ...row }) => row),
@@ -12054,107 +12053,194 @@ describe("computer use: the judge that plays, escalation and routes", () => {
       null,
       "never reached, nothing kept",
     );
-    const reload = [
-      { i: 1, action: "reload", args: { action: "reload" }, frame: null, simMs: null, reached: true as const },
+    const batched = [
+      {
+        i: 1,
+        action: "batch",
+        args: {
+          action: "batch",
+          steps: [
+            { action: "key", text: "e" },
+            { action: "wait", duration: 0.5 },
+          ],
+        },
+        frame: null,
+        simMs: 548,
+        reached: true as const,
+      },
     ];
-    assert.equal(distillRoute(reload, quest), null, "a reload cannot be replayed");
+    assert.deepEqual(
+      distillRoute(batched, quest)?.steps.map((step) => step.args),
+      [
+        {
+          action: "batch",
+          actions: [
+            { action: "key", text: "e" },
+            { action: "wait", duration: 0.5 },
+          ],
+        },
+      ],
+      "a batch is kept whole, as the call that ran it: its steps keep their timing",
+    );
   });
 
-  /** A run that keeps one three-step route to an open gate. */
+  /** A run that keeps one three-call route to an open gate. */
   function routedRun(deterministic: boolean) {
     const steps = [
-      { input: { type: "press", combo: "e", repeat: 1 }, stepMs: 48, frame: "s2_key.jpg" },
-      { input: null, stepMs: 500, frame: "s3_wait.jpg" },
-      {
-        input: { type: "click", x: 400, y: 300, button: "left", clicks: 1, px: true },
-        stepMs: 48,
-        frame: "s4_click.jpg",
-      },
+      { args: { action: "key", text: "e" }, frame: "s2_key.jpg" },
+      { args: { action: "wait", duration: 0.5 }, frame: "s3_wait.jpg" },
+      { args: { action: "left_click", coordinate: [400, 300] }, frame: "s4_click.jpg" },
     ];
     return {
       ...delegatedRun,
       keptRoutes: [{ id: "gate-open", quest, steps, deterministic, divergences: 0, retired: false }],
     };
   }
-  /** A page whose gate stays shut, whose inputs are refused from the `refuseFrom`th on. */
-  function shutGate(refuseFrom = Number.POSITIVE_INFINITY) {
-    let inputs = 0;
-    return ctxRecorder({
+  /**
+   * A host whose computer session plays the replay: one trace row per call, written to a trace file,
+   * the goal reached on call `reachAt`, calls from `refuseFrom` on refused, `deterministic` as the
+   * session's clock says.
+   */
+  async function replayHost({
+    reachAt = Number.POSITIVE_INFINITY,
+    refuseFrom = Number.POSITIVE_INFINITY,
+    deterministic = true,
+  } = {}) {
+    const dir = await tmpDir("cu-replay-");
+    const file = path.join(dir, "trace-2.jsonl");
+    let calls = 0;
+    let reachedAt: number | null = null;
+    const rows: string[] = [];
+    const recorder = ctxRecorder({
       handlers: {
-        "preview.call": () => null,
-        "preview.input": () => ({ ok: ++inputs < refuseFrom, applied: 1, width: 960, height: 600 }),
-        "preview.state": () => ({ gate: { open: false } }),
-        "preview.screenshot": () => ({ path: "/runs/r/routes/gate-open.jpg", base64: "" }),
+        "preview.computer": async (p) => {
+          calls++;
+          const refused = calls >= refuseFrom;
+          if (!refused && calls >= reachAt && reachedAt === null) reachedAt = calls;
+          const args = p.args as Record<string, unknown>;
+          rows.push(
+            JSON.stringify({
+              i: calls,
+              action: args.action,
+              args,
+              frame: path.join(dir, `s${calls + 10}_replay.jpg`),
+              simMs: 48,
+              ...(refused ? { refused: true } : {}),
+            }),
+          );
+          await writeFile(file, `${rows.join("\n")}\n`);
+          return { answer: "moved", trace: { path: file, steps: calls, deterministic, reachedAt } };
+        },
         "events.append": () => "e1",
       },
     });
+    return { recorder, file };
   }
 
-  it("CU8. a diverged replay of a deterministic route fails a check that names its step and frames", async () => {
+  it("CU8. a route is replayed through the host's own computer session; a deterministic one that no longer reaches its goal fails a check naming the step and the replay's trace", async () => {
     const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
     const run = routedRun(true);
-    const recorder = shutGate();
-    const out = await replayRoutes(recorder.ctx as never, {
-      run: run as never,
-      handle: "pool-1",
-      labelPrefix: "director/judge_2",
-    });
+    const options = { run: run as never, root: "/fake/marsh", handle: "pool-1", labelPrefix: "director/judge_2" };
+    const { recorder, file } = await replayHost();
+    const out = await replayRoutes(recorder.ctx as never, options);
+    const calls = recorder.paramsOf("preview.computer");
+    assert.deepEqual(
+      calls.map((call) => call.args),
+      run.keptRoutes[0]?.steps.map((step) => step.args),
+      "each kept call replayed as it ran, one call at a time",
+    );
+    assert.deepEqual(
+      calls.map((call) => call.fresh ?? false),
+      [true, false, false],
+      "a fresh session: reloaded, reseeded, its own trace",
+    );
+    const grant = calls[0] as Record<string, unknown>;
+    assert.deepEqual(
+      [grant.role, grant.pacing, grant.handle, grant.root],
+      ["judge", "stepped", "pool-1", "/fake/marsh"],
+    );
+    assert.deepEqual(grant.quest, quest, "the kept goal, checked by the host after every move");
+    assert.deepEqual(
+      recorder.sequence().filter((method) => method.startsWith("preview.") && method !== "preview.computer"),
+      [],
+      "no input of the harness's own around the session",
+    );
     assert.equal(out?.replays[0]?.divergedAt, 3);
     assert.equal(out?.results[0]?.pass, false);
     assert.match(String(out?.results[0]?.reason), /diverged at step 3 of 3/);
-    assert.match(String(out?.results[0]?.reason), /s4_click\.jpg vs \/runs\/r\/routes\/gate-open\.jpg/);
-    const seeded = recorder.paramsOf("preview.call")[0];
-    assert.deepEqual([seeded?.method, seeded?.arg, seeded?.handle], ["seed", 1, "pool-1"], "replayed on a seeded page");
+    assert.ok(String(out?.results[0]?.reason).includes(file), "the replay's trace is named");
     const record = firstRecord(recorder);
     assert.equal(record?.source, "route-replay");
     assert.equal(record?.status, "failed");
+    assert.equal(record?.trace, file);
 
-    const refused = await replayRoutes(shutGate(1).ctx as never, {
-      run: routedRun(true) as never,
-      handle: "pool-1",
-      labelPrefix: "x",
-    });
-    assert.equal(refused?.replays[0]?.divergedAt, 1, "an input refused on the first step names that step");
-    assert.match(String(refused?.results[0]?.reason), /step 1 of 3: .*s2_key\.jpg/);
+    const refused = await replayHost({ refuseFrom: 2 });
+    const stopped = await replayRoutes(refused.recorder.ctx as never, { ...options, run: routedRun(true) as never });
+    assert.equal(stopped?.replays[0]?.divergedAt, 2, "a call the session refused names its step");
 
-    for (let i = 0; i < 2; i++)
-      await replayRoutes(shutGate().ctx as never, { run: run as never, handle: "pool-1", labelPrefix: "x" });
+    for (let i = 0; i < 2; i++) await replayRoutes((await replayHost()).recorder.ctx as never, options);
     assert.equal(run.keptRoutes[0]?.retired, true, "three divergences retire the route");
-    assert.equal(
-      await replayRoutes(shutGate().ctx as never, { run: run as never, handle: "pool-1", labelPrefix: "x" }),
-      null,
-    );
+    assert.equal(await replayRoutes((await replayHost()).recorder.ctx as never, options), null);
 
-    const open = ctxRecorder({
-      handlers: {
-        "preview.call": () => null,
-        "preview.input": () => ({ ok: true }),
-        "preview.state": () => ({ gate: { open: true } }),
-        "events.append": () => "e1",
-      },
-    });
-    const held = await replayRoutes(open.ctx as never, {
-      run: routedRun(true) as never,
-      handle: "pool-1",
-      labelPrefix: "x",
-    });
+    const open = await replayHost({ reachAt: 2 });
+    const held = await replayRoutes(open.recorder.ctx as never, { ...options, run: routedRun(true) as never });
     assert.deepEqual(held?.results, []);
-    const verified = firstRecord(open);
+    assert.equal(open.recorder.paramsOf("preview.computer").length, 2, "the replay stops once the host saw the goal");
+    const verified = firstRecord(open.recorder);
     assert.equal(verified?.objective, "studio-verified");
+    assert.equal(verified?.trace, open.file, "the host vouches for the trace it saw reach the goal");
   });
 
-  it("CU9. a route from a session that was not deterministic never fails a check: it is reported", async () => {
+  it("CU9. a route whose original or replayed session was not deterministic never fails a check: it is reported", async () => {
     const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
-    const recorder = shutGate();
-    const out = await replayRoutes(recorder.ctx as never, {
-      run: routedRun(false) as never,
+    const options = { root: "/fake/marsh", handle: "pool-1", labelPrefix: "x" };
+    const kept = await replayHost();
+    const out = await replayRoutes(kept.recorder.ctx as never, { ...options, run: routedRun(false) as never });
+    assert.deepEqual(out?.results, [], "no failed check");
+    assert.match(String(out?.notes[0]), /diverged at step 3 of 3.*reported, never failed/);
+    assert.equal(firstRecord(kept.recorder)?.status, "incomplete");
+    const loose = await replayHost({ deterministic: false });
+    const replayed = await replayRoutes(loose.recorder.ctx as never, { ...options, run: routedRun(true) as never });
+    assert.deepEqual(replayed?.results, [], "a replay the host could not step exactly is reported, never failed");
+  });
+
+  it("CU9b. on a host without the computer session a route is not replayed: reported, never failed, never counted", async () => {
+    const { replayRoutes } = await import("../../src/harness-seed/loop/routes.ts");
+    const run = routedRun(true);
+    const older = ctxRecorder({ handlers: { "events.append": () => "e1" } });
+    const out = await replayRoutes(older.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
       handle: "pool-1",
       labelPrefix: "x",
     });
-    assert.deepEqual(out?.results, [], "no failed check");
-    assert.match(String(out?.notes[0]), /diverged at step 3 of 3.*reported, never failed/);
-    const record = firstRecord(recorder);
-    assert.equal(record?.status, "incomplete");
+    assert.deepEqual(out?.results, []);
+    assert.match(String(out?.notes[0]), /route gate-open not replayed/);
+    assert.equal(run.keptRoutes[0]?.divergences, 0);
+    const preInput = {
+      ...delegatedRun,
+      keptRoutes: [
+        {
+          id: "gate-open",
+          quest,
+          steps: [{ input: { type: "press", combo: "e", repeat: 1 }, stepMs: 48, frame: null }],
+          deterministic: true,
+          divergences: 0,
+          retired: false,
+        },
+      ],
+    };
+    const host = await replayHost();
+    assert.equal(
+      await replayRoutes(host.recorder.ctx as never, {
+        run: preInput as never,
+        root: "/fake/marsh",
+        handle: "pool-1",
+        labelPrefix: "x",
+      }),
+      null,
+      "a route kept as preview inputs by an older seed is not replayed",
+    );
   });
 
   it("CU10. a director's goal_state is read strictly: anything that is not a plain path and a primitive is refused", async () => {
@@ -12187,5 +12273,247 @@ describe("computer use: the judge that plays, escalation and routes", () => {
     assert.deepEqual(parseGoalState('{"path":"level.cleared","truthy":true}'), {
       until: { path: "level.cleared", truthy: true },
     });
+  });
+
+  const bench = { id: "bench", kind: "play", ask: "Could you sit on the bench?", expect: "yes", weight: "normal" };
+  const lit = () => ({ stats: { litFraction: 0.4, meanLuma: 90 }, width: 960, height: 600 });
+  const blank = () => ({ stats: { litFraction: 0, meanLuma: 0 }, width: 960, height: 600 });
+  /** Every interaction record a recorder appended, as [label, source, objective]. */
+  function records(recorder: { paramsOf(method: string): Array<Record<string, unknown>> }) {
+    return recorder
+      .paramsOf("events.append")
+      .flatMap((p) => (p.batch ?? []) as Array<{ payload: Record<string, unknown> }>)
+      .map(({ payload }) => [payload.label, payload.source, payload.objective]);
+  }
+
+  it("CU11. a reached goal verified every yes the judge gave: only the question it was set for is studio-verified, every other yes stays the model's word", async () => {
+    const { runHandsOnJudge, recordHandsOn } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const { trace } = await sessionFolder();
+    const said = {
+      answers: { gate: { answer: "yes", frames: ["s3_screen"] }, bench: { answer: "yes", note: "sat" } },
+    };
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const options = { run: delegatedRun as never, root: "/fake/marsh", handle: "pool-1", questions: [question, bench] };
+    const tied = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const out = await runHandsOnJudge(tied.ctx as never, {
+      ...options,
+      questions: options.questions as never,
+      quest: { ...quest, checkId: "gate" },
+    });
+    assert.deepEqual(
+      out.results.map((r) => [r.id, r.pass]),
+      [
+        ["gate", true],
+        ["bench", true],
+      ],
+    );
+    assert.deepEqual(out.objectives, { gate: "studio-verified", bench: "model-said" });
+    assert.equal(out.objective, "studio-verified", "the question the goal was set for");
+    const grant = tied.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown>;
+    assert.deepEqual(grant.quest, quest, "the host is handed the goal alone");
+    await recordHandsOn(tied.ctx as never, delegatedRun as never, out, [question, bench] as never);
+    assert.deepEqual(records(tied), [
+      ["Could you open the gate?", "hands-on-judge", "studio-verified"],
+      ["Could you sit on the bench?", "hands-on-judge", "model-said"],
+    ]);
+
+    const loose = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const untied = await runHandsOnJudge(loose.ctx as never, {
+      ...options,
+      questions: options.questions as never,
+      quest,
+    });
+    assert.equal(untied.objective, "model-said", "a goal for two questions that names neither verifies neither");
+    assert.deepEqual(
+      untied.results.map((r) => r.pass),
+      [true, true],
+      "each yes stands as the model gave it, on the normal rubric",
+    );
+    assert.deepEqual(untied.objectives, { gate: "model-said", bench: "model-said" });
+  });
+
+  it("CU12. the integration's play went to a judge sent to the run's requested state, which then passed every play check: only a check tied to that state is put to it; otherwise the playtester plays as before", async () => {
+    const { scoreEvidence } = await import("../../src/harness-seed/loop/facet/scoring.ts");
+    const { normalizeCheck } = await import("../../src/harness-seed/loop/spec.ts");
+    const run = { ...delegatedRun, setup: { begin: false, verify: { path: "gate.open", truthy: true } } };
+    const roam = normalizeCheck({ id: "integration-play", kind: "play", ask: "Could you move through the world?" });
+    const reach = normalizeCheck({ id: "reach-gate", kind: "play", ask: "Could you open the gate?", reaches: "setup" });
+    assert.equal(reach?.reaches, "setup", "the tie survives the planner's normalisation");
+    assert.equal(roam?.reaches, undefined);
+    const input = (checks: unknown[]) => ({
+      run,
+      spec: { id: "integration", title: "Integration", checks },
+      evidence: { shots: [] },
+      diffs: {},
+      handle: "pool-1",
+      role: "integration",
+      worktree: "/fake/marsh",
+      deadline: Date.now() + 3_600_000,
+      iteration: 1,
+      iterationId: "001",
+      facetId: "integration",
+    });
+    const said = {
+      answers: { "integration-play": { answer: "yes" }, "reach-gate": { answer: "yes", frames: ["s3_screen"] } },
+    };
+    const plain = judgeCtx(said, null);
+    await scoreEvidence(plain.ctx as never, input([roam]));
+    const played = plain.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown> | undefined;
+    assert.notEqual(played?.role, "judge", "no check tied to the requested state: the playtester plays");
+    assert.equal(played?.quest, undefined);
+    assert.deepEqual(records(plain), [], "and records nothing a judge that plays established");
+
+    const { trace } = await sessionFolder();
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const tied = judgeCtx(said, reached, { "preview.statsOf": lit });
+    const scored = await scoreEvidence(tied.ctx as never, input([roam, reach]));
+    const judged = tied.paramsOf("engine.delegate")[0]?.playtest as Record<string, unknown> | undefined;
+    assert.equal(judged?.role, "judge");
+    assert.deepEqual(judged?.quest, { id: "requested-state", until: { path: "gate.open", truthy: true } });
+    assert.deepEqual(
+      scored.results.map((r) => [r.id, r.pass]),
+      [
+        ["integration-play", true],
+        ["reach-gate", true],
+      ],
+    );
+    assert.deepEqual(records(tied), [
+      ["Could you move through the world?", "hands-on-judge", "model-said"],
+      ["Could you open the gate?", "hands-on-judge", "studio-verified"],
+    ]);
+  });
+
+  it("CU13. whether the frame a yes rests on is lit was read from the words of a tool answer: it is read from the frame file, and the frame must be taken at or after the goal", async () => {
+    const { runHandsOnJudge } = await import("../../src/harness-seed/loop/hands-on-judge.ts");
+    const { trace, dir } = await sessionFolder();
+    const reached = { path: trace, steps: 4, deterministic: true, reachedAt: 3 };
+    const options = {
+      run: delegatedRun as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      questions: [question] as never,
+      quest,
+    };
+    const early = { answers: { gate: { answer: "yes", frames: ["s2_screen"] } } };
+    const before = judgeCtx(early, reached, { "preview.statsOf": lit });
+    const cited = await runHandsOnJudge(before.ctx as never, options);
+    assert.equal(cited.results[0]?.pass, null, "a frame from before the goal shows nothing the goal proves");
+    assert.equal(cited.objective, "model-said");
+
+    const png = path.join(dir, "trace-png.jsonl");
+    const pngRows = (await readFile(trace, "utf8")).replaceAll("s3_screen.jpg", "s3_screen.png");
+    await writeFile(png, pngRows);
+    const pictured = judgeCtx(
+      { answers: { gate: { answer: "yes", frames: ["s3_screen.png"] } } },
+      { ...reached, path: png },
+      {
+        "preview.statsOf": lit,
+      },
+    );
+    const fromPng = await runHandsOnJudge(pictured.ctx as never, options);
+    assert.equal(fromPng.objective, "studio-verified");
+    assert.match(String(pictured.paramsOf("preview.statsOf")[0]?.path), /s3_screen\.png$/);
+
+    const local = { runId: "run_cu", project: "marsh", engine: "ollama", model: "vl", goal: "a marsh" };
+    let turns = 0;
+    const final = JSON.stringify({ answers: { gate: { answer: "yes", frames: ["s3_screen"] } } });
+    const direct = ctxRecorder({
+      handlers: {
+        "engine.describe": () => engines,
+        "engine.complete": () =>
+          turns++ === 0
+            ? {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    { id: "c1", name: "computer", arguments: { action: "left_click", coordinate: [400, 300] } },
+                  ],
+                },
+              }
+            : { message: { role: "assistant", content: final } },
+        "preview.computer": (p) =>
+          p.describe
+            ? {
+                tool: { name: "computer", description: "the computer", parameters: { type: "object", properties: {} } },
+              }
+            : {
+                answer: `${path.join(dir, "s3_screen.jpg")} — 960×600, cursor at 400,300, litFraction 0.90, meanLuma 120`,
+                trace: reached,
+              },
+        "preview.statsOf": blank,
+        "events.append": () => "e1",
+      },
+    });
+    const said = await runHandsOnJudge(direct.ctx as never, { ...options, run: local as never });
+    assert.equal(said.results[0]?.pass, null, "the answer's words say lit; the frame is blank");
+    assert.equal(said.objective, "model-said");
+    assert.equal(direct.paramsOf("preview.statsOf").length, 1);
+  });
+
+  it("CU14. a probe without a goal resolved an unmeasured picture as if measured, and its budget was forgotten on a restart: its answer is the model's word, below the confidence that counts, and the count rides in the journal", async () => {
+    const { escalateVision, ESCALATE_BELOW_CONFIDENCE, MAX_PROBES_PER_RUN } = await import(
+      "../../src/harness-seed/loop/vision-escalation.ts"
+    );
+    const { recordLoopRun } = await import("../../src/harness-seed/loop/director/journal.ts");
+    const ask = {
+      check: {
+        id: "lamp",
+        kind: "vision",
+        camera: "default",
+        ask: "Is the lamp lit?",
+        expect: "yes",
+        weight: "normal",
+      },
+      crop: null,
+    };
+    const unmeasuredLamp = {
+      id: "lamp",
+      kind: "vision",
+      weight: "normal",
+      pass: null,
+      state: "unmeasured",
+      reason: "camera default was not captured",
+    };
+    const said = { answers: { lamp: { answer: "yes", note: "it glows" } } };
+    const probe = judgeCtx(said, { path: null, steps: 3, deterministic: true, reachedAt: null });
+    const run = { ...delegatedRun };
+    const [resolved] = await escalateVision(probe.ctx as never, {
+      run: run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [unmeasuredLamp] as never,
+    });
+    assert.equal(resolved?.pass, true);
+    assert.ok(Number(resolved?.confidence) < ESCALATE_BELOW_CONFIDENCE, "never a measured-confident answer");
+    assert.equal(resolved?.objective, "model-said");
+    assert.deepEqual(records(probe), [["Is the lamp lit?", "hands-on-judge", "model-said"]]);
+
+    const now = Date.now();
+    const spent = { ...delegatedRun, handsOnProbes: MAX_PROBES_PER_RUN };
+    const loopRun = {
+      run: spent,
+      started: now,
+      softDeadline: now,
+      finalDeadline: now,
+      state: { judges: 0, plays: 0, ledger: [], workers: new Map(), log: [], planReviewUntil: 0 },
+      journal: { run: { ...delegatedRun } as Record<string, unknown>, director: {} as Record<string, unknown> },
+    };
+    recordLoopRun(loopRun as never, now);
+    assert.equal(loopRun.journal.run.handsOnProbes, MAX_PROBES_PER_RUN);
+    const resumed = judgeCtx(said, null);
+    await escalateVision(resumed.ctx as never, {
+      run: loopRun.journal.run as never,
+      root: "/fake/marsh",
+      handle: "pool-1",
+      asks: [ask] as never,
+      answers: [unmeasuredLamp] as never,
+    });
+    assert.deepEqual(
+      resumed.sequence("engine."),
+      [],
+      "a run resumed from its journal spends no probe it already spent",
+    );
   });
 });

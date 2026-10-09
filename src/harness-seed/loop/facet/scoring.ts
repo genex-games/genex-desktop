@@ -12,7 +12,7 @@ import { runPlaytest } from "../playtester.ts";
 // By namespace: a workspace may keep a copy of a module this one reaches for that predates it.
 import * as escalation from "../vision-escalation.ts";
 import * as handsOn from "../hands-on-judge.ts";
-import { questFromSetup } from "../quest.ts";
+import { PlayReaches, questFromSetup } from "../quest.ts";
 import type { CheckResult } from "../checks.ts";
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
 import type { Run } from "../../types/harness.d.ts";
@@ -308,14 +308,17 @@ function judgesIntegration(scoring: Scoring): boolean {
 }
 
 /**
- * The integration's play checks, put to a judge that plays when the run's setup names a state the
- * studio can check: it plays from the game's first screen to reach that state, and its yes counts
- * only once the studio saw it. Null when that does not apply, and the playtester plays as before.
+ * The integration's play checks, put to a judge that plays when one of them is tied to the run's
+ * requested state (`reaches: "setup"`) and the run's setup names that state as one the studio can
+ * check: the judge plays from the game's first screen to reach it, and only the tied check's yes
+ * counts once the studio saw it — every other answer is the model's word. Null when that does not
+ * apply, and the playtester plays as before.
  */
 async function integrationJudge(scoring: Scoring, playChecks: Check[]): Promise<CheckResult[] | null> {
   if (!judgesIntegration(scoring)) return null;
   const { ctx, run, handle, worktree, projectDir, deadline, iteration, label } = scoring;
-  const quest = questFromSetup(run.setup, INTEGRATION_QUEST);
+  const tied = playChecks.find((check) => check.reaches === PlayReaches.Setup);
+  const quest = tied ? questFromSetup(run.setup, INTEGRATION_QUEST, tied.id) : null;
   if (!quest) return null;
   const judged = await handsOn.runHandsOnJudge(ctx, {
     run: run as Run,

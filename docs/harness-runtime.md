@@ -730,15 +730,22 @@ OUTCOMES, asking for `playtest goal=<id>` on each one still unverified (journale
 **Judges that play.** `loop/hands-on-judge.ts` sends a blind `judge` (computer tool only, stepped
 clock, no setup script) into a build with a quest the studio checks after every move; a direct
 engine plays the same tool through `preview.computer` (`loop/computer-loop.ts`), as the direct
-playtester does when the host serves it. With a quest a "yes" passes only when `trace.reachedAt`
-is set and the cited frame is lit; otherwise it is unmeasured. No window is unmeasured, never a
-fail. The director's `playtest goal_state=…` uses it, as does the integration play when the run's
-setup has a `verify`, and facet scoring escalates an unmeasured or below-0.5 picture answer to one
-probe per pass (`loop/vision-escalation.ts`): a confident answer is never overturned, and a flip
-stands only when a second picture look at the probe's frames agrees. A verified session is kept as
-a route (`loop/routes.ts`) and replayed at the end of every leased evidence pass; a deterministic
-route that diverges fails a check naming the step, a non-deterministic one is only reported, and
-three divergences retire it. A run turns all of this off with `handsOnJudges: false`.
+playtester does when the host serves it. A quest is set for one question (`quest.checkId`, or the
+only one asked): its "yes" passes only when `trace.reachedAt` is set and the frame it cites, read
+by `preview.statsOf` from the trace row that saved it at or after that move, is lit; otherwise it
+is unmeasured. Every other answer is the model's word (`model-said`). No window is unmeasured,
+never a fail. The director's `playtest goal_state=…` uses it, as does the integration play when a
+play check says `"reaches":"setup"` and the run's setup has a `verify` (otherwise the playtester
+plays). Facet scoring escalates an unmeasured or below-0.5 picture answer to one probe per pass
+(`loop/vision-escalation.ts`, at most 8 a run, counted in the journal's run): a probe has no quest,
+so what it resolves is recorded `model-said` at 0.4; a confident answer is never overturned, and a
+flip stands only when a second picture look at the probe's frames agrees. A verified session is
+kept as a route (`loop/routes.ts`): its computer calls, replayed at the end of every leased
+evidence pass one at a time through a fresh `preview.computer` session (judge, stepped, the kept
+quest); an older host is reported, not replayed. A deterministic route that misses the goal fails
+a check naming the step and the replay's trace, a non-deterministic one is only reported, and
+three divergences retire it. The host keeps `objective: "studio-verified"` only for a trace it saw
+reach its goal. A run turns all of this off with `handsOnJudges: false`.
 
 The initial plan freezes required acceptance scenarios in the versioned director journal. A
 reopened build is a goal commission, the Loop's hours or ∞ its ceiling (`reopen-run.ts`

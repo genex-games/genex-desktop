@@ -35,6 +35,7 @@ import {
   priorWorkerState,
 } from "./journal-prompts.ts";
 import { priorEra } from "./reopen.ts";
+import { journalProbes } from "../probe-count.ts";
 import { DirectorLoop, WAKE_WINDOW_MS } from "./wake-schedule.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { ContractModule, ContractShared, ModuleContract } from "./module-contract.ts";
@@ -253,6 +254,8 @@ export function recordLoopRun(loopRun: LoopRun, now = Date.now()): void {
   director.completionPolicy = durationCommission(loopRun.run) ? CompletionPolicy.Duration : CompletionPolicy.Goal;
   director.workers ??= {};
   for (const worker of state.workers.values()) director.workers[worker.id] = workerRecord(worker, loopRun.run.runId);
+  // The hands-on probes the run spent ride on the journal's copy of the run, which a Resume starts from.
+  journalProbes(loopRun.journal, loopRun.run);
 }
 
 /**

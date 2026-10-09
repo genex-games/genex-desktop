@@ -1,20 +1,26 @@
 /**
- * Routes: a judge's session that reached its goal on a stepped clock, kept as the inputs that got
- * there and replayed on every later build of the run. A build that no longer lets the same inputs
- * reach the same goal has regressed somewhere a screenshot cannot see, and the replay names the
- * step where it parted ways.
+ * Routes: a judge's session that reached its goal on a stepped clock, kept as the computer calls
+ * that got there and replayed on every later build of the run. A build that no longer lets the
+ * same calls reach the same goal has regressed somewhere a screenshot cannot see, and the replay
+ * names the step where it parted ways.
  *
- * - `distillRoute` (pure): the trace's input and wait steps up to the move after which the studio
- *   verified the goal, mapped onto the preview's input actions; looks are dropped.
+ * - `distillRoute` (pure): the trace's calls up to the move after which the studio verified the
+ *   goal, each with the arguments it ran with; looks are dropped. A batch stays one call, so its
+ *   steps keep the timing they had.
  * - `keepRoute`: kept for this run only, on the run and in its journal.
- * - `replayRoutes`: from the evidence pass, on a leased window — seed the page, replay, check the
- *   goal. A route from a session that was not deterministic never fails a check: it is reported.
+ * - `replayRoutes`: from the evidence pass, on a leased window, THROUGH the host's own computer
+ *   session (`preview.computer`): a fresh one (reloaded, reseeded, its own trace), blind, on a
+ *   stepped clock, given the kept goal, one kept call at a time. The host derives the inputs and
+ *   steps the clock exactly as it did for the judge, and checks the goal after every move. A route
+ *   whose original or replayed session was not deterministic never fails a check: it is reported.
+ *   On a host without the computer session a route is not replayed, and that is reported.
  *
  * A new module: evidence.ts calls it through a namespace import, so a kept older evidence.ts never
  * needs it and this one never stops it loading.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { PlayPacing, PlayRole, type ComputerGrant } from "./computer-loop.ts";
 import { HostMethod } from "./host-methods.ts";
 import {
   appendInteraction,
@@ -23,12 +29,10 @@ import {
   InteractionStatus,
 } from "./interaction-evidence.ts";
 import { isRecord } from "./json.ts";
-import { PageMethod } from "./page-contract.ts";
-import { type Quest, questHolds } from "./quest.ts";
+import { type Quest, questGrant } from "./quest.ts";
 import { CheckKind, CheckWeight } from "./spec.ts";
-import { SECOND_MS } from "./time.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
-import type { PreviewInputAction } from "../types/host-api.d.ts";
+import type { ComputerTraceSummary } from "../types/host-api.d.ts";
 import type { CheckResult } from "./checks.ts";
 
 /** The longest route kept: a longer one is not a route but a playthrough. */
@@ -41,41 +45,23 @@ const MAX_REPLAYS_PER_PASS = 3;
 export const RETIRE_AFTER_DIVERGENCES = 3;
 /** The most of the trace file read: a session's trace is a few dozen lines. */
 const MAX_TRACE_ROWS = 400;
-/** The most simulated time one replayed step runs. */
-const MAX_STEP_MS = 30 * SECOND_MS;
-/** The seed a stepped computer session plants when it is given none (computer-session.ts). */
-const ROUTE_SEED = 1;
-/** One wheel notch, as the computer tool turns it (computer-vocabulary.ts). */
-const SCROLL_NOTCH_PX = 120;
-/** The notches a scroll turns when it names none (computer-tool.ts). */
-const DEFAULT_SCROLL_NOTCHES = 3;
+/** The most steps one batch call may carry (the computer tool's own cap). */
+const MAX_BATCH_STEPS = 8;
+/** The moves a replay may make: every kept call a full batch, so the budget never cuts a route short. */
+const REPLAY_MAX_ACTIONS = MAX_ROUTE_STEPS * MAX_BATCH_STEPS;
+/** The facet a replay's frames and trace are filed under. */
+const ROUTES_FACET = "routes";
 /** The field of the run that holds its kept routes. */
 const ROUTES_FIELD = "keptRoutes";
 
-/** The computer tool's actions as its trace spells them: the home of these spellings in the seed. */
+/** The computer tool's actions a route reads, as its trace spells them: the home of these spellings in the seed. */
 const ComputerAction = {
-  LeftClick: "left_click",
-  RightClick: "right_click",
-  MiddleClick: "middle_click",
-  DoubleClick: "double_click",
-  TripleClick: "triple_click",
-  LeftClickDrag: "left_click_drag",
-  MouseMove: "mouse_move",
-  LeftMouseDown: "left_mouse_down",
-  LeftMouseUp: "left_mouse_up",
-  Scroll: "scroll",
-  Type: "type",
-  Key: "key",
-  HoldKey: "hold_key",
-  Wait: "wait",
   Batch: "batch",
   Screenshot: "screenshot",
   Zoom: "zoom",
   CursorPosition: "cursor_position",
-  Camera: "camera",
   State: "state",
   Console: "console",
-  Reload: "reload",
 } as const;
 
 /** Actions that only look: a route drops them. */
@@ -83,37 +69,22 @@ const LOOKS: ReadonlySet<string> = new Set([
   ComputerAction.Screenshot,
   ComputerAction.Zoom,
   ComputerAction.CursorPosition,
-  ComputerAction.Camera,
   ComputerAction.State,
   ComputerAction.Console,
 ]);
 
-/** The clicks: which button, how many times. */
-const CLICKS: Record<string, { button: "left" | "right" | "middle"; clicks: number }> = {
-  [ComputerAction.LeftClick]: { button: "left", clicks: 1 },
-  [ComputerAction.RightClick]: { button: "right", clicks: 1 },
-  [ComputerAction.MiddleClick]: { button: "middle", clicks: 1 },
-  [ComputerAction.DoubleClick]: { button: "left", clicks: 2 },
-  [ComputerAction.TripleClick]: { button: "left", clicks: 3 },
-};
-
-/** The wheel's sign on each axis, per direction. */
-const SCROLL_SIGN: Record<string, { x: number; y: number }> = {
-  up: { x: 0, y: -1 },
-  down: { x: 0, y: 1 },
-  left: { x: -1, y: 0 },
-  right: { x: 1, y: 0 },
-};
-
 /** What a replay says, in the board's and the record's words. */
 const MESSAGE = {
-  diverged: (id: string, step: number, of: number, frames: string) =>
-    `route ${id} diverged at step ${step} of ${of}: the goal did not hold after the same inputs${frames}`,
+  diverged: (id: string, step: number, of: number, frames: string, trace: string | null) =>
+    `route ${id} diverged at step ${step} of ${of}: the goal did not hold after the same calls${frames}${trace ? ` (replay trace: ${trace})` : ""}`,
   framesOf: (original: string | null, replay: string | null) =>
     original || replay ? ` (frames: ${[original, replay].filter(Boolean).join(" vs ")})` : "",
   reportOnly: " — its session was not deterministic, so this is reported, never failed",
-  held: (id: string) => `route ${id} replayed: the goal held after the same inputs`,
+  held: (id: string) => `route ${id} replayed: the goal held after the same calls`,
   retired: (id: string) => `route ${id} retired after ${RETIRE_AFTER_DIVERGENCES} divergences`,
+  notReplayed: (id: string, why: string) => `route ${id} not replayed: ${why} — reported, never failed`,
+  noComputer: "this studio has no computer session to replay it through",
+  noRoot: "the pass names no build folder to replay it in",
 } as const;
 
 /** One action of a computer session, as `trace.jsonl` keeps it (substrate/computer-trace.ts). */
@@ -128,15 +99,14 @@ export interface TraceRow {
   reached?: true;
 }
 
-/** One step of a route: the input to give (none for a wait) and the time to step after it. */
+/** One step of a route: one computer call, with the arguments it ran with. */
 export interface RouteStep {
-  input: PreviewInputAction | null;
-  stepMs: number;
+  args: AnyRecord;
   /** The frame the original session saved at this step, by its name. */
   frame: string | null;
 }
 
-/** A route kept for this run: the goal it reached and the steps that reached it. */
+/** A route kept for this run: the goal it reached and the calls that reached it. */
 export interface KeptRoute {
   id: string;
   quest: Quest;
@@ -154,8 +124,11 @@ export interface RouteReplay {
   /** The step (from 1) after which the replay parted ways, or null when the goal held. */
   divergedAt: number | null;
   steps: number;
+  /** The original and the replayed session both ran on a stepped clock. */
   deterministic: boolean;
   frames: { original: string | null; replay: string | null };
+  /** The replay's own trace, which the host vouches for when it saw the goal reached. */
+  trace: string | null;
   retired: boolean;
 }
 
@@ -164,7 +137,7 @@ export interface RouteReplays {
   replays: RouteReplay[];
   /** A diverged deterministic route, as a failed check naming its step. */
   results: CheckResult[];
-  /** What a judge and a builder read: every divergence, and every report-only one. */
+  /** What a judge and a builder read: every divergence, every report-only one, every route not replayed. */
   notes: string[];
 }
 
@@ -199,90 +172,14 @@ export async function readTraceRows(file: string | null | undefined): Promise<Tr
     .filter((row): row is TraceRow => row !== null);
 }
 
-/** A point the trace kept, as a pair of numbers. */
-function pointOf(value: unknown): { x: number; y: number } | null {
-  if (!Array.isArray(value) || value.length < 2) return null;
-  const [x, y] = value.map(Number);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x: x as number, y: y as number } : null;
-}
-
-/** A click at its point, or at the cursor the row says it was at; null when it is neither. */
-function clickInput(args: AnyRecord, cursor: TraceRow["cursor"]): PreviewInputAction | null {
-  const click = CLICKS[String(args.action)];
-  const at = pointOf(args.coordinate) ?? cursor ?? null;
-  // A click with held modifiers names them as text the seed cannot map to key codes: not replayable.
-  if (!click || !at || args.text) return null;
-  return { type: "click", x: at.x, y: at.y, button: click.button, clicks: click.clicks, px: true };
-}
-
-/** A scroll as the wheel's pixels. */
-function scrollInput(args: AnyRecord): PreviewInputAction {
-  const px = (Number(args.scroll_amount) || DEFAULT_SCROLL_NOTCHES) * SCROLL_NOTCH_PX;
-  const sign = SCROLL_SIGN[String(args.scroll_direction)] ?? { x: 0, y: 0 };
-  const at = pointOf(args.coordinate);
-  return { type: "scroll", dx: sign.x * px, dy: sign.y * px, ...(at ? { x: at.x, y: at.y } : {}) };
-}
-
-/** A pointer move, drag or button: the preview's own action, or null when a point is missing. */
-function pointerInput(args: AnyRecord): PreviewInputAction | null {
-  const to = pointOf(args.coordinate);
-  const from = pointOf(args.start_coordinate);
-  if (args.action === ComputerAction.LeftClickDrag)
-    return from && to
-      ? { type: "drag", fromX: from.x, fromY: from.y, x: to.x, y: to.y, button: "left", px: true }
-      : null;
-  if (args.action === ComputerAction.MouseMove) return to ? { type: "move", x: to.x, y: to.y, px: true } : null;
-  if (args.action === ComputerAction.LeftMouseDown) return { type: "mousedown", button: "left" };
-  if (args.action === ComputerAction.LeftMouseUp) return { type: "mouseup", button: "left" };
-  return null;
-}
-
-/** A keyboard action: typed text, a struck combo, a held key. */
-function keyInput(args: AnyRecord): PreviewInputAction | null {
-  const text = typeof args.text === "string" ? args.text : "";
-  if (!text) return null;
-  if (args.action === ComputerAction.Type) return { type: "type", text };
-  if (args.action === ComputerAction.Key)
-    return { type: "press", combo: text, repeat: Math.max(1, Number(args.repeat) || 1) };
-  const ms = Math.round((Number(args.duration) || 1) * SECOND_MS);
-  return { type: "hold", keys: text.split("+").filter(Boolean), ms };
-}
-
-/** One input request of a trace as the preview's action; null when it cannot be replayed. */
-export function inputOf(args: AnyRecord, cursor: TraceRow["cursor"] = null): PreviewInputAction | null {
-  const action = String(args.action);
-  if (CLICKS[action]) return clickInput(args, cursor);
-  if (action === ComputerAction.Scroll) return scrollInput(args);
-  const keyed: string[] = [ComputerAction.Type, ComputerAction.Key, ComputerAction.HoldKey];
-  if (keyed.includes(action)) return keyInput(args);
-  return pointerInput(args);
-}
-
-/** The steps one row contributes; null when the row cannot be replayed (a reload, an unmappable input). */
-function stepsOfRow(row: TraceRow): RouteStep[] | null {
-  if (row.refused || LOOKS.has(row.action)) return [];
-  if (row.action === ComputerAction.Reload) return null;
-  const stepMs = Math.max(0, row.simMs ?? 0);
-  if (row.action === ComputerAction.Wait) return [{ input: null, stepMs, frame: frameName(row.frame) }];
-  const requests: unknown[] =
-    row.action === ComputerAction.Batch && Array.isArray(row.args.steps) ? row.args.steps : [row.args];
-  const steps: RouteStep[] = [];
-  for (const request of requests) {
-    const step = requestStep(isRecord(request) ? request : {}, row.cursor ?? null);
-    if (!step) return null;
-    steps.push(step);
-  }
-  // The whole row's simulated time runs after its last step: the trace keeps it per row.
-  const last = steps.at(-1);
-  if (last) Object.assign(last, { stepMs, frame: frameName(row.frame) });
-  return steps;
-}
-
-/** One request of a row (a batch has several) as a step without time; null when it cannot be replayed. */
-function requestStep(request: AnyRecord, cursor: TraceRow["cursor"]): RouteStep | null {
-  if (request.action === ComputerAction.Wait) return { input: null, stepMs: 0, frame: null };
-  const input = inputOf(request, cursor);
-  return input ? { input, stepMs: 0, frame: null } : null;
+/**
+ * A row's arguments as the call that ran them. The trace keeps a batch's parsed steps as `steps`;
+ * the tool takes them as `actions`. Everything else is passed as it ran: the host parses it again.
+ */
+function callArgs(args: AnyRecord): AnyRecord {
+  if (args.action !== ComputerAction.Batch || !Array.isArray(args.steps)) return { ...args };
+  const { steps, ...rest } = args;
+  return { ...rest, actions: steps };
 }
 
 /** A frame path as the name a judge cites it by. */
@@ -296,9 +193,14 @@ function reachedIndex(rows: readonly TraceRow[], reachedAt: number | null | unde
   return marked ?? (typeof reachedAt === "number" ? reachedAt : null);
 }
 
+/** Does a row move the game: not refused, and not a look. */
+function moves(row: TraceRow): boolean {
+  return !row.refused && !LOOKS.has(row.action);
+}
+
 /**
- * A session that reached its goal, distilled to the inputs and waits that got there; null when it
- * never reached it, when a step cannot be replayed, or when the route would be longer than a route.
+ * A session that reached its goal, distilled to the calls that got there; null when it never
+ * reached it or when the route would be longer than a route.
  */
 export function distillRoute(
   rows: readonly TraceRow[],
@@ -307,21 +209,23 @@ export function distillRoute(
 ): KeptRoute | null {
   const until = reachedIndex(rows, reachedAt);
   if (until === null) return null;
-  const steps: RouteStep[] = [];
-  for (const row of rows) {
-    if (row.i > until) break;
-    const more = stepsOfRow(row);
-    if (!more) return null;
-    steps.push(...more);
-  }
+  const steps = rows
+    .filter((row) => row.i <= until && moves(row))
+    .map((row) => ({ args: callArgs(row.args), frame: frameName(row.frame) }));
   if (steps.length === 0 || steps.length > MAX_ROUTE_STEPS) return null;
   return { id: quest.id, quest, steps, deterministic, divergences: 0, retired: false };
+}
+
+/** A route kept as computer calls: one an older seed kept as preview inputs is not replayable here. */
+function isCallRoute(route: unknown): route is KeptRoute {
+  if (!isRecord(route) || !isRecord(route.quest) || !Array.isArray(route.steps)) return false;
+  return route.steps.length > 0 && route.steps.every((step) => isRecord(step) && isRecord(step.args));
 }
 
 /** The routes this run keeps (on the run itself). */
 export function keptRoutes(run: Run | AnyRecord | null | undefined): KeptRoute[] {
   const kept = run?.[ROUTES_FIELD];
-  return Array.isArray(kept) ? (kept as KeptRoute[]) : [];
+  return Array.isArray(kept) ? kept.filter(isCallRoute) : [];
 }
 
 /**
@@ -363,50 +267,74 @@ export async function keepRouteOf(
 /** Where and how a pass replays its run's routes. */
 export interface ReplayOptions {
   run: Run;
+  /** The build's folder, as the pass loaded it; without one there is no build to replay in. */
+  root: string | null | undefined;
   /** A leased window: a route is never replayed on the user's own view. */
   handle: string;
   labelPrefix: string;
+  entry?: string;
+  iteration?: number;
 }
 
-/** Run one step on the page; false when the page refused its input. */
-async function runStep(ctx: HarnessCtx, step: RouteStep, h: { handle: string }): Promise<boolean> {
-  if (step.input) {
-    const ok = await ctx
-      .call(HostMethod.PreviewInput, { actions: [step.input], ...h })
-      .then((answer) => answer?.ok !== false)
-      .catch(() => false);
-    if (!ok) return false;
-  }
-  if (step.stepMs > 0)
-    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: Math.min(MAX_STEP_MS, step.stepMs), ...h });
-  return true;
+/** Does this studio's harness know the computer session at all (a kept older host-methods.ts may not). */
+function knowsComputer(): boolean {
+  return Object.hasOwn(HostMethod, "PreviewComputer");
 }
 
-/** The frame a diverged replay ends on, for the record. */
-async function replayFrame(ctx: HarnessCtx, run: Run, label: string, h: { handle: string }): Promise<string | null> {
-  const shot = await ctx.call(HostMethod.PreviewScreenshot, { runId: run.runId, label, ...h }).catch(() => null);
-  return shot?.path ?? null;
+/** The session a route is replayed in: blind, stepped, from the game's first screen, given the kept goal. */
+function replayGrant(route: KeptRoute, options: ReplayOptions & { root: string }): ComputerGrant {
+  const { run, root, handle, entry, iteration } = options;
+  return {
+    project: run.project,
+    root,
+    handle,
+    runId: run.runId,
+    facetId: ROUTES_FACET,
+    iteration: iteration ?? 0,
+    ...(entry ? { entry } : {}),
+    setup: { begin: false },
+    label: `route ${route.id}`,
+    role: PlayRole.Judge,
+    pacing: PlayPacing.Stepped,
+    quest: questGrant(route.quest),
+    maxActions: REPLAY_MAX_ACTIONS,
+  };
 }
 
-/** Replay one route on the loaded build: seed, the same inputs, then the goal. */
-async function replayRoute(ctx: HarnessCtx, route: KeptRoute, options: ReplayOptions): Promise<RouteReplay> {
-  const h = { handle: options.handle };
-  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: ROUTE_SEED, ...h });
-  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Pause, ...h }).catch(() => null);
-  let refusedAt: number | null = null;
+/** Each kept call through the host's session, one at a time, until the host saw the goal; the trace it left. */
+async function replayCalls(
+  ctx: HarnessCtx,
+  route: KeptRoute,
+  grant: ComputerGrant,
+): Promise<ComputerTraceSummary | null> {
+  let trace: ComputerTraceSummary | null = null;
   for (const [index, step] of route.steps.entries()) {
-    if (await runStep(ctx, step, h)) continue;
-    refusedAt = index + 1;
-    break;
+    const fresh = index === 0 ? { fresh: true } : {};
+    const answered = await ctx.call(HostMethod.PreviewComputer, { ...grant, ...fresh, args: step.args });
+    if (answered && "trace" in answered) trace = answered.trace;
+    if (typeof trace?.reachedAt === "number") break;
   }
-  const keep = { keep: [route.quest.until.path] };
-  const state =
-    refusedAt === null ? await ctx.call(HostMethod.PreviewState, { ...keep, ...h }).catch(() => null) : null;
-  const held = questHolds(route.quest.until, state) === true;
-  const divergedAt = held ? null : (refusedAt ?? route.steps.length);
+  return trace;
+}
+
+/** Where the replay parted ways: the first call the session refused, else the route's last step. */
+function divergedStep(rows: readonly TraceRow[], steps: number): number {
+  const refused = rows.find((row) => row.refused)?.i;
+  return typeof refused === "number" ? Math.min(refused, steps) : steps;
+}
+
+/** Replay one route on the build through a fresh host session, and weigh where it ended. */
+async function replayRoute(
+  ctx: HarnessCtx,
+  route: KeptRoute,
+  options: ReplayOptions & { root: string },
+): Promise<RouteReplay> {
+  const trace = await replayCalls(ctx, route, replayGrant(route, options));
+  const held = typeof trace?.reachedAt === "number";
+  const rows = held ? [] : await readTraceRows(trace?.path);
+  const divergedAt = held ? null : divergedStep(rows, route.steps.length);
   const original = divergedAt === null ? null : (route.steps[divergedAt - 1]?.frame ?? null);
-  const replay =
-    divergedAt === null ? null : await replayFrame(ctx, options.run, `${options.labelPrefix}/routes/${route.id}`, h);
+  const replayFrame = divergedAt === null ? null : (rows.find((row) => row.i === divergedAt)?.frame ?? null);
   if (divergedAt !== null) route.divergences++;
   route.retired = route.divergences >= RETIRE_AFTER_DIVERGENCES;
   return {
@@ -414,8 +342,9 @@ async function replayRoute(ctx: HarnessCtx, route: KeptRoute, options: ReplayOpt
     held,
     divergedAt,
     steps: route.steps.length,
-    deterministic: route.deterministic,
-    frames: { original, replay },
+    deterministic: route.deterministic && trace?.deterministic === true,
+    frames: { original, replay: replayFrame },
+    trace: trace?.path ?? null,
     retired: route.retired,
   };
 }
@@ -430,6 +359,7 @@ function divergedResult(replay: RouteReplay, sentence: string): CheckResult {
     reason: sentence,
     divergedAt: replay.divergedAt,
     frames: replay.frames,
+    trace: replay.trace,
   };
 }
 
@@ -438,42 +368,78 @@ function weighReplay(replay: RouteReplay, out: RouteReplays): void {
   out.replays.push(replay);
   if (replay.divergedAt !== null) {
     const frames = MESSAGE.framesOf(replay.frames.original, replay.frames.replay);
-    const sentence = MESSAGE.diverged(replay.id, replay.divergedAt, replay.steps, frames);
+    const sentence = MESSAGE.diverged(replay.id, replay.divergedAt, replay.steps, frames, replay.trace);
     if (replay.deterministic) out.results.push(divergedResult(replay, sentence));
     out.notes.push(replay.deterministic ? sentence : `${sentence}${MESSAGE.reportOnly}`);
   }
   if (replay.retired) out.notes.push(MESSAGE.retired(replay.id));
 }
 
-/** The record of one replay: studio-verified when the goal held; never a fail for a route that is report-only. */
+/** The status a replay is recorded with: a fail only for a deterministic route that parted ways. */
+function replayStatus(replay: RouteReplay): InteractionStatus {
+  if (replay.held) return InteractionStatus.Passed;
+  return replay.deterministic ? InteractionStatus.Failed : InteractionStatus.Incomplete;
+}
+
+/**
+ * The record of one replay, with the replay's trace: studio-verified only when the host saw the
+ * goal reached (the host keeps that word only for a trace it saw reach it).
+ */
 function replayRecord(replay: RouteReplay, notes: string[]) {
-  const status = replay.held ? InteractionStatus.Passed : InteractionStatus.Failed;
   return {
     head: null,
     label: `route ${replay.id}`,
-    status: replay.deterministic || replay.held ? status : InteractionStatus.Incomplete,
+    status: replayStatus(replay),
     note: notes.find((note) => note.startsWith(`route ${replay.id} `)) ?? MESSAGE.held(replay.id),
     source: InteractionSource.RouteReplay,
     objective: replay.held ? InteractionObjective.StudioVerified : InteractionObjective.ModelSaid,
+    trace: replay.trace,
   };
+}
+
+/** Every route reported as not replayed, and why: never a fail, never a divergence. */
+function notReplayed(routes: readonly KeptRoute[], why: string): RouteReplays {
+  return { replays: [], results: [], notes: routes.map((route) => MESSAGE.notReplayed(route.id, why)) };
 }
 
 /**
  * Replay this run's kept routes on the build the pass just looked at, on its leased window. Run
- * after every photograph is taken: a replay seeds the page and moves it.
+ * after every photograph is taken: a replay reloads the page and moves it.
  */
 export async function replayRoutes(ctx: HarnessCtx, options: ReplayOptions): Promise<RouteReplays | null> {
   const routes = keptRoutes(options.run)
     .filter((route) => !route.retired)
     .slice(0, MAX_REPLAYS_PER_PASS);
   if (routes.length === 0) return null;
+  if (!knowsComputer()) return notReplayed(routes, MESSAGE.noComputer);
+  const { root } = options;
+  if (!root) return notReplayed(routes, MESSAGE.noRoot);
   const out: RouteReplays = { replays: [], results: [], notes: [] };
   for (const route of routes) {
     if (ctx.cancelled) break;
-    const replay = await replayRoute(ctx, route, options).catch(() => null);
-    if (!replay) continue;
+    const replay = await tryReplay(ctx, route, { ...options, root });
+    if ("failed" in replay) {
+      out.notes.push(MESSAGE.notReplayed(route.id, replay.failed));
+      continue;
+    }
     weighReplay(replay, out);
     await appendInteraction(ctx, options.run.runId, replayRecord(replay, out.notes));
   }
   return out;
+}
+
+/**
+ * One replay, or why it could not run: a host that refuses the session (an older one without it,
+ * a window that went away) measured nothing about the build.
+ */
+async function tryReplay(
+  ctx: HarnessCtx,
+  route: KeptRoute,
+  options: ReplayOptions & { root: string },
+): Promise<RouteReplay | { failed: string }> {
+  try {
+    return await replayRoute(ctx, route, options);
+  } catch (err) {
+    return { failed: err instanceof Error ? err.message : String(err) };
+  }
 }

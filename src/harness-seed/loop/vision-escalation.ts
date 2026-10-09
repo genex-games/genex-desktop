@@ -1,10 +1,13 @@
 /**
  * Vision escalation: a screenshot question the picture judge could not answer (unmeasured) or
  * answered at less than even confidence may be put to a judge that plays — one hands-on probe per
- * build per pass, on the pass's leased window, within a budget for the whole run.
+ * build per pass, on the pass's leased window, within a budget for the whole run that the run's
+ * journal carries across a restart (probe-count.ts).
  *
- * The probe is a second witness, never a higher court:
- * - it may resolve an unmeasured or low-confidence answer;
+ * The probe is a second witness, never a higher court, and it plays without a goal the studio
+ * checks, so what it says is the model's word:
+ * - it may resolve an unmeasured or low-confidence answer, recorded as the model's word and below
+ *   the confidence a measured answer needs, so nothing downstream takes it for a confident one;
  * - it never overturns a confident screenshot answer on its own;
  * - when it flips a measured verdict, the picture judge is asked once more about the frames the
  *   probe cited, and the flip stands only if that look agrees with confidence.
@@ -15,10 +18,13 @@
 import { readFile } from "node:fs/promises";
 import { visionCheck, type VisionAsk } from "./judge.ts";
 import { handsOnJudgesOn, runHandsOnJudge, type HandsOnOutcome } from "./hands-on-judge.ts";
+import { appendInteraction, interactionStatus } from "./interaction-evidence.ts";
+import { InteractionObjective, InteractionSource } from "./interaction-words.ts";
+import { probesSpent, spendProbe } from "./probe-count.ts";
 import { CheckKind, CheckWeight, type Check } from "./spec.ts";
 import { isMeasured, type CheckResult } from "./checks.ts";
 import { MINUTE_MS } from "./time.ts";
-import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
+import type { HarnessCtx, Run } from "../types/harness.d.ts";
 
 /** The most questions one probe carries. */
 export const MAX_PROBE_QUESTIONS = 2;
@@ -26,12 +32,15 @@ export const MAX_PROBE_QUESTIONS = 2;
 export const MAX_PROBES_PER_RUN = 8;
 /** Below this confidence a screenshot answer may be escalated; at or above it, it stands. */
 export const ESCALATE_BELOW_CONFIDENCE = 0.5;
+/**
+ * The confidence a probe's answer to an unmeasured picture is given: below the escalation line, so
+ * the model's word is never taken for a measured, confident answer.
+ */
+export const RESOLVED_CONFIDENCE = 0.4;
 /** The moves a probe may make: a look at one thing, not a playthrough. */
 const PROBE_MAX_ACTIONS = 8;
 /** A probe starts only with at least this much of the pass's clock left. */
 const PROBE_MIN_MS = 3 * MINUTE_MS;
-/** The field of the run that counts the probes it spent. */
-const PROBES_FIELD = "handsOnProbes";
 
 /** How a resolved or verified answer explains itself on the board. */
 const MESSAGE = {
@@ -64,12 +73,6 @@ function confident(result: CheckResult): boolean {
   return isMeasured(result) && typeof result.confidence === "number" && result.confidence >= ESCALATE_BELOW_CONFIDENCE;
 }
 
-/** How many probes this run has spent. */
-function probesSpent(run: Run | AnyRecord): number {
-  const spent = Number(run?.[PROBES_FIELD]);
-  return Number.isFinite(spent) ? spent : 0;
-}
-
 /** Whether this pass may probe at all: on for the run, a leased window, budget and time left. */
 function mayProbe(options: EscalationOptions): boolean {
   const { run, handle, deadline } = options;
@@ -96,7 +99,7 @@ async function citedPicture(probe: HandsOnOutcome, id: string): Promise<{ base64
   return bytes ? { base64: bytes.toString("base64"), path: file } : null;
 }
 
-/** The probe's answer on the board, as a vision result: the picture's question, the player's answer. */
+/** The probe's answer on the board, as a vision result: the picture's question, the player's answer, the model's word. */
 function asVision(fresh: CheckResult, probe: CheckResult, confidence: number, reason: string): CheckResult {
   const { state: _unmeasured, ...measured } = fresh;
   return {
@@ -107,13 +110,14 @@ function asVision(fresh: CheckResult, probe: CheckResult, confidence: number, re
     note: typeof probe.note === "string" ? probe.note : "",
     reason: probe.pass ? "" : reason,
     probed: true,
+    objective: InteractionObjective.ModelSaid,
   };
 }
 
 /**
- * One escalated answer weighed against the probe's. Unmeasured: the probe's answer resolves it. A
- * confident answer stands. A measured answer the probe flips stands unless a second look at the
- * probe's own frames agrees with the flip, with confidence.
+ * One escalated answer weighed against the probe's. Unmeasured: the probe's answer resolves it, on
+ * the model's word. A confident answer stands. A measured answer the probe flips stands unless a
+ * second look at the probe's own frames agrees with the flip, with confidence.
  */
 async function weigh(
   ctx: HarnessCtx,
@@ -125,13 +129,26 @@ async function weigh(
   const answered = probe.results.find((result) => result.id === ask.check.id);
   if (!answered || !isMeasured(answered) || confident(fresh)) return fresh;
   const note = typeof answered.note === "string" ? answered.note : "";
-  if (!isMeasured(fresh)) return asVision(fresh, answered, ESCALATE_BELOW_CONFIDENCE, MESSAGE.resolved(note));
+  if (!isMeasured(fresh)) return asVision(fresh, answered, RESOLVED_CONFIDENCE, MESSAGE.resolved(note));
   if (answered.pass === fresh.pass) return fresh;
   const picture = await citedPicture(probe, ask.check.id);
   if (!picture) return fresh;
   const second = await visionCheck(ctx, { run, check: ask.check, crop: picture });
   const agrees = second.pass === answered.pass && confident(second);
   return agrees ? asVision(fresh, answered, second.confidence ?? ESCALATE_BELOW_CONFIDENCE, MESSAGE.verified) : fresh;
+}
+
+/** Record an answer the probe gave the board: a judge that played said it, on the model's word. */
+async function recordProbed(ctx: HarnessCtx, run: Run, ask: VisionAsk, taken: CheckResult, probe: HandsOnOutcome) {
+  await appendInteraction(ctx, run.runId, {
+    head: null,
+    label: ask.check.ask ?? ask.check.id,
+    status: interactionStatus(taken.pass),
+    note: taken.note || taken.reason || null,
+    source: InteractionSource.HandsOnJudge,
+    objective: InteractionObjective.ModelSaid,
+    trace: probe.trace?.path ?? null,
+  });
 }
 
 /**
@@ -150,7 +167,7 @@ export async function escalateVision(
     .filter(({ ask, index }) => ask.check.ask && escalatable(out[index]))
     .slice(0, MAX_PROBE_QUESTIONS);
   if (picked.length === 0) return out;
-  options.run[PROBES_FIELD] = probesSpent(options.run) + 1;
+  spendProbe(options.run);
   const probe = await runHandsOnJudge(ctx, {
     ...options,
     questions: picked.map(({ ask }) => playQuestion(ask.check)),
@@ -159,7 +176,10 @@ export async function escalateVision(
   });
   for (const { ask, index } of picked) {
     const fresh = out[index];
-    if (fresh) out[index] = await weigh(ctx, options.run, ask, fresh, probe);
+    if (!fresh) continue;
+    const weighed = await weigh(ctx, options.run, ask, fresh, probe);
+    out[index] = weighed;
+    if (weighed.probed === true) await recordProbed(ctx, options.run, ask, weighed, probe);
   }
   return out;
 }

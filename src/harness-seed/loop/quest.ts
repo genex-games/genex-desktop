@@ -18,7 +18,16 @@ export interface QuestUntil {
 export interface Quest {
   id: string;
   until: QuestUntil;
+  /**
+   * The one question this goal was set for. Only that question's yes may rest on the studio seeing
+   * the goal reached; every other answer of the same session is the model's word.
+   */
+  checkId?: string;
 }
+
+/** What a play check may be tied to (`Check.reaches`): the run's requested state, its setup `verify`. */
+export const PlayReaches = { Setup: "setup" } as const;
+export type PlayReaches = (typeof PlayReaches)[keyof typeof PlayReaches];
 
 /** The longest state path a quest may name. */
 const MAX_QUEST_PATH_CHARS = 120;
@@ -82,11 +91,17 @@ export function questId(text: unknown, fallback: string): string {
   return id || fallback;
 }
 
-/** A run's setup verify as a quest, when it names one the studio can check. */
-export function questFromSetup(setup: unknown, id: string): Quest | null {
+/** A run's setup verify as a quest, when it names one the studio can check; tied to `checkId` when given. */
+export function questFromSetup(setup: unknown, id: string, checkId?: string): Quest | null {
   const verify = isRecord(setup) ? setup.verify : null;
   const read = questUntilOf(verify);
-  return "until" in read ? { id, until: read.until } : null;
+  if (!("until" in read)) return null;
+  return { id, until: read.until, ...(checkId ? { checkId } : {}) };
+}
+
+/** The goal as the host is handed it (`DelegatePlaytestGrant.quest`): its name and its state, nothing of ours. */
+export function questGrant(quest: Quest): { id: string; until: QuestUntil } {
+  return { id: quest.id, until: quest.until };
 }
 
 /** The value at a dotted path, or undefined when the walk leaves the state. */

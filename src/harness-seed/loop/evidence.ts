@@ -2098,15 +2098,23 @@ async function weighFrames(look: Look): Promise<LookEnd> {
 
 /**
  * (8b) the run's kept routes (routes.ts), replayed on this build after every photograph is taken —
- * a replay seeds the page and moves it — and only on a leased window, never the user's own view. A
- * deterministic route that no longer reaches its goal is a failed check naming the step; every
- * divergence is a warning the judge and the next builder read.
+ * a replay reloads the page in the host's own computer session and moves it — and only on a leased
+ * window, never the user's own view. A deterministic route that no longer reaches its goal is a
+ * failed check naming the step; every divergence is a warning the judge and the next builder read.
  */
 async function replayKeptRoutes(look: Look): Promise<LookEnd> {
-  const { ctx, handle, labelPrefix, prefix, problems, run, warnings } = look;
+  const { ctx, entry, handle, iterationId, labelPrefix, prefix, problems, root, run, warnings } = look;
   if (typeof routes.replayRoutes !== "function" || !handle || problems.length > 0) return;
+  const iteration = typeof iterationId === "number" ? iterationId : undefined;
   try {
-    const replayed = await routes.replayRoutes(ctx, { run, handle, labelPrefix: labelPrefix ?? prefix });
+    const replayed = await routes.replayRoutes(ctx, {
+      run,
+      root,
+      handle,
+      labelPrefix: labelPrefix ?? prefix,
+      ...(entry ? { entry } : {}),
+      ...(iteration === undefined ? {} : { iteration }),
+    });
     if (!replayed) return;
     look.routeReplays = replayed;
     warnings.push(...replayed.notes);
