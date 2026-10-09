@@ -31,6 +31,9 @@ than evidence from inside it.
   still counts.
 - **Batch.** Up to `MAX_BATCH_STEPS` (8) input actions and waits in one call, at most
   `MAX_INPUT_ACTIONS` (24) input events, stopping at the first that fails with its step named.
+- **Look and act.** `look dx dy` turns the view (mouse-look) on any target with a pointer;
+  `act text [duration]` presses or holds a game's own named action on a target that declares them
+  (a Play Protocol game), for that much game time on a stepped clock.
 - **Aliases.** cua's and OpenAI's action names (`click{button}`, `type_text`, `hotkey`,
   `keypress{keys}`, `drag{path}`, `scroll{scroll_x,scroll_y}` …) are read as the studio's own and
   never advertised.

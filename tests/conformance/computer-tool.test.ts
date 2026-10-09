@@ -292,8 +292,11 @@ describe("computer tool — built from what the target can do", () => {
     reload: false,
   };
 
-  it("offers a browser game every verb, exactly as before", () => {
-    assert.deepEqual(computerActionsFor(BROWSER_CAPABILITIES), [...COMPUTER_ACTIONS]);
+  it("offers a browser game every verb but named game actions, which only a Play Protocol game declares", () => {
+    assert.deepEqual(
+      computerActionsFor(BROWSER_CAPABILITIES),
+      COMPUTER_ACTIONS.filter((action) => action !== "act"),
+    );
     const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
     assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
     assert.ok("surface" in browser.parameters.properties);
@@ -442,5 +445,32 @@ describe("computer tool — a goal the host checks cannot be gamed by its own pa
     assert.equal(setupReached({ path: "missing", equals: "undefined" }, state), false);
     assert.equal(setupReached({ path: "flow.phase", equals: "menu" }, state), true);
     assert.equal(normalizeSetup({ verify: { path: "__proto__.x", truthy: true } }), null);
+  });
+});
+
+describe("computer tool — mouse-look and named game actions, where the target has them", () => {
+  it("offers look on any target with a pointer, and act only on one that takes named actions", () => {
+    const relative = { ...BROWSER_CAPABILITIES, pointer: PointerLevel.Relative };
+    assert.ok(computerActionsFor(relative).includes("look" as never));
+    assert.ok(!computerActionsFor(relative).includes("left_click" as never));
+    assert.ok(!computerActionsFor({ ...BROWSER_CAPABILITIES, pointer: PointerLevel.None }).includes("look" as never));
+    assert.ok(!computerActionsFor(BROWSER_CAPABILITIES).includes("act" as never), "the browser takes no named actions");
+    const acting = { ...BROWSER_CAPABILITIES, actions: true };
+    assert.ok(computerActionsFor(acting).includes("act" as never));
+    assert.match(computerToolDefinition({ capabilities: acting }).description, /act text=<action>/);
+    assert.doesNotMatch(computerToolDefinition().description, /act text=<action>/);
+  });
+
+  it("reads look's deltas and act's name, and says what is missing", () => {
+    const look = parseComputerArgs({ action: "look", dx: "40", dy: -10 });
+    assert.equal(look.ok, true);
+    assert.deepEqual(look.ok && computerToInput(look.request, { x: 0, y: 0 }), [{ type: "look", dx: 40, dy: -10 }]);
+    const lookNothing = parseComputerArgs({ action: "look" });
+    assert.equal(lookNothing.ok, false);
+    assert.match((lookNothing as { error: string }).error, /look needs dx/);
+    const act = parseComputerArgs({ action: "act", text: "jump", duration: 0.5 });
+    assert.equal(act.ok && act.request.text, "jump");
+    const actNothing = parseComputerArgs({ action: "act" });
+    assert.match((actNothing as { error: string }).error, /act needs text/);
   });
 });

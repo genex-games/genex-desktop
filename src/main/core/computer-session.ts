@@ -48,6 +48,8 @@ const STATE_CHARS = { afterAction: 600, default: 1_200, asked: 4_000 } as const;
 const CONSOLE_ERRORS_SHOWN = 12;
 /** Characters of an action's name kept in a frame's file name. */
 const FRAME_NAME_CHARS = 40;
+/** One simulation tick of a named action held for a duration: a 60 Hz frame. */
+const TICK_MS = SECOND_MS / 60;
 /** The game time a stepped session gives a key stroke between its down and its up: a few frames. */
 const STEPPED_TAP_MS = 50;
 /** The most game time one step asks of a target at once; a longer wait is stepped in chunks. */
@@ -311,6 +313,22 @@ async function batch(ctx: ActionContext): Promise<LiveToolResult> {
   return observed(ctx, `${head} ${await ctx.helpers.afterMove(ctx)}${ctx.noteLine}`, true);
 }
 
+/** The game's own named action: pressed once, or held for its duration of game time, then time let pass. */
+async function act(ctx: ActionContext): Promise<LiveToolResult> {
+  const { request, target, helpers } = ctx;
+  if (!target.act) return COMPUTER_ARG_PROBLEM.unsupported(request.action, "");
+  const held = request.duration ? Math.round(request.duration * SECOND_MS) : 0;
+  const ticks = held ? Math.max(1, Math.round(held / TICK_MS)) : undefined;
+  const done = await target.act([
+    { action: String(request.text), state: held ? "hold" : "press", ...(ticks ? { ticks } : {}) },
+  ]);
+  ctx.record.route = done.route;
+  tally(ctx.record, { simMs: null, taken: done.applied, planned: 1, route: done.route });
+  ctx.record.simMs = await helpers.waiting(target, held || INPUT_SETTLE_MS);
+  const head = done.applied ? `OK — ${ctx.caption}` : COMPUTER_ARG_PROBLEM.partlyTaken(ctx.caption, 0, 1);
+  return observed(ctx, `${head}. ${await helpers.afterMove(ctx)}${ctx.noteLine}`, true);
+}
+
 const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
   screenshot: look,
   camera: look,
@@ -328,6 +346,7 @@ const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
     return `reloaded ${path.basename(ctx.helpers.root())}${noted} — ${state}`;
   },
   batch,
+  act,
 };
 
 function isHostAction(action: string): action is ComputerHostAction {
@@ -381,7 +400,8 @@ function centre(size: { width: number; height: number }): { x: number; y: number
 /** How many moves an action makes against the budget: looking and reading are free. */
 function movesOf(request: ComputerRequest): number {
   if (request.action === ComputerVerb.Batch) return request.steps?.length ?? 0;
-  return isHostAction(request.action) && request.action !== ComputerVerb.Wait ? 0 : 1;
+  const moving = request.action === ComputerVerb.Wait || request.action === ComputerVerb.Act;
+  return isHostAction(request.action) && !moving ? 0 : 1;
 }
 
 /** What one move's input amounted to: the time the clock ran, the actions the target took, and how. */

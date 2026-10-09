@@ -9,6 +9,7 @@ import {
   canPause,
   canPoint,
   hasState,
+  PointerLevel,
   type TargetCapabilities,
   TargetRuntime,
 } from "../shared/computer-target.ts";
@@ -110,6 +111,10 @@ export function computerToolDescription(options: {
     "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
     "type text=<literal text>. key text=<a key or +chord: w, i, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=w duration=<seconds> (walks, grinds). " +
     "wait duration=<seconds>. cursor_position. " +
+    (caps.pointer !== PointerLevel.None ? "look dx=<pixels> dy=<pixels>: turn the view (mouse-look). " : "") +
+    (caps.actions
+      ? "act text=<action> [duration=<seconds>]: the game's own named action (jump, attack), pressed once or held. "
+      : "") +
     BATCH_LINE +
     observeLine(options.observeByDefault ?? false) +
     studioVerbLines(caps, options.cameras) +
@@ -139,6 +144,8 @@ export const COMPUTER_PARAMETER_TEXT = {
   scroll_amount: "wheel notches, default 3",
   surface:
     "surface=screen|canvas for screenshot, camera and zoom: screen is the whole page (DOM menus, an HTML HUD, a loader), canvas is only what the game draws; omit it and the studio picks",
+  dx: "look only: how far to turn the view sideways, in view pixels of mouse motion",
+  dy: "look only: how far to turn the view up or down, in view pixels of mouse motion",
   observe: "screenshot, canvas or none: what an input action, wait or batch brings back with its answer",
   actions: 'batch only: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
 } as const;
@@ -155,6 +162,8 @@ export const COMPUTER_ARG_PROBLEM = {
   keyNeedsText: (action: string) => `${action} needs text=<key or combo, e.g. Return, Escape, ctrl+s, w>`,
   cameraNeedsName: "camera needs text=<camera name> (eye:here is your own eyes; default is the game's camera)",
   unknownSurface: (raw: string) => `surface "${raw}" is not screen or canvas — the studio picked the surface itself`,
+  lookNeedsDelta: "look needs dx=<pixels> and/or dy=<pixels> of mouse motion",
+  actNeedsName: "act needs text=<the game's action name, e.g. jump>",
   unsupported: (action: string, actions: string) =>
     `${action} is not available on this game — it cannot do that from here. Use one of ${actions}`,
   unknownObserve: (raw: string) => `observe "${raw}" is not screenshot, canvas or none — the studio decided itself`,

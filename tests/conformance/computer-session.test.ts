@@ -376,3 +376,23 @@ describe("computer session — review findings", () => {
     assert.deepEqual(reached, []);
   });
 });
+
+describe("computer session — named game actions", () => {
+  it("hands act to the target, held for its duration of game time, and refuses it where there are none", async () => {
+    const { target, calls } = fakeTarget();
+    const acting: ComputerTarget = {
+      ...target,
+      caps: { ...BROWSER_CAPABILITIES, actions: true },
+      act: async (list) => {
+        calls.push(`act:${list.map((a) => `${a.action}/${a.state}/${a.ticks ?? 0}`).join(",")}`);
+        return { applied: list.length, route: InputRoute.Bridge };
+      },
+    };
+    const { s } = await session({ target: acting, pacing: "stepped", seed: 1 });
+    await s.run("computer", { action: "act", text: "jump" });
+    await s.run("computer", { action: "act", text: "run", duration: 1 });
+    assert.deepEqual(calls, ["seed:1", "pause", "act:jump/press/0", "step:120", "act:run/hold/60", "step:1000"]);
+    const plain = await session();
+    assert.match(text(await plain.s.run("computer", { action: "act", text: "jump" })), /not available/);
+  });
+});

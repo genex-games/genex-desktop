@@ -28,7 +28,13 @@ import {
   type PreviewInputAction,
 } from "./preview-input.ts";
 import type { PreviewSetup } from "../shared/preview-contract.ts";
-import { BROWSER_CAPABILITIES, canPoint, hasState, type TargetCapabilities } from "../shared/computer-target.ts";
+import {
+  BROWSER_CAPABILITIES,
+  canPoint,
+  hasState,
+  PointerLevel,
+  type TargetCapabilities,
+} from "../shared/computer-target.ts";
 import { resolveAlias, SCROLL_NOTCH_PX } from "./computer-vocabulary.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
@@ -57,6 +63,7 @@ export const COMPUTER_INPUT_ACTIONS = [
   "type",
   "key",
   "hold_key",
+  "look",
 ] as const;
 
 /** Actions the tool host answers itself: looking, waiting, and the studio verbs. */
@@ -70,10 +77,11 @@ export const COMPUTER_HOST_ACTIONS = [
   "reload",
   "console",
   "batch",
+  "act",
 ] as const;
 
 /** The actions the session itself treats specially, by name: a wait, a batch and a reload. */
-export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload" } as const;
+export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload", Act: "act", Look: "look" } as const;
 export type ComputerVerb = (typeof ComputerVerb)[keyof typeof ComputerVerb];
 
 export type ComputerInputAction = (typeof COMPUTER_INPUT_ACTIONS)[number];
@@ -133,6 +141,9 @@ export interface ComputerRequest {
   observeNote?: string;
   /** A batch's steps, each already parsed: input actions and waits. */
   steps?: ComputerRequest[];
+  /** Mouse-look: how far the view turns, in view pixels of motion. */
+  dx?: number;
+  dy?: number;
 }
 
 export type ParsedComputer = { ok: true; request: ComputerRequest } | { ok: false; error: string };
@@ -304,6 +315,10 @@ function readOtherFields(request: ComputerRequest, raw: Record<string, unknown>)
     .trim()
     .toLowerCase();
   if (isScrollDirection(direction)) request.scroll_direction = direction;
+  const dx = num(raw.dx);
+  if (dx !== null) request.dx = dx;
+  const dy = num(raw.dy);
+  if (dy !== null) request.dy = dy;
   const amount = num(raw.scroll_amount ?? raw.amount);
   if (amount !== null) request.scroll_amount = Math.max(0, Math.min(MAX_SCROLL_NOTCHES, Math.round(amount)));
   const surface = parseSurface(raw.surface);
@@ -365,6 +380,8 @@ const ACTION_NEEDS: Partial<Record<ComputerAction, (request: ComputerRequest) =>
   key: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.keyNeedsText(r.action)),
   hold_key: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.keyNeedsText(r.action)),
   camera: (r) => (r.text ? null : COMPUTER_ARG_PROBLEM.cameraNeedsName),
+  look: (r) => (r.dx !== undefined || r.dy !== undefined ? null : COMPUTER_ARG_PROBLEM.lookNeedsDelta),
+  act: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.actNeedsName),
 };
 
 /** The amounts an action falls back to when it names none. */
@@ -486,6 +503,8 @@ export function computerToInput(request: ComputerRequest, pointer: { x: number; 
       return [{ type: "press", combo: String(request.text), repeat: request.repeat ?? 1 }];
     case "hold_key":
       return holdKeyInput(request);
+    case "look":
+      return [{ type: "look", dx: request.dx ?? 0, dy: request.dy ?? 0 }];
     default:
       return pointerInput(request);
   }
@@ -508,6 +527,8 @@ const POINTED_ACTIONS: ReadonlySet<ComputerAction> = new Set([
 const ACTION_NEEDS_CAPABILITY: Partial<Record<ComputerAction, (caps: TargetCapabilities) => boolean>> = {
   zoom: (caps) => caps.zoom,
   camera: (caps) => caps.cameras,
+  look: (caps) => caps.pointer !== PointerLevel.None,
+  act: (caps) => caps.actions,
   state: (caps) => hasState(caps),
   console: (caps) => caps.console,
   reload: (caps) => caps.reload,
@@ -579,6 +600,8 @@ export function computerToolDefinition(
         duration: { type: "number", description: text.duration },
         scroll_direction: { type: "string", description: text.scroll_direction },
         scroll_amount: { type: "number", description: text.scroll_amount },
+        dx: { type: "number", description: text.dx },
+        dy: { type: "number", description: text.dy },
         ...(capabilities.surfaces ? { surface: { type: "string", description: text.surface } } : {}),
         observe: { type: "string", description: text.observe },
         actions: { type: "string", description: text.actions },
@@ -613,6 +636,8 @@ const ACTION_DEED: Record<ComputerAction, ScreenDeed> = {
   wait: ScreenDeed.Wait,
   reload: ScreenDeed.Reload,
   batch: ScreenDeed.Press,
+  look: ScreenDeed.Move,
+  act: ScreenDeed.Press,
 };
 
 /** A computer action as the agent's screen shows it: its deed, and the keys of a press. */
@@ -654,12 +679,24 @@ function describeAction(request: ComputerRequest): string {
       return `hold ${request.text} ${request.duration ?? DEFAULT_DURATION_S}s`;
     case "wait":
       return `wait ${request.duration ?? DEFAULT_DURATION_S}s`;
+    default:
+      return describeStudioAction(request);
+  }
+}
+
+/** The studio's own verbs and the views it takes, in a caption's words. */
+function describeStudioAction(request: ComputerRequest): string {
+  switch (request.action) {
     case "zoom":
       return `zoom ${request.region?.map(Math.round).join(",")}`;
     case "camera":
       return `camera ${request.text}`;
     case "batch":
       return `batch: ${(request.steps ?? []).map(describeAction).join(", ")}`;
+    case "look":
+      return `look ${Math.round(request.dx ?? 0)},${Math.round(request.dy ?? 0)}`;
+    case "act":
+      return `act ${request.text}${request.duration ? ` ${request.duration}s` : ""}`;
     default:
       return request.action;
   }

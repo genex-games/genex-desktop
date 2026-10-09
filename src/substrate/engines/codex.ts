@@ -380,8 +380,12 @@ export class CodexEngine implements Engine {
   readonly #suppressedSkillsDir: string | null;
   /** The opt-in to dynamic tools on the app server (`CodexEngineOptions.codexDynamicTools`). */
   readonly #dynamicTools: boolean;
-  /** Set once this CLI's app server refused the tools: every later turn goes straight to exec. */
-  #dynamicToolsRefused = false;
+  /**
+   * When this CLI's app server last refused the tools or never answered: turns go straight to exec
+   * until `DYNAMIC_TOOLS_RETRY_MS` has passed, so one slow handshake does not end the route for the
+   * engine's whole life.
+   */
+  #dynamicToolsRefusedAt: number | null = null;
 
   constructor(options: CodexEngineOptions) {
     this.#dynamicTools = options.codexDynamicTools === true;
@@ -872,7 +876,7 @@ export class CodexEngine implements Engine {
       signal: ctx.signal,
     });
     if (opening.ok) return opening.turn;
-    if (!ctx.signal.aborted) this.#dynamicToolsRefused = true;
+    if (!ctx.signal.aborted) this.#dynamicToolsRefusedAt = Date.now();
     return null;
   }
 
@@ -880,7 +884,9 @@ export class CodexEngine implements Engine {
   async #dynamicToolSpecs(request: DelegateRequest, signal: AbortSignal): Promise<DynamicToolSpec[] | null> {
     const live = Boolean(request.onLiveTool && request.liveTools?.length);
     // A resumed session keeps exec: a thread exec started has no dynamic tools to resume.
-    const eligible = this.#dynamicTools && !this.#dynamicToolsRefused && live && !request.resume;
+    const refusedLately =
+      this.#dynamicToolsRefusedAt !== null && Date.now() - this.#dynamicToolsRefusedAt < DYNAMIC_TOOLS_RETRY_MS;
+    const eligible = this.#dynamicTools && !refusedLately && live && !request.resume;
     if (!eligible) return null;
     const tools = dynamicToolSpecs(bridgeTools(request));
     if (!tools) return null;
@@ -2073,6 +2079,8 @@ export function hostSkillSuppressionArgs(skillFiles: readonly string[]): string[
 
 /** `--disable` for each feature the studio owns instead, passed on every launch. */
 const STUDIO_OWNED_FEATURE_ARGS = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
+/** How long after the app server refused dynamic tools, or never answered, they are tried again. */
+const DYNAMIC_TOOLS_RETRY_MS = 30 * MINUTE_MS;
 /** How long `codex features list` may take before its listing counts as unreadable. */
 const FEATURES_LIST_TIMEOUT_MS = 15 * SECOND_MS;
 /** A feature name as `codex features list` prints it. */
