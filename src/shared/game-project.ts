@@ -3,6 +3,7 @@
  * Game sheet shows about a picked folder. `substrate/game-workspace.ts` decides and writes these
  * and re-exports the types; the renderer reads them through `window.studio`.
  */
+import type { TargetRuntime } from "./computer-target.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
 
 export interface GameProject {
@@ -80,6 +81,22 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: TargetRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
+}
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
 }
 
 /** What the served page does with the contract the judge reads — a word, not a sentence. Wire values: never rename one. */

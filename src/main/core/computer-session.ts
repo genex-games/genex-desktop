@@ -14,7 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ScreenAct } from "../../shared/agent-screen.ts";
 import { canPause, type TargetCapabilities } from "../../shared/computer-target.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { CaptureSurface } from "../../shared/preview-contract.ts";
+import { CaptureSurface, StillMimeType } from "../../shared/preview-contract.ts";
 import {
   COMPUTER_TOOL_NAME,
   type ComputerHostAction,
@@ -97,7 +97,8 @@ interface SessionHelpers {
   readonly clearSetupNote: () => void;
   readonly cursor: (target: ComputerTarget, size: { width: number; height: number }) => { x: number; y: number };
   readonly stateText: (target: ComputerTarget, max?: number) => Promise<string>;
-  readonly saveFrame: (jpeg: Buffer, name: string) => Promise<string>;
+  /** Save a frame under the session's folder; a PNG keeps its own extension. */
+  readonly saveFrame: (jpeg: Buffer, name: string, mime?: StillMimeType) => Promise<string>;
   readonly frame: (target: ComputerTarget, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
   /** Run the target's clock for one move, then stand it still again when the session is paced. */
   readonly moving: <R>(target: ComputerTarget, move: () => Promise<R>) => Promise<R>;
@@ -108,7 +109,9 @@ async function look(ctx: ActionContext): Promise<LiveToolResult> {
   const warning = request.action === "camera" ? await switchCamera(target, request.text) : "";
   const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface: ctx.surface });
   const { jpeg, stats } = shot;
-  const file = await helpers.saveFrame(jpeg, request.action === "camera" ? `cam-${request.text}` : "screen");
+  const mimeType = shot.mime ?? StillMimeType.Jpeg;
+  const name = request.action === "camera" ? `cam-${request.text}` : "screen";
+  const file = await helpers.saveFrame(jpeg, name, mimeType);
   await helpers.frame(target, jpeg, ctx.caption, ctx.act);
   const c = helpers.cursor(target, ctx.size);
   helpers.clearSetupNote();
@@ -117,7 +120,7 @@ async function look(ctx: ActionContext): Promise<LiveToolResult> {
   const measured = stats ? `, litFraction ${stats.litFraction.toFixed(2)}, meanLuma ${Math.round(stats.meanLuma)}` : "";
   return {
     text: `${ctx.surfaceLine}${file} — ${ctx.size.width}×${ctx.size.height}${tookText}, cursor at ${c.x},${c.y}${measured}${warning}${ctx.noteLine}`,
-    images: [{ mimeType: "image/jpeg", data: jpeg.toString("base64"), label: ctx.caption }],
+    images: [{ mimeType, data: jpeg.toString("base64"), label: ctx.caption }],
   };
 }
 
@@ -262,9 +265,11 @@ export function computerSession<T extends ComputerTarget>(
       const state = target.state ? await target.state().catch(() => null) : null;
       return `state: ${JSON.stringify(state ?? { __missing: true }).slice(0, max)}`;
     },
-    saveFrame: async (jpeg, name) => {
+    saveFrame: async (jpeg, name, mime = StillMimeType.Jpeg) => {
       await ensureDir(options.frameDir);
-      const file = path.join(options.frameDir, `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}.jpg`);
+      const ext = mime === StillMimeType.Png ? "png" : "jpg";
+      const base = `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}`;
+      const file = path.join(options.frameDir, `${base}.${ext}`);
       await writeFile(file, jpeg);
       return file;
     },

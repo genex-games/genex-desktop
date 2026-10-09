@@ -1074,6 +1074,19 @@ export type ProjectKind =
   | "own-script";
 // ↑ src/shared/game-project.ts
 
+export type TargetRuntime = 'browser' | 'bridge';
+// ↑ src/shared/computer-target.ts
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
+}
+// ↑ src/shared/game-project.ts
+
 /**
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
  * as a native ES module. A folder the user brings — Vite, TypeScript, any bundler — keeps its
@@ -1110,6 +1123,13 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: TargetRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
 }
 // ↑ src/shared/game-project.ts
 

@@ -4,9 +4,11 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { GameCandidate, ProjectKind, ProjectShape } from "../shared/game-project.ts";
+import { TargetRuntime } from "../shared/computer-target.ts";
+import type { GameCandidate, PlayCommand, ProjectKind, ProjectShape } from "../shared/game-project.ts";
 import { pathExists, readJsonIfExists } from "./fsx.ts";
 import { isRemoteSrc, pageScripts, projectRelative } from "./game-page.ts";
+import { containedReal } from "./paths.ts";
 import { declaredBootMs } from "./preview-ready.ts";
 import { isInstallCommand, packageCommands } from "./toolchain.ts";
 
@@ -195,6 +197,49 @@ function serveDirOf(entry: string): string {
   return dir === "" ? "." : dir;
 }
 
+/** The most arguments a declared play command may carry. */
+const MAX_PLAY_ARGS = 32;
+/** The longest single argument of a declared play command. */
+const MAX_PLAY_ARG_CHARS = 1024;
+
+/** One argument of a play command: a string of bounded length with no NUL, which no shell word can carry. */
+function usablePlayArg(arg: unknown): arg is string {
+  return typeof arg === "string" && arg.length <= MAX_PLAY_ARG_CHARS && !arg.includes("\0");
+}
+
+/**
+ * A play command as studio.json declares it, or null when any part is unusable: the command a
+ * plain path inside the folder (never absolute, never `..`, never a shell character or an
+ * option), the arguments a short list of strings. Nothing is resolved here — the command's real
+ * path is checked by {@link resolvePlayCommand} right before it runs.
+ */
+function declaredPlay(raw: unknown): PlayCommand | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { command, args } = raw as { command?: unknown; args?: unknown };
+  if (typeof command !== "string" || !plainRelativePath(command)) return null;
+  if (args === undefined) return { command, args: [] };
+  if (!Array.isArray(args) || args.length > MAX_PLAY_ARGS || !args.every(usablePlayArg)) return null;
+  return { command, args: [...args] };
+}
+
+/** The runtime studio.json declares, and a bridge game's play command; nothing for an unknown runtime. */
+function declaredRuntime(meta: ShapeMeta | null): Pick<ProjectShape, "runtime" | "play"> {
+  const runtime = Object.values(TargetRuntime).find((known) => known === meta?.runtime);
+  if (!runtime) return {};
+  const play = runtime === TargetRuntime.Bridge ? declaredPlay(meta?.play) : null;
+  return play ? { runtime, play } : { runtime };
+}
+
+/**
+ * The real path of a bridge game's play command: inside the project once every link is
+ * followed, or a throw. Checked right before the command runs, because studio.json and the
+ * folder it names are both writable by any contractor between a read and a launch.
+ */
+export async function resolvePlayCommand(dir: string, play: PlayCommand): Promise<string> {
+  if (!plainRelativePath(play.command)) throw new Error(`not a plain path inside the project: ${play.command}`);
+  return containedReal(dir, play.command);
+}
+
 /** studio.json as `readProjectShape` reads it: every field unchecked until it is used. */
 interface ShapeMeta {
   entry?: unknown;
@@ -205,6 +250,8 @@ interface ShapeMeta {
   kind?: unknown;
   serve?: unknown;
   bootMs?: unknown;
+  runtime?: unknown;
+  play?: unknown;
 }
 
 /** A non-blank string field, trimmed; null for anything else. */
@@ -266,10 +313,10 @@ export async function readProjectShape(dir: string): Promise<ProjectShape> {
   // shape's own early return — and attached with a spread, never a mutation: TEMPLATE_SHAPE is
   // shared, and an undefined-valued key would break every shape a test compares whole.
   const bootMs = declaredBootMs(meta?.bootMs);
-  const declaredBoot = bootMs === null ? {} : { bootMs };
+  const declaredBoot = { ...(bootMs === null ? {} : { bootMs }), ...declaredRuntime(meta) };
   if (!meta || !recordsShape(meta)) {
     const detected = (await detectProjectShape(dir)) ?? TEMPLATE_SHAPE;
-    return bootMs === null ? detected : { ...detected, ...declaredBoot };
+    return { ...detected, ...declaredBoot };
   }
   return { ...(await recordedShape(dir, meta)), ...declaredBoot };
 }
