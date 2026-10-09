@@ -33,7 +33,11 @@ function recordingExec() {
   return { fn, argvs };
 }
 
-async function engineWith(options: { hostSkills?: HostSkills; hostSkillsDir?: string }) {
+async function engineWith(options: {
+  hostSkills?: HostSkills;
+  hostSkillsDir?: string;
+  listFeatures?: () => Promise<string>;
+}) {
   const root = await tmpDir("studio-eval-codex-");
   const home = path.join(root, "codex-home");
   await mkdir(home, { recursive: true });
@@ -71,6 +75,26 @@ describe("codex host-skill suppression", () => {
     );
     assert.deepEqual(argv.slice(-(DISABLE_FLAGS.length + 1), -1), DISABLE_FLAGS);
     assert.equal(argv.at(-1), "-");
+  });
+
+  it("disables only the features this Codex knows: an older CLI refuses an unknown feature flag outright", async () => {
+    const skills = await tmpDir("studio-eval-skills-");
+    const { engine, root, argvs } = await engineWith({
+      hostSkillsDir: skills,
+      listFeatures: async () => "computer_use  stable  true\nin_app_browser  stable  true\nunrelated  beta  false\n",
+    });
+    await engine.delegate({ cwd: root, prompt: "Build" });
+    const argv = argvs[0] ?? [];
+    assert.deepEqual(argv.slice(-5, -1), ["--disable", "computer_use", "--disable", "in_app_browser"]);
+    assert.ok(!argv.includes("browser_use_external"), "a feature this CLI does not list is never named");
+    const broken = await engineWith({
+      hostSkillsDir: skills,
+      listFeatures: async () => {
+        throw new Error("features: no such command");
+      },
+    });
+    await broken.engine.delegate({ cwd: broken.root, prompt: "Build" });
+    assert.equal((broken.argvs[0] ?? []).includes("--disable"), false, "a CLI that cannot list features is sent none");
   });
 
   it("disables each host skill by path and the browser features, before the stdin prompt", async () => {

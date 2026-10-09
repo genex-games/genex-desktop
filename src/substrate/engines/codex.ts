@@ -67,6 +67,7 @@ import {
   releaseLocks,
   releaseStaleLocks,
 } from "./ownership-locks.ts";
+import { runCommand } from "./claude-cli.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { CodexEvent, CodexItem, CodexItemStatus } from "./codex-exec-events.ts";
 import {
@@ -166,6 +167,11 @@ export interface CodexEngineOptions {
    * exercised this path. Off, or on an older CLI, every turn keeps `codex exec` and the bridge.
    */
   codexDynamicTools?: boolean;
+  /**
+   * Injected in tests: `codex features list` as the CLI prints it. A CLI refuses a `--disable` for a
+   * feature it does not know, so only listed features are disabled. Production asks the CLI.
+   */
+  listFeatures?: (binary: string | null, env: Record<string, string>) => Promise<string>;
   /** Injected catalog refresh; production delegates to the selected CLI. */
   refreshCatalogue?: typeof refreshCodexCatalogue;
   readModels?: typeof readCodexModels;
@@ -348,6 +354,9 @@ export class CodexEngine implements Engine {
   readonly #executable: string | undefined;
   #execFn: CodexExec | undefined;
   readonly #appServerFn: CodexAppServer | undefined;
+  readonly #listFeatures: CodexEngineOptions["listFeatures"];
+  /** The features each installed CLI lists, read once per binary and version. */
+  readonly #knownFeatures = new Map<string, Promise<Set<string>>>();
   #authStatusFn: CodexEngineOptions["authStatusFn"];
   #findBinaryFn: CodexEngineOptions["findBinaryFn"];
   #binary: string | null | undefined;
@@ -384,6 +393,7 @@ export class CodexEngine implements Engine {
     this.#resolveCli = options.resolveCli ?? resolveCodingCli;
     this.#execFn = options.execFn;
     this.#appServerFn = options.appServerFn;
+    this.#listFeatures = options.listFeatures;
     this.#authStatusFn = options.authStatusFn;
     this.#refreshCatalogue = options.refreshCatalogue ?? (options.execFn ? async () => {} : refreshCodexCatalogue);
     this.#findBinaryFn = options.findBinaryFn;
@@ -845,7 +855,7 @@ export class CodexEngine implements Engine {
     const tools = await this.#dynamicToolSpecs(request, ctx.signal);
     if (!tools) return null;
     const onStderr = (chunk: string) => keepStderr(ctx.run, request, chunk);
-    const args = await this.#turnServerArgs(request, runDir);
+    const args = await this.#turnServerArgs(request, runDir, ctx.signal);
     const server = await this.#appServer(runDir, ctx.signal, { args, onStderr }).catch(() => null);
     if (!server) return null;
     const bypass = chatMode(request) === PermissionMode.Bypass;
@@ -876,13 +886,14 @@ export class CodexEngine implements Engine {
    * and approvals, effort, service tier, suppressed host skills, the features the studio owns),
    * plus what stands in for `--ignore-user-config`, which the app server lacks.
    */
-  async #turnServerArgs(request: DelegateRequest, runDir: string): Promise<string[]> {
+  async #turnServerArgs(request: DelegateRequest, runDir: string, signal: AbortSignal): Promise<string[]> {
+    const { env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
     return [
       ...(chatMode(request) === PermissionMode.Bypass ? BYPASS_CONFIG_ARGS : sandboxArgs(runDir)),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
-      ...STUDIO_OWNED_FEATURE_ARGS,
+      ...(await this.#ownedFeatureArgs(installation, env)),
       ...APP_SERVER_ISOLATION_ARGS,
     ];
   }
@@ -1158,7 +1169,7 @@ export class CodexEngine implements Engine {
     const argv = [
       ...invocation.argv.slice(0, -1),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
-      ...STUDIO_OWNED_FEATURE_ARGS,
+      ...(await this.#ownedFeatureArgs(installation, env)),
       ...(await codexProfileArgs(home)),
       invocation.argv.at(-1) ?? "-",
     ];
@@ -1183,6 +1194,41 @@ export class CodexEngine implements Engine {
     const installation = injected ? null : await requireCodingCli(EngineId.Codex, this.#executable, signal);
     signal.throwIfAborted();
     return { home, env: subscriptionEnv({ ...installation?.env, CODEX_HOME: home }), installation };
+  }
+
+  /**
+   * `--disable` for each feature the studio owns that this CLI knows. A CLI refuses a feature flag it
+   * does not know ("Unknown feature flag"), so an older one is never sent a name it lacks; one whose
+   * listing cannot be read is sent none. A test that injected the process gets every flag.
+   */
+  async #ownedFeatureArgs(installation: CodexInstallation | null, env: Record<string, string>): Promise<string[]> {
+    const binary = installation?.path ?? null;
+    if (!binary && !this.#listFeatures) return STUDIO_OWNED_FEATURE_ARGS;
+    const key = `${binary ?? "injected"}@${installation?.status.version ?? ""}`;
+    let known = this.#knownFeatures.get(key);
+    if (!known) {
+      known = this.#readFeatures(binary, env).catch(() => new Set<string>());
+      this.#knownFeatures.set(key, known);
+    }
+    const listed = await known;
+    return HOST_SKILL_DISABLED_FEATURES.filter((feature) => listed.has(feature)).flatMap((feature) => [
+      "--disable",
+      feature,
+    ]);
+  }
+
+  /** The feature names `codex features list` prints, one per line, name first. */
+  async #readFeatures(binary: string | null, env: Record<string, string>): Promise<Set<string>> {
+    const text = this.#listFeatures
+      ? await this.#listFeatures(binary, env)
+      : (await runCommand(binary ?? "codex", ["features", "list"], { env, timeoutMs: FEATURES_LIST_TIMEOUT_MS }))
+          .stdout;
+    return new Set(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/)[0] ?? "")
+        .filter((name) => FEATURE_NAME.test(name)),
+    );
   }
 
   #classify(err: Error, extra = ""): EngineError {
@@ -2015,6 +2061,10 @@ export function hostSkillSuppressionArgs(skillFiles: readonly string[]): string[
 
 /** `--disable` for each feature the studio owns instead, passed on every launch. */
 const STUDIO_OWNED_FEATURE_ARGS = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
+/** How long `codex features list` may take before its listing counts as unreadable. */
+const FEATURES_LIST_TIMEOUT_MS = 15 * SECOND_MS;
+/** A feature name as `codex features list` prints it. */
+const FEATURE_NAME = /^[a-z][a-z0-9_]*$/;
 
 /** The suppression argv for a folder of host skills, or nothing when they are kept. Only reads. */
 async function hostSkillArgs(dir: string | null): Promise<string[]> {
