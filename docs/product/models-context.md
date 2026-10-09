@@ -8,7 +8,7 @@ opens setup. Blocked plans keep the request and offer settings or retry. Fast mo
 Claude Code and Codex discover models without generating. The list names each family's newest-generation
 model; older ones switch on in Settings; a model in use stays listed.
 An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
-versions stay pinned. OpenRouter and OpenCode show three, newest first; OpenCode's default is its first signed-in model.
+versions stay pinned. OpenRouter shows three, newest first; OpenCode lists all, grouped Zen, Go, then others.
 
 Settings shows CLI versions; connected rows list picker models; Account rechecks
 or updates the CLI. Failed refreshes offer Try again, keeping stale names. Unavailable picks block sends; without models, Connect AI model replaces the
