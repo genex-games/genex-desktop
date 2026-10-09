@@ -1,14 +1,17 @@
 /**
- * The `build-graph` fixture: two runs of a sword in ice for the Builds graph to draw.
+ * The `build-graph` fixture: two runs of a sword in ice for the Builds graph to draw. The same runs
+ * with the worker records a director's builders write today (`chat-workers` seeds them in a game
+ * of their own) draw as trees.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CustomEvent } from "../../shared/custom-events.ts";
+import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
 import type { EventData } from "../../shared/event-log.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { FIXTURE_MODEL, fixtureRun, gradientShot, type Rgb, roundShotDir } from "./fixture-kit.ts";
 import { ExecutionStatus } from "../../shared/run-state.ts";
+import { WorkerEnd, WorkerIsolation } from "../../shared/workers.ts";
 
 const SKY: Rgb = [168, 196, 222];
 const SNOW: Rgb = [226, 232, 238];
@@ -42,14 +45,54 @@ interface LoopRun {
  * mountain undone four times and stopped), a round nobody judged that the lead merged anyway,
  * and a second run still running, its judges looking at a try.
  */
-export async function seedBuildGraph(core: StudioCore, project: string, threadId: string): Promise<void> {
+export async function seedBuildGraph(
+  core: StudioCore,
+  project: string,
+  threadId: string,
+  { builderRecords = false }: { builderRecords?: boolean } = {},
+): Promise<void> {
   for (const [runId, live] of LOOP_RUNS) {
     const loopRun: LoopRun = { runId, run: fixtureRun({ runId, project }), runsRoot: core.layout.runs };
     const events = await firstHalf(loopRun);
     events.push(...(live ? await stillRunning(loopRun) : await finished(loopRun)));
     await writeDirectorShots(path.join(core.layout.runs, runId, "director"), runId);
-    await core.append(events, threadId);
+    await core.append(builderRecords ? events.flatMap((data) => withBuilderRecords(loopRun, data)) : events, threadId);
   }
+}
+
+/** How a builder's close-out is recorded, by the state its `director_worker` gives. */
+const BUILDER_END: Readonly<Record<string, WorkerEnd>> = {
+  done: WorkerEnd.Done,
+  failed: WorkerEnd.Failed,
+  stopped: WorkerEnd.Stopped,
+};
+
+/**
+ * What a director writes today that these runs' records lack: the start saying its builders write
+ * worker records (the run's `autopilot_started` is replaced), and beside a builder's
+ * `director_worker` (`director-pool.ts`) the builder's start when it starts, its end at its close-out.
+ */
+function withBuilderRecords(loopRun: LoopRun, data: EventData): EventData[] {
+  const record = customRecord(data);
+  if (record?.event_type === CustomEvent.AutopilotStarted)
+    return [loopRun.run(CustomEvent.AutopilotStarted, { ...record.payload, workerRecords: true })];
+  return [data, ...builderRecord(loopRun, data)];
+}
+
+/** The worker record a director writes beside a builder's `director_worker`. */
+function builderRecord(loopRun: LoopRun, data: EventData): EventData[] {
+  const record = customRecord(data);
+  if (record?.event_type !== CustomEvent.DirectorWorker) return [];
+  const { workerId, title, state, stoppedBecause } = record.payload;
+  if (typeof workerId !== "string" || typeof title !== "string") return [];
+  if (state === "running")
+    return [loopRun.run(CustomEvent.WorkerStarted, { workerId, title, isolation: WorkerIsolation.Copy, task: title })];
+  const end = typeof state === "string" ? BUILDER_END[state] : undefined;
+  if (!end) return [];
+  const why = typeof stoppedBecause === "string" ? { stoppedBecause } : {};
+  // Every builder of these runs that finished made commits of its own, which the lead integrated.
+  const handedBack = end === WorkerEnd.Done ? { delivered: true } : {};
+  return [loopRun.run(CustomEvent.WorkerFinished, { workerId, title, state: end, ...why, ...handedBack })];
 }
 
 /** Both runs alike: the start, three rounds of the landscape and four merges. */

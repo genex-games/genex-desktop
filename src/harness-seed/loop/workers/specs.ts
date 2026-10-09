@@ -77,7 +77,9 @@ export function workerTools(types: readonly WorkerType[] = []): LiveToolSpec[] {
         properties: {
           id: text("The worker's id."),
           verdict: text("used | rejected"),
-          note: text("Why, in one line."),
+          note: text(
+            "Why, in one line. The person reads it in the chat beside the worker: plain words, no ids or tool names.",
+          ),
         },
         required: ["id", "verdict"],
       },

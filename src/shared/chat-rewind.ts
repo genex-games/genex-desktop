@@ -8,6 +8,7 @@ import { APPROVED_PLAN_HEADING } from "./composer.ts";
 import { CustomEvent, customRecord, DELEGATED_PREFIX } from "./custom-events.ts";
 import { type EventEnvelope, EventKind } from "./event-log.ts";
 import { messageQueueState, QueueState, type QueuedMessage } from "./message-queue.ts";
+import { workerKeyOf } from "./run-graph-events.ts";
 import { isExecutionEvent, RUN_START_EVENTS } from "./run-state.ts";
 
 /** The marker a rewind appends to the chat it rewound. */
@@ -25,8 +26,8 @@ export interface ChatRewind {
   hide: string[];
   /**
    * Rows in the range that stay: each settles something begun before it (a message's answer, a
-   * turn, a build, a question, a background job) or starts a job still running, which would
-   * otherwise read as open for good. Absent on rewinds
+   * turn, a build, a question, a background job, a worker) or starts a job or a worker still
+   * running, which would otherwise read as open for good. Absent on rewinds
    * made before a rewind could cross a build.
    */
   keep?: string[];
@@ -471,24 +472,32 @@ interface Begun {
   turns: Set<string>;
   runs: Set<string>;
   questions: Set<string>;
-  jobs: Set<string>;
-  /** Every job the log records an end for, in the range or not. */
-  endedJobs: ReadonlySet<string>;
+  /** Jobs and workers started in the range so far, by `lingeringKey`. */
+  lingering: Set<string>;
+  /** Every job and worker the log records an end for, in the range or not. */
+  ended: ReadonlySet<string>;
 }
 
-/** A job row's id, or null for any other row. */
-function jobIdOf(eventType: string, payload: Record<string, unknown>): string | null {
-  if (eventType !== CustomEvent.JobStarted && eventType !== CustomEvent.JobEnded) return null;
-  return typeof payload.jobId === "string" ? payload.jobId : null;
+/** The records that end what goes on past its turn: a job's end, a worker's end or verdict. */
+const LINGERING_ENDS: ReadonlySet<string> = new Set<string>([CustomEvent.JobEnded, CustomEvent.WorkerFinished]);
+
+/** A job row's or a worker row's key (`job:<id>`, `worker:<graph and id>`), or null for any other row. */
+function lingeringKey(eventType: string, payload: Record<string, unknown>): string | null {
+  if (eventType === CustomEvent.JobStarted || eventType === CustomEvent.JobEnded)
+    return typeof payload.jobId === "string" ? `job:${payload.jobId}` : null;
+  if (eventType !== CustomEvent.WorkerStarted && eventType !== CustomEvent.WorkerFinished) return null;
+  const worker = workerKeyOf(payload);
+  return worker ? `worker:${worker}` : null;
 }
 
-/** The jobs the log records an end for. */
-function endedJobs(events: readonly EventEnvelope[]): Set<string> {
+/** The jobs and workers the log records an end for. */
+function endedLingering(events: readonly EventEnvelope[]): Set<string> {
   const ended = new Set<string>();
   for (const event of events) {
     const custom = customRecord(event.data);
-    const jobId = custom?.event_type === CustomEvent.JobEnded ? jobIdOf(custom.event_type, custom.payload) : null;
-    if (jobId) ended.add(jobId);
+    const key =
+      custom && LINGERING_ENDS.has(custom.event_type) ? lingeringKey(custom.event_type, custom.payload) : null;
+    if (key) ended.add(key);
   }
   return ended;
 }
@@ -497,11 +506,12 @@ function endedJobs(events: readonly EventEnvelope[]): Set<string> {
  * The rows of the range that settle something begun before it, and stay: the queue records of
  * messages that stay (the answer a withdrawn message joined), the end of a turn begun before it,
  * a build's lifecycle from before it (the close a rewind's Stop wrote), the answer to a question
- * asked before it, and a background job's end whose start stays. Withdrawn, each would read as
- * open for good: a message the harness answers again, a turn still running, a build running
- * forever, a card waiting on nobody, a job's Stop on work that ended. The start of a job that is
- * still running stays too: a rewind stops only a build's jobs (and waits for their ends), so any
- * other job goes on, and withdrawn it would run with no line and no Stop.
+ * asked before it, and a background job's or a worker's end whose start stays. Withdrawn, each
+ * would read as open for good: a message the harness answers again, a turn still running, a build
+ * running forever, a card waiting on nobody, a job's Stop on work that ended, a worker still
+ * working. The start of a job that is still running stays too: a rewind stops only a build's jobs
+ * (and waits for their ends), so any other job goes on, and withdrawn it would run with no line
+ * and no Stop; a worker still working keeps its line the same way.
  */
 function keptInRange(
   events: readonly EventEnvelope[],
@@ -513,8 +523,8 @@ function keptInRange(
     turns: new Set(),
     runs: new Set(),
     questions: new Set(),
-    jobs: new Set(),
-    endedJobs: endedJobs(events),
+    lingering: new Set(),
+    ended: endedLingering(events),
   };
   return events
     .filter((event) => event.id >= from && !isRewound(event, rewinds) && settlesEarlier(event, leaving, begun))
@@ -530,16 +540,16 @@ function settlesEarlier(event: EventEnvelope, leaving: ReadonlySet<string>, begu
   const message = queueRecordOf(event);
   if (message !== null) return !leaving.has(message);
   if (isExecutionEvent(custom)) return stepsEarlierRun(custom.event_type, custom.payload, begun);
-  const jobId = jobIdOf(custom.event_type, custom.payload);
-  if (jobId) return settlesJob(custom.event_type, jobId, begun);
+  const lingering = lingeringKey(custom.event_type, custom.payload);
+  if (lingering) return settlesLingering(custom.event_type, lingering, begun);
   return answersEarlierQuestion(custom.event_type, custom.payload, begun);
 }
 
-/** A job's end whose start came before the range, or the start of a job with no end yet. */
-function settlesJob(eventType: string, jobId: string, begun: Begun): boolean {
-  if (eventType === CustomEvent.JobEnded) return !begun.jobs.has(jobId);
-  begun.jobs.add(jobId);
-  return !begun.endedJobs.has(jobId);
+/** A job's or a worker's end whose start came before the range, or the start of one with no end yet. */
+function settlesLingering(eventType: string, key: string, begun: Begun): boolean {
+  if (LINGERING_ENDS.has(eventType)) return !begun.lingering.has(key);
+  begun.lingering.add(key);
+  return !begun.ended.has(key);
 }
 
 /** A turn's end whose start came before the range. */

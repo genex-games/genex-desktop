@@ -46,6 +46,7 @@ import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import * as seedWakeSchedule from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
 import * as seedWorkers from "../../src/harness-seed/loop/workers/contract.ts";
+import * as seedWorkerRecords from "../../src/harness-seed/loop/workers/records.ts";
 import * as seedJobs from "../../src/harness-seed/loop/jobs/contract.ts";
 import * as seedBudgets from "../../src/harness-seed/loop/director/budgets.ts";
 import { yes as seedYes } from "../../src/harness-seed/loop/director/args.ts";
@@ -834,6 +835,20 @@ describe("one worker model (shared/workers.ts ↔ loop/workers/contract.ts)", ()
     assert.equal(seedWorkers.MAX_WORKER_WAIT_S, seedBudgets.MAX_WAIT_S);
     // The verdict the Unreal lead's agents are marked with is the worker verdict, value for value.
     assert.deepEqual({ ...seedUnrealLead.AgentVerdict }, { ...workers.WorkerVerdict });
+    // A worker's start and end records, its end states, its pool id and the caps of its words.
+    assert.deepEqual(
+      { ...seedWorkers.WorkerEvent },
+      { Started: CustomEvent.WorkerStarted, Finished: CustomEvent.WorkerFinished },
+    );
+    assert.deepEqual(seedWorkers.WorkerEnd, workers.WorkerEnd);
+    assert.deepEqual(seedWorkers.WorkerStopCode, workers.WorkerStopCode);
+    // Each end is a state the pool's records keep, by the same word.
+    const { Done, Failed, Stopped } = seedWorkerRecords.WorkerState;
+    assert.deepEqual({ ...workers.WorkerEnd }, { Done, Failed, Stopped });
+    assert.equal(seedWorkers.POOL_WORKER_PREFIX, workers.POOL_WORKER_PREFIX);
+    assert.equal(seedWorkers.WORKER_TASK_CHARS, workers.WORKER_TASK_CHARS);
+    assert.equal(seedWorkers.WORKER_ASK_CHARS, workers.WORKER_ASK_CHARS);
+    assert.equal(seedWorkers.WORKER_SUMMARY_CHARS, workers.WORKER_SUMMARY_CHARS);
   });
 
   it("Plan holds the director's merge and its landing finish by the seed's own names and its own reading of land", () => {

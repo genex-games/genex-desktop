@@ -8,6 +8,7 @@ import {
   plainDefect,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
 } from "../../run-graph.ts";
 import { buildReview, elapsedWords, resultStatus, workedSpan } from "../../run-steps.ts";
 import { endedWords } from "../../round-status.ts";
@@ -147,7 +148,7 @@ function ResultRows({
         <div className="mt-2">
           <Details
             rows={[
-              ["run", graph.runId],
+              ["run", runIdOf(graph)],
               ["model", modelLine(run.engine, run.model)],
             ]}
           />

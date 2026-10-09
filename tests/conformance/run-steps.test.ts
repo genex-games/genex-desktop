@@ -33,7 +33,10 @@ import {
   STEPS,
   triesWord,
   workedShortWords,
+  workerStopWords,
 } from "../../src/renderer/run-steps.ts";
+import type { WorkerInfo } from "../../src/renderer/run-graph-workers.ts";
+import { WorkerEnd, WorkerStopCode } from "../../src/shared/workers.ts";
 import { sideBySideWords } from "../../src/renderer/words.ts";
 const START = Date.parse("2026-09-19T15:36:00.000Z");
 let minute = 0;
@@ -670,5 +673,66 @@ describe("the words a card wears", () => {
     assert.equal(buildReview(looked("judge", "first-build", empty)), null);
     const unseen = "Nothing to compare it with: the game as it stood could not be photographed.";
     assert.equal(buildReview(looked("judge", "no-start", unseen)), null);
+  });
+});
+
+describe("why a worker stopped short, on its card", () => {
+  const worker = (ended: WorkerEnd | null, stopCode: WorkerStopCode | null = null): WorkerInfo => ({
+    type: null,
+    isolation: null,
+    in: null,
+    task: "Port the car",
+    summary: null,
+    turn: null,
+    ended,
+    stopCode,
+    verdict: null,
+    note: null,
+    merged: false,
+  });
+  it("says the end record's code in the app's words, and nothing without one: the record's own reason is the lead's", () => {
+    const cases: Array<[string, WorkerInfo, string | null]> = [
+      [
+        "refused by the host",
+        worker(WorkerEnd.Failed, WorkerStopCode.HostRefused),
+        "Your Settings allow no more workers at once",
+      ],
+      ["the turn ended", worker(WorkerEnd.Failed, WorkerStopCode.TurnEnded), "The chat turn ended first"],
+      ["an error", worker(WorkerEnd.Failed, WorkerStopCode.Error), "It ran into an error"],
+      ["no code", worker(WorkerEnd.Failed), null],
+      ["finished", worker(WorkerEnd.Done, WorkerStopCode.Error), null],
+      ["stopped by the Loop's end", worker(WorkerEnd.Stopped, WorkerStopCode.RunEnded), "The Loop ended first"],
+      ["stopped by the lead", worker(WorkerEnd.Stopped, WorkerStopCode.StoppedByLead), "The lead stopped it"],
+      ["stopped, no code", worker(WorkerEnd.Stopped), null],
+      ["still working", worker(null), null],
+    ];
+    for (const [name, info, expected] of cases) assert.equal(workerStopWords(info), expected, name);
+  });
+
+  it("a failed builder's card never says the harness's own reason, whether or not its end has a code", () => {
+    const why = "left conflict markers in src/main.ts — nothing was committed and the merge was aborted";
+    const title = "Fit Plaza in with the rest of the game";
+    for (const code of [WorkerStopCode.Error, null]) {
+      const events = [
+        event("run_started", { goal: "a plaza" }),
+        event("director_worker", { workerId: "plaza-2", title, state: "running", mode: "single" }),
+        event("worker_started", { workerId: "plaza-2", title, isolation: "copy", task: title }),
+        event("director_worker", { workerId: "plaza-2", title, state: "failed", mode: "single", stoppedBecause: why }),
+        event("worker_finished", {
+          workerId: "plaza-2",
+          title,
+          state: "failed",
+          stoppedBecause: why,
+          ...(code ? { stopCode: code } : {}),
+        }),
+      ];
+      const graph = buildRunGraph(events);
+      assert.ok(graph);
+      const info = partRows(graph, null)[0]?.steps.find((step) => step.worker)?.worker;
+      assert.ok(info, `${code}: the builder's row has its worker records`);
+      const said = workerStopWords(info) ?? "";
+      assert.equal(said, code ? "It ran into an error" : "", `${code}`);
+      assert.doesNotMatch(said, /reader|writer|editor|copy|lock|merg|isolation|sandbox|seat|conflict/i, `${code}`);
+    }
   });
 });

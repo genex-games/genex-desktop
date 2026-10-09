@@ -48,6 +48,12 @@ export const FixtureName = {
   UpdateReady: "update-ready",
   UnrealGame: "unreal-game",
   UnrealChat: "unreal-chat",
+  /**
+   * Workers on the Builds graph and in the chat: a chat turn's two, and, written after the start,
+   * a Loop's three with its lead's jobs, build-graph's web Loops and lead-graph's Unreal lead runs
+   * with their workers' records.
+   */
+  ChatWorkers: "chat-workers",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

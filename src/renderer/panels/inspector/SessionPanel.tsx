@@ -1,8 +1,24 @@
-/** The card of a part built in one session: its picture, who checked it, and what happened to it. */
+/**
+ * The card of a part built in one session: its picture, who checked it, and what happened to it.
+ * A worker's card says what the lead asked it, its own report and the lead's note, never how it
+ * works in the game.
+ */
 import type { JSX } from "react";
 import type { RunSummary, RunTask } from "../../../shared/run-summary.ts";
-import { CheckedBy, Gate, STATE_TONE, type Step, StepState, stepPill, stepSentence } from "../../run-steps.ts";
-import { ranToItsEnd, stoppedWords, verdictSentence } from "../../words.ts";
+import { runIdOf } from "../../run-graph.ts";
+import type { WorkerInfo } from "../../run-graph-workers.ts";
+import {
+  CheckedBy,
+  Gate,
+  STATE_TONE,
+  type Step,
+  StepState,
+  stepPill,
+  stepSentence,
+  stoppedShort,
+  workerStopWords,
+} from "../../run-steps.ts";
+import { stoppedWords, verdictSentence, WORKER_WORDS } from "../../words.ts";
 import { useRoundStill } from "../run-stills.ts";
 import { type DetailRow, Details, Panel, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
@@ -21,10 +37,6 @@ export const taskRows = (task: RunTask | null): DetailRow[] => [
   ["workers", task && task.workers.length > 1 ? task.workers.join(" → ") : null],
 ];
 
-/** Whether a part stopped short of its end for a reason worth saying; one that finished its work has none. */
-export const stoppedShort = (reason: string | null | undefined): reason is string =>
-  Boolean(reason) && reason !== "done" && !ranToItsEnd(reason);
-
 function WhoChecked({ step }: { step: Step }): JSX.Element | null {
   if (!step.checkedBy) return null;
   if (step.checkedBy !== CheckedBy.Judges)
@@ -39,14 +51,52 @@ function WhoChecked({ step }: { step: Step }): JSX.Element | null {
   return <Quote label="Reviewers">{verdictSentence(step.verdict) || preferred}</Quote>;
 }
 
-/** The card of a part built in one session. */
-export function SessionPanel(props: StepPanelProps): JSX.Element {
-  const { graph, row, step, outcome } = props;
-  const working = step.state === StepState.Building;
-  const src = useRoundStill(graph, step.facetId, 1, null, working && graph.active);
-  const screen = usePartScreen(props.project, graph.runId, step.facetId, working && graph.active);
+/** A part's own account: who checked it, what happened to it, why it stopped short, its details. */
+function PartAbout({ props, step }: { props: StepPanelProps; step: Step }): JSX.Element {
+  const { graph, row, outcome } = props;
   const task = taskOf(outcome, step.facetId);
   const stopped = row.facet.stoppedBecause;
+  return (
+    <>
+      <WhoChecked step={step} />
+      <div className="flex flex-col gap-1.5">
+        <Para>{stepSentence(step, graph.active)}</Para>
+        {stoppedShort(stopped) ? <Para quiet>{capitalise(stoppedWords(stopped))}.</Para> : null}
+      </div>
+      <Rows>
+        <Row label="Technical details">
+          <Details
+            rows={[["run", runIdOf(graph)], ["part", step.facetId], ...taskRows(task), ["state", task?.state ?? null]]}
+          />
+        </Row>
+      </Rows>
+    </>
+  );
+}
+
+/**
+ * A worker's account: the reviewers' word when they compared its build, what the lead asked it,
+ * its own report, the lead's note, why it stopped short.
+ */
+function WorkerAbout({ step, worker }: { step: Step; worker: WorkerInfo }): JSX.Element {
+  const failed = workerStopWords(worker);
+  return (
+    <>
+      {step.verdict ? <WhoChecked step={step} /> : null}
+      {worker.task ? <Quote label={WORKER_WORDS.asked}>{worker.task}</Quote> : null}
+      {worker.summary ? <Para>{worker.summary}</Para> : null}
+      {worker.note ? <Quote label={WORKER_WORDS.leadSaid}>{worker.note}</Quote> : null}
+      {failed ? <Para quiet>{failed}.</Para> : null}
+    </>
+  );
+}
+
+/** The card of a part built in one session. */
+export function SessionPanel(props: StepPanelProps): JSX.Element {
+  const { graph, step } = props;
+  const working = step.state === StepState.Building;
+  const src = useRoundStill(graph, step.facetId, 1, null, working && graph.active);
+  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, working && graph.active);
   return (
     <Panel
       id={step.id}
@@ -75,18 +125,7 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
         )
       }
     >
-      <WhoChecked step={step} />
-      <div className="flex flex-col gap-1.5">
-        <Para>{stepSentence(step, graph.active)}</Para>
-        {stoppedShort(stopped) ? <Para quiet>{capitalise(stoppedWords(stopped))}.</Para> : null}
-      </div>
-      <Rows>
-        <Row label="Technical details">
-          <Details
-            rows={[["run", graph.runId], ["part", step.facetId], ...taskRows(task), ["state", task?.state ?? null]]}
-          />
-        </Row>
-      </Rows>
+      {step.worker ? <WorkerAbout step={step} worker={step.worker} /> : <PartAbout props={props} step={step} />}
     </Panel>
   );
 }

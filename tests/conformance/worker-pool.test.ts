@@ -6,197 +6,42 @@
  * answers the delegations the test drives; copies are real git worktrees of a temporary repository.
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { setTimeout as sleep } from "node:timers/promises";
-import { promisify } from "node:util";
 import { buildChallenger } from "../../src/harness-seed/loop/facet/phases/build.ts";
-import { openPool, type WorkerPool } from "../../src/harness-seed/loop/workers/pool.ts";
-import type { PoolClock } from "../../src/harness-seed/loop/workers/records.ts";
 import { withWorkerRoom } from "../../src/harness-seed/loop/workers/room.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
-import { WorkerIsolation, WorkerTool, type WorkerType } from "../../src/shared/workers.ts";
-import { type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { CustomEvent } from "../../src/shared/custom-events.ts";
+import {
+  poolWorkerId,
+  WorkerEnd,
+  WorkerIsolation,
+  WorkerTool,
+  type WorkerType,
+  WorkerVerdict,
+} from "../../src/shared/workers.ts";
 import { gitFile } from "../helpers/git.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import {
+  CLAUDE,
+  chatPool,
+  delegation,
+  finish,
+  gameRepo,
+  grantOf,
+  leadCommits,
+  PROJECT,
+  poolHost,
+  settle,
+  shell,
+  start,
+  THREAD,
+  TURN,
+} from "../helpers/worker-pool-host.ts";
 
-const run = promisify(execFile);
-const PROJECT = "garden";
-const THREAD = "thread-1";
-const TURN = "msg-1";
-const CLAUDE = "claude-code";
 /** A test that would hang on a regression fails within this instead. */
 const TEST_TIMEOUT_MS = 60_000;
-/** How many turns of the event loop a test lets the pool take before it reads what happened. */
-const SETTLE_TICKS = 50;
-/** How much faster than real time the pool's clock runs in these tests. */
-const CLOCK_SPEEDUP = 100;
-
-/** What a delegation answers once the test lets it end. */
-type Result = { ok: boolean; sessionId?: string; summary?: string; stopReason?: string; errorText?: string };
-/** One worker session the fake host is running. */
-type Session = { params: Record<string, unknown>; end: (result: Result) => void };
-
-/** Let the pool's background work run its next steps. */
-async function settle(): Promise<void> {
-  for (let tick = 0; tick < SETTLE_TICKS; tick++) await new Promise((resolve) => setImmediate(resolve));
-}
-
-/** A clock a hundred times faster than real time: a minute's wait passes in well under a second. */
-function fastClock(): PoolClock {
-  let now = 1_000_000;
-  return {
-    now: () => now,
-    sleep: async (ms: number) => {
-      now += ms;
-      await sleep(ms / CLOCK_SPEEDUP);
-    },
-  };
-}
-
-/** A repository with one commit, as a game folder is. */
-async function gameRepo(): Promise<string> {
-  const dir = await realpath(await tmpDir("worker-pool-game-"));
-  await gitFile(["init", "-q", "-b", "main"], { cwd: dir });
-  await writeFile(path.join(dir, "a.txt"), "base\n");
-  await writeFile(path.join(dir, "b.txt"), "base\n");
-  await gitFile(["add", "-A"], { cwd: dir });
-  await gitFile(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first"], { cwd: dir });
-  return dir;
-}
-
-/** A shell command in a folder, answered the way `run.exec` answers. */
-async function shell(command: string, cwd: string) {
-  try {
-    const { stdout, stderr } = await run("/bin/sh", ["-c", command], { cwd });
-    return { code: 0, stdout, stderr };
-  } catch (err) {
-    const failed = err as { code?: number; stdout?: string; stderr?: string };
-    return {
-      code: typeof failed.code === "number" ? failed.code : 1,
-      stdout: failed.stdout ?? "",
-      stderr: failed.stderr ?? "",
-    };
-  }
-}
-
-/** The fake host: real git in the repository and its copies, sessions the test ends, and the chat's log. */
-function poolHost(
-  repo: string,
-  options: {
-    types?: WorkerType[];
-    log?: unknown[];
-    copyRefused?: Error;
-    /** How the host answers a Stop: ending the worker's sessions (the default), or as the test says. */
-    abort?: (params: Record<string, unknown>, end: () => void) => { aborted: number };
-  } = {},
-) {
-  const sessions: Session[] = [];
-  const artifacts = new Map<string, unknown>();
-  const log = options.log ?? [];
-  const recorder: CtxRecorder = ctxRecorder({
-    threadId: THREAD,
-    handlers: {
-      [HostMethod.ArtifactRead]: (p) => artifacts.get(String(p.artifactId)) ?? null,
-      [HostMethod.ArtifactWrite]: (p) => {
-        artifacts.set(String(p.artifactId), structuredClone(p.value));
-        return 1;
-      },
-      [HostMethod.PluginsWorkerTypes]: () => options.types ?? [],
-      [HostMethod.EventsHead]: () => null,
-      [HostMethod.EventsList]: (p) => {
-        const index = log.findIndex((event) => (event as { id: string }).id === p.after);
-        return log.slice(index + 1);
-      },
-      [HostMethod.RunExec]: (p) => shell(String(p.command), typeof p.cwd === "string" ? p.cwd : repo),
-      [HostMethod.SnapshotCreate]: async () => ({
-        snapshot_id: "snap-1",
-        git: { game: (await shell("git rev-parse HEAD", repo)).stdout.trim() },
-      }),
-      [HostMethod.SnapshotWorktree]: async (p) => {
-        if (options.copyRefused) throw options.copyRefused;
-        const dir = path.join(path.dirname(repo), `${path.basename(repo)}-${String(p.name)}`);
-        const commit = String(p.commit ?? "HEAD");
-        await gitFile(["worktree", "add", "-q", "--detach", dir, commit], { cwd: repo });
-        return { path: dir, commit: (await shell("git rev-parse HEAD", dir)).stdout.trim() };
-      },
-      [HostMethod.SnapshotRemoveWorktree]: async (p) => {
-        await gitFile(["worktree", "remove", "--force", String(p.path)], { cwd: repo });
-        return true;
-      },
-      [HostMethod.EngineDelegate]: (p) =>
-        new Promise((resolve) => {
-          sessions.push({ params: p, end: (result) => resolve({ engine: CLAUDE, turns: 1, usage: {}, ...result }) });
-        }),
-      [HostMethod.EngineInterrupt]: (p) => {
-        const live = sessions.findLast((s) => (s.params.worker as { id: string }).id === p.worker);
-        live?.end({ ok: false, stopReason: "stopped", sessionId: `s-${String(p.worker)}` });
-        return { interrupted: Boolean(live) };
-      },
-      [HostMethod.EngineAbort]: (p) => {
-        const end = () => {
-          for (const s of sessions.filter((s) => (s.params.worker as { id: string }).id === p.worker))
-            s.end({ ok: false, stopReason: "stopped" });
-        };
-        if (options.abort) return options.abort(p, end);
-        end();
-        return { aborted: 1 };
-      },
-    },
-  });
-  /** The latest session of a worker. */
-  const sessionOf = (id: string): Session => {
-    const found = sessions.findLast((s) => (s.params.worker as { id: string }).id === id);
-    assert.ok(found, `${id} has a session`);
-    return found;
-  };
-  return { recorder, sessions, artifacts, log, sessionOf };
-}
-
-type Host = ReturnType<typeof poolHost>;
-
-/** A pool for the chat turn, on the fake host. */
-function chatPool(host: Host, repo: string, turn = TURN): Promise<WorkerPool> {
-  return openPool({
-    ctx: host.recorder.ctx as never,
-    project: PROJECT,
-    threadId: THREAD,
-    turn,
-    engine: CLAUDE,
-    gameDir: repo,
-    leadFolder: { project: PROJECT },
-    identity: { folderLabel: "AI Games/garden", facts: [{ id: "web-game", path: "." }] },
-    clock: fastClock(),
-  });
-}
-
-/** Start a worker and answer its id. */
-async function start(pool: WorkerPool, args: Record<string, unknown>): Promise<string> {
-  const answer = await pool.call(WorkerTool.Start, args);
-  const id = /Started (w\d+)/.exec(answer)?.[1];
-  assert.ok(id, answer);
-  await settle();
-  return id;
-}
-
-/** End a worker's session and wait until the pool has settled it (a copy's work committed). */
-async function finish(host: Host, pool: WorkerPool, id: string, result: Result = { ok: true }): Promise<void> {
-  host.sessionOf(id).end(result);
-  await pool.state.runs.get(id);
-}
-
-/** A worker's delegation: what the pool asked the host for. */
-const delegation = (host: Host, id: string) => host.sessionOf(id).params;
-const grantOf = (host: Host, id: string) => delegation(host, id).worker as Record<string, unknown>;
-
-/** Commit the lead's own change in the game folder. */
-async function leadCommits(repo: string, file: string, text: string): Promise<void> {
-  await writeFile(path.join(repo, file), text);
-  await gitFile(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "lead"], { cwd: repo });
-}
 
 describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
   it("a reader works in place, read-only, and a research reader is offered web search", async () => {
@@ -281,6 +126,35 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     assert.match(dirty, /changes in b\.txt/);
     assert.equal(await readFile(path.join(repo, "b.txt"), "utf8"), "lead, not committed\n");
     assert.match(await pool.call(WorkerTool.Status, { id: first }), /worker_mark w1 used/, "no verdict yet");
+  });
+
+  it("a verdict stands once given, and work that went into the game can no longer be rejected", async () => {
+    const repo = await gameRepo();
+    const host = poolHost(repo);
+    const pool = await chatPool(host, repo);
+    const copied = await start(pool, { title: "Add an enemy", task: "Add enemy.js.", isolation: "copy" });
+    await writeFile(path.join(String(delegation(host, copied).cwd), "enemy.js"), "export const enemy = 1;\n");
+    await finish(host, pool, copied, { ok: true, sessionId: "s1", summary: "added" });
+    assert.match(await pool.call(WorkerTool.Mark, { id: copied, verdict: "used" }), /Merged w1/);
+    const inPlace = await start(pool, { title: "Tune", task: "Tune the jump.", isolation: "lock" });
+    await finish(host, pool, inPlace, { ok: true, sessionId: "s2", summary: "tuned" });
+    const verdicts = () =>
+      host.appended.filter((row) => row.type === CustomEvent.WorkerFinished && row.payload.verdict !== undefined);
+    const rows: Array<[string, string, RegExp]> = [
+      ["merged, then rejected", copied, /already marked used/],
+      ["merged, then used again", copied, /already marked used/],
+      ["written in place, then rejected", inPlace, /in your folder already/],
+    ];
+    for (const [name, id, refusal] of rows) {
+      const verdict = name.endsWith("rejected") ? "rejected" : "used";
+      assert.match(await pool.call(WorkerTool.Mark, { id, verdict }), refusal, name);
+    }
+    assert.deepEqual(
+      verdicts().map((row) => [row.payload.workerId, row.payload.verdict]),
+      [[poolWorkerId(copied), WorkerVerdict.Used]],
+      "no refused verdict is recorded",
+    );
+    assert.equal(await readFile(path.join(repo, "enemy.js"), "utf8"), "export const enemy = 1;\n");
   });
 
   it("one writer in place at a time", async () => {
@@ -423,6 +297,13 @@ describe("the worker pool", { timeout: TEST_TIMEOUT_MS }, () => {
     assert.match(await later.call(WorkerTool.Status, {}), /w1 · Still at it · copy · stopped/);
     assert.match(await later.call(WorkerTool.Mark, { id: finished, verdict: "used" }), /Merged w2/);
     assert.equal(await readFile(path.join(repo, "whole.txt"), "utf8"), "whole\n");
+    const finishedRecords = host.appended.filter((row) => row.type === CustomEvent.WorkerFinished);
+    const verdict = finishedRecords.find((row) => row.payload.verdict === WorkerVerdict.Used);
+    assert.equal(verdict?.payload.workerId, poolWorkerId(finished));
+    assert.equal(verdict?.payload.turn, TURN, "a later turn's verdict lands on the turn that started the worker");
+    const stopped = finishedRecords.find((row) => row.payload.workerId === poolWorkerId(running));
+    assert.equal(stopped?.payload.state, WorkerEnd.Stopped);
+    assert.equal(stopped?.payload.turn, TURN, "and so does the end of the worker its turn's close stopped");
   });
 
   it("a stop that reached the host before the worker's session registered is sent again until one is found", async () => {

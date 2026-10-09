@@ -96,6 +96,8 @@ export interface Worker {
   deadline: number;
   state: WorkerState;
   stopRequested: boolean;
+  /** The lead's `worker_stop` asked its stop, not the run's close (its end record says so). */
+  stoppedByLead?: boolean;
   stopWhy: string | null;
   iterationsCap: number | undefined;
   steering: string[];

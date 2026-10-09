@@ -1035,8 +1035,8 @@ with a managed local runtime; core has no special Blender tool.
   secrets, OAuth tokens) and `PluginRegistry.heldCredentials()` (plugin account tokens unlocked
   this session, the Genex token among them); values of eight characters or more are removed first,
   then token shapes. The same set feeds the dev control's sanitizer and the public export check.
-- **Chat context.** A disposable `chat-context.json` checkpoint (version 7) keeps the current run,
-  session, queued input, pending questions, consent, running jobs and each session role's newest
+- **Chat context.** A disposable `chat-context.json` checkpoint (version 8) keeps the current run,
+  session, queued input, pending questions, consent, running jobs and workers, and each session role's newest
   context reading independently of history. A missing, legacy or pre-rewind checkpoint is rebuilt
   from one log read without its rewound ranges, then extended in 256-event batches. Bootstrap carries the host thread-status map separately; a
   non-ready harness clears it.

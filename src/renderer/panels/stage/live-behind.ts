@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LiveBehindEvent } from "../../../shared/live-behind.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
-import type { RunGraph as RunGraphModel } from "../../run-graph.ts";
+import { type RunGraph as RunGraphModel, runBuilding } from "../../run-graph.ts";
 import {
   appliesUnseen,
   firstBuildShows,
@@ -29,6 +29,7 @@ type ShownBuild = { head: string };
 export interface LiveBehindInput extends StageWatch {
   project: string | null;
   threadId: string | null;
+  /** The run Live answers to (`stageRunGraph`): never a chat turn's graph. */
   graph: RunGraphModel | null;
   selectedRun: string | null;
   /** The person stopped the game: nothing waiting goes in on its own, which would start it again. */
@@ -130,10 +131,12 @@ export function useLiveBehind(input: LiveBehindInput): {
     [project, intoLive, onView, failed],
   );
 
-  // A build merged this run that runs, and is not already on the stage.
+  // A build merged this run that runs, and is not already on the stage. The graph is the run's
+  // own (`stageRunGraph`): a chat turn's workers change the game itself and offer no build.
+  const ownBuild = runBuilding(graph) && !selectedRun;
   const offer = useMemo(
-    () => (graph?.active && !selectedRun ? newBuildOffer(graph.mergedHead, shownBuild?.head ?? null) : null),
-    [graph?.active, graph?.mergedHead, selectedRun, shownBuild?.head],
+    () => (ownBuild ? newBuildOffer(graph?.mergedHead ?? null, shownBuild?.head ?? null) : null),
+    [ownBuild, graph?.mergedHead, shownBuild?.head],
   );
   // A build the stage swapped in can still be found broken by a later health pass. It stays until
   // the person reloads — they may be playing it — and the change is explained.

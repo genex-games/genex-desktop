@@ -15,6 +15,16 @@ import { describe, it } from "node:test";
 import {
   autopilotStartWords,
   backgroundCount,
+  BUILD_HISTORY_WORDS,
+  FINISH_CHECK_WORDS,
+  JOBS_EYEBROW,
+  JOBS_WORDS,
+  LEAD_WORDS,
+  TURN_WORDS,
+  WORKER_LINE_WORDS,
+  WORKER_STOP_WORDS,
+  WORKER_WORDS,
+  workersOnIt,
   checkCounts,
   checkReplanWords,
   circuitBreakWords,
@@ -52,6 +62,7 @@ import {
   withoutIds,
 } from "../../src/renderer/words.ts";
 import { morningWords } from "../../src/renderer/morning-words.ts";
+import { LeadFace, leadAbout } from "../../src/renderer/run-tree.ts";
 import { endedWords } from "../../src/renderer/round-status.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
@@ -138,6 +149,54 @@ describe("background work", () => {
     assert.equal(backgroundCount(1, 2), "1 running · 2 finished");
     assert.equal(backgroundCount(0, 2), "2 finished");
     assert.equal(backgroundCount(1, 0), "1 running");
+  });
+});
+
+describe("the lead, its workers and the finish check on the graph", () => {
+  /** Every string a table holds, its functions called with a sample. */
+  const said = (value: unknown): string[] => {
+    if (typeof value === "string") return [value];
+    if (typeof value === "function") return [String(value("Unreal"))];
+    if (value && typeof value === "object") return Object.values(value).flatMap(said);
+    return [];
+  };
+
+  it("no worker, lead, job, finish check, history or chat turn word names how a worker works", () => {
+    const words = said([
+      WORKER_WORDS,
+      WORKER_LINE_WORDS,
+      WORKER_STOP_WORDS,
+      LEAD_WORDS,
+      JOBS_EYEBROW,
+      JOBS_WORDS,
+      FINISH_CHECK_WORDS,
+      BUILD_HISTORY_WORDS,
+      BUILD_HISTORY_WORDS.turnFrom("Monday"),
+      BUILD_HISTORY_WORDS.loopFrom(BUILD_HISTORY_WORDS.yesterday),
+      TURN_WORDS,
+      workersOnIt(3),
+    ]);
+    assert.ok(words.length > 20, "the tables were read");
+    const forbidden =
+      /\b(reader|writer|editor|copy|lock|merged?|isolation|sandbox|seat|sub-agents?|helper|night|overnight|morning|tonight)\b|\bbuild \d/i;
+    assert.deepEqual(
+      words.filter((text) => forbidden.test(text)),
+      [],
+    );
+    assert.equal(workersOnIt(1), "1 worker on it");
+    assert.equal(WORKER_WORDS.workingIn("Unreal"), "Working in Unreal");
+  });
+});
+
+describe("the lead's card", () => {
+  it("in a tree, the lead at work never says nothing works, and names workers; a graph that is no tree keeps its words", () => {
+    const inTree = leadAbout(LeadFace.Working, true);
+    assert.doesNotMatch(inTree, /no part|nothing/i);
+    assert.doesNotMatch(inTree, /\bparts?\b/i);
+    assert.match(inTree, /\bworker\b/);
+    assert.equal(leadAbout(LeadFace.Working, false), LEAD_WORDS.about.working, "old logs read as they did");
+    for (const face of Object.values(LeadFace).filter((face) => face !== LeadFace.Working))
+      assert.equal(leadAbout(face, true), LEAD_WORDS.about[face], face);
   });
 });
 

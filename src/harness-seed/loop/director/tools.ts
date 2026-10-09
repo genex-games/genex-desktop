@@ -1237,6 +1237,7 @@ async function stopWorkerTool(loopRun: LoopRun, args: AnyRecord): Promise<string
   if (!isRunning(worker)) return `worker ${worker.id} is already ${worker.state}`;
   const why = String(args.why ?? "").trim();
   const at = worker.mode === WorkerMode.Loop ? worker.iterations.length + 1 : 1;
+  worker.stoppedByLead = true;
   await stopWorker(worker, why);
   await decision(
     `director stopped worker ${worker.id}${why ? `: ${why}` : ""}`,

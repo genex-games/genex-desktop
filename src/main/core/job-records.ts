@@ -27,10 +27,15 @@ function gameRelative(core: StudioCore, record: JobRecord): string {
   return isInside(game, cwd) ? path.relative(game, cwd) || "." : cwd;
 }
 
-/** The run a job belongs to, when it is a run's. */
-function runOf(record: JobRecord): { runId?: string } {
-  const { scope } = record.owner;
-  return scope.kind === JobScopeKind.Run ? { runId: scope.runId } : {};
+/**
+ * The graph a job's records belong to: its run when it is a run's, else the chat turn it belongs to
+ * (a turn worker's) or was started in (the chat's own session's).
+ */
+function scopeOf(record: JobRecord): { runId?: string; turn?: string } {
+  const { scope, turn } = record.owner;
+  if (scope.kind === JobScopeKind.Run) return { runId: scope.runId };
+  if (scope.kind === JobScopeKind.Turn) return { turn: scope.turn };
+  return turn ? { turn } : {};
 }
 
 /** The `job_started` record of a job. */
@@ -45,7 +50,7 @@ function jobStartedPayload(core: StudioCore, record: JobRecord): JobStartedPaylo
     startedAt: record.startedAt,
     role: owner.role,
     ...(owner.worker ? { worker: { ...owner.worker } } : {}),
-    ...runOf(record),
+    ...scopeOf(record),
     deadlineAt: record.deadlineAt,
   };
 }
@@ -73,7 +78,7 @@ async function jobEndedPayload(core: StudioCore, record: JobRecord): Promise<Job
     durationMs,
     ...(record.stoppedBy ? { stoppedBy: record.stoppedBy } : {}),
     ...(record.owner.worker ? { worker: { ...record.owner.worker } } : {}),
-    ...runOf(record),
+    ...scopeOf(record),
     ...(tail ? { tail } : {}),
   };
 }

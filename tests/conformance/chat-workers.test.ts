@@ -22,7 +22,7 @@ import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { DispatchActionType, HarnessCapability } from "../../src/shared/protocol.ts";
-import { WorkerTool } from "../../src/shared/workers.ts";
+import { WORKER_ASK_CHARS, WorkerTool } from "../../src/shared/workers.ts";
 import type { DelegateRequest, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { type CtxHandler, type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { gitFile } from "../helpers/git.ts";
@@ -133,6 +133,8 @@ async function seedTurn(
     engine?: string;
     runId?: string;
     steer?: string;
+    /** What the person said in the message the turn answers. */
+    text?: string;
     /** The Loop commission the turn's message carries (`loop`), its roles included. */
     commission?: Record<string, unknown>;
     delegate?: (params: Record<string, unknown>) => Promise<unknown>;
@@ -166,7 +168,7 @@ async function seedTurn(
   const turn = {
     threadId: chat.threadId,
     turnId: "turn-workers",
-    text: "build the level",
+    text: options.text ?? "build the level",
     engine: options.engine ?? "claude-code",
     engineLabel: "Claude Code",
     project: chat.game,
@@ -302,6 +304,35 @@ describe("workers in a chat", () => {
       const ref = keptRef({ scope: { threadId: chat.threadId } } as never, String(abort.worker));
       assert.equal(await shown(chat.project.dir, `${ref}:sky.txt`), "a sky\n", `${ending}: its copy's work is kept`);
     }
+  });
+
+  it("a chat turn's worker's start record names the turn's message and keeps what the person asked, clipped", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const chat = await workerChat();
+    const turn = await chat.personSays();
+    const asked = `Make the car drift less on straight roads. ${"It pulls left after every jump. ".repeat(12)}`;
+    const ran = await seedTurn(chat, {
+      steer: turn,
+      text: asked,
+      delegate: async (params) => {
+        if (params.worker) return { ok: true, engine: "claude-code", turns: 1, usage: {}, summary: "Looked." };
+        const args = { title: "Check the physics", task: "Read the car's physics.", isolation: "read" };
+        await chatWorkerTool({ threadId: chat.threadId, turn, name: WorkerTool.Start, args });
+        return { ok: true, engine: "claude-code", turns: 1, usage: {}, summary: "Done." };
+      },
+    });
+    assert.equal(ran.error, null);
+    const starts = ran
+      .paramsOf(HostMethod.EventsAppend)
+      .flatMap((params) => (params.batch as Array<Record<string, unknown>>) ?? [])
+      .flatMap((data) => {
+        const custom = customRecord(data as never);
+        return custom?.event_type === CustomEvent.WorkerStarted ? [custom.payload] : [];
+      });
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0]?.turn, turn, "the start names the message the turn answers");
+    assert.equal(starts[0]?.ask, asked.trim().slice(0, WORKER_ASK_CHARS), "and what the person asked, clipped");
   });
 
   it("a worker tool call reaches the harness for the live turn only", { timeout: CASE_TIMEOUT_MS }, async () => {

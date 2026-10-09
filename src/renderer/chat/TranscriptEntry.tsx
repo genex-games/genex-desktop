@@ -19,6 +19,7 @@ import { CommandRun } from "./CommandRun.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
 import { JobLine } from "./JobLine.tsx";
+import { WorkerLine } from "./WorkerLine.tsx";
 import { AppAccessLine } from "./AppAccessLine.tsx";
 import { PermissionOutcome } from "./PermissionRequest.tsx";
 import { PluginSuggestionCard } from "./PluginSuggestionCard.tsx";
@@ -244,7 +245,7 @@ function ConsentOutcome({ entry }: { entry: Extract<Entry, { kind: typeof EntryK
   );
 }
 
-/** The action entries that are one quiet line with a button: an engine link, a job, a missing permission. */
+/** The action entries that are one quiet line: an engine link, a job, a worker, a missing permission. */
 function quietLine(
   entry: Extract<Entry, { kind: typeof EntryKind.Action }>,
   context: TranscriptContext,
@@ -252,6 +253,7 @@ function quietLine(
   if (entry.action === EntryAction.EngineLink)
     return <EngineLinkLine entry={entry} threadId={context.threadId} onNotice={context.onNotice} />;
   if (entry.action === EntryAction.Job) return <JobLine entry={entry} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.Worker) return <WorkerLine entry={entry} />;
   if (entry.action === EntryAction.AppAccess) return <AppAccessLine entry={entry} onNotice={context.onNotice} />;
   return null;
 }

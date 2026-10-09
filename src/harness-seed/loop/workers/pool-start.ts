@@ -6,12 +6,23 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { DelegateResult, WorkerType } from "../../types/host-api.d.ts";
+import { CoreFact, hasFact } from "../folder-facts.ts";
+import { GameEngine } from "../game-engine.ts";
 import { HostMethod } from "../host-methods.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
-import { MAX_WORKERS_AT_ONCE, WORKER_TITLE_CHARS, WorkerIsolation, WorkerRefusal } from "./contract.ts";
+import {
+  MAX_WORKERS_AT_ONCE,
+  WORKER_TITLE_CHARS,
+  WorkerEnd,
+  WorkerIsolation,
+  WorkerRefusal,
+  WorkerStopCode,
+} from "./contract.ts";
+import { poolWorkerId, recordWorkerFinished, recordWorkerStarted } from "./events.ts";
 import { commitCopy, removeCopy } from "./pool-merge.ts";
 import { POOL_WORDS, workerBrief } from "./prompts.ts";
 import {
+  eventScope,
   gameGitWrite,
   isWorking,
   type PoolState,
@@ -29,6 +40,12 @@ const MAX_WORKER_INPUTS = 16;
 const MAX_TASK_CHARS = 20_000;
 /** The isolations a lead may ask for, as it sends them. */
 const ISOLATIONS: readonly string[] = Object.values(WorkerIsolation);
+/** How each state a worker ends in is recorded; a worker waiting on the person has not ended. */
+const END_OF: Partial<Record<WorkerState, WorkerEnd>> = {
+  [WorkerState.Done]: WorkerEnd.Done,
+  [WorkerState.Failed]: WorkerEnd.Failed,
+  [WorkerState.Stopped]: WorkerEnd.Stopped,
+};
 
 /** What a start asks for, read from the lead's arguments; or why it cannot start. */
 type StartAsk = {
@@ -162,19 +179,59 @@ export async function startWorker(state: PoolState, args: AnyRecord): Promise<st
     ...ask,
     typeDescription: ask.type?.description ?? null,
   });
+  // Written before its session starts, so its start always comes before its end in the log.
+  await recordStart(state, record);
   const work = runWorker(state, record, ask, prompt)
-    .catch((err: unknown) => ended(state, record, WorkerState.Failed, failureWords(err)))
+    .catch((err: unknown) => ended(state, record, WorkerState.Failed, failureWords(err), null, failureCode(err)))
     .finally(() => state.runs.delete(record.id));
   state.runs.set(record.id, work);
   await persist(state);
   return POOL_WORDS.started(record.id, record.isolation);
 }
 
+/**
+ * The engine a worker works in when it writes in place in the game folder of one: an Unreal
+ * project's. A reader or a copy works in no engine's editor.
+ */
+function workingIn(state: PoolState, record: WorkerRecord): GameEngine | undefined {
+  if (record.isolation !== WorkerIsolation.Lock) return undefined;
+  return hasFact(state.scope.identity.facts, CoreFact.UnrealProject) ? GameEngine.Unreal : undefined;
+}
+
+/** A worker's start on the chat's log, under its pool id. */
+function recordStart(state: PoolState, record: WorkerRecord): Promise<void> {
+  const { id, title, isolation, task, type } = record;
+  const engine = workingIn(state, record);
+  const worker = { workerId: poolWorkerId(id), title, isolation, task, type, ...(engine ? { in: engine } : {}) };
+  return recordWorkerStarted(eventScope(state, record), worker, state.scope.clock.now());
+}
+
+/**
+ * A worker's end on the chat's log: how it ended, why, its first sentence, whether its copy holds
+ * work, and whether it finished work it wrote in place in the game folder (in the game already).
+ */
+function recordEnd(state: PoolState, record: WorkerRecord, summary: string | null): Promise<void> {
+  const end = END_OF[record.state];
+  if (!end) return Promise.resolve();
+  const delivered = record.isolation === WorkerIsolation.Copy && Boolean(record.commit);
+  const inGame = record.isolation === WorkerIsolation.Lock && end === WorkerEnd.Done;
+  const worker = { workerId: poolWorkerId(record.id), title: record.title, state: end, stoppedBecause: record.error };
+  const ended = { ...worker, stopCode: record.stopCode ?? null, summary, delivered, inGame };
+  return recordWorkerFinished(eventScope(state, record), ended, state.scope.clock.now());
+}
+
+/** The host refused a worker's session: the chat's Settings allow no more workers at once. */
+const hostRefused = (err: unknown): boolean => (err as AnyRecord | null)?.code === WorkerRefusal.TooManyWorkers;
+
 /** Why a worker's session did not run or went wrong: a refusal the host gave it, in its words. */
 function failureWords(err: unknown): string {
   const why = clip(String((err as Error)?.message ?? err), CLIP_DETAIL);
-  return (err as AnyRecord | null)?.code === WorkerRefusal.TooManyWorkers ? POOL_WORDS.hostRefused(why) : why;
+  return hostRefused(err) ? POOL_WORDS.hostRefused(why) : why;
 }
+
+/** The same, as the code the app words. */
+const failureCode = (err: unknown): WorkerStopCode =>
+  hostRefused(err) ? WorkerStopCode.HostRefused : WorkerStopCode.Error;
 
 /** One leg of a worker's session: its brief or what the lead steered, in a new session or `resume`d. */
 function delegateLeg(
@@ -203,7 +260,7 @@ function delegateLeg(
 
 /** A worker's sessions: its brief, then each steer the lead queued while it worked, in the same session. */
 async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, prompt: string): Promise<void> {
-  if (state.closing) return ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded);
+  if (state.closing) return ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded, null, scopeEnd(state));
   // Stopped while its copy was being made: no session starts.
   if (!isWorking(record)) return ended(state, record, record.state, record.error);
   let result = await delegateLeg(state, record, ask, { prompt, resume: null });
@@ -211,8 +268,11 @@ async function runWorker(state: PoolState, record: WorkerRecord, ask: StartAsk, 
     result = await delegateLeg(state, record, ask, { prompt: steer, resume: result.sessionId });
   if (record.isolation === WorkerIsolation.Copy) await commitCopy(state, record);
   if (!isWorking(record)) return ended(state, record, record.state, record.error);
-  const why = result.ok ? null : clip(result.errorText || result.summary || result.stopReason || "", CLIP_DETAIL);
-  return ended(state, record, result.ok ? WorkerState.Done : WorkerState.Failed, why);
+  if (!result.ok) {
+    const why = clip(result.errorText || result.summary || result.stopReason || "", CLIP_DETAIL);
+    return ended(state, record, WorkerState.Failed, why, null, WorkerStopCode.Error);
+  }
+  return ended(state, record, WorkerState.Done, null, result.summary ?? null);
 }
 
 /** What the lead steered into a running worker, all of it, for its next leg; null when nothing waits. */
@@ -222,17 +282,28 @@ function takeSteer(state: PoolState, record: WorkerRecord): string | null {
   return isWorking(record) && queued.length ? queued.join("\n\n") : null;
 }
 
-/** A worker's end: where it stands and why, persisted. */
+/** Why a worker stops when its pool's scope ends: the run's end, else the chat turn's. */
+export const scopeEnd = (state: PoolState): WorkerStopCode =>
+  state.scope.runId ? WorkerStopCode.RunEnded : WorkerStopCode.TurnEnded;
+
+/**
+ * A worker's end: where it stands and why (the lead's words, and `code`, the app's: by default what
+ * a stop already set), persisted and recorded with its own summary when it gave one.
+ */
 export async function ended(
   state: PoolState,
   record: WorkerRecord,
   next: WorkerState,
   why: string | null,
+  summary: string | null = null,
+  code: WorkerStopCode | null = record.stopCode ?? null,
 ): Promise<void> {
   record.state = next;
   record.error = why;
+  record.stopCode = next === WorkerState.Done ? null : code;
   record.question = null;
   record.endedAt = state.scope.clock.now();
   await persist(state);
+  await recordEnd(state, record, summary);
   state.scope.onEnded?.(record);
 }

@@ -1419,6 +1419,40 @@ describe("seed upgrade across the harness step flag", () => {
     }
   });
 
+  it("a kept director part, run start, director tool list or chat turn from before worker records is reported once and noted", async () => {
+    const root = await tmpDir("seed-step-worker-records-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    // The older shapes: no builder records, no tree from the run's start, no word that the person
+    // reads the lead's note, and a chat turn's workers without the person's request.
+    const older: ReadonlyArray<readonly [string, string, RegExp]> = [
+      ["loop/director/workers.ts", "recordBuilderStarted(", /recordBuilderStarted/],
+      ["loop/director/setup.ts", "workerRecords: true", /workerRecords: true/],
+      ["loop/director/tool-specs.ts", "Why, for the person", /person reads/],
+      ["loop/delegated-turn.ts", "ask: options.text", /ask: options\.text/],
+    ];
+    for (const [file, marker] of older) {
+      const copy = await readFile(path.join(ws, file), "utf8");
+      assert.ok(copy.includes(marker), `${file} has ${marker}`);
+      await writeFile(path.join(ws, file), `${copy.replaceAll(marker, "olderShape")}\n// the agent's own change\n`);
+    }
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    const files = older.map(([file]) => file);
+    assert.deepEqual([...(report.outdatedCalls ?? [])].sort(), [...files].sort(), "each file once");
+    const memory = seedCallMemory({}, report.outdatedCalls ?? []);
+    for (const [file, , named] of older) {
+      const note = String(memory[`${SEED_CALL_MEMORY_PREFIX}${file}`]);
+      assert.match(note, named, file);
+      assert.ok(note.length <= 300, `${file}: one memory value stays within the memory policy's limit`);
+    }
+  });
+
   it("a kept wake rules file without the job kind still loads the harness, and a job's end it has no kind for still wakes the lead soon", async () => {
     const root = await tmpDir("seed-job-kind-");
     const ws = path.join(root, "workspace");

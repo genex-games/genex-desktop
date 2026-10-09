@@ -94,14 +94,14 @@ function ScreenAge({
 }
 
 /** The newest frame of the agent working on one part of a live run; null while none is. */
-export function usePartFrame(project: string | null, runId: string, facetId: string, live: boolean) {
-  return useAgentScreens((s) => (live ? partFrameOf(s, project, runId, facetId) : undefined)) ?? null;
+export function usePartFrame(project: string | null, runId: string | null, facetId: string, live: boolean) {
+  return useAgentScreens((s) => (live && runId ? partFrameOf(s, project, runId, facetId) : undefined)) ?? null;
 }
 
 /** The same agent's screen and its trail, for a card. */
 export function usePartScreen(
   project: string | null,
-  runId: string,
+  runId: string | null,
   facetId: string,
   live: boolean,
 ): { frame: AgentScreenFrame | null; trail: readonly AgentScreenFrame[] } {

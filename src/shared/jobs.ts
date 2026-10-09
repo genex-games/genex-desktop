@@ -33,6 +33,16 @@ export const JobStopper = {
 } as const;
 export type JobStopper = (typeof JobStopper)[keyof typeof JobStopper];
 
+const JOB_STATES: ReadonlySet<string> = new Set(Object.values(JobState));
+const JOB_STOPPERS: ReadonlySet<string> = new Set(Object.values(JobStopper));
+
+/** Whether `value` is a job's state, in its exact wire spelling. */
+export const isJobState = (value: unknown): value is JobState => typeof value === "string" && JOB_STATES.has(value);
+
+/** Whether `value` names who stopped a job, in its exact wire spelling. */
+export const isJobStopper = (value: unknown): value is JobStopper =>
+  typeof value === "string" && JOB_STOPPERS.has(value);
+
 /** What a job belongs to, and so what ends it besides itself. Persisted: never rename a value. */
 export const JobScopeKind = { Chat: "chat", Run: "run", Turn: "turn" } as const;
 export type JobScopeKind = (typeof JobScopeKind)[keyof typeof JobScopeKind];
@@ -109,6 +119,8 @@ export interface JobOwner {
   scope: JobScope;
   /** The worker that started it, when one did. */
   worker?: { id: string; title: string };
+  /** The chat turn (its message id) the chat's own session started it in: a chat-scope job outlives it. */
+  turn?: string;
 }
 
 /** One job as its registry keeps it (`job.json`); `endSeq` orders the ends of one game's jobs. */
@@ -195,6 +207,8 @@ export interface JobStartedPayload {
   role: JobRole;
   worker?: { id: string; title: string };
   runId?: string;
+  /** The chat turn it belongs to or was started in, when it is no run's. */
+  turn?: string;
   deadlineAt: string;
 }
 
@@ -212,6 +226,8 @@ export interface JobEndedPayload {
   /** The worker that started it, so an end whose start is not on the page still names it. */
   worker?: { id: string; title: string };
   runId?: string;
+  /** The chat turn it belongs to or was started in, when it is no run's. */
+  turn?: string;
   tail?: string;
 }
 

@@ -1,9 +1,12 @@
 /**
  * Genex's one worker model, as the app and the harness both name it: the tools a lead runs workers
- * with, how a worker stands in the project, the lead's word on what one delivered, and the kinds of
- * worker a plugin declares. Renderer-safe (no Node). The harness's copy is
- * `loop/workers/contract.ts`, held to this one by `seed-contracts.test.ts`.
+ * with, how a worker stands in the project, the lead's word on what one delivered, the kinds of
+ * worker a plugin declares, and the records a worker leaves when it starts and ends. Renderer-safe
+ * (no Node). The harness's copy is `loop/workers/contract.ts`, held to this one by
+ * `seed-contracts.test.ts`.
  */
+import type { RunScope } from "./custom-events.ts";
+import type { GameEngine } from "./game-engine.ts";
 
 /** The tools a lead runs its workers with, by the names its engine sends: never rename a value. */
 export const WorkerTool = {
@@ -72,3 +75,95 @@ export const isWorkerTool = (name: unknown): name is WorkerTool => typeof name =
 /** Whether `value` is a worker isolation. */
 export const isWorkerIsolation = (value: unknown): value is WorkerIsolation =>
   typeof value === "string" && WORKER_ISOLATIONS.has(value);
+
+/** How a worker ended, as its `worker_finished` record says. Persisted: never rename a value. */
+export const WorkerEnd = { Done: "done", Failed: "failed", Stopped: "stopped" } as const;
+export type WorkerEnd = (typeof WorkerEnd)[keyof typeof WorkerEnd];
+
+/**
+ * Why a worker stopped short, as its end record names it (`worker_finished.stopCode`): the host
+ * refused its session (the chat's Settings allow no more workers at once), the chat turn or the run
+ * that started it ended, the lead stopped it, or its session went wrong. The app words each itself;
+ * the record's `stoppedBecause` is the harness's text for the lead and is never shown. Persisted:
+ * never rename a value.
+ */
+export const WorkerStopCode = {
+  HostRefused: "host_refused",
+  TurnEnded: "turn_ended",
+  RunEnded: "run_ended",
+  StoppedByLead: "stopped_by_lead",
+  Error: "error",
+} as const;
+export type WorkerStopCode = (typeof WorkerStopCode)[keyof typeof WorkerStopCode];
+
+const WORKER_ENDS: ReadonlySet<string> = new Set(Object.values(WorkerEnd));
+const WORKER_STOP_CODES: ReadonlySet<string> = new Set(Object.values(WorkerStopCode));
+
+/** Whether `value` is why a worker stopped short. */
+export const isWorkerStopCode = (value: unknown): value is WorkerStopCode =>
+  typeof value === "string" && WORKER_STOP_CODES.has(value);
+const WORKER_VERDICTS: ReadonlySet<string> = new Set(Object.values(WorkerVerdict));
+
+/** Whether `value` is how a worker ended. */
+export const isWorkerEnd = (value: unknown): value is WorkerEnd => typeof value === "string" && WORKER_ENDS.has(value);
+
+/** Whether `value` is a lead's verdict on a worker. */
+export const isWorkerVerdict = (value: unknown): value is WorkerVerdict =>
+  typeof value === "string" && WORKER_VERDICTS.has(value);
+
+/**
+ * What a pool worker's id is prefixed with on the graph and in its records: the dot keeps it apart
+ * from every id a lead names itself (`director/args.ts` `slug` keeps those to `[a-z0-9-_]`).
+ */
+export const POOL_WORKER_PREFIX = "pool.";
+
+/** A pool worker's id on the graph and in its records. */
+export const poolWorkerId = (id: string): string => `${POOL_WORKER_PREFIX}${id}`;
+
+/** The most characters of a worker's task its start record keeps. */
+export const WORKER_TASK_CHARS = 300;
+/** The most characters of the person's request a chat turn's worker's start record keeps. */
+export const WORKER_ASK_CHARS = 300;
+/** The most characters of a worker's own summary its end record keeps (its first sentence). */
+export const WORKER_SUMMARY_CHARS = 160;
+
+/**
+ * A worker a lead started (`worker_started`), in a run (`runId`) or in a chat turn (`turn`, with
+ * the person's request as `ask`). Written by the harness; every field optional, as an older or an
+ * agent-edited writer may leave any out. `isolation` picks the words the app shows, never shown
+ * itself; `in` names the engine a worker works in when it works in the game folder of one.
+ */
+export interface WorkerStartedPayload extends RunScope {
+  workerId?: string;
+  title?: string;
+  isolation?: WorkerIsolation;
+  type?: string;
+  task?: string;
+  in?: GameEngine;
+  turn?: string;
+  ask?: string;
+  at?: string;
+}
+
+/**
+ * A worker's end (`worker_finished`: `state`, why it stopped as the harness's text for the lead and
+ * as the code the app words (`stopCode`), its first sentence, whether it delivered work to hand
+ * back, and `inGame` when it finished work it wrote in place in the game folder), or the lead's
+ * later verdict on it (`verdict`, `note`, and `merged` when its work was added to the game), a
+ * second record without `state`. Every field optional.
+ */
+export interface WorkerFinishedPayload extends RunScope {
+  workerId?: string;
+  title?: string;
+  state?: WorkerEnd;
+  stoppedBecause?: string | null;
+  stopCode?: WorkerStopCode;
+  summary?: string;
+  delivered?: boolean;
+  inGame?: boolean;
+  verdict?: WorkerVerdict;
+  note?: string | null;
+  merged?: boolean;
+  turn?: string;
+  at?: string;
+}

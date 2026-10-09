@@ -677,8 +677,9 @@ news says not to import it as it is; a look that can't be made says to look at t
 hand. At the end the run saves what is unsaved, settles its sub-agents
 and writes `report.json`, its cost the sum of each turn's own share. On the Builds graph
 (`lead-graph.ts`) the lead's milestones are rows whose save points are nodes it kept itself (no
-eye); each sub-agent is a node with its asset cards, Delivered until a save uses it; the critic's
-advice sits on the save it looked at, never as a verdict.
+eye); each typed worker is a node with its asset cards, Delivered until a save uses it, and leaves
+the records every lead's worker leaves (`worker_started`, `worker_finished`, and one more with the
+lead's verdict); the critic's advice sits on the save it looked at, never as a verdict.
 
 C++ (`loop/unreal/cpp.ts`): before the first turn, the runner asks `cpp-status`. When this computer
 compiles C++, the lead may start a C++ sub-agent; one asked for in a game without a module has the

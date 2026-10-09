@@ -23,11 +23,19 @@ import { mergeChatEvents } from "../../shared/chat-history.ts";
 import { canBuildWith } from "../../shared/engine-descriptor.ts";
 import type { ConversationRecord, EventEnvelope } from "../../shared/event-log.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
-import { buildHistory, historyLabel, projectBuildGraph, workerThreadsOf } from "../build-progress.ts";
+import {
+  buildHistory,
+  historyLabel,
+  isNewestBuild,
+  projectBuildGraph,
+  replyTarget,
+  stageRunGraph,
+  workerThreadsOf,
+} from "../build-progress.ts";
 import type { BesideTarget } from "../open-beside.ts";
 import { OPEN_BUILD_EVENT } from "../open-build.ts";
 import { replyAbout } from "../reply-about.ts";
-import type { RunGraph as RunGraphModel } from "../run-graph.ts";
+import { type RunGraph as RunGraphModel, runBuilding, runIdOf } from "../run-graph.ts";
 import { kindPendingGame, StageView, watchingLive } from "../stage.ts";
 import { threadLog } from "../state/event-log.ts";
 import { useEventLog, useLaunch, useShallow, useThreads } from "../state/hooks.ts";
@@ -189,10 +197,17 @@ function useStageGraph({
       [events, workerEvents, threadId, workers, runsRoot, project, selectedRun, buildsVisible],
     ),
   );
-  // The run's workers write their own threads; the graph reads each one's whole log.
+  // The run's workers write their own threads; the graph reads each one's whole log. A chat turn's
+  // workers are pool sessions with no threads named after a run.
+  const shownRunId = graph ? runIdOf(graph) : null;
   useEffect(() => {
-    setWorkerRun(graph?.runId ?? null);
-  }, [graph?.runId]);
+    setWorkerRun(shownRunId);
+  }, [shownRunId]);
+  // The run Live answers to: the shown graph's, or (a chat turn's shown) the newest run's.
+  const runGraph = useMemo(
+    () => stageRunGraph(events, threadId, runsRoot, graph, history),
+    [events, threadId, runsRoot, graph, history],
+  );
   useEffect(() => {
     if (!buildsVisible) return;
     const release = workers.map((worker) => studio().eventLog.watchThread(worker.id));
@@ -200,7 +215,7 @@ function useStageGraph({
       for (const stop of release) stop();
     };
   }, [workers, buildsVisible]);
-  return { history, graph };
+  return { history, graph, runGraph };
 }
 
 /**
@@ -224,7 +239,7 @@ function useStageRun({
   buildsVisible: boolean;
 }) {
   const { selectedRun, select, showLatest } = useHistorySelection(threadId);
-  const { history, graph } = useStageGraph({ project, threadId, runsRoot, selectedRun, buildsVisible });
+  const { history, graph, runGraph } = useStageGraph({ project, threadId, runsRoot, selectedRun, buildsVisible });
   useOpenBuild(history, select, onView);
   const latestRun = history.at(-1)?.runId;
   const historyIndex = history.findIndex((run) => run.runId === (selectedRun ?? latestRun));
@@ -232,10 +247,13 @@ function useStageRun({
   const planning = Boolean(!selectedRun && planningRun && planningRun !== graph?.runId);
   const shownRun = history[historyIndex];
   const earlier = useMemo(
-    () => (selectedRun && shownRun ? { label: historyLabel(shownRun, historyIndex), onLatest: showLatest } : null),
-    [selectedRun, shownRun, historyIndex, showLatest],
+    () =>
+      selectedRun && shownRun
+        ? { label: historyLabel(shownRun, { newest: isNewestBuild(history, shownRun) }), onLatest: showLatest }
+        : null,
+    [selectedRun, shownRun, history, showLatest],
   );
-  return { selectedRun, history, graph, planning, earlier };
+  return { selectedRun, history, graph, runGraph, planning, earlier };
 }
 
 /**
@@ -247,17 +265,21 @@ function useFirstPlan(project: string | null, status: string, graph: RunGraphMod
   const launched = useLaunch((s) => s.planning);
   const building = isWorkingStatus(status) || launching;
   const since = launched?.project === project ? launched.at : undefined;
-  const planning = Boolean(project && building && !graph?.active);
+  const planning = Boolean(project && building && !runBuilding(graph));
   return useMemo(() => {
     if (!planning) return null;
     return since === undefined ? {} : { since };
   }, [planning, since]);
 }
 
-/** Follow up in chat about a node of this run: the composer takes a chip naming it; none without a chat. */
+/**
+ * Follow up in chat about a node of this run: the composer takes a chip naming it; none without a
+ * chat, and none on a chat turn's graph, whose workers take no notes through a run's inbox.
+ */
 function replyFor(threadId: string | null, graph: RunGraphModel): ((reply: Reply) => void) | null {
-  if (!threadId) return null;
-  return (reply) => replyAbout({ threadId, runId: graph.runId, active: graph.active, ...reply });
+  const target = replyTarget(graph);
+  if (!threadId || !target) return null;
+  return (reply) => replyAbout({ threadId, ...target, ...reply });
 }
 
 /**
@@ -267,14 +289,15 @@ function replyFor(threadId: string | null, graph: RunGraphModel): ((reply: Reply
  */
 function LiveStates({
   view,
-  graph,
+  runGraph,
   project,
   onWatch,
   onPlay,
   onResume,
 }: {
   view: StageContentsView;
-  graph: RunGraphModel | null;
+  /** the run Live answers to: a run building fills an empty or stopped stage */
+  runGraph: RunGraphModel | null;
   project: string | null;
   onWatch: () => void;
   onPlay: (head: string) => Promise<void>;
@@ -286,8 +309,8 @@ function LiveStates({
   // A load still inside its first moments shows the bare stage: most finish before a loader would.
   if (liveLoading) return null;
   if (gameStopped)
-    return <StoppedGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} onResume={onResume} />;
-  if (showEmpty) return <EmptyGame graph={graph} project={project} onWatch={onWatch} onPlay={onPlay} />;
+    return <StoppedGame graph={runGraph} project={project} onWatch={onWatch} onPlay={onPlay} onResume={onResume} />;
+  if (showEmpty) return <EmptyGame graph={runGraph} project={project} onWatch={onWatch} onPlay={onPlay} />;
   return null;
 }
 
@@ -309,6 +332,7 @@ function StageContents({
   project,
   threadId,
   graph,
+  runGraph,
   view,
   showSetup,
   beside,
@@ -324,6 +348,8 @@ function StageContents({
   project: string | null;
   threadId: string | null;
   graph: RunGraphModel | null;
+  /** the run Live answers to (`stageRunGraph`) */
+  runGraph: RunGraphModel | null;
   view: StageContentsView;
   showSetup: boolean;
   beside: BesideTarget | null;
@@ -357,7 +383,7 @@ function StageContents({
       {!project ? <NoGame showSetup={showSetup} /> : null}
       <LiveStates
         view={view}
-        graph={graph}
+        runGraph={runGraph}
         project={project}
         onWatch={() => onView(StageView.Builds)}
         onPlay={onPlayBuild}
@@ -415,8 +441,7 @@ export function PreviewPanel({
     onView,
     buildsVisible: visible && view === StageView.Builds,
   });
-  const { selectedRun, history, graph, planning } = run;
-  const showSetup = !project && !engines.some(canBuildWith);
+  const { selectedRun, history, graph, runGraph, planning } = run;
   const flags = stageFlags({ view, beside, graph, planning, project, unreal, pending, live });
   const { stageView, showEmpty, liveLoading, gameStopped, engineCard } = flags;
   const [focusedAsset, setFocusedAsset] = useState<string | null>(null);
@@ -436,7 +461,7 @@ export function PreviewPanel({
   const { shownBuild, behind, showBuild, reload } = useLiveBehind({
     project,
     threadId,
-    graph,
+    graph: runGraph,
     selectedRun,
     view: stageView,
     visible,
@@ -446,7 +471,7 @@ export function PreviewPanel({
     onView,
     onNotice,
   });
-  const firstPlan = useFirstPlan(project, status, graph);
+  const firstPlan = useFirstPlan(project, status, runGraph);
 
   return (
     <div
@@ -481,8 +506,9 @@ export function PreviewPanel({
           project={project}
           threadId={threadId}
           graph={graph}
+          runGraph={runGraph}
           view={{ stageView, planning, showEmpty, liveLoading, gameStopped, loader: controls.loader, firstPlan }}
-          showSetup={showSetup}
+          showSetup={!project && !engines.some(canBuildWith)}
           beside={beside}
           focusedAsset={focusedAsset}
           earlier={run.earlier}

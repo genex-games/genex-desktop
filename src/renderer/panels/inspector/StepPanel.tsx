@@ -11,6 +11,7 @@ import {
   plannedFlips,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
   type Shot,
   thumbShot,
 } from "../../run-graph.ts";
@@ -235,7 +236,7 @@ function StepRows({
       <Row label="Technical details">
         <Details
           rows={[
-            ["run", graph.runId],
+            ["run", runIdOf(graph)],
             ["part", node.facetId],
             ["round", String(node.iteration)],
             ["verdict by", node.verdictSource],
@@ -301,7 +302,7 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
   const tries = step.tries;
   const picture = useStepPicture(props, node);
   // The try in hand, while its agent works: the card shows its screen, live, instead of its stills.
-  const screen = usePartScreen(props.project, graph.runId, step.facetId, graph.active && isLiveStep(step));
+  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, graph.active && isLiveStep(step));
   const liveFrame = node === tries.at(-1) ? screen.frame : null;
   const n = tries.indexOf(node) + 1;
   const rightLabel = rightLabelOf(step, n);

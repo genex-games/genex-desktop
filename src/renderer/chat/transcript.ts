@@ -28,6 +28,7 @@ import {
 } from "../../shared/run-state.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
 import { isStudioRecord } from "../../shared/studio-activity.ts";
+import { isWorkerOfGraph, workerKeyOf } from "../../shared/run-graph-events.ts";
 import { EntryAction, EntryKind, toEntries } from "../chat-entries.ts";
 import type { LoopSetting } from "../loop-setting.ts";
 import {
@@ -49,6 +50,8 @@ const isWaiting = (message: QueuedMessage): boolean =>
 
 /** A plugin's question that still waits on the user. */
 const CONSENT_PENDING: PluginConsentEvent["state"] = "pending";
+/** The key prefix of a running worker's start. */
+const WORKER_KEY = "worker:";
 /** A plugin tool's records, traces of the worker that called it. */
 const WORKER_TOOL_EVENTS: ReadonlySet<string> = new Set([CustomEvent.PluginToolStarted, CustomEvent.PluginTool]);
 
@@ -91,6 +94,32 @@ function runningJobs(threadEvents: readonly EventEnvelope[]): Map<string, EventE
   return running;
 }
 
+/** A run that finished: its workers left with no end work no more. */
+function settleRunWorkers(running: Map<string, EventEnvelope>, runId: unknown): void {
+  if (typeof runId !== "string" || !runId) return;
+  for (const key of running.keys()) if (isWorkerOfGraph(key.slice(WORKER_KEY.length), runId)) running.delete(key);
+}
+
+/** Workers still working in this thread: the first start of each, so its line stays reachable. */
+function runningWorkers(threadEvents: readonly EventEnvelope[]): Map<string, EventEnvelope> {
+  const running = new Map<string, EventEnvelope>();
+  for (const event of threadEvents) {
+    const runEnd = customEvent(event, CustomEvent.RunFinished);
+    if (runEnd) {
+      settleRunWorkers(running, runEnd.runId);
+      continue;
+    }
+    const started = customEvent(event, CustomEvent.WorkerStarted);
+    const finished = started ? null : customEvent(event, CustomEvent.WorkerFinished);
+    const worker = workerKeyOf(started ?? finished ?? {});
+    if (!worker) continue;
+    const key = `${WORKER_KEY}${worker}`;
+    if (finished) running.delete(key);
+    else if (!running.has(key)) running.set(key, event);
+  }
+  return running;
+}
+
 /** Does this record answer an open intake question: a user message, or a build that started? */
 function endsInterview(event: EventEnvelope): boolean {
   if (event.data.type === EventKind.Messages) return event.data.messages.some((m) => m.role === "user");
@@ -122,7 +151,7 @@ function isRunningWorkerTrace(event: EventEnvelope, activeRunId: string | null):
 /**
  * The transcript: the loaded page, plus what must stay reachable whatever page is loaded (a
  * plugin's pending question, an intake question not yet answered, background work still
- * running), in delivery order.
+ * running, a worker still working), in delivery order.
  */
 export function transcriptEntries(input: {
   /** The loaded page and its live tail. */
@@ -142,6 +171,7 @@ export function transcriptEntries(input: {
   const interview = openInterview(input.threadEvents);
   if (interview) pending.set("interview", interview);
   for (const [key, start] of runningJobs(input.threadEvents)) pending.set(key, start);
+  for (const [key, start] of runningWorkers(input.threadEvents)) pending.set(key, start);
   const loadedIds = new Set(input.events.map((event) => event.id));
   // Waiting input keeps its bubble whatever page is loaded: queued, or being handed to the running turn.
   for (const message of input.queued) if (isWaiting(message) && message.eventId) loadedIds.add(message.eventId);

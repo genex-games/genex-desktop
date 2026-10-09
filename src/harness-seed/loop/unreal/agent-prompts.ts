@@ -313,6 +313,9 @@ export const AGENT_WORDS = {
   MarkedAs: (verdict: string) => `marked ${verdict}`,
   NotDelivered: (id: string, state: string) => `Worker ${id} is ${state}: only a delivered one can be marked.`,
   BadVerdict: `verdict must be ${Object.values(AgentVerdict).join(" or ")}`,
+  AlreadyMarked: (id: string, verdict: string) => `${id} is already marked ${verdict}; a verdict stands once given.`,
+  InGameAlready: (id: string, savePoint: string) =>
+    `${id}'s work is already in the game (save point ${savePoint}), so it cannot be rejected. To take something of it out, change it in the game folder.`,
   Marked: (id: string, verdict: string) =>
     verdict === AgentVerdict.Used
       ? `Marked ${id} used: it joins your next save point on the graph.`

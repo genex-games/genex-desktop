@@ -30,6 +30,7 @@ import {
 import { tmpDir } from "../helpers/tmp.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
+import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import {
   DIRECTOR_TOOLS,
   MAX_DIRECTOR_MEMORY,
@@ -2415,12 +2416,37 @@ function markingLoopRun(state: string) {
   return { loopRun, rec, integrated, cards, log };
 }
 
+/** The `worker_finished` records a director appended, by their payloads. */
+function workerFinishes(rec: { paramsOf: (method: string) => Array<Record<string, unknown>> }) {
+  return rec
+    .paramsOf("events.append")
+    .flatMap((params) =>
+      ((params.batch as Array<Record<string, unknown>>) ?? []).flatMap((data) =>
+        data.event_type === "worker_finished" ? [data.payload as Record<string, unknown>] : [],
+      ),
+    );
+}
+
 describe("the director's worker_mark and readers, in Genex's one worker model", () => {
   it("worker_mark used integrates the worker, and rejected stops its news", async () => {
     const { handler, wait } = await import("../../src/harness-seed/loop/director/tools.ts");
     const used = markingLoopRun("running");
     assert.equal(await handler(used.loopRun as never, "worker_mark", { id: "plaza", verdict: "used" }), "merged plaza");
     assert.deepEqual(used.integrated, [{ worker: "plaza" }], "used is integrate for that worker");
+    assert.deepEqual(
+      workerFinishes(used.rec).map(({ at: _at, ...row }) => row),
+      [
+        {
+          runId: "run-mark-running",
+          project: "skate",
+          workerId: "plaza",
+          title: "Plaza",
+          verdict: "used",
+          merged: true,
+        },
+      ],
+      "the lead's verdict is a record: used and added to the game",
+    );
 
     const rejected = markingLoopRun("done");
     rejected.loopRun.note("worker plaza: iteration 2 accepted");
@@ -2430,17 +2456,151 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
     );
     assert.match(answer, /Rejected plaza/);
     assert.deepEqual(rejected.integrated, [], "rejected integrates nothing");
+    const [rejectedRow, ...more] = workerFinishes(rejected.rec);
+    assert.equal(rejectedRow?.verdict, "rejected");
+    assert.equal(rejectedRow?.merged, undefined, "a rejected builder's work was not added");
+    assert.deepEqual(more, []);
     assert.match(rejected.cards.join("\n"), /rejected worker plaza/, "the feed says so");
     const waited = JSON.parse(String(await wait(rejected.loopRun as never, { seconds: "1" })));
     assert.deepEqual(waited.happened, ["USER SAYS: keep the plaza red"], "its news stops; the user's words do not");
     assert.deepEqual(waited.status.workers, [], "the digest no longer names it");
+    const stillRunning = markingLoopRun("running");
     assert.match(
-      String(
-        await handler(markingLoopRun("running").loopRun as never, "worker_mark", { id: "plaza", verdict: "rejected" }),
-      ),
+      String(await handler(stillRunning.loopRun as never, "worker_mark", { id: "plaza", verdict: "rejected" })),
       /still running/,
       "a running worker is stopped first",
     );
+    assert.deepEqual(workerFinishes(stillRunning.rec), [], "and no verdict is recorded");
+  });
+
+  it("worker_mark rejected refuses a builder whose work is in the game already", async () => {
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const usedFirst = markingLoopRun("done");
+    await handler(usedFirst.loopRun as never, "worker_mark", { id: "plaza", verdict: "used" });
+    const integratedFirst = markingLoopRun("done");
+    const plaza = integratedFirst.loopRun.state.workers.get("plaza");
+    assert.ok(plaza);
+    Object.assign(plaza, { integrated: true });
+    for (const [name, { loopRun, rec, cards }] of [
+      ["marked used", usedFirst],
+      ["integrated by the lead", integratedFirst],
+    ] as const) {
+      const before = workerFinishes(rec).length;
+      const answer = String(await handler(loopRun as never, "worker_mark", { id: "plaza", verdict: "rejected" }));
+      assert.match(answer, /already in the game/, name);
+      assert.equal(workerFinishes(rec).length, before, `${name}: no verdict is recorded`);
+      assert.deepEqual(cards, [], `${name}: the feed says nothing was set aside`);
+    }
+  });
+
+  it("a builder's end is recorded: one the close-out finds still running stopped, a finished one with its summary", async () => {
+    const { recordBuilderEnded } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
+    const cutOff = markingLoopRun("running");
+    const plaza = cutOff.loopRun.state.workers.get("plaza");
+    await recordBuilderEnded(cutOff.loopRun as never, plaza as never, "the run ended");
+    const [stopped] = workerFinishes(cutOff.rec);
+    assert.equal(stopped?.state, "stopped", "a builder cut off by the run's end did not finish");
+    assert.equal(stopped?.stoppedBecause, "the run ended");
+    const finished = markingLoopRun("done");
+    // A single-session builder keeps its session's summary on itself, as `runSingleWorker` sets it.
+    const done = { ...finished.loopRun.state.workers.get("plaza"), summary: "Paved the plaza. Tests pass." };
+    await recordBuilderEnded(finished.loopRun as never, done as never, null);
+    const [ended] = workerFinishes(finished.rec);
+    assert.equal(ended?.state, "done");
+    assert.equal(ended?.summary, "Paved the plaza.", "its own summary's first sentence");
+    assert.equal(ended?.runId, "run-mark-done");
+    assert.equal(ended?.delivered, undefined, "a builder that left no commit of its own hands nothing back");
+    const handedBack = markingLoopRun("done");
+    const committed = { ...handedBack.loopRun.state.workers.get("plaza"), from: "base1", lastCommit: "own1" };
+    await recordBuilderEnded(handedBack.loopRun as never, committed as never, null);
+    assert.equal(
+      workerFinishes(handedBack.rec)[0]?.delivered,
+      true,
+      "a builder that finished with a commit of its own hands work back: it waits on the lead",
+    );
+    const unchanged = markingLoopRun("done");
+    const atBase = { ...unchanged.loopRun.state.workers.get("plaza"), from: "base1", lastCommit: "base1" };
+    await recordBuilderEnded(unchanged.loopRun as never, atBase as never, null);
+    assert.equal(workerFinishes(unchanged.rec)[0]?.delivered, undefined, "its head still at its fork is nothing");
+    const failed = markingLoopRun("failed");
+    const failedWithCommit = { ...failed.loopRun.state.workers.get("plaza"), from: "base1", lastCommit: "own1" };
+    await recordBuilderEnded(failed.loopRun as never, failedWithCommit as never, "it broke");
+    assert.equal(workerFinishes(failed.rec)[0]?.delivered, undefined, "only a finished builder hands work back");
+  });
+
+  it("a builder that stops short says why in the app's own code: the lead stopped it, the Loop ended first, or an error", async () => {
+    const { recordBuilderEnded } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const codeOf = async (state: string, setUp: (run: ReturnType<typeof markingLoopRun>) => Promise<void> | void) => {
+      const marking = markingLoopRun(state);
+      await setUp(marking);
+      const plaza = marking.loopRun.state.workers.get("plaza");
+      await recordBuilderEnded(marking.loopRun as never, plaza as never, "lead-facing words");
+      return workerFinishes(marking.rec)[0]?.stopCode;
+    };
+    const plazaOf = (marking: ReturnType<typeof markingLoopRun>) =>
+      marking.loopRun.state.workers.get("plaza") as unknown as Record<string, unknown>;
+    assert.equal(await codeOf("running", () => {}), "run_ended", "cut off by the run's end at its close-out");
+    assert.equal(
+      await codeOf("running", async (marking) => {
+        const asked = Object.assign(marking.loopRun, {
+          stopWorker: async (worker: Record<string, unknown>) => {
+            worker.stopRequested = true;
+          },
+        });
+        plazaOf(marking).iterations = [];
+        const answer = String(await handler(asked as never, "worker_stop", { id: "plaza", why: "enough" }));
+        assert.match(answer, /stop requested for plaza/);
+        plazaOf(marking).state = "stopped";
+      }),
+      "stopped_by_lead",
+      "the lead's worker_stop",
+    );
+    assert.equal(
+      await codeOf("stopped", (marking) => {
+        plazaOf(marking).stopRequested = true;
+      }),
+      "run_ended",
+      "stopped by the run's close, not by the lead",
+    );
+    assert.equal(await codeOf("failed", () => {}), "error", "a failure");
+    assert.equal(await codeOf("done", () => {}), undefined, "a finished builder has none");
+  });
+
+  it("a conflict worker's records name the work it fits in, in plain words, with no summary of Genex's own", async () => {
+    const { recordBuilderEnded, recordBuilderStarted } = await import(
+      "../../src/harness-seed/loop/workers/director-pool.ts"
+    );
+    const { CONFLICT_WORDS } = await import("../../src/harness-seed/loop/director/lead-session-prompts.ts");
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const { loopRun, rec } = markingLoopRun("done");
+    const fitting = {
+      id: "plaza-2",
+      title: CONFLICT_WORDS.title("Plaza"),
+      brief: "MERGE CONFLICT TO RESOLVE: keep both sides.",
+      state: "done",
+      mode: "single",
+      from: "base1",
+      lastCommit: "own1",
+      merging: { of: "plaza", commit: "c1" },
+      summary: CONFLICT_WORDS.mergedCleanly("plaza"),
+    };
+    loopRun.state.workers.set(fitting.id, fitting as never);
+    await recordBuilderStarted(loopRun as never, fitting as never);
+    await recordBuilderEnded(loopRun as never, fitting as never, null);
+    await handler(loopRun as never, "worker_mark", { id: fitting.id, verdict: "used" });
+    const records = rec
+      .paramsOf("events.append")
+      .flatMap((params) => (params.batch as Array<Record<string, unknown>>) ?? [])
+      .filter((data) => String(data.event_type).startsWith("worker_"))
+      .map((data) => data.payload as Record<string, unknown>);
+    assert.equal(records.length, 3, "a start, an end and the lead's verdict");
+    const forbidden = /merg|copy|lock|reader|writer|editor|isolation|sandbox|seat|conflict/i;
+    for (const { title, task, summary } of records) {
+      assert.equal(title, "Fit Plaza in with the rest of the game");
+      assert.doesNotMatch(`${title} ${task ?? ""} ${summary ?? ""}`, forbidden);
+    }
+    assert.equal(records[1]?.summary, undefined, "Genex's own words on the merge are no summary of the worker's");
   });
 
   it("a reader started with isolation read works in place and never integrates", async () => {
@@ -2784,6 +2944,25 @@ describe("a director's run through the real core and harness", () => {
       ["running", "done"],
     );
     assert.ok(workerEvents[1]!.lastCommit);
+    // The builder's own worker records, as its session left them: its start with the lead's brief,
+    // its end with its session's first sentence; the integrate then puts its line in the game.
+    const plazaRecords = (type: string) =>
+      customEvents(events, type).filter((e) => e.runId === runId && e.workerId === "plaza");
+    const [plazaStart, ...moreStarts] = plazaRecords("worker_started");
+    assert.deepEqual(moreStarts, []);
+    assert.equal(plazaStart?.title, "Plaza");
+    assert.equal(plazaStart?.isolation, "copy");
+    assert.equal(plazaStart?.task, "paint the plaza red");
+    const [plazaEnd, ...moreEnds] = plazaRecords("worker_finished");
+    assert.deepEqual(moreEnds, [], "integrate writes no worker record");
+    assert.equal(plazaEnd?.state, "done");
+    assert.equal(plazaEnd?.delivered, true, "it committed work of its own");
+    assert.equal(plazaEnd?.stopCode, undefined);
+    assert.equal(plazaEnd?.summary, "painted the plaza red", "the session's own words, as worker_status says them");
+    const plazaLines = toEntries(events).flatMap((entry) =>
+      entry.kind === EntryKind.Action && entry.action === EntryAction.Worker ? [entry.text] : [],
+    );
+    assert.deepEqual(plazaLines, ["Painted the plaza red. Added to your game."]);
     const merges = customEvents(events, "integration_merge").filter((e) => e.runId === runId);
     assert.equal(merges.length, 1);
     assert.equal(merges[0]!.stage, "director");
@@ -2905,7 +3084,10 @@ describe("a director's run through the real core and harness", () => {
         "autopilot_plan_review",
         "director_verdict",
         "director_worker",
+        // Flipped: a builder also leaves the worker records every lead's workers leave.
+        "worker_started",
         "autopilot_decision",
+        "worker_finished",
         "integration_merge",
         "integration_health",
         "run_interaction_evidence",
@@ -2920,7 +3102,9 @@ describe("a director's run through the real core and harness", () => {
       buildRunGraph(events)
         ?.nodes.map((node) => node.kind)
         .sort(),
-      ["base", "facet", "final", "integration", "optimization", "run"],
+      // Flipped: a run whose builder left worker records is a tree with the lead at its root; it
+      // finished, so no finish check waits at its end.
+      ["base", "facet", "final", "integration", "lead", "optimization", "run"],
       "the Builds graph's node kinds",
     );
   });

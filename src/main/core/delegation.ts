@@ -49,7 +49,7 @@ import { writableRoots } from "../../substrate/engines/never-touch.ts";
 import { forwardWorkerTool, heldInPlan, offeredWorkerTools } from "./worker-tools.ts";
 import { callJobTool, type JobCaller, type JobNews, jobNews, jobToolsFor } from "./job-tools.ts";
 import { appLookFor, type LookCaller, runAppLook } from "./app-look-tool.ts";
-import { type JobOwner, JobRole, type JobScope, JobScopeKind, JobStopper } from "../../shared/jobs.ts";
+import { type JobOwner, JobRole, JobScopeKind, JobStopper } from "../../shared/jobs.ts";
 import { WORKER_TOOL_ANSWER } from "./worker-tools-prompts.ts";
 import { DispatchActionType, HarnessCapability, type ReferenceFrame } from "../../shared/protocol.ts";
 import { COMPUTER_TOOL_NAME } from "../../substrate/computer-tool.ts";
@@ -737,8 +737,7 @@ export class DelegationService {
     const folder = session.leads ?? target.workCwd;
     const neverTouch = await this.#neverTouch(p.project, [folder, game]);
     const writeRoots = writableRoots(await this.#writeRoots(folder, chatThreadId), neverTouch);
-    const scope: JobScope = lead ? { kind: JobScopeKind.Run, runId: lead.runId } : { kind: JobScopeKind.Chat };
-    const owner: JobOwner = { project: p.project, chatThreadId, role: lead ? JobRole.Lead : JobRole.Chat, scope };
+    const owner = chatOrLeadJobOwner(p.project, chatThreadId, lead, session.chatTurn);
     return { folder, reach: { writeRoots, neverTouch, home, gameFolder: game }, owner };
   }
 
@@ -2401,6 +2400,21 @@ function projectToolSeat(p: DelegateParams, session: Pick<DelegationSession, "le
   if (session.worker) return ProjectToolSeat.Worker;
   if (session.leadTurn) return ProjectToolSeat.Lead;
   return chatsOwnSession(p, session) ? ProjectToolSeat.Chat : ProjectToolSeat.None;
+}
+
+/**
+ * Whose a lead's or the chat's own session's jobs are: the lead's run's, or the chat's (they outlive
+ * the turn, but their records name the turn that started them).
+ */
+function chatOrLeadJobOwner(
+  project: string,
+  chatThreadId: string,
+  lead: { runId: string } | null,
+  chatTurn: string | undefined,
+): JobOwner {
+  if (lead) return { project, chatThreadId, role: JobRole.Lead, scope: { kind: JobScopeKind.Run, runId: lead.runId } };
+  const turn = chatTurn ? { turn: chatTurn } : {};
+  return { project, chatThreadId, role: JobRole.Chat, scope: { kind: JobScopeKind.Chat }, ...turn };
 }
 
 /** Whose a worker's jobs are: its chat's, for its run, or for the chat turn that started it; null for neither. */

@@ -284,7 +284,9 @@ export interface SeedCallChange {
  * tool list offers its readers no research. A kept wake loop that never reads the run's job ends
  * leaves a resting lead asleep through them; kept wake rules lack their kind (such an end still
  * wakes the lead soon, as news); and a kept `loop-run.ts` or journal that keeps no job cursor reads the
- * run's ends again after a restart.
+ * run's ends again after a restart. Kept builders or chat turns that write no worker records leave
+ * those workers off Builds and the chat; a kept run start without `workerRecords` draws its Loop as a
+ * tree only from its first worker; a kept tool list never tells the lead the person reads its note.
  */
 export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
   { file: "loop/delegated-turn.ts", marker: "step: true" },
@@ -334,6 +336,14 @@ export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
   { file: "loop/director/wake-schedule.ts", marker: "JobEnded" },
   { file: "loop/director/loop-run.ts", marker: "jobsCursor" },
   { file: "loop/director/journal.ts", marker: "jobsCursor" },
+  // Every worker leaves its start and end on the chat's log for the Builds graph and the chat: the
+  // director's builders, and a chat turn's workers with the person's request.
+  { file: "loop/director/workers.ts", marker: "recordBuilderStarted(" },
+  { file: "loop/delegated-turn.ts", marker: "ask: options.text" },
+  // A director's run says from its start that its workers leave records (its graph is a tree from
+  // the start), and the lead is told the person reads its note on a worker.
+  { file: "loop/director/setup.ts", marker: "workerRecords: true" },
+  { file: "loop/director/tool-specs.ts", marker: "Why, for the person" },
 ];
 
 interface SeedManifest {

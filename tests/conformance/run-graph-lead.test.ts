@@ -29,6 +29,7 @@ import {
 } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { type Lead, newLeadJournal } from "../../src/harness-seed/loop/unreal/lead-journal.ts";
 import { VerdictSource } from "../../src/harness-seed/loop/verdict.ts";
+import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { buildRunGraph, GraphNodeKind, type IterationNode } from "../../src/renderer/run-graph.ts";
 import { CheckedBy, partRows, StepState, statusLine, stepSentence, stepWord } from "../../src/renderer/run-steps.ts";
 import { seedLeadGraph } from "../../src/main/dev/fixture-lead-graph.ts";
@@ -229,7 +230,7 @@ async function leadRun() {
   await criticAdvice(lead, advice);
   await leadFinished(lead, { landed: true, ...leadCloseOf(journal) }, false);
   const log = events(agentJob("agent-texture-1"));
-  return { graph: buildRunGraph(log), lead, summary: summarizeRun(log as never, RUN.project, RUN_ID) };
+  return { graph: buildRunGraph(log), lead, log, summary: summarizeRun(log as never, RUN.project, RUN_ID) };
 }
 
 describe("the Unreal lead's run on the Builds graph", () => {
@@ -289,9 +290,10 @@ describe("the Unreal lead's run on the Builds graph", () => {
     assert.deepEqual(
       agents.map((row) => [row.facet.title, row.steps[0]?.state, row.steps[0] && stepWord(row.steps[0], graph.active)]),
       [
-        ["Blender: Katana", StepState.InBuild, "Added"],
-        ["Meshy: Goblin", StepState.NotDelivered, "Didn't deliver"],
-        ["Texture: Concrete", StepState.Delivered, "Delivered"],
+        // Typed workers write the worker records, so their nodes wear the workers' words.
+        ["Blender: Katana", StepState.InBuild, "Added to your game"],
+        ["Meshy: Goblin", StepState.NotDelivered, "Didn't finish"],
+        ["Texture: Concrete", StepState.Delivered, "Done"],
       ],
     );
     assert.equal(agents[1]?.facet.stoppedBecause, "the model stopped");
@@ -301,6 +303,18 @@ describe("the Unreal lead's run on the Builds graph", () => {
       merge.merges.some((item) => item.facetId === "agent-blender_model-1"),
       "the used delivery merged into the save",
     );
+  });
+
+  it("a used worker's line says it was added to the game once the save point merges it, as its row does", async () => {
+    const { graph, log } = await leadRun();
+    const lines = toEntries(log).flatMap((entry) =>
+      entry.kind === EntryKind.Action && entry.action === EntryAction.Worker ? [entry.text] : [],
+    );
+    assert.equal(lines[0], "Blender: Katana. Added to your game.");
+    assert.ok(graph);
+    const katana = partRows(graph).find((row) => row.facet.facetId === "agent-blender_model-1")?.steps[0];
+    assert.ok(katana);
+    assert.equal(stepWord(katana, graph.active), "Added to your game");
   });
 
   it("says the run landed with its save points and names a sub-agent that didn't deliver, title as written", async () => {
@@ -391,13 +405,14 @@ describe("the Unreal lead's run on the Builds graph", () => {
     assert.equal(round?.status, "accepted", "the round stays the lead's save");
   });
 
-  it("closes with the save points and the sub-agents in its summary, and the run landed", async () => {
+  it("closes with the save points and the workers in its summary, and the run landed", async () => {
     const { graph, lead } = await leadRun();
     const final = graph?.nodes.find((node) => node.kind === GraphNodeKind.Final);
     assert.ok(final?.kind === GraphNodeKind.Final);
     assert.equal(final.landed, true);
     assert.match(String(final.summary), /2 save points; the last, Fog and light: volumetric fog, one key light\./);
-    assert.match(String(final.summary), /2 sub-agents delivered, 1 used in the game; 1 didn't deliver\./);
+    // Flipped: the close names them workers, as everything the person reads does.
+    assert.match(String(final.summary), /2 workers delivered, 1 used in the game; 1 didn't deliver\./);
     const close = leadCloseOf(lead.journal);
     assert.deepEqual(Object.keys(close.facets as object), [
       "lead",

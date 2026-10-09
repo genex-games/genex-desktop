@@ -10,6 +10,8 @@
  */
 import type { JSX } from "react";
 import { AssetsPanel } from "./inspector/AssetsPanel.tsx";
+import { FinishCheckPanel } from "./inspector/FinishCheckPanel.tsx";
+import { JobsPanel } from "./inspector/JobsPanel.tsx";
 import { LeadPanel } from "./inspector/LeadPanel.tsx";
 import { OptimizationPanel } from "./inspector/OptimizationPanel.tsx";
 import { PartPanel } from "./inspector/PartPanel.tsx";
@@ -31,6 +33,8 @@ export function Inspector(props: InspectorProps): JSX.Element | null {
   if (selection === GraphSelection.Start) return <StartPanel {...props} />;
   if (selection === GraphSelection.Final) return <ResultPanel {...props} />;
   if (selection === GraphSelection.Lead) return <LeadPanel {...props} />;
+  if (selection === GraphSelection.Jobs) return <JobsPanel {...props} />;
+  if (selection === GraphSelection.FinishCheck) return <FinishCheckPanel {...props} />;
   if (selection === GraphSelection.Assets) return <AssetsPanel {...props} />;
   if (selection === GraphSelection.Optimization && props.optimization)
     return <OptimizationPanel {...props} node={props.optimization} />;

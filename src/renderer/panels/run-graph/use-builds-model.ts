@@ -7,6 +7,7 @@ import {
   type BaseNode,
   type BlenderNode,
   buildRunGraph,
+  type FinishCheckNode,
   joinBuildsView,
   GraphNodeKind,
   type IntegrationNode,
@@ -14,18 +15,19 @@ import {
   type OptimizationNode,
   type RunGraph as RunGraphModel,
   type RunNode,
+  runIdOf,
   RunStillStage,
   runStillPath,
   thumbShot,
 } from "../../run-graph.ts";
-import { layoutSteps, leadWorking, partRows, resultGate, resultStatus, StepState } from "../../run-steps.ts";
+import { leadWorking, partRows, resultStatus, StepState } from "../../run-steps.ts";
+import { buildsLayout, graphLoaded, leadFace, leadNodeOf, readingNodes, readingOrder } from "../../run-tree.ts";
 import { useLibrary } from "../../state/hooks.ts";
 import { assetsOf } from "../../state/library.ts";
 import { studio } from "../../state/studio.ts";
 import { useStill } from "../../stills.ts";
 import { useSharedSnapshot } from "../../use-shared-snapshot.ts";
 import { useRunSummary } from "../../use-run-summary.ts";
-import { GraphSelection } from "../inspector/selection.ts";
 import { useRoundStill } from "../run-stills.ts";
 
 /** How often the status bar's elapsed time moves while the run does. */
@@ -62,7 +64,7 @@ function nodeOfKind<T extends RunGraphModel["nodes"][number]>(graph: RunGraphMod
 
 /** The Builds tab's model: the graph as the outcome and the asset inventory see it, its rows and its layout. */
 function useBuildGraph(suppliedGraph: RunGraphModel, project: string | null) {
-  const outcome = useDeferredValue(useSharedSnapshot(useRunSummary(project, suppliedGraph.runId)));
+  const outcome = useDeferredValue(useSharedSnapshot(useRunSummary(project, runIdOf(suppliedGraph))));
   const deferredGraph = useDeferredValue(suppliedGraph);
   // The game's asset inventory, from the library store's one watch (shared with the Assets stage).
   useEffect(() => (project ? studio().library.watchAssets(project) : undefined), [project]);
@@ -83,22 +85,15 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   const blender = useMemo(() => nodeOfKind<BlenderNode>(graph, GraphNodeKind.Blender), [graph]);
   const assets = useMemo(() => nodeOfKind<AssetsNode>(graph, GraphNodeKind.Assets), [graph]);
   const optimization = useMemo(() => nodeOfKind<OptimizationNode>(graph, GraphNodeKind.Optimization), [graph]);
+  const finishCheck = useMemo(() => nodeOfKind<FinishCheckNode>(graph, GraphNodeKind.FinishCheck), [graph]);
+  const loaded = graphLoaded(graph, outcome);
+  const leadNode = useMemo(() => leadNodeOf(graph), [graph]);
   const rows = useSharedSnapshot(useMemo(() => partRows(graph, outcome), [graph, outcome]));
-  const gateOfResult = useMemo(() => resultGate(graph), [graph]);
   // Between parts the lead has the run; its node keeps the graph from looking finished.
   const lead = useMemo(() => leadWorking(graph, outcome, rows), [graph, outcome, rows]);
-  const layout = useSharedSnapshot(
-    useMemo(
-      () =>
-        layoutSteps(rows, {
-          assets: Boolean(blender || assets),
-          optimization: Boolean(optimization),
-          resultGate: gateOfResult,
-          lead,
-        }),
-      [rows, blender, assets, optimization, gateOfResult, lead],
-    ),
-  );
+  // A tree draws the lead for the whole run, saying what it is doing.
+  const face = useMemo(() => (graph.tree ? leadFace(graph, outcome, rows) : null), [graph, outcome, rows]);
+  const layout = useSharedSnapshot(useMemo(() => buildsLayout(graph, rows, outcome), [graph, rows, outcome]));
   const steps = useMemo(() => rows.flatMap((row) => row.steps), [rows]);
   const stepById = useMemo(() => new Map(steps.map((step) => [step.id, step] as const)), [steps]);
   const rounds = useMemo(
@@ -107,26 +102,20 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   );
   const roundById = useMemo(() => new Map(rounds.map((node) => [node.id, node] as const)), [rounds]);
   /** Every node Previous and Next step through, in the graph's reading order. */
-  const selectable = useMemo(
-    () => [
-      GraphSelection.Start,
-      ...(blender || assets ? [GraphSelection.Assets] : []),
-      ...rows.flatMap((row) => row.steps.map((step) => step.id)),
-      ...(optimization ? [GraphSelection.Optimization] : []),
-      GraphSelection.Final,
-      ...(lead ? [GraphSelection.Lead] : []),
-    ],
-    [rows, blender, assets, optimization, lead],
-  );
+  const selectable = useMemo(() => readingOrder(rows, readingNodes(graph, rows, outcome)), [rows, graph, outcome]);
   return useMemo(
     () => ({
       outcome,
+      loaded,
       graph,
       run,
       base,
       blender,
       assets,
       optimization,
+      finishCheck,
+      leadNode,
+      face,
       rows,
       lead,
       layout,
@@ -138,12 +127,16 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
     }),
     [
       outcome,
+      loaded,
       graph,
       run,
       base,
       blender,
       assets,
       optimization,
+      finishCheck,
+      leadNode,
+      face,
       rows,
       lead,
       layout,

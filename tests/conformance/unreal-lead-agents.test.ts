@@ -31,6 +31,7 @@ import {
   CAST_AGENT_MS,
 } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { type Lead, newLeadJournal, oneGitWrite } from "../../src/harness-seed/loop/unreal/lead-journal.ts";
+import { leadCloseOf, savePointRound } from "../../src/harness-seed/loop/unreal/lead-graph.ts";
 import { leadToolHandler } from "../../src/harness-seed/loop/unreal/lead-tools.ts";
 import { activate as activateBlender } from "../../src/plugins/blender/backend.ts";
 import { type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
@@ -229,6 +230,18 @@ const workerRecords = (rec: CtxRecorder, part: string) =>
     .flatMap((p) => p.batch as Array<{ event_type: string; payload: Record<string, unknown> }>)
     .filter((e) => e.event_type === "director_worker" && e.payload.workerId === part)
     .map((e) => e.payload);
+
+/** A part's worker records (`worker_started`, `worker_finished`), oldest first, each without the time it was written. */
+const leadWorkerRecords = (rec: CtxRecorder, part: string) =>
+  rec
+    .paramsOf("events.append")
+    .flatMap((p) => p.batch as Array<{ event_type: string; payload: Record<string, unknown> }>)
+    .filter((e) => ["worker_started", "worker_finished"].includes(e.event_type) && e.payload.workerId === part)
+    .map((e) => {
+      const { at, ...payload } = e.payload;
+      assert.equal(typeof at, "string", "a worker record says when");
+      return [e.event_type, payload];
+    });
 
 describe("a lead's sub-agent, started", () => {
   it("works in its own copy at medium effort, offered only its kind's tools and attributed to its own part", async () => {
@@ -799,6 +812,65 @@ describe("the lead's news of its sub-agents", () => {
     assert.match(String(last?.stoppedBecause), /too short/);
     assert.ok(rec);
   });
+
+  it("a typed worker leaves the same records under its part's id, and both verdicts are recorded", async () => {
+    const { lead, rec } = await leadOn();
+    await deliver(lead);
+    await markAgent(lead, { id: "blender_model-1", verdict: "used" });
+    const { lead: other, rec: otherRec } = await leadOn();
+    await deliver(other);
+    await markAgent(other, { id: "blender_model-1", verdict: "rejected", note: "too short" });
+    const scope = { runId: "run-lead", project: "night-spire" };
+    const katana = { ...scope, workerId: "agent-blender_model-1", title: "Blender: Katana" };
+    assert.deepEqual(leadWorkerRecords(rec, katana.workerId), [
+      ["worker_started", { ...katana, isolation: "copy", type: AgentKind.BlenderModel, task: KATANA.brief }],
+      ["worker_finished", { ...katana, state: "done", delivered: true }],
+      ["worker_finished", { ...katana, verdict: "used" }],
+    ]);
+    assert.deepEqual(leadWorkerRecords(otherRec, katana.workerId).at(-1), [
+      "worker_finished",
+      { ...katana, verdict: "rejected", note: "too short" },
+    ]);
+  });
+});
+
+describe("a typed worker's verdict stands once given", () => {
+  it("a used worker a save point took in cannot be rejected, and no verdict is given twice; the close still counts it used", async () => {
+    const { lead, rec } = await leadOn();
+    await deliver(lead);
+    await markAgent(lead, { id: "blender_model-1", verdict: "used" });
+    const point = {
+      label: "Save 1",
+      snapshotId: "snap-1",
+      at: lead.clock.now(),
+      summary: "the katana in the shrine",
+      thumbnails: [],
+      milestoneId: "lead",
+      round: 1,
+      auto: false,
+      logErrors: [],
+    };
+    lead.journal.savePoints.push(point);
+    await savePointRound(lead, point);
+    const [katana] = lead.journal.agents;
+    assert.equal(katana?.mergedInto, "Save 1", "the save point took it in");
+    const recordsBefore = leadWorkerRecords(rec, "agent-blender_model-1").length;
+    const partBefore = workerRecords(rec, "agent-blender_model-1").length;
+    const answer = await markAgent(lead, { id: "blender_model-1", verdict: "rejected", note: "too short" });
+    assert.match(answer, /already in the game/);
+    assert.equal(katana?.mark?.verdict, "used", "its verdict stands");
+    assert.equal(leadWorkerRecords(rec, "agent-blender_model-1").length, recordsBefore, "no verdict is recorded");
+    assert.equal(workerRecords(rec, "agent-blender_model-1").length, partBefore, "its part does not stop");
+    assert.match(String(leadCloseOf(lead.journal).summary), /1 used in the game/);
+
+    const { lead: other, rec: otherRec } = await leadOn();
+    await deliver(other);
+    await markAgent(other, { id: "blender_model-1", verdict: "rejected", note: "too short" });
+    const before = leadWorkerRecords(otherRec, "agent-blender_model-1").length;
+    assert.match(await markAgent(other, { id: "blender_model-1", verdict: "used" }), /already marked rejected/);
+    assert.equal(other.journal.agents[0]?.mark?.verdict, "rejected");
+    assert.equal(leadWorkerRecords(otherRec, "agent-blender_model-1").length, before);
+  });
 });
 
 describe("the close of a run with sub-agents", () => {
@@ -916,6 +988,40 @@ describe("the lead's workers, in Genex's one worker model", () => {
     assert.equal(wind?.state, AgentState.Stopped, "nothing delivered: it ends as stopped");
     assert.equal(wind?.error, "stopped by the lead");
     assert.match(String(await stop("worker_stop", { id: "sound-1" })), /not running/);
+  });
+
+  it("a typed worker that stops short says why in the app's own code: an error, the lead stopped it, or the Loop ended first", async () => {
+    const stopCodeOf = (rec: CtxRecorder, part: string) =>
+      leadWorkerRecords(rec, part).flatMap(([type, payload]) => {
+        const end = payload as Record<string, unknown>;
+        return type === "worker_finished" && end.state ? [[end.state, end.stopCode]] : [];
+      });
+    const failed = await leadOn();
+    failed.host.turns = ["fails"];
+    failed.host.tree = [];
+    await deliver(failed.lead);
+    assert.deepEqual(stopCodeOf(failed.rec, "agent-blender_model-1"), [["failed", "error"]]);
+
+    const stopped = await leadOn();
+    stopped.host.turns = ["hangs"];
+    stopped.host.tree = [];
+    const call = leadToolHandler(stopped.lead);
+    await call("worker_start", { type: "sound", title: "Wind", task: "A low wind." });
+    for (let i = 0; i < 5; i++) await tick();
+    await call("worker_stop", { id: "sound-1" });
+    assert.deepEqual(stopCodeOf(stopped.rec, "agent-sound-1"), [["stopped", "stopped_by_lead"]]);
+
+    const closed = await leadOn();
+    closed.host.turns = ["hangs"];
+    await startAgent(closed.lead, { kind: "sound", title: "Wind", brief: "A low wind." });
+    for (let i = 0; i < 5; i++) await tick();
+    closed.host.tree = [];
+    await settleAgents(closed.lead);
+    assert.deepEqual(stopCodeOf(closed.rec, "agent-sound-1"), [["stopped", "run_ended"]]);
+
+    const done = await leadOn();
+    await deliver(done.lead);
+    assert.deepEqual(stopCodeOf(done.rec, "agent-blender_model-1"), [["done", undefined]]);
   });
 
   it("a typeless worker_start runs a generic worker from the shared pool", async () => {

@@ -3,14 +3,26 @@ import { PerformanceBoundary } from "../../performance.tsx";
 import { PerformanceComponent } from "../../../shared/performance.ts";
 /**
  * The Builds graph's nodes: what you asked, the assets tile, every step, the optimization tile,
- * your build and — while it has the run between parts — the lead. Every picture node is one size:
+ * your build and the lead — in a tree for the whole run, with its background tile and the finish
+ * check; otherwise while it has the run between parts. Every picture node is one size:
  * its picture fills it and its words sit on the picture, so no state changes its height. A node at
  * work is its agent's screen: the window's newest frame, the agent's cursor, what it is doing.
  */
 import type { CSSProperties, JSX, ReactNode } from "react";
 import type { AgentScreenFrame } from "../../../shared/agent-screen.ts";
-import type { AssetInfo, AssetsNode, BaseNode, BlenderNode, OptimizationNode, Rect, RunNode } from "../../run-graph.ts";
-import { thumbShot, truncate } from "../../run-graph.ts";
+import { JobState } from "../../../shared/jobs.ts";
+import type {
+  AssetInfo,
+  AssetsNode,
+  BaseNode,
+  BlenderNode,
+  FinishCheckNode as FinishCheckModel,
+  OptimizationNode,
+  Rect,
+  RunNode,
+} from "../../run-graph.ts";
+import { FinishCheckState, runIdOf, thumbShot, truncate } from "../../run-graph.ts";
+import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import {
   askedRest,
@@ -22,6 +34,7 @@ import {
   stepWord,
   Tone,
 } from "../../run-steps.ts";
+import { jobsTileStatus, LeadFace } from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { ASSET_THUMB_PX, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
@@ -32,6 +45,8 @@ import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector
 import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
 import { useRoundStill } from "../run-stills.ts";
+import { FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
+import { useNow } from "./use-builds-model.ts";
 
 /** How much of the prompt the start node shows. */
 const GOAL_CHARS = 48;
@@ -237,13 +252,18 @@ function NodeFace({
   );
 }
 
-/** A tile's name and status in the flow of its card — the assets tile, which has no one picture. */
+/**
+ * A tile's name and status in the flow of its card — the assets tile and the background tile,
+ * which have no one picture — under an optional first line that says what the tile is.
+ */
 function TileText({
+  eyebrow = null,
   name,
   word,
   glyph,
   color = "var(--ink-3)",
 }: {
+  eyebrow?: string | null;
   name: string;
   word: string;
   glyph: ReactNode;
@@ -252,6 +272,7 @@ function TileText({
   return (
     <>
       <span className="flex min-w-0 flex-col gap-px px-1 group-data-[zoom=far]/canvas:hidden">
+        {eyebrow ? <span className="truncate text-[11px] leading-[14px] text-ink-3">{eyebrow}</span> : null}
         <span className="truncate text-[13.5px] leading-[18px] font-semibold text-ink">{name}</span>
         <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4" style={{ color }}>
           {glyph}
@@ -289,7 +310,7 @@ export const StepNode = memo(function StepNode({
   const shown = step.shown;
   const shot = shown ? thumbShot(shown) : null;
   const src = useRoundStill({ runId }, step.facetId, shown?.iteration ?? 1, shot?.path ?? null, working && active);
-  const frame = usePartFrame(project, runId, step.facetId, working && active);
+  const frame = usePartFrame(project, runIdOf({ runId }), step.facetId, working && active);
   const screen = useFrameSrc(frame);
   const word = stepWord(step, active);
   const tries = step.tries.length;
@@ -576,37 +597,140 @@ export function ResultNode({
   );
 }
 
-/** The lead, while it has the run between parts: its own screen, when it has shown one. */
+/** How each of the lead's faces looks: its frame, what it shows without a picture, and its glyph. */
+const LEAD_LOOK: Record<LeadFace, { variant: Variant; fill: Fill; glyph: StepState }> = {
+  [LeadFace.Working]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Building },
+  [LeadFace.Waiting]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Building },
+  [LeadFace.Paused]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.NotInBuild },
+  [LeadFace.Stopped]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.NotInBuild },
+  [LeadFace.Done]: { variant: Variant.Normal, fill: Fill.Flat, glyph: StepState.InBuild },
+};
+
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+/**
+ * The lead: while it works itself, its own screen when it has shown one. In a tree it stands for
+ * the whole run and says what it is doing: waiting for a worker, paused, done or stopped.
+ */
 export function LeadNode({
   rect,
   frame,
+  face = LeadFace.Working,
   selected,
   onSelect,
 }: {
   rect: Rect;
   frame: AgentScreenFrame | null;
+  face?: LeadFace;
   selected: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const src = useFrameSrc(frame);
+  // Only the lead at work shows its screen; waiting, it is the workers' screens that move.
+  const shown = face === LeadFace.Working ? frame : null;
+  const src = useFrameSrc(shown);
+  const look = LEAD_LOOK[face];
+  const word = LEAD_WORDS.face[face];
   return (
     <NodeFrame
       id={GraphSelection.Lead}
       rect={rect}
-      variant={Variant.Working}
+      variant={look.variant}
       selected={selected}
-      label="The lead: working on the next step"
-      screen={frame?.handle ?? null}
+      label={`${LEAD_WORDS.name}: ${lowerFirst(word)}`}
+      screen={shown?.handle ?? null}
       onSelect={onSelect}
     >
       <NodeFace
         src={src}
-        fill={Fill.Shimmer}
-        over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
-        name="The lead"
-        word={frame ? <ScreenWords frame={frame} /> : "Working on the next step"}
-        tone={Tone.Accent}
-        glyph={<StateGlyph state={StepState.Building} />}
+        fill={look.fill}
+        over={shown ? <NodeCursor frame={shown} box={rect} /> : null}
+        name={LEAD_WORDS.name}
+        word={shown ? <ScreenWords frame={shown} /> : word}
+        tone={STATE_TONE[look.glyph]}
+        glyph={<StateGlyph state={look.glyph} />}
+      />
+    </NodeFrame>
+  );
+}
+
+/** The glyph the background tile wears: work in hand while a job runs, none once all ended. */
+const JOBS_GLYPH: Partial<Record<Tone, StepState>> = { [Tone.Accent]: StepState.Building };
+
+/** The lead's background work, under it in a tree: the newest running job by name, the rest counted. */
+export function JobsTile({
+  jobs,
+  rect,
+  selected,
+  onSelect,
+}: {
+  jobs: JobInfo[];
+  rect: Rect;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const now = useNow(jobs.some((job) => job.state === JobState.Running));
+  const status = jobsTileStatus(jobs, now);
+  const glyphState = JOBS_GLYPH[status.tone];
+  return (
+    <NodeFrame
+      id={GraphSelection.Jobs}
+      rect={rect}
+      selected={selected}
+      label={`${JOBS_EYEBROW}: ${status.title}, ${status.status}`}
+      onSelect={onSelect}
+    >
+      <span className="absolute inset-0 flex flex-col justify-end p-2">
+        <TileText
+          eyebrow={JOBS_EYEBROW}
+          name={status.title}
+          word={status.status}
+          glyph={glyphState ? <StateGlyph state={glyphState} /> : null}
+          color={TONE[status.tone]}
+        />
+      </span>
+    </NodeFrame>
+  );
+}
+
+/** How the finish check looks in each state: a ghost until it runs, at work while it checks. */
+const FINISH_LOOK: Record<FinishCheckState, { variant: Variant; glyph: StepState | null }> = {
+  [FinishCheckState.NotYet]: { variant: Variant.Ghost, glyph: null },
+  [FinishCheckState.Checking]: { variant: Variant.Working, glyph: StepState.Judging },
+  [FinishCheckState.Done]: { variant: Variant.Normal, glyph: StepState.InBuild },
+  [FinishCheckState.Stopped]: { variant: Variant.Normal, glyph: StepState.Undone },
+};
+
+/** The finish check, the last node of a run's tree: the reviewer's check that the run is done. */
+export function FinishCheckNode({
+  node,
+  rect,
+  selected,
+  onSelect,
+}: {
+  node: FinishCheckModel;
+  rect: Rect;
+  selected: boolean;
+  onSelect: () => void;
+}): JSX.Element {
+  const look = FINISH_LOOK[node.state];
+  const state = FINISH_CHECK_WORDS.state[node.state];
+  const word = node.state === FinishCheckState.NotYet ? `${state} · ${FINISH_CHECK_WORDS.placeholder}` : state;
+  return (
+    <NodeFrame
+      id={GraphSelection.FinishCheck}
+      rect={rect}
+      variant={look.variant}
+      selected={selected}
+      label={`${FINISH_CHECK_WORDS.name}: ${word}`}
+      onSelect={onSelect}
+    >
+      <NodeFace
+        src={null}
+        fill={look.variant === Variant.Working ? Fill.Shimmer : Fill.Hatch}
+        name={FINISH_CHECK_WORDS.name}
+        word={word}
+        tone={look.glyph ? STATE_TONE[look.glyph] : Tone.Muted}
+        glyph={look.glyph ? <StateGlyph state={look.glyph} /> : null}
       />
     </NodeFrame>
   );

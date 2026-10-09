@@ -20,6 +20,8 @@ export interface ChatWorkersSeat {
   threadId: string;
   /** The message the turn answers (its steer handle's `messageId`). */
   turn: string;
+  /** What the person asked in it: its workers' start records keep it. */
+  ask?: string;
   engine: string;
   model?: string;
   effort?: string;
@@ -55,6 +57,7 @@ export async function openChatWorkers(
     project,
     threadId,
     turn,
+    ...(seat.ask ? { ask: seat.ask } : {}),
     ...workersEngine(seat),
     ...(seat.effort ? { effort: seat.effort } : {}),
     gameDir,

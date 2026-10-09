@@ -2,7 +2,7 @@
  * The harness's copy of Genex's one worker model: the tools a lead runs workers with, how a worker
  * stands in the project, the lead's word on what one delivered, the codes a refused worker's call
  * carries and the event a worker's question is recorded as. The app's copy is `shared/workers.ts`
- * (and `DelegationRefusal`, `SnapshotRefusal`, `CustomEvent.ToolPermission`);
+ * (and `DelegationRefusal`, `SnapshotRefusal`, `CustomEvent.ToolPermission`, `CustomEvent.WorkerStarted`);
  * `seed-contracts.test.ts` holds the two together. Wire values: never rename one. It imports nothing,
  * so every worker module can read it while any other module is still loading.
  */
@@ -61,3 +61,37 @@ export interface WorkerQuestion {
 export const MAX_WORKER_WAIT_S = 240;
 /** The most characters of a worker's title the graph and the chat show. */
 export const WORKER_TITLE_CHARS = 80;
+
+/**
+ * The records a worker leaves on the chat's log: one when it starts, one when it ends and one more
+ * with the lead's verdict. The app's `CustomEvent.WorkerStarted`/`WorkerFinished`; kept here, not in
+ * the shipped `RunEvent`, so a kept older `run-events.ts` never leaves them undefined.
+ */
+export const WorkerEvent = { Started: "worker_started", Finished: "worker_finished" } as const;
+export type WorkerEvent = (typeof WorkerEvent)[keyof typeof WorkerEvent];
+
+/** How a worker ended, as its end record says. */
+export const WorkerEnd = { Done: "done", Failed: "failed", Stopped: "stopped" } as const;
+export type WorkerEnd = (typeof WorkerEnd)[keyof typeof WorkerEnd];
+
+/**
+ * Why a worker stopped short, as its end record names it (`stopCode`): the app words each itself,
+ * and never shows `stoppedBecause`, which is written for the lead. The app's `WorkerStopCode`.
+ */
+export const WorkerStopCode = {
+  HostRefused: "host_refused",
+  TurnEnded: "turn_ended",
+  RunEnded: "run_ended",
+  StoppedByLead: "stopped_by_lead",
+  Error: "error",
+} as const;
+export type WorkerStopCode = (typeof WorkerStopCode)[keyof typeof WorkerStopCode];
+
+/** What a pool worker's id is prefixed with in its records, apart from every id a lead names itself. */
+export const POOL_WORKER_PREFIX = "pool.";
+/** The most characters of a worker's task its start record keeps. */
+export const WORKER_TASK_CHARS = 300;
+/** The most characters of the person's request a chat turn's worker's start record keeps. */
+export const WORKER_ASK_CHARS = 300;
+/** The most characters of a worker's own summary its end record keeps (its first sentence). */
+export const WORKER_SUMMARY_CHARS = 160;

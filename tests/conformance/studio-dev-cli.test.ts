@@ -13,8 +13,17 @@ import { freshMachineEnv } from "../../scripts/studio-dev/fresh-machine.ts";
 import { strippedEnv } from "../../scripts/evals/lanes/common.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  assert.equal(FIXTURE_NAMES.length, 19);
-  for (const added of ["first-launch", "notifications", "build-graph", "lead-graph", "sandbox-setup", "update-ready"])
+  // Flipped from 19: the chat-workers fixture joined the list.
+  assert.equal(FIXTURE_NAMES.length, 20);
+  for (const added of [
+    "first-launch",
+    "notifications",
+    "build-graph",
+    "lead-graph",
+    "sandbox-setup",
+    "update-ready",
+    "chat-workers",
+  ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });
   // An unknown fixture is refused before any profile is allocated or build started.

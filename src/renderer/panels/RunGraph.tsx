@@ -5,6 +5,8 @@ import { markPerformance, PerformanceBoundary } from "../performance.tsx";
  * The Builds tab — a run drawn as a graph a player can read without knowing the harness: what you
  * asked → one row per part, its steps on a line → your build. What reached the build is the line;
  * what did not hangs below it. The judges are an eye on the edge into every node they looked at.
+ * A run or a chat turn whose lead started workers or background work is a tree: what you asked →
+ * the lead (its background work under it) → a row per worker → your build → the finish check.
  *
  * `run-steps.ts` folds the log into steps and lays them out; this file owns the canvas (pan, zoom,
  * keeping live work in view, bringing a selected node to the middle), the selection and the keyboard.
@@ -15,8 +17,17 @@ import { markPerformance, PerformanceBoundary } from "../performance.tsx";
  */
 import type { JSX, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { type AssetInfo, IterationStatus, type RunGraph as RunGraphModel } from "../run-graph.ts";
-import { frontier, Gate, type GatePoint, isJudgedTry, rowMeta, statusLine } from "../run-steps.ts";
+import { type AssetInfo, IterationStatus, type RunGraph as RunGraphModel, runIdOf } from "../run-graph.ts";
+import {
+  frontier,
+  Gate,
+  type GatePoint,
+  isJudgedTry,
+  resultStatus,
+  rowMeta,
+  StepState,
+  statusLine,
+} from "../run-steps.ts";
 import type { AgentScreenFrame } from "../../shared/agent-screen.ts";
 import { leadFrameOf } from "../state/agent-screens.ts";
 import { useAgentScreens } from "../state/hooks.ts";
@@ -24,7 +35,16 @@ import { GraphSelection, isPartSelection, partOf, partSelection } from "./inspec
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { BuildStatus, type EarlierBuild, PlayButton, ZoomPill } from "./run-graph/chrome.tsx";
 import { GateButton, GateTip, gateWords } from "./run-graph/gates.tsx";
-import { AssetsTile, LeadNode, OptimizationTile, ResultNode, StartNode, StepNode } from "./run-graph/nodes.tsx";
+import {
+  AssetsTile,
+  FinishCheckNode,
+  JobsTile,
+  LeadNode,
+  OptimizationTile,
+  ResultNode,
+  StartNode,
+  StepNode,
+} from "./run-graph/nodes.tsx";
 import { runProgress, useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-model.ts";
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
@@ -200,12 +220,17 @@ function useCanvasActions(overlays: Overlays, moved: { current: boolean }) {
   return useMemo(() => ({ select, onBackgroundClick, openGate }), [select, onBackgroundClick, openGate]);
 }
 
-/** What the Builds tab's own buttons do: play the run's build, or open an asset job on the Assets stage. */
+/**
+ * What the Builds tab's own buttons do: play the run's build, or open an asset job on the Assets
+ * stage. A chat turn's workers changed the game itself, so its Play shows Live once they did.
+ */
 function useBuildActions(
   project: string | null,
-  outcome: BuildsModel["outcome"],
+  model: Pick<BuildsModel, "outcome" | "graph">,
   { onShowLive, onShowAsset, onNotice }: Pick<Props, "onShowLive" | "onShowAsset" | "onNotice">,
 ) {
+  const { outcome, graph } = model;
+  if (!runIdOf(graph)) return turnActions(graph, onShowLive);
   const hasBuild = Boolean(outcome?.head && outcome.head !== outcome.base);
   const play = (): Promise<void> | void => {
     if (!project || !outcome?.head) return;
@@ -219,6 +244,12 @@ function useBuildActions(
     onShowAsset(job.generationId ?? job.jobId ?? "");
   };
   return { hasBuild, play, openJob };
+}
+
+/** A chat turn's buttons: Play shows Live once a worker's work went in; it has no asset jobs of a run's. */
+function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"]) {
+  const hasBuild = resultStatus(graph, null).state === StepState.InBuild;
+  return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
 /** Over the hidden canvas until the run's recorded outcome arrives: the stage's loader. */
@@ -245,7 +276,7 @@ export const RunGraph = memo(function RunGraph({
 }: Props): JSX.Element {
   useEffect(() => markPerformance(PerformanceMarkName.GraphCommit));
   const model = useBuildsModel(suppliedGraph, project);
-  const { outcome, graph, rows } = model;
+  const { graph, rows } = model;
   const references = useReferenceFrames(project, graph.runId);
   const stills = useRunStills(model);
   // The lead's own newest view of the game: the picture on its node while it has the run.
@@ -254,7 +285,7 @@ export const RunGraph = memo(function RunGraph({
   const { selected } = overlays;
   const camera = useGraphCamera({
     graph,
-    ready: outcome !== null,
+    ready: model.loaded,
     layout: model.layout,
     rows,
     live: frontier(rows),
@@ -265,7 +296,7 @@ export const RunGraph = memo(function RunGraph({
   const step = useStepper(overlays, model);
   useGraphKeys(overlays, camera.fitAll, step);
   const actions = useCanvasActions(overlays, camera.moved);
-  const { hasBuild, play, openJob } = useBuildActions(project, outcome, { onShowLive, onShowAsset, onNotice });
+  const { hasBuild, play, openJob } = useBuildActions(project, model, { onShowLive, onShowAsset, onNotice });
 
   // Keep the viewport mounted for measurements/listeners while hiding non-authoritative fallback totals.
   return (
@@ -273,9 +304,9 @@ export const RunGraph = memo(function RunGraph({
       <div
         data-stage-graph
         className="absolute inset-0 flex flex-col overflow-hidden bg-canvas select-none"
-        style={{ visibility: outcome ? "visible" : "hidden" }}
+        style={{ visibility: model.loaded ? "visible" : "hidden" }}
       >
-        {!outcome && <OutcomePending />}
+        {!model.loaded && <OutcomePending />}
         <BuildStatusClock
           model={model}
           earlier={earlier}
@@ -571,7 +602,7 @@ const RowLabels = memo(function RowLabels({
   );
 });
 
-/** Every node of the graph, from what you asked to your build. */
+/** Every node of the graph, from what you asked to your build (and in a tree, the finish check). */
 const GraphNodes = memo(function GraphNodes({
   model,
   project,
@@ -587,7 +618,9 @@ const GraphNodes = memo(function GraphNodes({
   selected: string | null;
   onSelect: (id: string) => void;
 }): JSX.Element {
-  const { graph, layout, optimization } = model;
+  const { graph, layout, optimization, leadNode, finishCheck } = model;
+  const jobsRect = layout.rects[GraphSelection.Jobs];
+  const finishRect = layout.rects[GraphSelection.FinishCheck];
   return (
     <>
       <StartNode
@@ -644,8 +677,25 @@ const GraphNodes = memo(function GraphNodes({
         <LeadNode
           rect={layout.rects.lead}
           frame={leadFrame}
+          face={model.face ?? undefined}
           selected={selected === GraphSelection.Lead}
           onSelect={() => onSelect(GraphSelection.Lead)}
+        />
+      ) : null}
+      {leadNode && jobsRect ? (
+        <JobsTile
+          jobs={leadNode.jobs}
+          rect={jobsRect}
+          selected={selected === GraphSelection.Jobs}
+          onSelect={() => onSelect(GraphSelection.Jobs)}
+        />
+      ) : null}
+      {finishCheck && finishRect ? (
+        <FinishCheckNode
+          node={finishCheck}
+          rect={finishRect}
+          selected={selected === GraphSelection.FinishCheck}
+          onSelect={() => onSelect(GraphSelection.FinishCheck)}
         />
       ) : null}
     </>

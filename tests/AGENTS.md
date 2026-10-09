@@ -48,6 +48,9 @@ through the JS API imports `@typescript/typescript6`.
   `chat-workers`), agent jobs through a `jobSpawn` the test gives it (`job-tools`), and `app_look`
   through the stub port and a recording `screenAccess` (`app-look-tool`). Its waits are on what
   happened (`untilSeen`, `nextCard`), never on a clock.
+- `worker-pool-host.ts`: a fake host for the seed's worker pool (real git in a temporary game and
+  its copies, worker sessions the test ends, every record the pool appends), for `worker-pool` and
+  `worker-events`.
 - `git.ts`, `tmp.ts`: temporary repositories and directories with cleanup. A test removes its own
   temporary folder with `removeTree` (or leaves it to `tmpDir`), not a bare `rm`: on Windows a
   sandboxed test file's srt-win entries re-propagate through all of `%TEMP%` and hold each folder

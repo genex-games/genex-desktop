@@ -506,6 +506,34 @@ describe("job tools", () => {
       );
   });
 
+  it("a job's records name its run, or the chat turn it was started in", {
+    ...POSIX,
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    const chat = await jobChat();
+    await chat.core.setPermissionMode(chat.threadId, PermissionMode.Auto);
+    const lead = await callsIn(chat, inPlaceLead(chat), [[JobTool.Start, { title: "Lead's", command: SHORT }]]);
+    const leadJob = startedId(lead.answers[0] ?? "");
+    const turn = await ownTurn(chat);
+    const own = await callsIn(chat, turn, [[JobTool.Start, { title: "Chat's", command: SHORT }]]);
+    const ownJob = startedId(own.answers[0] ?? "");
+    for (const id of [leadJob, ownJob]) await untilEndRecorded(chat, id);
+    const started = await jobRows<JobStartedPayload>(chat, "job_started");
+    const ended = await jobRows<JobEndedPayload>(chat, "job_ended");
+    const scopeOf = (row: { runId?: string; turn?: string } | undefined) => ({ runId: row?.runId, turn: row?.turn });
+    for (const rows of [started, ended]) {
+      const byJob = (id: string) => rows.find((row) => row.jobId === id);
+      assert.deepEqual(scopeOf(byJob(leadJob)), { runId: RUN_ID, turn: undefined }, "the lead's names its run");
+      assert.deepEqual(
+        scopeOf(byJob(ownJob)),
+        { runId: undefined, turn: turn.chatTurn.messageId },
+        "the chat's own names the turn it was started in",
+      );
+    }
+    const record = await chat.core.jobs.get(chat.game, ownJob);
+    assert.deepEqual(record?.owner.scope, { kind: JobScopeKind.Chat }, "it still outlives the turn");
+  });
+
   it("the person's Stop stops the job and records who stopped it", { ...POSIX, timeout: CASE_TIMEOUT_MS }, async () => {
     const chat = await jobChat();
     await chat.core.setPermissionMode(chat.threadId, PermissionMode.Auto);
@@ -662,5 +690,19 @@ describe("job tools", () => {
     await untilJob(chat, workerId ?? "", (state) => state === JobState.Stopped);
     assert.equal((await chat.core.jobs.get(chat.game, workerId ?? ""))?.stoppedBy, JobStopper.ScopeEnded);
     assert.equal((await chat.core.jobs.get(chat.game, ownId ?? ""))?.state, JobState.Running, "the chat's own runs on");
+    for (
+      let tries = 0;
+      tries < POLL_TRIES && !(await chat.core.jobs.get(chat.game, workerId ?? ""))?.endLogged;
+      tries++
+    )
+      await sleep(POLL_MS);
+    const ofWorker = <T extends { jobId?: string }>(rows: T[]) => rows.filter((row) => row.jobId === workerId);
+    const started = ofWorker(await jobRows<JobStartedPayload>(chat, "job_started"));
+    const ended = ofWorker(await jobRows<JobEndedPayload>(chat, "job_ended"));
+    for (const row of [...started, ...ended]) {
+      assert.equal(row.turn, messageId, "a turn worker's job is on its turn's graph");
+      assert.equal(row.runId, undefined, "and on no run's");
+    }
+    assert.deepEqual([started.length, ended.length], [1, 1]);
   });
 });

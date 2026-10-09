@@ -256,6 +256,7 @@ function chatWorkersSeat(options: DelegatedOptions, handoff: Handoff): ChatWorke
   return {
     threadId,
     turn: steer.messageId,
+    ...(options.text ? { ask: options.text } : {}),
     engine,
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),

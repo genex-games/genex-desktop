@@ -1,8 +1,17 @@
 /** The card of one part: its steps as rows, why it stopped, the user's notes and its checks. */
 import type { JSX } from "react";
 import type { RunTask } from "../../../shared/run-summary.ts";
-import { type FacetNode, type RunGraph as RunGraphModel, thumbShot } from "../../run-graph.ts";
-import { elapsedWords, isLiveStep, type PartRow, type Step, stepWord, Tone, triesWord } from "../../run-steps.ts";
+import { type FacetNode, type RunGraph as RunGraphModel, runIdOf, thumbShot } from "../../run-graph.ts";
+import {
+  elapsedWords,
+  isLiveStep,
+  type PartRow,
+  type Step,
+  stepWord,
+  stoppedShort,
+  Tone,
+  triesWord,
+} from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { checkCounts, ranToItsEnd, stoppedWords } from "../../words.ts";
 import { useRoundStill } from "../run-stills.ts";
@@ -10,7 +19,7 @@ import { Details, NotesSection, Panel, Para, Quote, Row, Rows, Section } from ".
 import { capitalise, joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
 import { partSelection } from "./selection.ts";
-import { stoppedShort, taskOf, taskRows } from "./SessionPanel.tsx";
+import { taskOf, taskRows } from "./SessionPanel.tsx";
 import { StateGlyph, Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
 
@@ -172,7 +181,7 @@ export function PartPanel(props: InspectorProps & { row: PartRow }): JSX.Element
         <Row label="Technical details">
           <Details
             rows={[
-              ["run", graph.runId],
+              ["run", runIdOf(graph)],
               ["part", facet.facetId],
               ["budget share", facet.budgetShare !== null ? `${Math.round(facet.budgetShare * 100)}%` : null],
               ...taskRows(task),

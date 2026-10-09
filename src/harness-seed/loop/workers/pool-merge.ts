@@ -12,8 +12,19 @@ import { commitArg, isCommit } from "../shell.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
 import { throughClaudeFolder } from "./claude-folder.ts";
 import { WorkerIsolation, WorkerVerdict } from "./contract.ts";
+import { poolWorkerId, recordWorkerFinished } from "./events.ts";
 import { POOL_WORDS } from "./prompts.ts";
-import { gameGitWrite, isWorking, keptRef, type PoolState, persist, recordOf, type WorkerRecord } from "./records.ts";
+import {
+  eventScope,
+  gameGitWrite,
+  isWorking,
+  keptRef,
+  type PoolState,
+  persist,
+  recordOf,
+  type WorkerRecord,
+  WorkerState,
+} from "./records.ts";
 
 /** The git command lines only the pool runs. */
 const WORKER_GIT = {
@@ -87,8 +98,11 @@ async function dirtyOverlap(state: PoolState, commit: string): Promise<string[]>
     .filter((file) => file && dirty.has(file));
 }
 
-/** What a verdict came to: the lead's answer, and whether the verdict stands (a merge that failed leaves none). */
-type Marked = { text: string; settled: boolean };
+/**
+ * What a verdict came to: the lead's answer, whether the verdict stands (a merge that failed leaves
+ * none), and whether the worker's work was merged into the lead's folder.
+ */
+type Marked = { text: string; settled: boolean; merged?: boolean };
 
 /**
  * Merge a copy worker's commit into the lead's folder: merged, or why not, with the files. The look
@@ -126,7 +140,7 @@ async function mergeNow(state: PoolState, record: WorkerRecord, commit: string):
     failure: shortFailure,
     listConflicts: true,
   });
-  if (merge.ok) return { text: POOL_WORDS.merged(record.id), settled: true };
+  if (merge.ok) return { text: POOL_WORDS.merged(record.id), settled: true, merged: true };
   const text = merge.conflicts.length
     ? POOL_WORDS.conflict(record.id, merge.conflicts)
     : POOL_WORDS.mergeFailed(record.id, clip(merge.error, CLIP_DETAIL));
@@ -149,13 +163,23 @@ async function markCopy(state: PoolState, record: WorkerRecord, verdict: WorkerV
   return merged;
 }
 
-/** `worker_mark`: the lead's word on what a worker delivered. A merge that failed leaves no verdict. */
+/** A writer in place that finished: its work is in the game folder already, whatever the lead says of it. */
+const wroteInGame = (record: WorkerRecord): boolean =>
+  record.isolation === WorkerIsolation.Lock && record.state === WorkerState.Done;
+
+/**
+ * `worker_mark`: the lead's word on what a worker delivered. A merge that failed leaves no verdict;
+ * a verdict given stands, and work already in the game is never marked rejected, so the chat and
+ * the graph never call work in the game unused.
+ */
 export async function markWorker(state: PoolState, args: AnyRecord): Promise<string> {
   const record = recordOf(state, args.id);
   if (!record) return POOL_WORDS.unknown(String(args.id ?? ""));
   if (isWorking(record)) return POOL_WORDS.stillRunning(record.id);
   if (!VERDICTS.includes(String(args.verdict))) return POOL_WORDS.badVerdict;
+  if (record.verdict) return POOL_WORDS.alreadyMarked(record.id, record.verdict);
   const verdict = args.verdict as WorkerVerdict;
+  if (verdict === WorkerVerdict.Rejected && wroteInGame(record)) return POOL_WORDS.inGameAlready(record.id);
   const marked =
     record.isolation === WorkerIsolation.Copy
       ? await markCopy(state, record, verdict)
@@ -163,5 +187,14 @@ export async function markWorker(state: PoolState, args: AnyRecord): Promise<str
   if (marked.settled) record.verdict = verdict;
   if (marked.settled && hasText(args.note)) record.note = clip(args.note.trim(), CLIP_DETAIL);
   await persist(state);
+  if (marked.settled) await recordVerdict(state, record, marked.merged === true);
   return marked.text;
+}
+
+/** The lead's verdict on the chat's log, a second end record of the worker: added to the game when merged. */
+function recordVerdict(state: PoolState, record: WorkerRecord, merged: boolean): Promise<void> {
+  const { id, title, verdict, note } = record;
+  if (!verdict) return Promise.resolve();
+  const worker = { workerId: poolWorkerId(id), title, verdict, note: note ?? null, merged };
+  return recordWorkerFinished(eventScope(state, record), worker, state.scope.clock.now());
 }

@@ -72,7 +72,7 @@ import { planHeldWords, planSetWords, WAKE_START_NEXT } from "./wake-prompts.ts"
 import { NoteKind } from "./wake-schedule.ts";
 import { runIdentity } from "../workers/identity.ts";
 import { stoppableRoomClock, withWorkerRoom } from "../workers/room.ts";
-import { briefOf } from "../workers/director-pool.ts";
+import { briefOf, recordBuilderEnded, recordBuilderStarted } from "../workers/director-pool.ts";
 import type { LoopRun, StartingWorker, Worker } from "./loop-run.ts";
 import type { FacetSpec } from "../spec.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
@@ -1262,6 +1262,8 @@ async function announceWorker(loopRun: LoopRun, worker: Worker, { budgetMs, repl
         }
       : {}),
   });
+  // The same start in Genex's one worker model, which the Builds graph and the chat read.
+  await recordBuilderStarted(loopRun, worker);
   const quoted = `${brief.slice(0, BRIEF_QUOTED)}${brief.length > BRIEF_QUOTED ? "…" : ""}`;
   await decision(
     `director started worker "${worker.title}" (${id}, ${mode}, ${minutes(budgetMs)} min): ${quoted}${roundWarning ? ` — ${roundWarning}` : ""}`,
@@ -1886,6 +1888,7 @@ async function closeOutWorker(loopRun: LoopRun, worker: Worker): Promise<void> {
     stoppedBecause: because,
     ...(worker.replaces ? { replaces: worker.replaces } : {}),
   });
+  await recordBuilderEnded(loopRun, worker, because);
   // A worker the lead stopped settling is its own doing: it opens the next digest, and wakes nobody.
   note(
     `worker ${worker.id} ${worker.state}${because ? ` — ${because}` : ""}`,

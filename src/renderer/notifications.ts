@@ -367,13 +367,29 @@ export function activityNotices(items: readonly Notice[]): Notice[] {
   return items.filter((item) => !item.waiting).sort((a, b) => compareIds(b.at, a.at));
 }
 
-/** Today / Yesterday / Earlier: coarse on purpose, the row carries its own time. */
-export function dayGroup(iso: string, now = new Date()): "Today" | "Yesterday" | "Earlier" {
+/** The coarse day something happened on, by the local calendar. */
+export const DayGroup = { Today: "today", Yesterday: "yesterday", Earlier: "earlier" } as const;
+export type DayGroup = (typeof DayGroup)[keyof typeof DayGroup];
+
+/** The notifications menu's heading for each day. */
+const DAY_HEADINGS = {
+  [DayGroup.Today]: "Today",
+  [DayGroup.Yesterday]: "Yesterday",
+  [DayGroup.Earlier]: "Earlier",
+} as const satisfies Record<DayGroup, string>;
+
+/** Which day `iso` falls on, seen from `now`: today, yesterday or earlier. */
+export function dayOf(iso: string, now = new Date()): DayGroup {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const at = Date.parse(iso);
-  if (at >= today) return "Today";
-  if (at >= today - DAY_MS) return "Yesterday";
-  return "Earlier";
+  if (at >= today) return DayGroup.Today;
+  if (at >= today - DAY_MS) return DayGroup.Yesterday;
+  return DayGroup.Earlier;
+}
+
+/** Today / Yesterday / Earlier: coarse on purpose, the row carries its own time. */
+export function dayGroup(iso: string, now = new Date()): (typeof DAY_HEADINGS)[DayGroup] {
+  return DAY_HEADINGS[dayOf(iso, now)];
 }
 
 /** An activity row not yet read, among the ones asked for (all when none are named). */

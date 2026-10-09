@@ -1,9 +1,12 @@
 import { mergeChatEvents } from "../shared/chat-history.ts";
 import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX } from "../shared/custom-events.ts";
 import { type ConversationRecord, type EventEnvelope, EventKind } from "../shared/event-log.ts";
+import { messageQueueState, type QueueView } from "../shared/message-queue.ts";
+import { graphKeyOf, turnOfGraphKey } from "../shared/run-graph-events.ts";
 import { RunState, runExecutions } from "../shared/run-state.ts";
 import { summaryCounts, summaryOutcome } from "../shared/run-summary.ts";
 import {
+  answeringTurn,
   type BaseNode,
   buildRunGraph,
   type FacetNode,
@@ -14,8 +17,14 @@ import {
   IterationStatus,
   type RunGraph,
   type RunNode,
+  RUN_ID_EVENTS,
+  runIdOf,
+  turnKeyOf,
+  WORKER_EVENTS,
 } from "./run-graph.ts";
+import { DayGroup, dayOf } from "./notifications.ts";
 import {
+  BUILD_HISTORY_WORDS,
   keptSoFarWords,
   loopRunWords,
   outcomeTitle,
@@ -52,9 +61,17 @@ const SINGLE_SESSION_MODE = "single";
 const isDelegatedRecord = (e: EventEnvelope): boolean =>
   e.data.type === EventKind.Custom && e.data.event_type.startsWith(DELEGATED_PREFIX);
 
-/** Whether an event belongs to the run on show: every event does when none is chosen or it names no run. */
-const inSelectedRun = (runId: unknown, selectedRunId: string | null | undefined): boolean =>
-  !selectedRunId || !runId || runId === selectedRunId;
+/**
+ * Whether an event belongs to the graph on show (a run, or a chat turn's key): every event does
+ * when none is chosen or it names neither a run nor a turn.
+ */
+function inSelectedRun(
+  payload: Record<string, unknown> | undefined,
+  selectedRunId: string | null | undefined,
+): boolean {
+  const key = payload ? graphKeyOf(payload) : null;
+  return !selectedRunId || !key || key === selectedRunId;
+}
 
 /** Follow the selected conversation, including first-round starts in older worker logs. */
 export function projectBuildGraph(
@@ -68,18 +85,38 @@ export function projectBuildGraph(
   if (!threadId) return null;
   const parent = events.filter((e) => {
     if (e.thread_id !== threadId) return false;
-    return inSelectedRun(customRecord(e.data)?.payload.runId, selectedRunId);
+    return inSelectedRun(customRecord(e.data)?.payload, selectedRunId);
   });
   const fold = options.fold ?? buildRunGraph;
-  const initial = fold(parent);
+  const initial = fold(parent, selectedRunId ?? undefined);
   if (!initial) return null;
+  // A chat turn's workers are pool sessions: they have no worker threads named after a run.
+  const runId = runIdOf(initial);
   const starts =
-    options.includeWorkers === false
+    options.includeWorkers === false || !runId
       ? []
-      : initial.facets.flatMap((facet) => firstRoundStart(events, parent, threads, initial.runId, facet));
-  const graph = starts.length ? (fold(mergeChatEvents(parent, starts)) ?? initial) : initial;
-  if (!graph.runDir && runsRoot) graph.runDir = `${runsRoot}/${graph.runId}`;
+      : initial.facets.flatMap((facet) => firstRoundStart(events, parent, threads, runId, facet));
+  const graph = starts.length ? (fold(mergeChatEvents(parent, starts), initial.runId) ?? initial) : initial;
+  if (!graph.runDir && runsRoot && runId) graph.runDir = `${runsRoot}/${runId}`;
   return graph;
+}
+
+/**
+ * The graph of the run the stage's Live answers to (its builds on offer, a build found broken, a
+ * run building): the graph shown when it is a run's, else the newest run's. A chat turn's graph
+ * has no build of its own; null when the chat has no run.
+ */
+export function stageRunGraph(
+  events: EventEnvelope[],
+  threadId: string | null,
+  runsRoot: string | null,
+  shown: RunGraph | null,
+  history: readonly HistoryEntry[],
+): RunGraph | null {
+  if (!shown || runIdOf(shown)) return shown;
+  const newestRun = history.filter((entry) => entry.chat !== true).at(-1)?.runId;
+  if (!newestRun) return null;
+  return projectBuildGraph(events, threadId, [], runsRoot, newestRun, { includeWorkers: false });
 }
 
 /** Single-session director workers have an explicit lifecycle, not a round loop. */
@@ -129,39 +166,164 @@ function firstRoundStart(
 const RUN_OPEN_EVENTS = new Set<string>([CustomEvent.RunStarted, CustomEvent.RunRegistered]);
 const ROUND_EVENTS = new Set<string>([CustomEvent.FacetIteration, CustomEvent.RunIteration]);
 
-/** The conversation's builds, oldest first: when each started, how many rounds it ran, and where it stands (run-state.ts). */
-export function buildHistory(
-  events: EventEnvelope[],
-  threadId: string | null,
-): Array<{ runId: string; rounds: number; state: string; startedAt: string | null }> {
-  const own = events.filter((e) => e.thread_id === threadId);
-  const runs = new Map<string, { rounds: number; startedAt: string | null }>();
-  for (const e of own) {
-    if (e.data.type !== EventKind.Custom) continue;
-    const id = customRecord(e.data)?.payload.runId;
-    if (!id) continue;
-    const run = runs.get(id);
-    if (RUN_OPEN_EVENTS.has(e.data.event_type))
-      runs.set(id, { rounds: run?.rounds ?? 0, startedAt: run?.startedAt ?? e.created_at });
-    else if (run && ROUND_EVENTS.has(e.data.event_type)) run.rounds++;
-  }
-  const executions = runExecutions(own);
-  return [...runs].map(([runId, run]) => ({
-    runId,
-    rounds: run.rounds,
-    state: executions.get(runId)?.state ?? RunState.Running,
-    startedAt: run.startedAt,
-  }));
+/**
+ * A build in the conversation's history: a run (a Loop), or a chat turn that started workers
+ * (`chat`, keyed by `turnGraphKey`). `runId` is the graph's key either way.
+ */
+export interface HistoryEntry {
+  runId: string;
+  rounds: number;
+  state: string;
+  startedAt: string | null;
+  chat?: true;
 }
 
-/** A build in the history picker: when it started, and its state unless it simply finished. */
-export function historyLabel(run: { startedAt: string | null; state: string }, index: number): string {
-  const date = run.startedAt ? new Date(run.startedAt) : null;
-  const when =
-    date && !Number.isNaN(date.getTime())
-      ? `${date.toLocaleDateString([], { day: "numeric", month: "short" })}, ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-      : `Build ${index + 1}`;
-  return run.state === RunState.Finished ? when : `${when} · ${run.state}`;
+/** A chat turn's workers while the history is read: those that started, and those that ended. */
+interface TurnDraft {
+  startedAt: string;
+  started: Set<string>;
+  ended: Set<string>;
+}
+
+/** Note one worker record of a chat turn; true when it is the turn's first, which opens it in the history. */
+function readTurnRecord(
+  turns: Map<string, TurnDraft>,
+  key: string,
+  e: EventEnvelope,
+  payload: Record<string, unknown>,
+): boolean {
+  const workerId = typeof payload.workerId === "string" ? payload.workerId : "";
+  if (!workerId) return false;
+  const known = turns.get(key);
+  const turn = known ?? { startedAt: e.created_at, started: new Set<string>(), ended: new Set<string>() };
+  if (!known) turns.set(key, turn);
+  const ended = e.data.type === EventKind.Custom && e.data.event_type === CustomEvent.WorkerFinished;
+  (ended ? turn.ended : turn.started).add(workerId);
+  return !known;
+}
+
+/**
+ * Note one record of a run; true when it makes the run the newest build: it opens the run, or names
+ * a run already open the way `lastGraphKey` reads it (a resume registers it again).
+ */
+function readRunRecord(
+  runs: Map<string, { rounds: number; startedAt: string | null }>,
+  id: string,
+  eventType: string,
+  at: string,
+): boolean {
+  const run = runs.get(id);
+  if (RUN_OPEN_EVENTS.has(eventType)) {
+    runs.set(id, { rounds: run?.rounds ?? 0, startedAt: run?.startedAt ?? at });
+    return true;
+  }
+  if (run && ROUND_EVENTS.has(eventType)) run.rounds++;
+  return run !== undefined && RUN_ID_EVENTS.has(eventType);
+}
+
+/** Make a build the newest of the history, wherever it stood. */
+function moveLast(order: string[], key: string): void {
+  const index = order.indexOf(key);
+  if (index !== -1) order.splice(index, 1);
+  order.push(key);
+}
+
+/** A chat turn works while one of its workers has started and not ended, or the lead still answers its message. */
+function turnState(turn: TurnDraft, key: string, queue: QueueView): string {
+  const working = [...turn.started].some((id) => !turn.ended.has(id));
+  const message = turnOfGraphKey(key);
+  const answering = message !== null && answeringTurn(queue, message);
+  return working || answering ? RunState.Running : RunState.Finished;
+}
+
+/** The history while the log is read: the builds, newest last, and what each holds. */
+interface HistoryDraft {
+  order: string[];
+  runs: Map<string, { rounds: number; startedAt: string | null }>;
+  turns: Map<string, TurnDraft>;
+}
+
+/** Read one record into the history: a chat turn's worker record, or a run's. */
+function readHistoryRecord(draft: HistoryDraft, e: EventEnvelope): void {
+  if (e.data.type !== EventKind.Custom) return;
+  const payload = customRecord(e.data)?.payload ?? {};
+  const turnKey = WORKER_EVENTS.has(e.data.event_type) ? turnKeyOf(payload) : null;
+  if (turnKey) {
+    if (readTurnRecord(draft.turns, turnKey, e, payload)) draft.order.push(turnKey);
+    return;
+  }
+  const id = typeof payload.runId === "string" ? payload.runId : "";
+  if (id && readRunRecord(draft.runs, id, e.data.event_type, e.created_at)) moveLast(draft.order, id);
+}
+
+/**
+ * The conversation's builds, oldest first: each run (when it started, how many rounds it ran,
+ * where it stands, run-state.ts) and each chat turn that started workers (running while one of
+ * them works). They stand in the order `lastGraphKey` reads newest by: a run at the last record
+ * that names it as the shown run, a chat turn at its first worker record, so the last entry is
+ * always the graph Builds shows by default.
+ */
+export function buildHistory(events: EventEnvelope[], threadId: string | null): HistoryEntry[] {
+  const own = events.filter((e) => e.thread_id === threadId);
+  const draft: HistoryDraft = { order: [], runs: new Map(), turns: new Map() };
+  for (const e of own) readHistoryRecord(draft, e);
+  const executions = runExecutions(own);
+  const queue = messageQueueState(own);
+  return draft.order.map((key): HistoryEntry => {
+    const turn = draft.turns.get(key);
+    if (turn)
+      return { runId: key, rounds: 0, state: turnState(turn, key, queue), startedAt: turn.startedAt, chat: true };
+    const run = draft.runs.get(key) ?? { rounds: 0, startedAt: null };
+    return {
+      runId: key,
+      rounds: run.rounds,
+      state: executions.get(key)?.state ?? RunState.Running,
+      startedAt: run.startedAt,
+    };
+  });
+}
+
+/** The day a build started, as its history label says it: "today", "yesterday", else "5 Sep"; null when unknown. */
+function dayWords(startedAt: string | null, now: Date): string | null {
+  const date = startedAt ? new Date(startedAt) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const day = dayOf(startedAt ?? "", now);
+  if (day === DayGroup.Today) return BUILD_HISTORY_WORDS.today;
+  if (day === DayGroup.Yesterday) return BUILD_HISTORY_WORDS.yesterday;
+  return date.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+/** What a build in the history is called: "This chat turn" for the newest build, else by its day: "Loop from yesterday". */
+function historyName(entry: HistoryEntry, newest: boolean, now: Date): string {
+  const chat = entry.chat === true;
+  const day = newest ? null : dayWords(entry.startedAt, now);
+  if (!day) return chat ? BUILD_HISTORY_WORDS.thisTurn : BUILD_HISTORY_WORDS.thisLoop;
+  return chat ? BUILD_HISTORY_WORDS.turnFrom(day) : BUILD_HISTORY_WORDS.loopFrom(day);
+}
+
+/**
+ * A build in the history, in plain words: what it was and when, then its state unless it simply
+ * finished ("Loop from yesterday · paused"). `newest`: it is the latest build in the history.
+ */
+export function historyLabel(
+  entry: HistoryEntry,
+  { newest, now = new Date() }: { newest: boolean; now?: Date },
+): string {
+  const name = historyName(entry, newest, now);
+  return entry.state === RunState.Finished ? name : `${name} · ${entry.state}`;
+}
+
+/**
+ * Whether a build is the latest in the history: only it is "this" one; an earlier build of either
+ * kind is named by its day, as a Loop before a newer chat turn is.
+ */
+export const isNewestBuild = (history: readonly HistoryEntry[], entry: HistoryEntry): boolean =>
+  history.at(-1) === entry;
+
+/** What a reply about a node of this graph names: its run and whether it is live; null for a chat turn's graph. */
+export function replyTarget(graph: RunGraph): { runId: string; active: boolean } | null {
+  const runId = runIdOf(graph);
+  return runId ? { runId, active: graph.active } : null;
 }
 
 /**

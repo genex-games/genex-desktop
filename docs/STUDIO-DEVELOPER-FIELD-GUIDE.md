@@ -341,6 +341,10 @@ readiness/identity JSON. `npm run studio:dev -- fixtures` lists the named fixtur
 build-graph (two sword-in-ice runs: folded tries, an undone step, a lead-merged unjudged round),
 lead-graph (two Unreal lead runs: milestone columns, save points, sub-agents with their cards, the
 critic's advice on a round),
+chat-workers (a chat message's two workers on Builds and as chat lines, after an earlier Loop; three
+more games, written after the start so their Loops read as going: Fixture Loop with three workers,
+the lead's background work and the finish check not run yet; Fixture web Loop with build-graph's
+runs and Fixture Unreal Loop with lead-graph's, each with its workers' records, drawn as trees),
 first-launch (an empty library and the welcome; Claude Code needs a sign-in, Codex is not
 installed, and sign-in, links and downloads are refused as in every fixture) and notifications
 (six games; about four seconds after launch a question, a plan, a plugin permission, a sign-out

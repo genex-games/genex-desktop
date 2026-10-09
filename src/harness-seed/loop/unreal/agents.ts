@@ -25,7 +25,7 @@ import { modelOn, RoleKey, roleEngine } from "../model-roles.ts";
 import { isCommit, shellQuote } from "../shell.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
-import { WorkerRefusal } from "../workers/contract.ts";
+import { WorkerRefusal, WorkerStopCode } from "../workers/contract.ts";
 import { waitingWorkers } from "../workers/questions.ts";
 import { withWorkerRoom } from "../workers/room.ts";
 import type { WorkerState } from "../workers/records.ts";
@@ -426,8 +426,10 @@ async function runAgent(lead: Lead, agent: AgentRecord, tools: readonly AgentPlu
 
 /** The run closed (or the lead stopped it) before a typed worker's turn began: it never begins. */
 async function stopUnstarted(lead: Lead, agent: AgentRecord): Promise<void> {
-  const why = settling.has(lead) ? DELIVERY_WORDS.RunEnded : AGENT_WORDS.StoppedByLead;
-  if (agent.state === AgentState.Running) await ended(lead, agent, AgentState.Stopped, why);
+  const runEnded = settling.has(lead);
+  const why = runEnded ? DELIVERY_WORDS.RunEnded : AGENT_WORDS.StoppedByLead;
+  const code = runEnded ? WorkerStopCode.RunEnded : WorkerStopCode.StoppedByLead;
+  if (agent.state === AgentState.Running) await ended(lead, agent, AgentState.Stopped, why, code);
 }
 
 /**
@@ -443,7 +445,13 @@ async function turnEnded(lead: Lead, agent: AgentRecord, outcome: { ok: boolean;
   const stopped = settling.has(lead) || askedStop;
   const stopWords = askedStop ? AGENT_WORDS.StoppedByLead : DELIVERY_WORDS.RunEnded;
   const why = stopped ? stopWords : (outcome.why ?? refusedOf(agent)[0] ?? DELIVERY_WORDS.NothingToLand);
-  await ended(lead, agent, stopped ? AgentState.Stopped : AgentState.Failed, why);
+  await ended(lead, agent, stopped ? AgentState.Stopped : AgentState.Failed, why, stopCodeOf(askedStop, stopped));
+}
+
+/** Why a typed worker stopped short, as the app words it: the lead's stop, the run's end, else an error. */
+function stopCodeOf(askedStop: boolean, stopped: boolean): WorkerStopCode {
+  if (askedStop) return WorkerStopCode.StoppedByLead;
+  return stopped ? WorkerStopCode.RunEnded : WorkerStopCode.Error;
 }
 
 /**
@@ -457,7 +465,7 @@ async function deliveredNow(lead: Lead, agent: AgentRecord): Promise<void> {
   if (agent.kind === AgentKind.Cpp && agent.landed.length) journal.between.rebuild = true;
   const look = await lookIfModel(lead, agent);
   if (look) agent.look = look;
-  await ended(lead, agent, AgentState.Done, null);
+  await ended(lead, agent, AgentState.Done, null, null);
 }
 
 /**
@@ -471,11 +479,17 @@ async function lookIfModel(lead: Lead, agent: AgentRecord): Promise<AssetLook | 
 }
 
 /** A sub-agent's end: its state and why, on its part and in the journal; its copy goes. */
-async function ended(lead: Lead, agent: AgentRecord, state: AgentState, error: string | null): Promise<void> {
+async function ended(
+  lead: Lead,
+  agent: AgentRecord,
+  state: AgentState,
+  error: string | null,
+  stopCode: WorkerStopCode | null,
+): Promise<void> {
   agent.state = state;
   agent.error = error;
   agent.endedAt = lead.clock.now();
-  await agentNode(lead, agent);
+  await agentNode(lead, agent, stopCode);
   await removeCopy(lead, agent);
   await saveLead(lead);
 }
@@ -901,6 +915,9 @@ export async function markAgent(lead: Lead, args: AnyRecord): Promise<string> {
   if (!agent) return AGENT_WORDS.Unknown(id);
   if (agent.state !== AgentState.Done) return AGENT_WORDS.NotDelivered(id, agent.state);
   if (!VERDICTS.includes(args.verdict as string)) return AGENT_WORDS.BadVerdict;
+  // A verdict stands once given: work a save point took in stays in the game, as on its row.
+  if (agent.mergedInto) return AGENT_WORDS.InGameAlready(id, agent.mergedInto);
+  if (agent.mark) return AGENT_WORDS.AlreadyMarked(id, agent.mark.verdict);
   const verdict = args.verdict as AgentVerdict;
   agent.mark = { verdict, note: hasText(args.note) ? clip(args.note.trim(), CLIP_DETAIL) : null, at: lead.clock.now() };
   await agentMarked(lead, agent);
@@ -967,7 +984,8 @@ export async function settleAgents(lead: Lead): Promise<void> {
   const unsettled = lead.journal.agents.filter((agent) => lead.agentRuns.has(agent.id) && agent.worktree);
   const kept = new Map(unsettled.map((agent) => [agent.id, agent.worktree]));
   for (const agent of unsettled) agent.worktree = null;
-  for (const agent of running(lead)) await ended(lead, agent, AgentState.Stopped, DELIVERY_WORDS.RunEnded);
+  for (const agent of running(lead))
+    await ended(lead, agent, AgentState.Stopped, DELIVERY_WORDS.RunEnded, WorkerStopCode.RunEnded);
   await landPending(lead);
   for (const agent of lead.journal.agents) await removeCopy(lead, agent);
   for (const agent of unsettled) void removeWhenEnded(lead, agent, kept.get(agent.id) ?? null);

@@ -7,10 +7,11 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CustomEvent } from "../../shared/custom-events.ts";
+import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
 import { type EventData, EventKind } from "../../shared/event-log.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { ExecutionStatus } from "../../shared/run-state.ts";
+import { WorkerEnd, WorkerIsolation } from "../../shared/workers.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { FIXTURE_MODEL, fixtureRun, gradientShot, type Rgb, roundShotDir } from "./fixture-kit.ts";
 
@@ -28,6 +29,9 @@ const RUNS = [
   ["fixture-lead-live", true],
 ] as const;
 
+/** A typed worker's part on the graph: this prefix and its id (the seed's `AGENT_PART_PREFIX`). */
+const AGENT_PREFIX = "agent-";
+
 /** The verdict source and the merge stage the lead's records carry (the seed's `VerdictSource.Lead`, `MergeStage.Editor`). */
 const LEAD_SOURCE = "lead";
 const EDITOR_STAGE = "editor";
@@ -39,8 +43,17 @@ interface LeadRun {
   runsRoot: string;
 }
 
-/** Seeds both runs once: a profile reused after its first start keeps them. */
-export async function seedLeadGraph(core: StudioCore, project: string, threadId: string): Promise<void> {
+/**
+ * Seeds both runs once: a profile reused after its first start keeps them. `workerRecords`: each
+ * typed worker also leaves the worker records the seed's lead writes today (`chat-workers` seeds
+ * these runs so in a game of their own), which draw the run as a tree.
+ */
+export async function seedLeadGraph(
+  core: StudioCore,
+  project: string,
+  threadId: string,
+  { workerRecords = false }: { workerRecords?: boolean } = {},
+): Promise<void> {
   const seeded = (await core.store.listEvents(threadId)).some(
     (e) => e.data.type === EventKind.Custom && (e.data.payload as { runId?: string })?.runId === RUNS[0][0],
   );
@@ -48,8 +61,39 @@ export async function seedLeadGraph(core: StudioCore, project: string, threadId:
   for (const [runId, live] of RUNS) {
     const lead: LeadRun = { runId, run: fixtureRun({ runId, project }), runsRoot: core.layout.runs };
     const events = [...(await opening(lead)), ...(live ? stillRunning(lead) : await finished(lead))];
-    await core.append(events, threadId);
+    await core.append(
+      workerRecords ? events.flatMap((data) => [data, ...typedWorkerRecord(lead, data)]) : events,
+      threadId,
+    );
   }
+}
+
+/** How a typed worker's end is recorded, by the state its `director_worker` gives. */
+const TYPED_WORKER_END: Readonly<Record<string, WorkerEnd>> = {
+  done: WorkerEnd.Done,
+  failed: WorkerEnd.Failed,
+  stopped: WorkerEnd.Stopped,
+};
+
+/**
+ * The worker record the seed's lead writes beside a typed worker's `director_worker`
+ * (`loop/unreal/lead-graph.ts` `agentNode`), and its `merged` end once a save point takes in work it
+ * used. The lead's own columns (`lead`, `lead-<milestone>`) leave none.
+ */
+function typedWorkerRecord(lead: LeadRun, data: EventData): EventData[] {
+  const record = customRecord(data);
+  const payload = record?.payload ?? {};
+  if (record?.event_type === CustomEvent.IntegrationMerge && payload.facetId === KATANA.id)
+    return [lead.run(CustomEvent.WorkerFinished, { workerId: KATANA.id, title: KATANA.title, merged: true })];
+  const { workerId, title, state, stoppedBecause, delivered } = payload;
+  const typed = typeof workerId === "string" && workerId.startsWith(AGENT_PREFIX);
+  if (record?.event_type !== CustomEvent.DirectorWorker || !typed || typeof title !== "string") return [];
+  if (state === "running")
+    return [lead.run(CustomEvent.WorkerStarted, { workerId, title, isolation: WorkerIsolation.Copy, task: title })];
+  const end = typeof state === "string" ? TYPED_WORKER_END[state] : undefined;
+  if (!end) return [];
+  const why = typeof stoppedBecause === "string" ? { stoppedBecause } : {};
+  return [lead.run(CustomEvent.WorkerFinished, { workerId, title, state: end, delivered: delivered === true, ...why })];
 }
 
 /** A column or a sub-agent as the graph's worker record. */
@@ -246,7 +290,7 @@ async function finished(lead: LeadRun): Promise<EventData[]> {
       executionStatus: ExecutionStatus.Completed,
       // The seed's own close sentence (`leadCloseSentence` in loop/unreal/lead-graph.ts), held to it by run-graph-lead.test.ts.
       summary:
-        "3 save points; the last, Katana in hand: the combo with the katana attached. 2 sub-agents delivered, 1 used in the game; 1 didn't deliver.",
+        "3 save points; the last, Katana in hand: the combo with the katana attached. 2 workers delivered, 1 used in the game; 1 didn't deliver.",
     }),
   ];
 }

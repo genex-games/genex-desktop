@@ -135,7 +135,9 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
       properties: {
         id: text("The worker's id."),
         verdict: text(`One of ${Object.values(AgentVerdict).join(", ")}.`),
-        note: text("Why, in one line (optional)."),
+        note: text(
+          "Why, in one line (optional). The person reads it in the chat beside the worker: plain words, no ids or tool names.",
+        ),
       },
       required: ["id", "verdict"],
     },

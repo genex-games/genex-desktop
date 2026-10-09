@@ -3,6 +3,7 @@ import { compareIds } from "./compare-ids.ts";
 import { EventKind, type EventData, type EventEnvelope } from "./event-log.ts";
 import { CustomEvent, customEvent, customRecord } from "./custom-events.ts";
 import { ToolPermissionState } from "./permissions.ts";
+import { isWorkerOfGraph, workerKeyOf } from "./run-graph-events.ts";
 
 export const CHAT_PAGE_SIZE = 160;
 export interface ChatPage {
@@ -12,6 +13,9 @@ export interface ChatPage {
   /** Compact current-state facts, independent of the visible history page. */
   context: EventEnvelope[];
 }
+
+/** The key prefix of a worker's fact. */
+const WORKER_FACT = "worker:";
 
 /** Current-state facts by key: the latest record that still says something about now. */
 type Facts = Map<string, EventEnvelope>;
@@ -56,6 +60,23 @@ function jobFact(facts: Facts, event: EventEnvelope, event_type: string, p: Payl
   const key = `job:${p.jobId}`;
   if (event_type === CustomEvent.JobStarted) facts.set(key, event);
   else facts.delete(key);
+}
+
+/** A run that finished: a worker of it still open (no end on the log) works no more. */
+function runWorkersFact(facts: Facts, p: Payload): void {
+  if (typeof p.runId !== "string" || !p.runId) return;
+  const runId = p.runId;
+  for (const key of facts.keys())
+    if (key.startsWith(WORKER_FACT) && isWorkerOfGraph(key.slice(WORKER_FACT.length), runId)) facts.delete(key);
+}
+
+/** A worker still working: its start keeps its line reachable whatever page is loaded; any end or verdict settles it. */
+function workerFact(facts: Facts, event: EventEnvelope, event_type: string, p: Payload): void {
+  const worker = workerKeyOf(p);
+  if (!worker) return;
+  const key = `${WORKER_FACT}${worker}`;
+  if (event_type === CustomEvent.WorkerFinished) facts.delete(key);
+  else if (!facts.has(key)) facts.set(key, event);
 }
 
 function queuedFact(facts: Facts, event: EventEnvelope, data: CustomData, p: Payload): void {
@@ -109,6 +130,7 @@ function customFact(facts: Facts, event: EventEnvelope, data: CustomData): void 
     case CustomEvent.AutopilotPaused:
       runStepFact(facts, event, event_type, p);
       settleReadInto(facts, p.runId, event_type);
+      if (event_type === CustomEvent.RunFinished) runWorkersFact(facts, p);
       break;
     case CustomEvent.AutopilotResumed:
     case CustomEvent.RunControl:
@@ -166,6 +188,10 @@ function customFact(facts: Facts, event: EventEnvelope, data: CustomData): void 
     case CustomEvent.JobStarted:
     case CustomEvent.JobEnded:
       jobFact(facts, event, event_type, p);
+      break;
+    case CustomEvent.WorkerStarted:
+    case CustomEvent.WorkerFinished:
+      workerFact(facts, event, event_type, p);
       break;
     case CustomEvent.ConversationRewound:
       // Permanent: an older page loaded later still needs every rewind to hide its withdrawn rows.

@@ -26,6 +26,7 @@ import type { RunSpec } from "./protocol.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
 import type { DontWaitOfferPayload, DontWaitSetPayload } from "./dont-wait.ts";
 import type { AppLookAccessPayload, JobEndedPayload, JobStartedPayload } from "./jobs.ts";
+import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -103,6 +104,9 @@ export const CustomEvent = {
   RunSteeringDelivered: "run_steering_delivered",
   RunVisualEvidence: "run_visual_evidence",
   WorkerStopRequested: "worker_stop_requested",
+  /** A worker a lead started, in a run or a chat turn, and its end or the lead's verdict; written by the harness. */
+  WorkerStarted: "worker_started",
+  WorkerFinished: "worker_finished",
   // one part's rounds
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
@@ -587,6 +591,8 @@ export interface CustomEventMap {
     director?: boolean;
     /** The run's lead takes the chat while it builds (live chat): a message goes to it, not behind the build. */
     liveChat?: boolean;
+    /** The run's lead's workers write `worker_started`/`worker_finished`: its graph is a tree from the start. */
+    workerRecords?: boolean;
   };
   blender_asset: RunScope & {
     name?: string;
@@ -680,6 +686,8 @@ export interface CustomEventMap {
   job_started: Partial<JobStartedPayload>;
   job_ended: Partial<JobEndedPayload>;
   app_look_access: Partial<AppLookAccessPayload>;
+  worker_started: WorkerStartedPayload;
+  worker_finished: WorkerFinishedPayload;
   rebuild_and_restart_studio: { ok?: boolean; reason?: string };
   run_auto_resumed: RunAutoResumedPayload;
   run_control: RunScope & { action?: string };

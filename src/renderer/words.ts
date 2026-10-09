@@ -20,6 +20,7 @@
  */
 
 import type { GameEngine } from "../shared/game-engine.ts";
+import { WorkerStopCode } from "../shared/workers.ts";
 import { type PackageManager, type SandboxProblemCode, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
 import { sizeWords } from "../shared/byte-size.ts";
@@ -46,7 +47,8 @@ import {
 } from "../shared/permissions.ts";
 import { RunSharingDeleteOutcome, type RunSharingDeleteResult } from "../shared/run-sharing.ts";
 import type { ProviderBuilderUse } from "../shared/provider-skills.ts";
-import type { IterationStatus } from "./run-graph.ts";
+import type { FinishCheckState, IterationStatus } from "./run-graph.ts";
+import type { LeadFace } from "./run-tree.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { plural } from "../shared/skill-words.ts";
@@ -1689,6 +1691,126 @@ export function backgroundCount(running: number, finished: number): string {
   const parts = [running ? `${running} running` : "", finished ? `${finished} finished` : ""];
   return parts.filter(Boolean).join(" · ");
 }
+
+// ── the lead, its workers and the finish check on the Builds graph ────────────────────────
+
+/** A worker's status on its node and its card: what it is doing, or how it ended. Never how it works. */
+export const WORKER_WORDS = {
+  working: "Working",
+  workingIn: (engine: string) => `Working in ${engine}`,
+  added: "Added to your game",
+  done: "Done",
+  didntFinish: "Didn't finish",
+  stopped: "Stopped",
+  notUsed: "Not used",
+  /** the quotes on a worker's card */
+  asked: "The lead asked",
+  leadSaid: "The lead",
+} as const;
+
+/**
+ * Why a worker stopped short, by the code its end record carries (`WorkerStopCode`), as its card
+ * and its chat line say it. The record's own reason is the harness's text for the lead: never shown.
+ */
+export const WORKER_STOP_WORDS = {
+  [WorkerStopCode.HostRefused]: "Your Settings allow no more workers at once",
+  [WorkerStopCode.TurnEnded]: "The chat turn ended first",
+  [WorkerStopCode.RunEnded]: "The Loop ended first",
+  [WorkerStopCode.StoppedByLead]: "The lead stopped it",
+  [WorkerStopCode.Error]: "It ran into an error",
+} as const satisfies Record<WorkerStopCode, string>;
+
+/** Text as a sentence: its first letter capitalized, and a full stop when it has no end of its own. */
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  const capital = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  return /[.!?…]$/.test(capital) ? capital : `${capital}.`;
+}
+
+/**
+ * A worker's one line in the chat (`chat/worker-lines.ts`): its task while it works, then what it
+ * said (its own summary, else its task) and how it ended. Never an id or how it stands in the game.
+ */
+export const WORKER_LINE_WORDS = {
+  working: (title: string) => `${title}…`,
+  workingIn: (title: string, engine: string) => `${title} in ${engine}…`,
+  done: (said: string) => asSentence(said),
+  added: (said: string) => `${asSentence(said)} Added to your game.`,
+  notUsed: (said: string, note: string | null) =>
+    note ? `${asSentence(said)} Not used: ${note}` : `${asSentence(said)} Not used.`,
+  didntFinish: (title: string, because: WorkerStopCode | null) =>
+    because ? `${title}: didn't finish. ${asSentence(WORKER_STOP_WORDS[because])}` : `${title}: didn't finish.`,
+  stopped: (title: string) => `${title}: stopped.`,
+} as const;
+
+/** The status line's rest while a Loop's workers work: "3 workers on it". */
+export const workersOnIt = (count: number): string => `${plural(count, "worker")} on it`;
+
+/** The lead's node and card: its name, and what it is doing by its face (`run-tree.ts` `LeadFace`). */
+export const LEAD_WORDS = {
+  name: "The lead",
+  face: {
+    working: "Working on the next step",
+    waiting: "Waiting for a worker",
+    paused: "Paused",
+    done: "Done",
+    stopped: "Stopped",
+  } satisfies Record<LeadFace, string>,
+  /** the card's sentence by face */
+  about: {
+    working:
+      "No part is working right now. The lead is deciding what comes next, or changing the game itself; a new part shows up here when it starts one.",
+    waiting: "The lead is waiting for its workers. Each one is a row on the graph, named by what it was asked to do.",
+    paused: "The lead is paused with the Loop. Resume it from the chat.",
+    done: "The lead is done.",
+    stopped: "The lead stopped before it said it was done.",
+  } satisfies Record<LeadFace, string>,
+  /** the card's sentence for the lead at work in a tree, where each worker it starts is a row */
+  aboutWorkingInTree: "The lead is working on the next step itself; each worker it starts is a row here.",
+} as const;
+
+/** The background tile's first line, over the job's name: "In the background". */
+export const JOBS_EYEBROW = "In the background";
+
+/** The background card: one row per job, read-only (Stop stays on the job's chat line). */
+export const JOBS_WORDS = {
+  title: "In the background",
+  about: "Long work the lead or a worker started, like a build. It runs on while the agents go on working.",
+  by: (who: string) => `Started by ${who}`,
+  byLead: "Started by the lead",
+} as const;
+
+/** The finish check's node and card. */
+export const FINISH_CHECK_WORDS = {
+  name: "Finish check",
+  state: {
+    not_yet: "Not yet",
+    checking: "Checking",
+    done: "Done",
+    stopped: "Stopped",
+  } satisfies Record<FinishCheckState, string>,
+  placeholder: "Runs at the end",
+  about: "When the lead says the Loop is done, a reviewer that did none of the work checks the proof first.",
+} as const;
+
+/** A build in the stage's history, by what it was and the day it started; never a number or a count. */
+export const BUILD_HISTORY_WORDS = {
+  thisTurn: "This chat turn",
+  thisLoop: "This Loop",
+  turnFrom: (day: string) => `Chat turn from ${day}`,
+  loopFrom: (day: string) => `Loop from ${day}`,
+  today: "today",
+  yesterday: "yesterday",
+} as const;
+
+/** A chat turn's status line and result node: its workers at work, then whether their work is in your game. */
+export const TURN_WORDS = {
+  working: "Working",
+  nothingYet: "Nothing yet",
+  live: "Live in your game",
+  done: "Done",
+  fromTurn: "from this chat turn",
+} as const;
 
 /** The macOS Privacy & Security panes app_look needs, by the names System Settings shows. */
 const PRIVACY_PANE_WORDS = {

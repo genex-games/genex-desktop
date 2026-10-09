@@ -10,7 +10,8 @@ import type { FactRef, FolderHolds } from "../folder-facts.ts";
 import type { Where } from "../git.ts";
 import { HostMethod } from "../host-methods.ts";
 import { sleep } from "../time.ts";
-import type { WorkerIsolation, WorkerQuestion, WorkerVerdict } from "./contract.ts";
+import type { WorkerIsolation, WorkerQuestion, WorkerStopCode, WorkerVerdict } from "./contract.ts";
+import type { WorkerEventScope } from "./events.ts";
 
 /** Where a worker stands. Persisted in the chat's artifact: never rename a value. */
 export const WorkerState = {
@@ -44,6 +45,8 @@ export interface WorkerScope {
   runId?: string;
   /** The chat turn (its message id) whose lead started them, when the chat's own session did. */
   turn?: string;
+  /** The person's request that turn answers: its workers' start records keep it. */
+  ask?: string;
   engine: string;
   model?: string;
   effort?: string;
@@ -94,6 +97,8 @@ export interface WorkerRecord {
   startedAt: number;
   endedAt: number | null;
   error: string | null;
+  /** Why it stopped short, as the code its end record carries for the app; absent in older records. */
+  stopCode?: WorkerStopCode | null;
   verdict: WorkerVerdict | null;
   /** The lead's note with its verdict. */
   note?: string | null;
@@ -120,6 +125,16 @@ export interface PoolState {
   closing: boolean;
   /** Copies the close hands back once their sessions end (a session still writing at the close). */
   handingBack: Map<string, Promise<void>>;
+}
+
+/**
+ * Where a worker's records go: the pool's chat and run, or the chat turn that started the worker
+ * (an earlier turn's, for a worker that turn left to mark), with the request the turn answers.
+ */
+export function eventScope(state: PoolState, record: WorkerRecord): WorkerEventScope {
+  const { ctx, threadId, project, runId, turn, ask } = state.scope;
+  const belongs = runId ? { runId } : { turn: record.turn ?? turn ?? null };
+  return { ctx, threadId, project, ...belongs, ...(ask ? { ask } : {}) };
 }
 
 /** The records that are still working (or waiting on the person). */

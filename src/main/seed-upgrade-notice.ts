@@ -37,7 +37,7 @@ export const SEED_CALL_MEMORY_PREFIX = "app update changed host calls in ";
 /** What the agent reads about a kept file that calls the host the older way (SEED_CALL_CHANGES), by file. */
 const CALL_NOTES: Readonly<Record<string, string>> = {
   "loop/delegated-turn.ts":
-    "Your edited loop/delegated-turn.ts was kept but calls the host the older way: harness steps need step: true (checkpoint: true for writes Plan holds), plugins.tools needs { project }, the brief takes facts, holds, kinds and pluginsOff, and chat turns open workers (withChatWorkers).",
+    "Your edited loop/delegated-turn.ts was kept but calls the host the older way: steps need step: true (checkpoint: true for writes Plan holds), plugins.tools needs { project }, the brief takes facts, holds, kinds and pluginsOff, and chat turns open workers (withChatWorkers) with ask: options.text.",
   "loop/main.ts":
     'Your edited loop/main.ts was kept, but it does not claim "workers" or route worker_tool to chatWorkerTool (loop/workers/chat-workers.ts), so the chat\'s session is offered no workers. Copy both from the shipped file.',
   "tools/index.ts":
@@ -51,7 +51,7 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "prompts/operating-rules.md":
     "Your edited prompts/operating-rules.md was kept, but a web game's rules (the preview, window.__studio, determinism) now live in prompts/operating-rules-web.md, read only for a web game: take them out of your copy, as the shipped copy does.",
   "loop/director/tool-specs.ts":
-    "Your edited loop/director/tool-specs.ts was kept, but the director now uses Genex's worker tools: wait is worker_wait, worker_mark is new and worker_start takes task, isolation and research (WorkerTool, loop/workers/contract.ts). Copy them from the shipped file.",
+    "Your edited loop/director/tool-specs.ts was kept, but the director now uses Genex's worker tools: wait is worker_wait, worker_mark is new (the person reads its note) and worker_start takes task, isolation and research (WorkerTool, loop/workers/contract.ts). Copy them from the shipped file.",
   "loop/director/tools.ts":
     "Your edited loop/director/tools.ts was kept, but it does not answer worker_mark or readers (isolation read) from the run's shared pool, or never tells the lead a builder waits on the person (waitingBuilders, loop/workers/director-pool.ts). Copy both from the shipped file.",
   "loop/director/wake-prompts.ts":
@@ -59,11 +59,11 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "loop/director/briefs.ts":
     "Your edited loop/director/briefs.ts was kept, but it still names the director's old wait tool (worker_wait now), or a single worker's brief does not open with Genex's identity (builderIdentity). Copy both from the shipped file.",
   "loop/director/workers.ts":
-    "Your edited loop/director/workers.ts was kept, but it lacks the worker grant that seats its builders in the chat's mode (workerGrant), Genex's identity in their briefs (runIdentity), or the wait for room under the Settings ceiling (withWorkerRoom). Copy them from the shipped file.",
+    "Your edited loop/director/workers.ts was kept, but it lacks its builders' worker grant (workerGrant), Genex's identity in their briefs (runIdentity), the wait for room (withWorkerRoom) or their start and end records (recordBuilderStarted, recordBuilderEnded). Copy them from the shipped file.",
   "loop/facet/phases/build.ts":
     "Your edited loop/facet/phases/build.ts was kept, but a builder delegates without its worker grant (worker: loop.options.worker), or reads a chat with no room for another writer as a broken build (withWorkerRoom, loop/workers/room.ts). Copy both from the shipped file.",
   "loop/director/setup.ts":
-    "Your edited loop/director/setup.ts was kept, but game.scaffold needs kind: ProjectStarter.Web for a web game, and the base and wiring sessions open with Genex's identity (runIdentity, loop/workers/identity.ts). Copy both from the shipped file.",
+    "Your edited loop/director/setup.ts was kept, but game.scaffold needs kind: ProjectStarter.Web for a web game, the base and wiring sessions open with Genex's identity (runIdentity), and the run's start says workerRecords: true. Copy them from the shipped file.",
   "loop/facet/phases/brief.ts":
     "Your edited loop/facet/phases/brief.ts was kept, but a director's facet worker does not open its brief with Genex's identity (withIdentity, loop/workers/identity.ts). Copy it from the shipped file.",
   "loop/director/wake.ts":

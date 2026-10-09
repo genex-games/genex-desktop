@@ -9,7 +9,7 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { readText, storageKeyFor, writeText } from "../storage.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
-import { Icon } from "../ui/icons.tsx";
+import { StepMark } from "./StepMark.tsx";
 import { STEPS_WORDS } from "../words.ts";
 import { parseSteps, STEPS_ACTION, type StepRow, type StepsCard, type StepsOffer, stepsShown } from "./engine-steps.ts";
 
@@ -116,12 +116,7 @@ function StepLine({ row, onRun }: { row: StepRow; onRun: (row: StepRow) => void 
       data-step={row.id}
       className="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1.5 py-1 @md:grid-cols-[1rem_minmax(0,1fr)_auto]"
     >
-      <span
-        aria-hidden="true"
-        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full ${row.done ? "bg-accent-primary/12 text-accent-ink" : "border border-line"}`}
-      >
-        {row.done ? <Icon name="check" size={11} /> : null}
-      </span>
+      <StepMark done={row.done} />
       <StepText row={row} command={command} />
       <StepButtons row={row} command={command} onRun={onRun} />
     </li>

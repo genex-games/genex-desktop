@@ -587,6 +587,8 @@ delegated engine carries a worker's seat.
 - `worker_mark used` merges a copy's commit into the game folder with the director's merge
   (`mergeNoFf`, conflicts listed and the merge aborted). Conflicts, and the lead's uncommitted
   files the work also changes, go back to the lead with their names; `rejected` drops the copy.
+  A verdict stands once given, and a writer in place that finished is in the game already, so it
+  is never marked rejected: the chat and the graph never call work in the game unused.
   Work that changes Claude Code's own folder (`.claude` at any depth, in any case,
   `workers/claude-folder.ts`) is never merged, as no build lands it in a game.
 
@@ -598,9 +600,19 @@ it, and its copy removed; a copy whose session is still writing is handed back o
 records persist in the chat's artifact `chat-workers`, so `worker_mark` in a later turn still
 merges from the ref.
 
+Every worker leaves records on the chat's log (`loop/workers/events.ts`): `worker_started` when it
+starts and `worker_finished` when it ends (with `stopCode` when it stopped short, which the app
+words itself) and again with the lead's verdict. A run's worker names its `runId`; a chat turn's
+names its `turn` and the request (`ask`). The Builds graph draws them as a tree under the lead and
+the chat gives each one line (`renderer/run-graph-workers.ts`, `chat/worker-lines.ts`); a director
+builder that ends done with a commit of its own says `delivered`, and the run's clean
+`integration_merge` of it reads as added on both. The next pool to open ends a worker an earlier
+scope left without an end (its harness restarted, or its session outlived the close's wait).
+
 ### Workers in a run
 
-A run's lead offers the same six worker tools. The director (`loop/director/tool-specs.ts`) names
+A run's lead offers the same six worker tools; a director's `autopilot_started` says
+`workerRecords: true`, so Builds draws its run as a tree from the start. The director (`loop/director/tool-specs.ts`) names
 its wait `worker_wait` (`WorkerTool.Wait`; the handler still answers the old name `wait`, which a
 kept playbook or journal may say) and adds `worker_mark`. Its `worker_start` takes `task` (a kept
 prompt's `brief` is still read), `isolation` and `research`: `copy`, the default, is its builder in
@@ -608,7 +620,9 @@ its own worktree; `read` starts a reader from the run's shared pool (`loop/worke
 `director-pool.ts`) in the game folder, which never integrates, and may research the web; `lock` is
 refused, because the web method never writes in the game folder itself. A web run takes no plugin
 worker types. `worker_mark used` integrates the builder as
-`integrate` does; `rejected` stops its news in every digest and `worker_wait`. Every builder's
+`integrate` does; `rejected` stops its news in every digest and `worker_wait`, and is refused for a
+builder already integrated. A conflict worker's records name the work it fits in, in plain words
+(`FIT_IN_WORDS`), with no summary of Genex's own. Every builder's
 delegation, a conflict worker's included, carries `worker {id, title, runId}` (`director/workers.ts`,
 and `facet/phases/build.ts` only when the facet loop runs for a director; a classic Autopilot's
 builders carry none), so the host seats it in the mode of the chat the run was started in. A

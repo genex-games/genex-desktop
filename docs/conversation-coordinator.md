@@ -555,7 +555,8 @@ that settle something begun before it stay (`keep`): queue records of messages t
 `turn_ended` of a turn begun before it, the lifecycle of a build started before it, the answer
 to a question asked before it, a job's `job_ended` whose start stays, and the `job_started` of a
 job with no end yet (a rewind stops only a build's jobs; another job goes on, and withdrawn it
-would run with no line and no Stop). Builds started after it leave the chat with it, so routing
+would run with no line and no Stop), and likewise a worker's `worker_finished` whose start stays
+and the `worker_started` of a worker still working. Builds started after it leave the chat with it, so routing
 (`latestRun` over `events.list`) and the coordinator's run tools, the lead, plan review
 (`continuingRun`), a graph note's steer and the files a chat names no longer reach them; the Builds panel still has them. Queue holds, build
 observations, bookkeeping and the `conversation_rewound` marker stay. The

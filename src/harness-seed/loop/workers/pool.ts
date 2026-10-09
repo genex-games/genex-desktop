@@ -12,9 +12,9 @@ import type { EventEnvelope } from "../../types/host-api.d.ts";
 import { HostMethod } from "../host-methods.ts";
 import { hasText } from "../text.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
-import { MAX_WORKER_WAIT_S, WORKER_QUESTION_PENDING, WorkerIsolation, WorkerTool } from "./contract.ts";
+import { MAX_WORKER_WAIT_S, WORKER_QUESTION_PENDING, WorkerIsolation, WorkerStopCode, WorkerTool } from "./contract.ts";
 import { commitCopy, keepWork, markWorker, removeCopy } from "./pool-merge.ts";
-import { ended, startWorker } from "./pool-start.ts";
+import { ended, scopeEnd, startWorker } from "./pool-start.ts";
 import { POOL_WORDS } from "./prompts.ts";
 import { questionOf, questionText } from "./questions.ts";
 import {
@@ -73,9 +73,16 @@ export async function openPool(scope: WorkerScope): Promise<WorkerPool> {
     handingBack: new Map(),
   };
   // A worker an earlier scope left at work (its harness restarted under it) works no more.
-  for (const record of runningRecords(state)) await ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded);
+  for (const record of runningRecords(state))
+    await ended(state, record, WorkerState.Stopped, POOL_WORDS.turnEnded, null, scopeEnd(state));
+  // One that scope's close stopped, whose session outlived the wait and never ended, ends as stopped.
+  for (const record of unendedStops(state)) await ended(state, record, record.state, record.error);
   return { state, call: (name, args) => callTool(state, name, args), close: () => closePool(state) };
 }
+
+/** The workers a close stopped whose end was never recorded: no longer working, with no end time. */
+const unendedStops = (state: PoolState): WorkerRecord[] =>
+  state.records.filter((record) => !isWorking(record) && record.endedAt === null);
 
 /** One worker tool call, by the name the lead's engine sent. */
 function callTool(state: PoolState, name: string, args: AnyRecord): Promise<string> {
@@ -198,9 +205,15 @@ async function steerWorker(state: PoolState, args: AnyRecord): Promise<string> {
 }
 
 /** Stop one worker's session: it is stopped first, so its end reads as a stop, never a failure. */
-async function abortWorker(state: PoolState, record: WorkerRecord, why: string): Promise<boolean> {
+async function abortWorker(
+  state: PoolState,
+  record: WorkerRecord,
+  why: string,
+  code: WorkerStopCode,
+): Promise<boolean> {
   record.state = WorkerState.Stopped;
   record.error = why;
+  record.stopCode = code;
   record.question = null;
   return sendAbort(state, record);
 }
@@ -235,7 +248,8 @@ async function stopWorker(state: PoolState, args: AnyRecord): Promise<string> {
   const record = recordOf(state, args.id);
   if (!record) return POOL_WORDS.unknown(String(args.id ?? ""));
   if (!isWorking(record)) return POOL_WORDS.notRunning(record.id, record.state);
-  const found = await abortWorker(state, record, hasText(args.why) ? args.why.trim() : POOL_WORDS.stoppedByLead);
+  const why = hasText(args.why) ? args.why.trim() : POOL_WORDS.stoppedByLead;
+  const found = await abortWorker(state, record, why, WorkerStopCode.StoppedByLead);
   await untilEnded(state, record, found);
   return POOL_WORDS.stopped(record.id);
 }
@@ -251,7 +265,7 @@ async function stopWorker(state: PoolState, args: AnyRecord): Promise<string> {
 async function closePool(state: PoolState): Promise<void> {
   state.closing = true;
   const why = state.scope.runId ? POOL_WORDS.runEnded : POOL_WORDS.turnEnded;
-  for (const record of runningRecords(state)) await abortWorker(state, record, why);
+  for (const record of runningRecords(state)) await abortWorker(state, record, why, scopeEnd(state));
   const runs = [...state.runs.values()];
   await Promise.race([Promise.all(runs), state.scope.clock.sleep(SETTLE_WAIT_MS)]);
   for (const record of state.records) {

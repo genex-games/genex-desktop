@@ -8,10 +8,10 @@ import { MINUTE_MS } from "../../shared/duration.ts";
 import {
   AppLookAccessKind,
   type AppLookAccessPayload,
+  isJobState,
+  isJobStopper,
   type JobEndedPayload,
   type JobStartedPayload,
-  JobState,
-  JobStopper,
 } from "../../shared/jobs.ts";
 import { inBackground, jobRunningLine, jobStatusWords } from "../words.ts";
 
@@ -37,11 +37,6 @@ const textOf = (value: unknown): string | undefined => (typeof value === "string
 
 /** The title of the worker a record names, when it names one. */
 const workerTitle = (worker: unknown): string | undefined => textOf((worker as { title?: unknown } | null)?.title);
-
-const STATES: readonly string[] = Object.values(JobState);
-const STOPPERS: readonly string[] = Object.values(JobStopper);
-const isJobState = (value: unknown): value is JobState => typeof value === "string" && STATES.includes(value);
-const isJobStopper = (value: unknown): value is JobStopper => typeof value === "string" && STOPPERS.includes(value);
 
 /** A `job_started` record's line; null without a title. */
 export function jobStart(payload: Partial<JobStartedPayload>): JobStart | null {

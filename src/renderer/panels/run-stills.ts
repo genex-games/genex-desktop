@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
-import type { RunGraph } from "../run-graph.ts";
+import { type RunGraph, runIdOf } from "../run-graph.ts";
 import { loadStill, useStill } from "../stills.ts";
 
 /** How often a round still in hand looks for a newer saved frame. */
@@ -99,13 +99,15 @@ export function useRoundStill(
 ): string | null {
   const judged = useStill(shot ? { run: shot, maxPx: 640 } : null);
   const [live, setLive] = useState<string | null>(null);
+  // A chat turn's graph has no run whose saved frames could be asked for.
+  const runId = runIdOf(graph);
   useEffect(() => {
     setLive(null);
     // No part named: nothing to ask for (a caller whose picture comes from elsewhere).
-    if (shot || !facetId) return;
+    if (shot || !facetId || !runId) return;
     const read = async (isCurrent: () => boolean): Promise<void> => {
       try {
-        const frame = await readRoundPreview({ runId: graph.runId, facetId, iteration }, active);
+        const frame = await readRoundPreview({ runId, facetId, iteration }, active);
         const src = frame ? await loadStill({ run: frame.path, version: frame.capturedAt, maxPx: 640 }) : null;
         if (isCurrent() && src) setLive(src);
       } catch {
@@ -113,7 +115,7 @@ export function useRoundStill(
       }
     };
     return pollWhile(read, active, LIVE_FRAME_POLL_MS);
-  }, [graph.runId, facetId, iteration, shot, active]);
+  }, [runId, facetId, iteration, shot, active]);
   return judged ?? live;
 }
 

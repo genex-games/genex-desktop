@@ -13,6 +13,7 @@ import type { StudioCore } from "../studio-core.ts";
 import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
 import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
+import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
@@ -131,6 +132,7 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.BuildGraph) return seedGraphOnce(game);
   if (id === FixtureName.LargeBuildGraph) return seedLargeBuildGraph(core, game.project.name, threadId);
   if (id === FixtureName.LeadGraph) return seedLeadGraph(core, game.project.name, threadId);
+  if (id === FixtureName.ChatWorkers) return seedChatWorkers(core, game.project.name, threadId);
   if (id === FixtureName.Sidebar) return seedSidebar(core, game.project.name);
   // The rest seed a fresh profile only; a reused one keeps what it has.
   if (existing) return;
@@ -288,6 +290,10 @@ export async function activateChatFixture(
   }
   if (fixture.fixture === FixtureName.ChatFeedback) {
     await activatePlanReviews(core);
+    return;
+  }
+  if (fixture.fixture === FixtureName.ChatWorkers) {
+    await seedChatWorkersLoop(core);
     return;
   }
   if (isChatFixture(fixture.fixture)) await activateLiveChat(core, fixture);

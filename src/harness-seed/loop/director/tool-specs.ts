@@ -320,7 +320,8 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
       properties: {
         id: { type: "string", description: "The worker id." },
         verdict: { type: "string", description: `${WorkerVerdict.Used} or ${WorkerVerdict.Rejected}.` },
-        note: { type: "string", description: "Why, in one line." },
+        // The person reads this note in the chat; the schema's size is ratcheted, so it says so briefly.
+        note: { type: "string", description: "Why, for the person." },
       },
       required: ["id", "verdict"],
     },

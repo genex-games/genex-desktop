@@ -10,11 +10,12 @@ import type { AnyRecord } from "../../types/harness.d.ts";
 import { slug } from "../director/args.ts";
 import type { LoopRun, Worker } from "../director/loop-run.ts";
 import { modelOn, roleEffort, RoleKey, roleEngine } from "../model-roles.ts";
-import { isRunning } from "../outcomes.ts";
+import { isRunning, WorkerState } from "../outcomes.ts";
 import { CLIP_DETAIL, clip, hasText } from "../text.ts";
-import { WorkerIsolation, WorkerTool, WorkerVerdict } from "./contract.ts";
+import { WorkerEnd, WorkerIsolation, WorkerStopCode, WorkerTool, WorkerVerdict } from "./contract.ts";
+import { recordWorkerFinished, recordWorkerStarted, type WorkerEventScope } from "./events.ts";
 import { folderLabelOf, WEB_AT_ROOT } from "./identity.ts";
-import { DIRECTOR_MARK_WORDS, RUN_POOL_WORDS } from "./prompts.ts";
+import { DIRECTOR_MARK_WORDS, FIT_IN_WORDS, RUN_POOL_WORDS } from "./prompts.ts";
 import { REAL_CLOCK } from "./records.ts";
 import { waitingWorkers } from "./questions.ts";
 import { closeRunPool, type RunPoolSeat, runPool, runPoolCall, runPoolStatus } from "./run-pool.ts";
@@ -148,21 +149,121 @@ export function closeReaders(loopRun: LoopRun): Promise<void> {
   return closeRunPool(loopRun.run.runId);
 }
 
+// ── a builder's records ──────────────────────────────────────────────────────────────────────
+
+/**
+ * How each state a builder's close-out finds it in is recorded. A close-out ends the builder
+ * whatever its state says: one still marked running there was cut off by the run's end before its
+ * own state was set, so it reads as stopped.
+ */
+const BUILDER_END = {
+  [WorkerState.Running]: WorkerEnd.Stopped,
+  [WorkerState.Done]: WorkerEnd.Done,
+  [WorkerState.Failed]: WorkerEnd.Failed,
+  [WorkerState.Stopped]: WorkerEnd.Stopped,
+} as const satisfies Record<WorkerState, WorkerEnd>;
+
+/** Where a builder's records go: the run's chat, stamped with the run. */
+function builderScope(loopRun: LoopRun): WorkerEventScope {
+  const { ctx, run, threadId } = loopRun;
+  return { ctx, threadId, project: run.project, runId: run.runId };
+}
+
+/**
+ * The title a builder's records carry. A conflict worker's (conflict-worker.ts) names the work it
+ * fits in, in plain words: the title the lead knows it by names the git step.
+ */
+function recordedTitle(loopRun: LoopRun, worker: Worker): string {
+  if (!worker.merging) return worker.title;
+  const of = loopRun.state.workers.get(worker.merging.of)?.title;
+  return hasText(of) ? FIT_IN_WORDS.title(of) : FIT_IN_WORDS.someWork;
+}
+
+/**
+ * A builder's start on the chat's log: a worker in its own copy, under the id the lead gave it.
+ * A conflict worker's task is Genex's own brief, so its record asks what its title says.
+ */
+export function recordBuilderStarted(loopRun: LoopRun, worker: Worker): Promise<void> {
+  const title = recordedTitle(loopRun, worker);
+  const task = worker.merging ? title : worker.brief;
+  const started = { workerId: worker.id, title, isolation: WorkerIsolation.Copy, task };
+  return recordWorkerStarted(builderScope(loopRun), started);
+}
+
+/** Whether a builder left a commit of its own: work in its copy that waits for the lead to use it. */
+const handsWorkBack = (worker: Worker): boolean => hasText(worker.lastCommit) && worker.lastCommit !== worker.from;
+
+/** A builder's own summary: its session's (`runSingleWorker`); a conflict worker's is Genex's words on the merge. */
+const ownSummary = (worker: Worker): string | null =>
+  !worker.merging && hasText(worker.summary) ? worker.summary : null;
+
+/**
+ * Why a builder stopped short, as the app words it: the lead's `worker_stop`; the run's end, which
+ * cut it off at its close-out, stopped it at the close, or was the person's Stop; else an error.
+ * Null for a builder that finished.
+ */
+function builderStopCode(loopRun: LoopRun, worker: Worker, state: WorkerEnd): WorkerStopCode | null {
+  if (state === WorkerEnd.Done) return null;
+  if (worker.stoppedByLead) return WorkerStopCode.StoppedByLead;
+  const cutOff = worker.state === WorkerState.Running || worker.stopRequested || Boolean(loopRun.ctx.cancelled);
+  return cutOff ? WorkerStopCode.RunEnded : WorkerStopCode.Error;
+}
+
+/**
+ * A builder's end on the chat's log: how it ended, why in the app's code (`because` is for the
+ * lead), with its own summary when it has one. A finished builder with a commit of its own
+ * delivered work the lead has not used yet, so its row waits on the lead until it is integrated,
+ * as a pool worker's copy does.
+ */
+export function recordBuilderEnded(loopRun: LoopRun, worker: Worker, because: string | null): Promise<void> {
+  const state = BUILDER_END[worker.state] ?? WorkerEnd.Stopped;
+  const delivered = state === WorkerEnd.Done && handsWorkBack(worker);
+  const title = recordedTitle(loopRun, worker);
+  const summary = ownSummary(worker);
+  const stopCode = builderStopCode(loopRun, worker, state);
+  const ended = { workerId: worker.id, title, state, stoppedBecause: because, stopCode, summary, delivered };
+  return recordWorkerFinished(builderScope(loopRun), ended);
+}
+
+/** The lead's verdict on a builder, a second end record of it: a used builder's work was integrated. */
+function recordBuilderMarked(loopRun: LoopRun, worker: Worker, verdict: WorkerVerdict, note: string | null) {
+  const merged = verdict === WorkerVerdict.Used;
+  return recordWorkerFinished(builderScope(loopRun), {
+    workerId: worker.id,
+    title: recordedTitle(loopRun, worker),
+    verdict,
+    note,
+    merged,
+  });
+}
+
 /** `worker_mark used`: the builder's last accepted commit is integrated; the mark stands once the head moved. */
 async function markUsed(loopRun: LoopRun, worker: Worker, note: string | null): Promise<string> {
   const before = loopRun.state.integrationHead;
   const answer = await loopRun.integrate({ worker: worker.id });
-  if (loopRun.state.integrationHead !== before) marksOf(loopRun).set(worker.id, { verdict: WorkerVerdict.Used, note });
+  if (loopRun.state.integrationHead !== before) {
+    marksOf(loopRun).set(worker.id, { verdict: WorkerVerdict.Used, note });
+    await recordBuilderMarked(loopRun, worker, WorkerVerdict.Used, note);
+  }
   return typeof answer === "string" ? answer : JSON.stringify(answer);
 }
 
-/** `worker_mark rejected`: its news stops, and the feed says so. */
+/** A builder whose work the lead integrated, by `worker_mark used` or `integrate`: it is in the game. */
+const isIntegrated = (loopRun: LoopRun, worker: Worker): boolean =>
+  worker.integrated === true || marksOf(loopRun).get(worker.id)?.verdict === WorkerVerdict.Used;
+
+/**
+ * `worker_mark rejected`: its news stops, and the feed says so. Work already in the game is
+ * never marked rejected, so the chat and the graph never call work in the game unused.
+ */
 async function markRejected(loopRun: LoopRun, worker: Worker, note: string | null): Promise<string> {
   if (isRunning(worker)) return DIRECTOR_MARK_WORDS.stillRunning(worker.id);
+  if (isIntegrated(loopRun, worker)) return DIRECTOR_MARK_WORDS.inGameAlready(worker.id);
   marksOf(loopRun).set(worker.id, { verdict: WorkerVerdict.Rejected, note });
+  await recordBuilderMarked(loopRun, worker, WorkerVerdict.Rejected, note);
   await loopRun.decision(
     DIRECTOR_MARK_WORDS.rejectedCard(worker.id, note),
-    DIRECTOR_MARK_WORDS.rejectedPlain(worker.title),
+    DIRECTOR_MARK_WORDS.rejectedPlain(recordedTitle(loopRun, worker)),
   );
   return DIRECTOR_MARK_WORDS.rejected(worker.id);
 }

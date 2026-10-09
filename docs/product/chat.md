@@ -12,21 +12,21 @@ The chat's work shows a short status and elapsed time; waiting is static. A runn
 is one card (time used of its hours, what happens now, Builds), not chat work, nothing under it. No duplicate Stop
 controls or narration.
 
-Neighboring tools group under a **Worked on N steps** (or **Worked in Unreal**)
-disclosure; failures stay visible. Play views and assets sit under the work
+Neighboring tools group under **Worked on N steps** (or **Worked in Unreal**);
+failures stay visible. Play views and assets sit under the work
 that made them. Build updates use a short status and See it;
 a finished build is that card with Play, opening Builds; checks stay in Builds and Studio.
 A build that taught nothing adds no learned line. An Unreal turn saves and snapshots unsaved editor
-work, saying so. A port snapshots first, keeps web files as reference, and the chat goes on in the
+work, saying so. A port snapshots first, keeps web files as reference; the chat goes on in the
 new kind (Unreal's once it answers).
 The [design specification](../agent/design.md#chat-reading-and-activity) owns exact values.
 
 ## Questions and plans
 
 Replies get current plugin, account, MCP and template facts each turn; asking about plugins
-never resumes a build. A reply may start workers in the chat's mode (Plan holds writers); they
-stop with the reply. Agents may look at app windows, never clicking, in any mode; background
-work they start is one line with Stop, ending when Genex quits.
+never resumes a build. A reply may start workers in the chat's mode (Plan holds writers), stopping
+with the reply; each is one line, opening its work on Builds. Agents may look at app windows, never
+clicking, in any mode; background work is one line with Stop, until Genex quits.
 
 - An `ask_user` question opens the question panel: options and a typed-answer row; Send answer
   confirms a choice. Chat about this puts it aside for the composer; any reply settles it.
@@ -39,7 +39,7 @@ work they start is one line with Stop, ending when Genex quits.
 - A game reply's one-line `bash` block offers **Run** and **Copy**; output shows below and
   reaches the agent unseen, reopening no build.
 - **Plan mode** (Add's bulb) is a one-message choice: the plan is Markdown with **Approve**,
-  **Make changes** and **Cancel**; only Approve starts it, and a revision needs fresh approval.
+  **Make changes** and **Cancel**; only Approve starts it; a revision needs fresh approval.
   Failed generation offers Choose model, Model providers, Try again, Dismiss.
 
 ## Sending, waiting and history

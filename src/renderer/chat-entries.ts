@@ -6,6 +6,9 @@ import type { DontWaitOfferPayload } from "../shared/dont-wait.ts";
 import { dontWaitSetLine, parseDontWaitOffer } from "./chat/dont-wait-offer.ts";
 import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
 import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
+import { type WorkerLine, workerEndLine, workerLineEnded, workerStartLine } from "./chat/worker-lines.ts";
+import { isWorkerOfGraph, workerKeyOf } from "../shared/run-graph-events.ts";
+import { WorkerEnd } from "../shared/workers.ts";
 /**
  * The chat transcript as entries: the thread's event log read once, oldest first, into the
  * bubbles, tool-chip groups, narration lines and cards the chat draws. Pure — `chat/transcript.ts`
@@ -123,6 +126,8 @@ export const EntryAction = {
   EngineLink: "engine-link",
   /** Background work an agent started (`job_started`): one line, with Stop while it runs. */
   Job: "job",
+  /** A worker a lead started (`worker_started`): one line naming its task, rewritten as it ends. */
+  Worker: "worker",
   /** Genex can't see app windows yet (`app_look_access`): one line, with Open Privacy settings per pane. */
   AppAccess: "app-access",
 } as const;
@@ -198,6 +203,8 @@ export type Entry =
       engineLink?: { project: string; pluginId: string; linkedAt: string };
       /** action "job": what Stop reaches, and when the job started; absent once its end is read. */
       job?: JobHandle;
+      /** action "worker": its work ended well (done, used or added), so its mark is ticked. */
+      workerDone?: boolean;
       /** action "app-access": the Privacy & Security panes still to allow. */
       appAccess?: AppLookAccessKind[];
     }
@@ -298,7 +305,11 @@ const ROUTINE_TAGS = new Set<string>([
 
 /** Records that start a run: any interview question still open is answered by it. */
 const RUN_OPENING_EVENTS = new Set<string>([CustomEvent.RunRegistered, CustomEvent.RunStarted]);
-/** Records that show a run moved on: its steering card is no longer waiting. */
+/**
+ * Records that show a run moved on: its steering card is no longer waiting. A worker's start is not
+ * one: a reader starts while a held plan still waits for the person, and only builders (their
+ * `director_worker`) wait for that answer.
+ */
 const RUN_MOVING_EVENTS = [CustomEvent.DirectorWorker, CustomEvent.FacetBuildStarted, CustomEvent.RunFinished] as const;
 /**
  * Queue bookkeeping: a follow-up waiting (a steered one too, until the running turn reads it),
@@ -463,6 +474,8 @@ interface ChatDraft {
   jobs: Map<string, { entry: ActionEntry; start: JobStart }>;
   /** The jobs whose end is on this page: an end recorded again (after a crash) draws nothing more. */
   endedJobs: Set<string>;
+  /** Each worker's line by its graph and id (`workerKeyOf`), with what its records said, so later ones rewrite it. */
+  workerLines: Map<string, { entry: ActionEntry; line: WorkerLine }>;
 }
 
 export function toEntries(events: EventEnvelope[]): Entry[] {
@@ -492,6 +505,7 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     engineLinks: new Map(),
     jobs: new Map(),
     endedJobs: new Set(),
+    workerLines: new Map(),
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
     directTurns: new Map(),
@@ -1120,6 +1134,89 @@ function narrateJobEnded(chat: ChatDraft, event: EventEnvelope): void {
   });
 }
 
+/**
+ * A worker's line: "Port the car…". A start for a worker still working on the page (a resume)
+ * changes nothing; one after its end (a builder started again under its id) is a new attempt, a
+ * line of its own that carries nothing of the old end.
+ */
+function narrateWorkerStarted(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.WorkerStarted);
+  const key = payload ? workerKeyOf(payload) : null;
+  if (!payload || !key) return;
+  const known = chat.workerLines.get(key)?.line;
+  if (known && !workerLineEnded(known)) return;
+  const line = workerStartLine(payload);
+  if (line) pushWorkerLine(chat, event.id, key, line);
+}
+
+/**
+ * A worker's end, and the lead's verdict after it, rewrite its line in place; with its start not
+ * on this page, the first of them is a line of its own, and the rest rewrite that one.
+ */
+function narrateWorkerFinished(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.WorkerFinished);
+  const key = payload ? workerKeyOf(payload) : null;
+  if (!payload || !key) return;
+  const known = chat.workerLines.get(key);
+  const line = workerEndLine(payload, known?.line);
+  if (!line) return;
+  if (!known) {
+    pushWorkerLine(chat, event.id, key, line);
+    return;
+  }
+  rewriteWorkerLine(known, line);
+}
+
+/** A worker's line on the page, rewritten in place with what its records say now. */
+function rewriteWorkerLine(known: { entry: ActionEntry; line: WorkerLine }, line: WorkerLine): void {
+  known.line = line;
+  known.entry.text = line.text;
+  known.entry.workerDone = line.done;
+}
+
+/**
+ * A run's lead merged a worker's work cleanly into its build (the director's `integrate`): the
+ * worker's line says it is in the game, as its row on the run's graph does. A conflict adds nothing.
+ */
+function narrateWorkerIntegrated(chat: ChatDraft, event: EventEnvelope): void {
+  const merge = customRecord(event.data);
+  if (merge?.event_type !== CustomEvent.IntegrationMerge || merge.payload.conflict === true) return;
+  const key = workerKeyOf({ runId: merge.payload.runId, workerId: merge.payload.facetId });
+  const known = key ? chat.workerLines.get(key) : undefined;
+  const line = known ? workerEndLine({ merged: true }, known.line) : null;
+  if (known && line) rewriteWorkerLine(known, line);
+}
+
+/**
+ * A run finished: a worker of it whose line still works (no end reached the log, as when the app
+ * closed the run at its start) stopped with it, as its row on the run's graph says; one whose work
+ * is in the game reads added.
+ */
+function narrateRunWorkersStopped(chat: ChatDraft, event: EventEnvelope): void {
+  const runId = customPayload(event.data, CustomEvent.RunFinished)?.runId;
+  if (!runId) return;
+  for (const [key, known] of chat.workerLines) {
+    if (!isWorkerOfGraph(key, runId) || known.line.ended || known.line.done) continue;
+    const line = workerEndLine({ state: WorkerEnd.Stopped }, known.line);
+    if (line) rewriteWorkerLine(known, line);
+  }
+}
+
+/** A worker's own line, remembered by its key: never routine, so it never folds into activity. */
+function pushWorkerLine(chat: ChatDraft, id: string, key: string, line: WorkerLine): void {
+  const entry: ActionEntry = {
+    id,
+    kind: EntryKind.Action,
+    tag: SystemTag.TheLead,
+    action: EntryAction.Worker,
+    text: line.text,
+    workerDone: line.done,
+  };
+  closeGroup(chat);
+  chat.entries.push(entry);
+  chat.workerLines.set(key, { entry, line });
+}
+
 /** Genex can't see app windows yet: one line naming what to allow, with a button per pane. */
 function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
   const payload = customPayload(event.data, CustomEvent.AppLookAccess);
@@ -1721,6 +1818,10 @@ const NARRATORS: readonly Narrator[] = [
   narrateEngineUndone,
   narrateJobStarted,
   narrateJobEnded,
+  narrateWorkerStarted,
+  narrateWorkerFinished,
+  narrateWorkerIntegrated,
+  narrateRunWorkersStopped,
   narrateAppAccess,
   narratePluginSuggested,
   narrateDontWaitOffer,

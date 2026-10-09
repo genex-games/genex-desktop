@@ -226,6 +226,8 @@ async function announceRunStart(
           integrationNotes: "",
           maxParallel: capacity?.max ?? 1,
           director: true,
+          // Every builder writes worker records (`workers/director-pool.ts`): Builds draws a tree from the start.
+          workerRecords: true,
           ...(resume ? { resumed: true } : {}),
           // The composer tells the person a message reaches the lead now (renderer chat/live-chat.ts).
           ...(liveChat ? { liveChat: true } : {}),

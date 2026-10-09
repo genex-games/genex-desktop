@@ -19,6 +19,8 @@ import {
 } from "../helpers/studio-rig.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
+import { buildRunGraph, GraphNodeKind } from "../../src/renderer/run-graph.ts";
+import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
 import { deliveryOrder } from "../../src/renderer/chat/delivery-order.ts";
 import { chatContext } from "../../src/shared/chat-history.ts";
 import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
@@ -585,6 +587,25 @@ describe("live chat during a build", () => {
     const log = await rig.core.store.listEvents(thread);
     const started = customEvents(log, "autopilot_started").find((e) => e.runId === runId);
     assert.equal(started?.liveChat, true, "the build says its lead takes the chat, so the composer can say so");
+    assert.equal(started?.workerRecords, true, "the run says from its start that its workers leave records");
+    const startIndex = log.findIndex(
+      (event) =>
+        customRecord(event.data)?.event_type === CustomEvent.AutopilotStarted &&
+        customRecord(event.data)?.payload.runId === runId,
+    );
+    const fromItsStart = buildRunGraph(log.slice(0, startIndex + 1), runId);
+    assert.equal(fromItsStart?.tree, true, "a tree before any worker starts: the lead never moves");
+    assert.deepEqual(
+      fromItsStart?.nodes.map((node) => node.kind),
+      [
+        GraphNodeKind.Run,
+        GraphNodeKind.Base,
+        GraphNodeKind.Lead,
+        GraphNodeKind.Integration,
+        GraphNodeKind.Final,
+        GraphNodeKind.FinishCheck,
+      ],
+    );
     assert.equal(customEvents(log, "run_registered").length, 1, "no second run started");
     assert.equal(customEvents(log, "coordinator_message_processing").length, 0, "never a turn of its own");
     const said = toEntries(deliveryOrder(log)).flatMap((e) => (e.kind === "assistant" ? [e.text] : []));

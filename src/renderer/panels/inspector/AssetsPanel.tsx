@@ -1,7 +1,7 @@
 /** The panel of the run's assets: every job a plugin was asked for, grouped by where it got to, and the modeller's work. */
 import type { JSX } from "react";
 import type { AssetInfo, BlenderNode, RunGraph as RunGraphModel } from "../../run-graph.ts";
-import { truncate } from "../../run-graph.ts";
+import { runIdOf, truncate } from "../../run-graph.ts";
 import { AssetCardState } from "../../run-graph-assets.ts";
 import { useStill } from "../../stills.ts";
 import { BlenderLogo } from "../../ui/brand.tsx";
@@ -207,7 +207,7 @@ function AssetDetails({
     <Row label="Technical details">
       <Details
         rows={[
-          ["run", graph.runId],
+          ["run", runIdOf(graph)],
           ["files", joinDots(files) || null],
           ["jobs", joinDots(jobs.map((job) => job.jobId)) || null],
         ]}
