@@ -70,8 +70,14 @@ const REQUIRED_FLAGS: Record<CodingProvider, string[]> = {
     "--allowedTools",
     "--disallowedTools",
   ],
-  // `opencode run` 1.18 lists every one; an older CLI without `--variant` or `--pure` is refused.
-  [EngineId.OpenCode]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
+  // `opencode run` v2 lists these; a 1.x CLI advertising `--pure` or `--variant` is refused below.
+  [EngineId.OpenCode]: ["--format", "--session", "--model", "--agent", "--file"],
+};
+/** Flags a current CLI must not list: their presence means a 1.x CLI that v2 replaced. */
+const STALE_FLAGS: Record<CodingProvider, string[]> = {
+  [EngineId.Codex]: [],
+  [EngineId.ClaudeCode]: [],
+  [EngineId.OpenCode]: ["--pure", "--variant"],
 };
 /** How long reading the login shell's PATH, and each `--version`/`--help` probe, may take. */
 const LOGIN_PATH_TIMEOUT_MS = 8 * SECOND_MS;
@@ -99,6 +105,8 @@ const MESSAGE = {
   ProbeTimedOut: `CLI diagnostic timed out after ${PROBE_TIMEOUT_MS / SECOND_MS} seconds`,
   NoVersion: "CLI did not report a version",
   MissingOptions: (missing: string[]) => `Required CLI options are unavailable: ${missing.join(", ")}`,
+  StaleOptions: (stale: string[]) =>
+    `Outdated CLI options found: ${stale.join(", ")}. Update OpenCode, then check again.`,
 } as const;
 
 const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
@@ -585,6 +593,8 @@ async function checkCliCapabilities(
   const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, signal, platform));
   const missing = REQUIRED_FLAGS[provider].filter((flag) => !help.includes(flag));
   if (missing.length) throw new Error(MESSAGE.MissingOptions(missing));
+  const stale = (STALE_FLAGS[provider] ?? []).filter((flag) => help.includes(flag));
+  if (stale.length) throw new Error(MESSAGE.StaleOptions(stale));
   if (identity && !known) answered.set(identity, { version: status.version, help });
 }
 /** Brief cache for UI/model-list reads only. Sessions and explicit Recheck bypass it. */

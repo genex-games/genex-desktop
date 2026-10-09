@@ -430,6 +430,26 @@ test("display versions drop product names", () => {
   assert.equal(cliVersion("fixture-1"), "fixture-1");
   assert.equal(cliVersion(undefined), undefined);
 });
+const OPENCODE_V2_FLAGS =
+  "--standalone --server --continue --session --fork --model --agent --format --file --title --thinking --auto";
+async function opencodeCli(relative: string, flags: string, version = "fixture 2.0") {
+  const file = path.join(root, exe(relative));
+  await launcher(
+    file,
+    `#!/bin/sh\ncase "$1" in\n --version) echo '${version}';;\n *) echo '${flags}';;\nesac\n`,
+    `console.log(process.argv[2] === "--version" ? ${JSON.stringify(version)} : ${JSON.stringify(flags)});\n`,
+  );
+  await chmod(file, 0o755);
+  return file;
+}
+test("opencode gate accepts v2 run flags and refuses a 1.x CLI by its stale flags", async () => {
+  const v2 = await opencodeCli("v2/opencode", OPENCODE_V2_FLAGS, "opencode version 2.0.26");
+  assert.equal((await discoverCodingCli("opencode", { ...options, override: v2 })).status.state, "ready");
+  const v1 = await opencodeCli("v1/opencode", `${OPENCODE_V2_FLAGS} --variant --pure --dir`, "1.18.34");
+  const stale = await discoverCodingCli("opencode", { ...options, override: v1 });
+  assert.equal(stale.status.state, "incompatible");
+  assert.match(stale.status.detail, /--pure/);
+});
 test.after(async () => {
   await rm(root, { recursive: true, force: true });
 });
