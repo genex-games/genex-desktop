@@ -60,6 +60,16 @@ const POINTER_LINES =
   "left_click | right_click | middle_click | double_click | triple_click coordinate=x,y (text=shift|ctrl+alt holds modifiers). " +
   "left_click_drag start_coordinate=x,y coordinate=x,y. mouse_move coordinate=x,y. left_mouse_down / left_mouse_up. ";
 
+/** The batch sentence: several moves in one call. */
+const BATCH_LINE =
+  'batch actions=[{"action":"key","text":"w"},{"action":"wait","duration":0.5}]: up to 8 input actions and waits in one call, run in order, stopping at the first that fails. ';
+
+/** The observe sentence, with what this session does when observe is left out. */
+function observeLine(byDefault: boolean): string {
+  const fallback = byDefault ? "a screenshot comes back by default" : "leave it out and nothing comes back";
+  return `Input actions, wait and batch take observe=screenshot|canvas|none: the picture of the result comes back with the answer (${fallback}). `;
+}
+
 /** The clock sentence for a role on a target. */
 function clockLine(role: ComputerToolRole, caps: TargetCapabilities): string {
   if (!PACED_TOOL_ROLES.has(role)) return RUNNING_CLOCK_LINE;
@@ -84,6 +94,8 @@ export function computerToolDescription(options: {
   view: { width: number; height: number };
   cameras: string;
   capabilities?: TargetCapabilities;
+  /** Whether an input action brings back its picture when the model does not say. */
+  observeByDefault?: boolean;
 }): string {
   const caps = options.capabilities ?? BROWSER_CAPABILITIES;
   const whose = WHOSE_BUILD[options.role];
@@ -99,6 +111,8 @@ export function computerToolDescription(options: {
     "scroll scroll_direction=up|down|left|right scroll_amount=<notches> [coordinate=x,y]. " +
     "type text=<literal text>. key text=<a key or +chord: w, i, Return, Escape, space, ctrl+s> [repeat=n]. hold_key text=w duration=<seconds> (walks, grinds). " +
     "wait duration=<seconds>. cursor_position. " +
+    BATCH_LINE +
+    observeLine(options.observeByDefault ?? false) +
     studioVerbLines(caps, options.cameras) +
     reload +
     surface +
@@ -125,6 +139,8 @@ export const COMPUTER_PARAMETER_TEXT = {
   scroll_amount: "wheel notches, default 3",
   surface:
     "surface=screen|canvas for screenshot, camera and zoom: screen is the whole page (DOM menus, an HTML HUD, a loader), canvas is only what the game draws; omit it and the studio picks",
+  observe: "screenshot, canvas or none: what an input action, wait or batch brings back with its answer",
+  actions: 'batch only: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
 } as const;
 
 /** What the model is told instead of an action, when its arguments cannot run. */
@@ -141,4 +157,16 @@ export const COMPUTER_ARG_PROBLEM = {
   unknownSurface: (raw: string) => `surface "${raw}" is not screen or canvas — the studio picked the surface itself`,
   unsupported: (action: string, actions: string) =>
     `${action} is not available on this game — it cannot do that from here. Use one of ${actions}`,
+  unknownObserve: (raw: string) => `observe "${raw}" is not screenshot, canvas or none — the studio decided itself`,
+  batchNeedsActions:
+    'batch needs actions=[…]: a JSON list of steps, e.g. [{"action":"key","text":"w"},{"action":"wait","duration":0.5}]',
+  batchTooLong: (max: number) => `batch takes at most ${max} steps — split it into two calls`,
+  batchOnlyInput: (step: number) =>
+    `batch step ${step}: a batch holds only input actions and wait — take screenshots, zoom, camera, state and reload as their own calls`,
+  batchStep: (step: number, problem: string) => `batch step ${step}: ${problem}`,
+  batchTooManyEvents: (max: number) => `that batch would send more than ${max} input events — split it into two calls`,
+  batchStepFailed: (step: number, caption: string, why: string, done: number) =>
+    `step ${step} (${caption}) failed: ${why} — ${done} step${done === 1 ? "" : "s"} before it ran`,
+  budgetSpent: (max: number) =>
+    `action budget spent (${max} of ${max} moves) — no more input this session; answer with what you have seen`,
 } as const;

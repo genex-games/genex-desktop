@@ -12,7 +12,7 @@ import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
 import { type BrowserPreviewTarget, browserPreviewTarget } from "./browser-preview-target.ts";
-import { computerSession, type TargetSource } from "./computer-session.ts";
+import { ComputerPacing, computerSession, type TargetSource } from "./computer-session.ts";
 import type { PreviewService } from "./previews.ts";
 import { iterationDir } from "./run-shots.ts";
 import type { SessionPort } from "./session-port.ts";
@@ -117,7 +117,7 @@ export function computerTools(
   });
   const source = browserSource(previews, grant, role, sessionPort, screen);
   const session = computerSession(source, initialRoot, {
-    paced: PACED_ROLES.has(role),
+    pacing: PACED_ROLES.has(role) ? ComputerPacing.Paced : ComputerPacing.Running,
     frameDir: iterationDir(outDir, grant.iteration),
   });
   const ensureLoaded = async (force = false): Promise<ComputerLoad> => {

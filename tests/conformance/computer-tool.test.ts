@@ -322,3 +322,112 @@ describe("computer tool — built from what the target can do", () => {
     assert.doesNotMatch(unheld, /stands still between your actions/);
   });
 });
+
+describe("computer tool v2 — tolerant names, observing, batching", () => {
+  it("accepts the names cua and OpenAI models use, without advertising them", () => {
+    const rows: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        { action: "click", coordinate: "10,20" },
+        { action: "left_click", coordinate: [10, 20] },
+      ],
+      [
+        { action: "click", x: 5, y: 6, button: "right" },
+        { action: "right_click", coordinate: [5, 6] },
+      ],
+      [
+        { action: "click", x: 5, y: 6, button: "wheel" },
+        { action: "middle_click", coordinate: [5, 6] },
+      ],
+      [
+        { action: "type_text", text: "hi" },
+        { action: "type", text: "hi" },
+      ],
+      [
+        { action: "press_key", text: "Return" },
+        { action: "key", text: "Return" },
+      ],
+      [
+        { action: "hotkey", text: "ctrl+s" },
+        { action: "key", text: "ctrl+s" },
+      ],
+      [
+        { action: "keypress", keys: ["CTRL", "S"] },
+        { action: "key", text: "CTRL+S" },
+      ],
+      [
+        { action: "move_cursor", coordinate: "1,2" },
+        { action: "mouse_move", coordinate: [1, 2] },
+      ],
+      [
+        {
+          action: "drag",
+          path: [
+            { x: 1, y: 2 },
+            { x: 3, y: 4 },
+            { x: 9, y: 9 },
+          ],
+        },
+        { action: "left_click_drag", start_coordinate: [1, 2], coordinate: [9, 9] },
+      ],
+      [{ action: "scroll_up" }, { action: "scroll", scroll_direction: "up" }],
+      [
+        { action: "scroll", scroll_y: 360, x: 1, y: 2 },
+        { action: "scroll", scroll_direction: "down", scroll_amount: 3 },
+      ],
+      [
+        { action: "scroll", scroll_x: -120 },
+        { action: "scroll", scroll_direction: "left", scroll_amount: 1 },
+      ],
+      [{ action: "get_cursor_position" }, { action: "cursor_position" }],
+    ];
+    for (const [given, expected] of rows) {
+      const parsed = parseComputerArgs(given);
+      assert.equal(parsed.ok, true, `${JSON.stringify(given)} parses`);
+      const request: Record<string, unknown> = parsed.ok ? { ...parsed.request } : {};
+      for (const [key, value] of Object.entries(expected))
+        assert.deepEqual(request[key], value, `${JSON.stringify(given)} → ${key}`);
+    }
+    const description = computerToolDefinition().description;
+    assert.doesNotMatch(description, /type_text|press_key|hotkey/, "aliases stay out of the description");
+  });
+
+  it("reads observe on input actions, and says so when it does not know the word", () => {
+    const seen = parseComputerArgs({ action: "key", text: "w", observe: "screenshot" });
+    assert.equal(seen.ok && seen.request.observe, "screenshot");
+    const none = parseComputerArgs({ action: "key", text: "w", observe: "none" });
+    assert.equal(none.ok && none.request.observe, "none");
+    const odd = parseComputerArgs({ action: "key", text: "w", observe: "maybe" });
+    assert.equal(odd.ok && odd.request.observe, undefined);
+    assert.match(String(odd.ok && odd.request.observeNote), /observe "maybe"/);
+  });
+
+  it("batches input and waits, and refuses what a batch may not hold", () => {
+    const ok = parseComputerArgs({
+      action: "batch",
+      actions: JSON.stringify([
+        { action: "key", text: "w" },
+        { action: "wait", duration: 0.2 },
+        { action: "left_click", coordinate: "1,1" },
+      ]),
+    });
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.ok && ok.request.steps?.map((step) => step.action), ["key", "wait", "left_click"]);
+    const asArray = parseComputerArgs({ action: "batch", actions: [{ action: "type", text: "go" }] });
+    assert.equal(asArray.ok && asArray.request.steps?.length, 1);
+    const refusals: Array<[unknown, RegExp]> = [
+      [undefined, /batch needs actions/],
+      ["not json", /batch needs actions/],
+      [[], /batch needs actions/],
+      [[{ action: "screenshot" }], /only input actions and wait/],
+      [[{ action: "batch", actions: [] }], /only input actions and wait/],
+      [[{ action: "reload" }], /only input actions and wait/],
+      [Array.from({ length: 9 }, () => ({ action: "key", text: "w" })), /at most 8 steps/],
+      [[{ action: "left_click_drag" }], /step 1: left_click_drag needs/],
+    ];
+    for (const [actions, error] of refusals) {
+      const parsed = parseComputerArgs({ action: "batch", actions });
+      assert.equal(parsed.ok, false, `${JSON.stringify(actions)} is refused`);
+      assert.match((parsed as { error: string }).error, error);
+    }
+  });
+});

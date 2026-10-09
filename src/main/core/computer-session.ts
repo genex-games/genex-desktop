@@ -1,37 +1,44 @@
 /**
  * The computer session: the studio's referee between a model and a target. It parses the action,
- * loads the target, refuses what the target cannot do, holds the clock still between a paced
- * role's moves, and answers every action — looking, waiting and the studio verbs here, input
- * through the target — leaving a frame on the agent's screen each time.
+ * loads the target, refuses what the target cannot do, keeps the action budget, holds or steps the
+ * clock between a paced role's moves, answers every action — looking, waiting and the studio verbs
+ * here, input through the target — checks a goal the studio was given, and writes the trace,
+ * leaving a frame on the agent's screen each time.
  *
  * Generic over {@link ComputerTarget}: the browser window, a Play Protocol game and every target
  * added later share this one implementation. What is particular to a target (how it loads, how
  * its frames reach the agent screen) comes in through a {@link TargetSource}.
  */
-import { writeFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ScreenAct } from "../../shared/agent-screen.ts";
-import { canPause, type TargetCapabilities } from "../../shared/computer-target.ts";
+import { canPause, type InputRoute, type TargetCapabilities } from "../../shared/computer-target.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { CaptureSurface } from "../../shared/preview-contract.ts";
+import { errorMessage } from "../../shared/errors.ts";
+import { CaptureSurface, type PreviewSetup } from "../../shared/preview-contract.ts";
 import {
   COMPUTER_TOOL_NAME,
+  ComputerObserve,
   type ComputerHostAction,
   type ComputerRequest,
   computerAct,
   computerToInput,
   describeComputerAction,
   parseComputerArgs,
+  setupReached,
   unsupportedAction,
 } from "../../substrate/computer-tool.ts";
+import { COMPUTER_ARG_PROBLEM } from "../../substrate/computer-tool-prompts.ts";
 import type { ComputerTarget, TargetLoad } from "../../substrate/computer-target.ts";
+import { TRACE_FILE, type TraceRow, type TraceSummary, traceArgs, traceLine } from "../../substrate/computer-trace.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import { ensureDir } from "../../substrate/fsx.ts";
+import { MAX_INPUT_ACTIONS } from "../../substrate/preview-input.ts";
 import { CAMERA_SETTLE_MS, DEFAULT_SHOT_QUALITY, requestedSurface, surfaceWord } from "./capture.ts";
 import { safePathSegment } from "./run-shots.ts";
 
-/** How long an input settles before the state is read back. */
+/** How long an input settles before the state is read back (and how far a stepped clock runs after it). */
 const INPUT_SETTLE_MS = 120;
 /** Characters of the game's state in an answer: after an action, by default, and when asked for. */
 const STATE_CHARS = { afterAction: 600, default: 1_200, asked: 4_000 } as const;
@@ -39,33 +46,69 @@ const STATE_CHARS = { afterAction: 600, default: 1_200, asked: 4_000 } as const;
 const CONSOLE_ERRORS_SHOWN = 12;
 /** Characters of an action's name kept in a frame's file name. */
 const FRAME_NAME_CHARS = 40;
+/** The seed a stepped session plants when it was given none, so two runs start from the same dice. */
+const DEFAULT_SEED = 1;
+
+/** How a session treats the target's clock between moves. */
+export const ComputerPacing = {
+  /** The game keeps running between actions (a builder, a scout, the lead). */
+  Running: "running",
+  /** The clock runs only during a move, on wall time (a playtester). */
+  Paced: "paced",
+  /** The clock is seeded and stepped by exact amounts: the same inputs replay the same run (a judge). */
+  Stepped: "stepped",
+} as const;
+export type ComputerPacing = (typeof ComputerPacing)[keyof typeof ComputerPacing];
 
 /** What a session needs from the kind of target it drives: how it loads, and where its frames go. */
 export interface TargetSource<T extends ComputerTarget = ComputerTarget> {
   readonly caps: TargetCapabilities;
   /**
    * The target, loaded with the build at `root` — reloaded when forced. `fresh` says this call
-   * loaded it, so the session can stand a paced clock still before the first move.
+   * loaded it, so the session can seed and stand the clock still before the first move.
    */
   load(root: string, force: boolean): Promise<TargetLoad<T> & { fresh: boolean }>;
   /** A picture of the target for the agent's screen; null asks the source to take its own. */
   frame(target: T, jpeg: Buffer | null, caption: string, act: ScreenAct): Promise<void>;
 }
 
-/** How a session behaves: whose clock it holds and where its frames are saved. */
-export interface ComputerSessionOptions {
-  /** Stand the target's clock still between moves (a playtester, a judge). */
-  paced: boolean;
-  /** The folder every frame of this session is saved into. */
-  frameDir: string;
+/** A goal the studio checks after every move: the first time it holds is studio-verified. */
+export interface ComputerQuest {
+  id: string;
+  until: NonNullable<PreviewSetup["verify"]>;
 }
 
-/** One session on one target: its tool call, its shared load, and the build it shows. */
+/** How a session behaves: its pacing, where frames go, what it brings back, and its limits. */
+export interface ComputerSessionOptions {
+  pacing: ComputerPacing;
+  /** The folder every frame of this session, and its trace, is saved into. */
+  frameDir: string;
+  /** The seed a stepped session plants on every fresh load. */
+  seed?: number;
+  /** Whether an input action brings back its picture when the model does not say. */
+  observeByDefault?: boolean;
+  /** The most moves (input actions, waits and batch steps) the session may make. */
+  maxActions?: number;
+  quest?: ComputerQuest;
+  /** The clock trace times are read from; injected in tests. */
+  now?: () => number;
+}
+
+/** One session on one target: its tool call, its shared load, the build it shows and its trace. */
 export interface ComputerSession<T extends ComputerTarget = ComputerTarget> {
   run(name: string, args: Record<string, unknown>): Promise<LiveToolResult>;
   ensureLoaded(force?: boolean): Promise<TargetLoad<T>>;
   root(): string;
   retarget(root: string): void;
+  trace(): TraceSummary;
+}
+
+/** What an action leaves for its trace row, filled in by its handler. */
+interface ActionRecord {
+  route: InputRoute | null;
+  frame: string | null;
+  simMs: number | null;
+  reached: boolean;
 }
 
 /** Everything an action's handler reads: the request, the target, and the session's helpers. */
@@ -81,9 +124,10 @@ interface ActionContext {
   /** The setup note to append to the answer (`\nnote: …`), or nothing. */
   noteLine: string;
   surface: CaptureSurface;
-  /** What the studio says about the surface asked for, on its own line above the answer. */
+  /** What the studio says about the surface and observe words asked for, on lines above the answer. */
   surfaceLine: string;
   helpers: SessionHelpers;
+  record: ActionRecord;
 }
 
 type HostActionHandler = (ctx: ActionContext) => Promise<LiveToolResult>;
@@ -97,10 +141,13 @@ interface SessionHelpers {
   readonly clearSetupNote: () => void;
   readonly cursor: (target: ComputerTarget, size: { width: number; height: number }) => { x: number; y: number };
   readonly stateText: (target: ComputerTarget, max?: number) => Promise<string>;
+  /** The state after a move, as the answer shows it, with the goal checked against it. */
+  readonly afterMove: (ctx: ActionContext) => Promise<string>;
   readonly saveFrame: (jpeg: Buffer, name: string) => Promise<string>;
   readonly frame: (target: ComputerTarget, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
-  /** Run the target's clock for one move, then stand it still again when the session is paced. */
-  readonly moving: <R>(target: ComputerTarget, move: () => Promise<R>) => Promise<R>;
+  /** Run one move and let `ms` of the target's time pass after it, as the session's pacing says. */
+  readonly moving: (target: ComputerTarget, move: () => Promise<void>, ms: number) => Promise<number | null>;
+  readonly observeByDefault: boolean;
 }
 
 async function look(ctx: ActionContext): Promise<LiveToolResult> {
@@ -109,6 +156,7 @@ async function look(ctx: ActionContext): Promise<LiveToolResult> {
   const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface: ctx.surface });
   const { jpeg, stats } = shot;
   const file = await helpers.saveFrame(jpeg, request.action === "camera" ? `cam-${request.text}` : "screen");
+  ctx.record.frame = file;
   await helpers.frame(target, jpeg, ctx.caption, ctx.act);
   const c = helpers.cursor(target, ctx.size);
   helpers.clearSetupNote();
@@ -138,6 +186,7 @@ async function zoom(ctx: ActionContext): Promise<LiveToolResult> {
   if (!target.zoom || !request.region) return "zoom is not available on this preview — take a screenshot instead";
   const z = await target.zoom(request.region, { surface });
   const file = await ctx.helpers.saveFrame(z.jpeg, "zoom");
+  ctx.record.frame = file;
   const took = surfaceWord(surface === CaptureSurface.Auto ? null : surface);
   const tookText = took ? ` (${took})` : "";
   return {
@@ -146,11 +195,31 @@ async function zoom(ctx: ActionContext): Promise<LiveToolResult> {
   };
 }
 
+/** What a move brings back: the picture asked for (or the session's default), or only its text. */
+async function observed(ctx: ActionContext, text: string, hint: boolean): Promise<LiveToolResult> {
+  const { request, target, helpers } = ctx;
+  const fallback = helpers.observeByDefault ? ComputerObserve.Screenshot : ComputerObserve.None;
+  const mode = request.observe ?? fallback;
+  if (mode === ComputerObserve.None) {
+    await helpers.frame(target, null, ctx.caption, ctx.act);
+    const asked = request.observe !== undefined;
+    return `${ctx.surfaceLine}${text}${hint && !asked ? "\nScreenshot to see the result." : ""}`;
+  }
+  const surface = mode === ComputerObserve.Canvas ? CaptureSurface.Canvas : CaptureSurface.Auto;
+  const shot = await target.screenshot({ quality: DEFAULT_SHOT_QUALITY, surface });
+  const file = await helpers.saveFrame(shot.jpeg, `after-${request.action}`);
+  ctx.record.frame = file;
+  await helpers.frame(target, shot.jpeg, ctx.caption, ctx.act);
+  return {
+    text: `${ctx.surfaceLine}${text}\n${file}`,
+    images: [{ mimeType: "image/jpeg", data: shot.jpeg.toString("base64"), label: ctx.caption }],
+  };
+}
+
 async function wait(ctx: ActionContext): Promise<LiveToolResult> {
   const seconds = ctx.request.duration ?? 1;
-  await ctx.helpers.moving(ctx.target, () => sleep(Math.round(seconds * SECOND_MS)));
-  await ctx.helpers.frame(ctx.target, null, ctx.caption, ctx.act);
-  return `waited ${seconds}s — ${await ctx.helpers.stateText(ctx.target, STATE_CHARS.afterAction)}${ctx.noteLine}`;
+  ctx.record.simMs = await ctx.helpers.moving(ctx.target, async () => {}, Math.round(seconds * SECOND_MS));
+  return observed(ctx, `waited ${seconds}s — ${await ctx.helpers.afterMove(ctx)}${ctx.noteLine}`, false);
 }
 
 async function consoleErrors(ctx: ActionContext): Promise<LiveToolResult> {
@@ -162,6 +231,53 @@ async function consoleErrors(ctx: ActionContext): Promise<LiveToolResult> {
     .map((entry) => `- ${entry.message}`)
     .join("\n");
   return `console errors since load (${errors.length}):\n${listed}`;
+}
+
+/** One input step: carried out by the target inside the session's pacing; the time its clock ran. */
+async function inputStep(ctx: ActionContext, step: ComputerRequest): Promise<number | null> {
+  const { target, helpers } = ctx;
+  if (step.action === "wait")
+    return helpers.moving(target, async () => {}, Math.round((step.duration ?? 1) * SECOND_MS));
+  const actions = computerToInput(step, helpers.cursor(target, ctx.size));
+  if (!actions.length) return null;
+  return helpers.moving(
+    target,
+    async () => {
+      const done = await target.input(actions);
+      ctx.record.route = done.route;
+    },
+    INPUT_SETTLE_MS,
+  );
+}
+
+/** The input events a batch would send, counted before any is sent. */
+function batchEvents(ctx: ActionContext, steps: ComputerRequest[]): number {
+  const at = ctx.helpers.cursor(ctx.target, ctx.size);
+  return steps.reduce((sum, step) => sum + computerToInput(step, at).length, 0);
+}
+
+/** A batch: its steps in order, stopping at the first that fails, with one look at the end. */
+async function batch(ctx: ActionContext): Promise<LiveToolResult> {
+  const steps = ctx.request.steps ?? [];
+  if (batchEvents(ctx, steps) > MAX_INPUT_ACTIONS) return COMPUTER_ARG_PROBLEM.batchTooManyEvents(MAX_INPUT_ACTIONS);
+  let simulated = 0;
+  for (const [index, step] of steps.entries()) {
+    try {
+      simulated += (await inputStep(ctx, step)) ?? 0;
+    } catch (err) {
+      const why = COMPUTER_ARG_PROBLEM.batchStepFailed(
+        index + 1,
+        describeComputerAction(step),
+        errorMessage(err),
+        index,
+      );
+      return observed(ctx, `${why}. ${await ctx.helpers.afterMove(ctx)}`, true);
+    }
+  }
+  ctx.record.simMs = simulated || null;
+  const c = ctx.helpers.cursor(ctx.target, ctx.size);
+  const head = `OK — ${steps.length} of ${steps.length} steps: ${ctx.caption}; cursor at ${c.x},${c.y}.`;
+  return observed(ctx, `${head} ${await ctx.helpers.afterMove(ctx)}${ctx.noteLine}`, true);
 }
 
 const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
@@ -180,6 +296,7 @@ const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
     const state = await ctx.helpers.stateText(ctx.target, STATE_CHARS.afterAction);
     return `reloaded ${path.basename(ctx.helpers.root())}${noted} — ${state}`;
   },
+  batch,
 };
 
 function isHostAction(action: string): action is ComputerHostAction {
@@ -189,16 +306,13 @@ function isHostAction(action: string): action is ComputerHostAction {
 /** An input action: carried out by the target, then the state read back. */
 async function input(ctx: ActionContext): Promise<LiveToolResult> {
   const { target, helpers, caption } = ctx;
-  const actions = computerToInput(ctx.request, helpers.cursor(target, ctx.size));
-  if (!actions.length) return `${ctx.request.action}: nothing to do (${caption})`;
-  await helpers.moving(target, async () => {
-    await target.input(actions);
-    await sleep(INPUT_SETTLE_MS);
-  });
-  await helpers.frame(target, null, caption, ctx.act);
+  if (!computerToInput(ctx.request, helpers.cursor(target, ctx.size)).length) {
+    return `${ctx.request.action}: nothing to do (${caption})`;
+  }
+  ctx.record.simMs = await inputStep(ctx, ctx.request);
   const c = helpers.cursor(target, ctx.size);
-  const state = await helpers.stateText(target, STATE_CHARS.afterAction);
-  return `OK — ${caption}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}\nScreenshot to see the result.`;
+  const state = await helpers.afterMove(ctx);
+  return observed(ctx, `OK — ${caption}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}`, true);
 }
 
 /**
@@ -227,40 +341,115 @@ function centre(size: { width: number; height: number }): { x: number; y: number
   return { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
 }
 
+/** How many moves an action makes against the budget: looking and reading are free. */
+function movesOf(request: ComputerRequest): number {
+  if (request.action === "batch") return request.steps?.length ?? 0;
+  return isHostAction(request.action) && request.action !== "wait" ? 0 : 1;
+}
+
 /**
- * A computer session over one target source, starting on the build at `initialRoot`. Loaded on
- * the first action, then kept running between actions so a map the worker switched to stays
- * switched — except for a paced session, whose clock runs only during its moves.
+ * The session's clock keeper. A paced session runs the clock on wall time during a move; a stepped
+ * one seeds the target on load and steps exact time after each move, and falls back to pacing —
+ * marking the session as not replayable — the first time the target cannot step.
  */
-export function computerSession<T extends ComputerTarget>(
+function clockKeeper(caps: TargetCapabilities, options: ComputerSessionOptions) {
+  const holds = options.pacing !== ComputerPacing.Running && canPause(caps);
+  let stepping = holds && options.pacing === ComputerPacing.Stepped;
+  const paced = async (target: ComputerTarget, move: () => Promise<void>, ms: number): Promise<number | null> => {
+    const clock = holds ? target.clock : undefined;
+    await clock?.start();
+    try {
+      await move();
+      await sleep(ms);
+    } finally {
+      await clock?.pause();
+    }
+    return null;
+  };
+  return {
+    deterministic: () => stepping,
+    onLoad: async (target: ComputerTarget) => {
+      if (stepping) await target.seed?.(options.seed ?? DEFAULT_SEED);
+      if (holds) await target.clock?.pause();
+    },
+    moving: async (target: ComputerTarget, move: () => Promise<void>, ms: number): Promise<number | null> => {
+      const step = target.clock?.step;
+      if (!stepping || !step) return paced(target, move, ms);
+      await move();
+      const simulated = await step.call(target.clock, ms);
+      if (simulated === null) stepping = false;
+      return simulated;
+    },
+  };
+}
+
+/** The session's trace: rows appended beside the frames, and what they add up to. */
+function traceKeeper(options: ComputerSessionOptions) {
+  const now = options.now ?? Date.now;
+  const file = path.join(options.frameDir, TRACE_FILE);
+  let started: number | null = null;
+  let steps = 0;
+  let reachedAt: number | null = null;
+  return {
+    reachedAt: () => reachedAt,
+    write: async (
+      request: ComputerRequest,
+      caption: string,
+      record: ActionRecord,
+      cursor: TraceRow["cursor"],
+      refused: boolean,
+    ) => {
+      started ??= now();
+      steps += 1;
+      if (record.reached && reachedAt === null) reachedAt = steps;
+      const row: TraceRow = {
+        i: steps,
+        atMs: now() - started,
+        action: request.action,
+        caption,
+        args: traceArgs(request),
+        route: record.route,
+        frame: record.frame,
+        cursor,
+        simMs: record.simMs,
+        ...(refused ? { refused: true as const } : {}),
+        ...(record.reached ? { reached: true as const } : {}),
+      };
+      await ensureDir(options.frameDir);
+      await appendFile(file, traceLine(row));
+    },
+    summary: (deterministic: boolean): TraceSummary => ({ path: steps ? file : null, steps, deterministic, reachedAt }),
+  };
+}
+
+/** The session's helpers over its source, its options and the keepers of its clock and goal. */
+function sessionHelpers<T extends ComputerTarget>(
   source: TargetSource<T>,
-  initialRoot: string,
   options: ComputerSessionOptions,
-): ComputerSession<T> {
-  let root = initialRoot;
+  state: { root: () => string; loadedAt: () => number; note: { value: string | null } },
+  clock: ReturnType<typeof clockKeeper>,
+  goal: { reached: boolean },
+): SessionHelpers {
   let shots = 0;
-  let loadedAt = 0;
-  let lastSetupNote: string | null = null;
-  const holdsClock = options.paced && canPause(source.caps);
-  const ensureLoaded = sharedLoad(async (force: boolean): Promise<TargetLoad<T>> => {
-    const loaded = await source.load(root, force);
-    if (!loaded.fresh || loaded.problem) return loaded;
-    if (holdsClock) await loaded.target.clock?.pause();
-    loadedAt = Date.now();
-    lastSetupNote = loaded.note;
-    return loaded;
-  });
-  const helpers: SessionHelpers = {
-    root: () => root,
-    loadedAt: () => loadedAt,
-    setupNote: () => lastSetupNote,
+  const readState = async (target: ComputerTarget): Promise<unknown> =>
+    (target.state ? await target.state().catch(() => null) : null) ?? { __missing: true };
+  return {
+    root: state.root,
+    loadedAt: state.loadedAt,
+    setupNote: () => state.note.value,
     clearSetupNote: () => {
-      lastSetupNote = null;
+      state.note.value = null;
     },
     cursor: (target, size) => target.pointer() ?? centre(size),
-    stateText: async (target, max = STATE_CHARS.default) => {
-      const state = target.state ? await target.state().catch(() => null) : null;
-      return `state: ${JSON.stringify(state ?? { __missing: true }).slice(0, max)}`;
+    stateText: async (target, max = STATE_CHARS.default) =>
+      `state: ${JSON.stringify(await readState(target)).slice(0, max)}`,
+    afterMove: async (ctx) => {
+      const current = await readState(ctx.target);
+      const line = `state: ${JSON.stringify(current).slice(0, STATE_CHARS.afterAction)}`;
+      if (!options.quest || goal.reached || setupReached(options.quest.until, current) !== true) return line;
+      goal.reached = true;
+      ctx.record.reached = true;
+      return `${line}\nGOAL REACHED (studio-verified): ${options.quest.id}`;
     },
     saveFrame: async (jpeg, name) => {
       await ensureDir(options.frameDir);
@@ -269,15 +458,69 @@ export function computerSession<T extends ComputerTarget>(
       return file;
     },
     frame: (target, jpeg, caption, act) => source.frame(target as T, jpeg, caption, act),
-    moving: async (target, move) => {
-      if (!holdsClock || !target.clock) return move();
-      await target.clock.start();
-      try {
-        return await move();
-      } finally {
-        await target.clock.pause();
-      }
-    },
+    moving: clock.moving,
+    observeByDefault: options.observeByDefault ?? false,
+  };
+}
+
+/** The context an action runs in. */
+function actionContext(
+  request: ComputerRequest,
+  loaded: TargetLoad,
+  setupNote: string | null,
+  helpers: SessionHelpers,
+): ActionContext {
+  const notes = [request.surfaceNote, request.observeNote].filter(Boolean);
+  return {
+    request,
+    target: loaded.target,
+    size: loaded.target.viewSize(),
+    caption: describeComputerAction(request),
+    act: computerAct(request),
+    note: loaded.note,
+    noteLine: setupNote ? `\nnote: ${setupNote}` : "",
+    surface: requestedSurface(request),
+    surfaceLine: notes.length ? `${notes.join("\n")}\n` : "",
+    helpers,
+    record: { route: null, frame: null, simMs: null, reached: false },
+  };
+}
+
+/**
+ * A computer session over one target source, starting on the build at `initialRoot`. Loaded on
+ * the first action, then kept running between actions so a map the worker switched to stays
+ * switched — except for a paced or stepped session, whose clock runs only during its moves.
+ */
+export function computerSession<T extends ComputerTarget>(
+  source: TargetSource<T>,
+  initialRoot: string,
+  options: ComputerSessionOptions,
+): ComputerSession<T> {
+  let root = initialRoot;
+  let loadedAt = 0;
+  let moves = 0;
+  const note = { value: null as string | null };
+  const goal = { reached: false };
+  const clock = clockKeeper(source.caps, options);
+  const trace = traceKeeper(options);
+  const ensureLoaded = sharedLoad(async (force: boolean): Promise<TargetLoad<T>> => {
+    const loaded = await source.load(root, force);
+    if (!loaded.fresh || loaded.problem) return loaded;
+    await clock.onLoad(loaded.target);
+    loadedAt = Date.now();
+    note.value = loaded.note;
+    return loaded;
+  });
+  const helpers = sessionHelpers(source, options, { root: () => root, loadedAt: () => loadedAt, note }, clock, goal);
+  const refuse = async (request: ComputerRequest, sentence: string): Promise<LiveToolResult> => {
+    await trace.write(
+      request,
+      describeComputerAction(request),
+      { route: null, frame: null, simMs: null, reached: false },
+      null,
+      true,
+    );
+    return sentence;
   };
   const run = async (name: string, args: Record<string, unknown>): Promise<LiveToolResult> => {
     if (name !== COMPUTER_TOOL_NAME) return `unknown tool ${name}`;
@@ -285,26 +528,18 @@ export function computerSession<T extends ComputerTarget>(
     if (!parsed.ok) return parsed.error;
     const request = parsed.request;
     const refused = unsupportedAction(request.action, source.caps);
-    if (refused) return refused;
-    const { target, problem, note } = await ensureLoaded(request.action === "reload");
-    if (problem) return problem;
-    const setupNote = note ?? lastSetupNote;
-    // Which picture this look takes. An unparseable surface is never a refusal — the studio
-    // picks and says so on the line above the answer, because a turn spent arguing about a
-    // flag costs the engine that cannot see the image more than the picture is worth.
-    const ctx: ActionContext = {
-      request,
-      target,
-      size: target.viewSize(),
-      caption: describeComputerAction(request),
-      act: computerAct(request),
-      note,
-      noteLine: setupNote ? `\nnote: ${setupNote}` : "",
-      surface: requestedSurface(request),
-      surfaceLine: request.surfaceNote ? `${request.surfaceNote}\n` : "",
-      helpers,
-    };
-    return isHostAction(request.action) ? HOST_ACTIONS[request.action](ctx) : input(ctx);
+    if (refused) return refuse(request, refused);
+    const cost = movesOf(request);
+    if (options.maxActions !== undefined && moves + cost > options.maxActions) {
+      return refuse(request, COMPUTER_ARG_PROBLEM.budgetSpent(options.maxActions));
+    }
+    moves += cost;
+    const loaded = await ensureLoaded(request.action === "reload");
+    if (loaded.problem) return loaded.problem;
+    const ctx = actionContext(request, loaded, loaded.note ?? note.value, helpers);
+    const answer = await (isHostAction(request.action) ? HOST_ACTIONS[request.action](ctx) : input(ctx));
+    await trace.write(request, ctx.caption, ctx.record, loaded.target.pointer(), false);
+    return answer;
   };
   return {
     run,
@@ -313,5 +548,6 @@ export function computerSession<T extends ComputerTarget>(
     retarget: (next) => {
       root = next;
     },
+    trace: () => trace.summary(options.pacing === ComputerPacing.Stepped && clock.deterministic()),
   };
 }
