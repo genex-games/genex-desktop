@@ -726,6 +726,19 @@ every 60 working minutes (`VERIFY_NUDGE_EVERY_MS`) and after each ship review ad
 OUTCOMES, asking for `playtest goal=<id>` on each one still unverified (journaled as
 `verifyNudgedWorkedMs`; never in the wrap-up).
 
+**Judges that play.** `loop/hands-on-judge.ts` sends a blind `judge` (computer tool only, stepped
+clock, no setup script) into a build with a quest the studio checks after every move; a direct
+engine plays the same tool through `preview.computer` (`loop/computer-loop.ts`), as the direct
+playtester does when the host serves it. With a quest a "yes" passes only when `trace.reachedAt`
+is set and the cited frame is lit; otherwise it is unmeasured. No window is unmeasured, never a
+fail. The director's `playtest goal_state=…` uses it, as does the integration play when the run's
+setup has a `verify`, and facet scoring escalates an unmeasured or below-0.5 picture answer to one
+probe per pass (`loop/vision-escalation.ts`): a confident answer is never overturned, and a flip
+stands only when a second picture look at the probe's frames agrees. A verified session is kept as
+a route (`loop/routes.ts`) and replayed at the end of every leased evidence pass; a deterministic
+route that diverges fails a check naming the step, a non-deterministic one is only reported, and
+three divergences retire it. A run turns all of this off with `handsOnJudges: false`.
+
 The initial plan freezes required acceptance scenarios in the versioned director journal. A
 reopened build is a goal commission, the Loop's hours or ∞ its ceiling (`reopen-run.ts`
 `reopenBudgets`), and takes none of the finished run's outcomes: its journal records
