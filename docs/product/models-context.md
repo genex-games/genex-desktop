@@ -3,15 +3,15 @@
 ## Selecting a model
 
 The model button opens Main agent, Workers and Reviewers, grouped by provider; Add more models
-opens setup. Blocked plans keep the request and offer model settings or retry. Fast mode is hidden.
+opens setup. Blocked plans keep the request and offer settings or retry. Fast mode is hidden.
 
-Claude Code and Codex discover models without generating. The list names each family's newest
-model of the newest generation; older ones switch on in Settings; a model in use stays listed.
+Claude Code and Codex discover models without generating. The list names each family's newest-generation
+model; older ones switch on in Settings; a model in use stays listed.
 An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
-versions stay pinned. OpenRouter and OpenCode show three, newest first, no default.
+versions stay pinned. OpenRouter and OpenCode show three, newest first; OpenCode's default is its first signed-in model.
 
 Settings shows CLI versions; connected rows list picker models; Account rechecks
-or updates the CLI. Failed refreshes offer Try again, keeping names stale. Unavailable picks block sends; without models, Connect AI model replaces the
+or updates the CLI. Failed refreshes offer Try again, keeping stale names. Unavailable picks block sends; without models, Connect AI model replaces the
 model pill. New models may need a CLI update; listing does not prove access.
 
 Each chat keeps its model, effort and Loop; fresh games inherit the last picks. One effort,
@@ -29,7 +29,7 @@ offers Compact now, also typed as `/compact` (Claude Code and Codex use
 [their own](../connections-and-context.md#compact-now); others hand over); every provider, workers
 included, also compacts automatically at its own point. Then plan limits ([details](../connections-and-context.md#plan-limits)).
 
-Ollama uses a loaded model's reported runtime context; an unloaded
+Ollama uses a loaded model's reported context; an unloaded
 model's budget is an estimate marked unknown. Tools and images need reported capability;
 unsupported requests fail before inference.
 
@@ -49,7 +49,7 @@ Bypass; Bonsai, OpenRouter: no Bypass; OpenCode: Auto, Plan; Ollama: Auto). A ch
 Manual or Accept edits. Claude's chat and build lead work anywhere on your Mac with your access;
 unattended builds keep their sandbox ([details](../tool-permissions.md)).
 
-Adopted folders do not supply Claude settings/hooks until explicitly trusted in Open Game.
+Adopted folders do not supply Claude settings/hooks until trusted in Open Game.
 Read deny rules also cover sensitive system/account locations. Codex read restrictions are
 advisory, not whole-disk isolation.
 

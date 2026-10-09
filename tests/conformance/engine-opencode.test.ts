@@ -1,9 +1,10 @@
 /**
  * OpenCode: a delegated harness the studio runs inside its own sandbox.
  *
- * The sessions replay event streams recorded from OpenCode 1.18 (`fixtures/transcripts/opencode-*`)
- * through the engine's `execFn` seam, so the translation, the command line, the environment, the
- * sandbox and every ending are exercised without the CLI, a provider or the network.
+ * The sessions replay event streams (`fixtures/transcripts/opencode-run.jsonl`, whose `--format json`
+ * shape was re-verified against OpenCode 2.0.26) through the engine's `execFn` seam, so the
+ * translation, the command line, the environment, the sandbox and every ending are exercised
+ * without the CLI, a provider or the network.
  */
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
@@ -272,7 +273,7 @@ describe("OpenCode's account", () => {
 describe("OpenCode sessions", () => {
   it("builds from the prompt on stdin, mirrors every event, and adds up the run's tokens and price", async () => {
     const { engine, seen } = await engineWith(async function* () {
-      yield* replay(await events("opencode-run-1.18.jsonl"));
+      yield* replay(await events("opencode-run.jsonl"));
     });
     const cwd = await game();
     const mirrored: DelegateEvent[] = [];
@@ -437,7 +438,7 @@ describe("OpenCode sessions", () => {
     assert.equal(result.errorText, "nope");
     assert.equal(result.sessionId, "ses_x", "Continue resumes the session that failed");
 
-    const recorded = translateOpenCodeEvent((await events("opencode-error-1.18.jsonl"))[0] ?? {});
+    const recorded = translateOpenCodeEvent((await events("opencode-error.jsonl"))[0] ?? {});
     assert.deepEqual(recorded.failure, { message: "Forbidden: request blocked", status: 403 });
   });
 

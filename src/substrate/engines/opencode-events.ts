@@ -5,7 +5,7 @@
  * outcome), `step_finish` (that step's tokens and price) and `error`, every one tagged with the
  * session's id. They are mirrored in the compacted Claude Code shape every consumer already reads
  * (the chat rows, the run graph, the morning review), as `codex.ts` mirrors Codex's. Recorded
- * samples: `tests/fixtures/transcripts/opencode-*.jsonl` (OpenCode 1.18).
+ * samples: `tests/fixtures/transcripts/opencode-{run,error}.jsonl` (shape re-verified on OpenCode 2.0.26).
  */
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
