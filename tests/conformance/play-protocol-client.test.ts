@@ -40,6 +40,7 @@ function manualDeadlines(): PlayDeadlines & { advance(ms: number): void; pending
 function fakeEngine() {
   const stdout = new PassThrough();
   const stdin = new PassThrough();
+  const stderr = new PassThrough();
   const requests: Array<Record<string, unknown>> = [];
   let buffered = "";
   stdin.setEncoding("utf8");
@@ -55,10 +56,11 @@ function fakeEngine() {
   });
   const logs: string[] = [];
   return {
-    streams: { readable: stdout, writable: stdin, exited },
+    streams: { readable: stdout, writable: stdin, stderr, exited },
     requests,
     logs,
     say: (line: string) => stdout.write(`${line}\n`),
+    complain: (text: string) => stderr.write(text),
     reply: (body: Record<string, unknown>) => stdout.write(`${JSON.stringify(body)}\n`),
     exit: (code: number | null = 1) => exit({ code, signal: null }),
   };
@@ -273,5 +275,41 @@ describe("play protocol client — calls", () => {
     await settle();
     engine.streams.readable.end();
     assert.equal((await failure(call)).code, PlayFailure.Exited);
+  });
+});
+
+describe("play protocol client — the game's stderr", () => {
+  it("keeps reading stderr while it waits, so a game that logs a lot never blocks on it", async () => {
+    const engine = fakeEngine();
+    const opening = openPlayClient(engine.streams, { deadlines: manualDeadlines() });
+    for (let i = 0; i < 64; i++) engine.complain(`${"log ".repeat(1_250)}\n`);
+    await settle();
+    assert.equal(engine.streams.stderr.readableLength, 0, "nothing is left unread on the pipe");
+    engine.say(JSON.stringify({ event: "ready", protocol: 3 }));
+    assert.equal((await opening).ready.protocol, 3);
+  });
+
+  it("names the last lines the game wrote to stderr when it never becomes ready", async () => {
+    const engine = fakeEngine();
+    const opening = openPlayClient(engine.streams, { deadlines: manualDeadlines() });
+    engine.complain(`${"x".repeat(300_000)}\nloading renderer\nrenderer: no Metal device\n`);
+    await settle();
+    engine.exit(3);
+    const error = await failure(opening);
+    assert.equal(error.code, PlayFailure.Exited);
+    assert.match(error.message, /loading renderer.*renderer: no Metal device/s);
+    assert.ok(error.message.length < 2_000, `a sentence, not the whole log (${error.message.length} characters)`);
+  });
+
+  it("names them when a call times out too", async () => {
+    const { client, engine, deadlines } = await readyClient();
+    const call = client.call(PlayOp.State, {}, { timeoutMs: 500 });
+    await lastId(engine);
+    engine.complain("compiling shaders (4/900)\n");
+    await settle();
+    deadlines.advance(500);
+    const error = await failure(call);
+    assert.equal(error.code, PlayFailure.Timeout);
+    assert.match(error.message, /compiling shaders \(4\/900\)/);
   });
 });

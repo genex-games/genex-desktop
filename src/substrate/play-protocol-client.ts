@@ -6,6 +6,9 @@
  * nobody made, a reply larger than the studio reads, a process that never says ready or dies
  * mid-call — each is dropped or fails exactly the call it concerns with a typed code, and none of
  * them can throw out of a stream handler. Electron-free; time comes in through {@link PlayDeadlines}.
+ *
+ * The game's stderr is read for as long as it runs, so a game that logs a lot never blocks on a
+ * full pipe; its last lines are kept in a bounded tail and named in every failure sentence.
  */
 import type { ChildProcess } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
@@ -18,8 +21,12 @@ export const PLAY_READY_TIMEOUT_MS = 20 * SECOND_MS;
 export const PLAY_CALL_TIMEOUT_MS = 10 * SECOND_MS;
 /** The longest line the studio reads: a large inline screenshot fits, a runaway stream does not. */
 export const MAX_PLAY_LINE_CHARS = 24 * 1024 * 1024;
-/** Characters of a dropped line kept in the log. */
+/** Characters of a dropped line kept in the log, and of one stderr line named in a failure. */
 const LOGGED_LINE_CHARS = 160;
+/** Characters of the game's stderr kept: the tail a failure sentence quotes from. */
+const STDERR_TAIL_CHARS = 8 * 1024;
+/** How many of the game's last stderr lines a failure sentence names. */
+const STDERR_TAIL_LINES = 6;
 /** Characters at the head of an oversize line searched for the id of the reply it was meant to be. */
 const OVERSIZE_ID_PROBE_CHARS = 64;
 
@@ -35,6 +42,8 @@ export interface PlayStreams {
   readable: Readable;
   /** The engine's stdin. */
   writable: Writable;
+  /** The engine's stderr, read throughout so it never fills, its tail kept for failures. */
+  stderr?: Readable;
   /** Settles once the process is gone. */
   exited: Promise<PlayExit>;
 }
@@ -78,6 +87,8 @@ export interface PlayClient {
   send(op: string, args: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<unknown>;
   /** Stop writing to the process: its stdin is ended. */
   close(): void;
+  /** The last lines the game wrote to stderr, oldest first, each cut to a readable length. */
+  stderrTail(): string[];
 }
 
 const MESSAGE = {
@@ -89,6 +100,8 @@ const MESSAGE = {
   refused: (op: string, why: string) => `${op} refused: ${why}`,
   badReply: (op: string) => `${op} got a reply the studio cannot read`,
   dropped: (why: string, line: string) => `[play] dropped ${why}: ${line.slice(0, LOGGED_LINE_CHARS)}`,
+  withTail: (sentence: string, lines: string[]) =>
+    lines.length ? `${sentence} — the game's last stderr lines: ${lines.join(" | ")}` : sentence,
 } as const;
 
 /** Deadlines on the real clock; an armed one never keeps the studio alive. */
@@ -102,13 +115,31 @@ const REAL_DEADLINES: PlayDeadlines = {
 
 /** A child process's pipes and exit, for the client. */
 export function playStreamsOf(child: ChildProcess): PlayStreams {
-  const { stdout, stdin } = child;
+  const { stdout, stdin, stderr } = child;
   if (!stdout || !stdin) throw new Error("a play process needs piped stdin and stdout");
   const exited = new Promise<PlayExit>((resolve) => {
     child.once("close", (code, signal) => resolve({ code, signal }));
     child.once("error", () => resolve({ code: null, signal: null }));
   });
-  return { readable: stdout, writable: stdin, exited };
+  return { readable: stdout, writable: stdin, ...(stderr ? { stderr } : {}), exited };
+}
+
+/** Read a stderr stream to its end, keeping only its last {@link STDERR_TAIL_CHARS}; answers its last lines. */
+function stderrTail(stream: Readable | undefined): () => string[] {
+  let kept = "";
+  stream?.setEncoding("utf8");
+  stream?.on("data", (chunk: string) => {
+    kept = (kept + chunk).slice(-STDERR_TAIL_CHARS);
+  });
+  // A broken stderr pipe only loses the tail; it never fails the game's calls.
+  stream?.on("error", () => {});
+  return () =>
+    kept
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-STDERR_TAIL_LINES)
+      .map((line) => line.slice(0, LOGGED_LINE_CHARS));
 }
 
 /** Is this a non-null, non-array object whose fields can be read? */
@@ -175,6 +206,8 @@ interface Wire {
   handshake: Handshake | null;
   exited: boolean;
   log: (line: string) => void;
+  /** A failure sentence with the game's last stderr lines after it. */
+  told: (sentence: string) => string;
 }
 
 /** The engine's refusal as a typed failure: its own code when the studio knows it, else bad-reply. */
@@ -218,7 +251,7 @@ function handleEvent(wire: Wire, message: Record<string, unknown>, line: string)
     return;
   }
   const why = typeof message.error === "string" ? message.error : "no reason given";
-  handshake.reject(new PlayProtocolError(PlayFailure.Fatal, PlayEvent.Fatal, MESSAGE.fatal(why)));
+  handshake.reject(new PlayProtocolError(PlayFailure.Fatal, PlayEvent.Fatal, wire.told(MESSAGE.fatal(why))));
 }
 
 /** A line as a JSON object, or null after logging why it was dropped. */
@@ -259,12 +292,14 @@ function handleOversize(wire: Wire, head: string): void {
 function handleExit(wire: Wire): void {
   if (wire.exited) return;
   wire.exited = true;
-  wire.handshake?.reject(new PlayProtocolError(PlayFailure.Exited, PlayEvent.Ready, MESSAGE.exited(PlayEvent.Ready)));
+  wire.handshake?.reject(
+    new PlayProtocolError(PlayFailure.Exited, PlayEvent.Ready, wire.told(MESSAGE.exited(PlayEvent.Ready))),
+  );
   wire.handshake = null;
   for (const [id, call] of wire.pending) {
     wire.pending.delete(id);
     call.cancel();
-    call.reject(new PlayProtocolError(PlayFailure.Exited, call.op, MESSAGE.exited(call.op)));
+    call.reject(new PlayProtocolError(PlayFailure.Exited, call.op, wire.told(MESSAGE.exited(call.op))));
   }
 }
 
@@ -277,12 +312,12 @@ function request(
   call: { op: string; args: Record<string, unknown>; timeoutMs: number },
 ): Promise<unknown> {
   const { op, timeoutMs } = call;
-  if (wire.exited) return Promise.reject(new PlayProtocolError(PlayFailure.Exited, op, MESSAGE.exited(op)));
+  if (wire.exited) return Promise.reject(new PlayProtocolError(PlayFailure.Exited, op, wire.told(MESSAGE.exited(op))));
   const id = next();
   return new Promise((resolve, reject) => {
     const cancel = deadlines.after(timeoutMs, () => {
       if (!wire.pending.delete(id)) return;
-      reject(new PlayProtocolError(PlayFailure.Timeout, op, MESSAGE.timeout(op, timeoutMs)));
+      reject(new PlayProtocolError(PlayFailure.Timeout, op, wire.told(MESSAGE.timeout(op, timeoutMs))));
     });
     wire.pending.set(id, { op, resolve, reject, cancel });
     streams.writable.write(`${JSON.stringify({ ...call.args, id, op })}\n`);
@@ -298,14 +333,21 @@ export async function openPlayClient(streams: PlayStreams, options: PlayClientOp
   const deadlines = options.deadlines ?? REAL_DEADLINES;
   const readyTimeoutMs = options.readyTimeoutMs ?? PLAY_READY_TIMEOUT_MS;
   const callTimeoutMs = options.callTimeoutMs ?? PLAY_CALL_TIMEOUT_MS;
-  const wire: Wire = { pending: new Map(), handshake: null, exited: false, log: options.log ?? (() => {}) };
+  const tail = stderrTail(streams.stderr);
+  const wire: Wire = {
+    pending: new Map(),
+    handshake: null,
+    exited: false,
+    log: options.log ?? (() => {}),
+    told: (sentence) => MESSAGE.withTail(sentence, tail()),
+  };
   let ids = 0;
   const ready = new Promise<Record<string, unknown>>((resolve, reject) => {
     wire.handshake = { resolve, reject };
   });
   const cancelReady = deadlines.after(readyTimeoutMs, () => {
     wire.handshake?.reject(
-      new PlayProtocolError(PlayFailure.NotReady, PlayEvent.Ready, MESSAGE.notReady(readyTimeoutMs)),
+      new PlayProtocolError(PlayFailure.NotReady, PlayEvent.Ready, wire.told(MESSAGE.notReady(readyTimeoutMs))),
     );
     wire.handshake = null;
   });
@@ -333,5 +375,6 @@ export async function openPlayClient(streams: PlayStreams, options: PlayClientOp
     close: () => {
       streams.writable.end();
     },
+    stderrTail: tail,
   };
 }
