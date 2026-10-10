@@ -626,10 +626,11 @@ function Presses({
   return (
     <>
       {publish}
+      {/* Hugs its label. The arrow's glyph sits inset in its box, so the label side takes the wider padding. */}
       <Button
         variant="default"
         size="default"
-        className="genex-publish-primary"
+        className="has-[>svg]:pl-4"
         busy={acting}
         onClick={() => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery })}
       >
