@@ -1,0 +1,218 @@
+{
+  "location": {
+    "directory": "/game"
+  },
+  "data": [
+    {
+      "id": "exo-free",
+      "modelID": "exo-free",
+      "providerID": "opencode",
+      "name": "Exo Free",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        }
+      ],
+      "time": {
+        "released": 1791244800000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "ling-3.1-flash-free",
+      "modelID": "ling-3.1-flash-free",
+      "providerID": "opencode",
+      "family": "ling",
+      "name": "Ling 3.1 Flash Free",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [],
+      "time": {
+        "released": 1790640000000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 32768
+      }
+    },
+    {
+      "id": "space-bunny-free",
+      "modelID": "space-bunny-free",
+      "providerID": "opencode",
+      "name": "Space Bunny Free",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoningEffort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoningEffort": "xhigh"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1790121600000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "input": 524288,
+        "output": 524288
+      }
+    },
+    {
+      "id": "big-pickle",
+      "modelID": "big-pickle",
+      "providerID": "opencode",
+      "family": "big-pickle",
+      "name": "Big Pickle",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "provider": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "variants": [],
+      "time": {
+        "released": 1760659200000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 200000,
+        "input": 160000,
+        "output": 32000
+      }
+    }
+  ]
+}

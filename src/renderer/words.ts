@@ -1456,6 +1456,7 @@ export const MODEL_PICKER_WORDS = {
   cannotSeeImages: "This model cannot see images, so it cannot review screenshots",
   subscription: "subscription",
   signIn: "sign in",
+  free: "Free",
 } as const;
 
 /** Settings → Model Providers: the metered rows, OpenCode and OpenRouter (`panels/MeteredProviders.tsx`). */

@@ -12,21 +12,33 @@
  * The prompt goes in on stdin; each stdout line is one event (`opencode-events.ts`); a session is
  * resumed by its id (`--session`). Studio tools arrive through the same bridge Codex uses.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { CATALOG_DEADLINE_MS, ModelCatalog } from "./model-catalog.ts";
-import { resolveCodingCli } from "./external-cli.ts";
+import { cliVersion, resolveCodingCli } from "./external-cli.ts";
 import { runCommand } from "./claude-cli.ts";
 import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
-import { OpenCodeAccess, openCodeConfig, parseOpenCodeModels, type OpenCodeModel } from "./opencode-cli.ts";
+import {
+  OPENCODE_AGENT,
+  OpenCodeAccess,
+  OpenCodeDialect,
+  openCodeConfig,
+  openCodeConfigV2,
+  openCodeRelease,
+  parseOpenCodeApiModels,
+  parseOpenCodeModels,
+  type OpenCodeModel,
+} from "./opencode-cli.ts";
 import { parseOpenCodeLine, translateOpenCodeEvent, type Translated } from "./opencode-events.ts";
 import {
   type CompleteRequest,
@@ -56,6 +68,15 @@ import { EngineId } from "../../shared/providers.ts";
 
 /** How long `opencode models --verbose` may take: it may refresh its catalog from models.dev first. */
 const MODELS_TIMEOUT_MS = 30 * SECOND_MS;
+/** How long 2.x's private listing server may take to say where it answers. */
+const SERVER_READY_TIMEOUT_MS = 20 * SECOND_MS;
+/** How often 2.x's listing is read while it settles, and for how long at most. */
+const LISTING_POLL_MS = 500;
+const LISTING_SETTLE_MS = 15 * SECOND_MS;
+/** How long one read of 2.x's listing may take. */
+const LISTING_READ_TIMEOUT_MS = 5 * SECOND_MS;
+/** The user name 2.x's server takes with the password it was started with. */
+const SERVER_USER = "opencode";
 /** How long a git probe for a worktree's metadata may take. */
 const GIT_PROBE_TIMEOUT_MS = 5 * SECOND_MS;
 /** How long a judge's one-shot answer may take before it is a timeout. */
@@ -81,6 +102,10 @@ const MESSAGE = {
   NoModels: "OpenCode has no model it can run yet.",
   SignInRemedy: "Sign in to a provider with OpenCode from Settings › Model Providers.",
   Ready: (version: string | undefined, count: number) => `OpenCode ${version ?? ""}, ${count} model(s)`.trim(),
+  Untested: (ready: string) => `${ready} · newer than Genex has tested`,
+  UnknownVersion: "Genex can't tell which OpenCode version this is. Check it again in Settings › Model Providers.",
+  ServerSilent: "OpenCode's model server did not say where it answers",
+  ListingFailed: (status: number) => `OpenCode's model server answered ${status}`,
   NoTools: "OpenCode's one-shot answers take no studio tools",
   NoCompact: "OpenCode compacts its own sessions",
   Stopped: (code: number | null) => `OpenCode exited with ${code}`,
@@ -177,7 +202,10 @@ export class OpenCodeEngine implements Engine {
     await this.refreshModels().catch(() => {});
     const count = this.#catalog.models().length;
     if (!count) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NoModels, remedy: MESSAGE.SignInRemedy };
-    return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready(cli.version, count) };
+    const ready = MESSAGE.Ready(cliVersion(cli.version), count);
+    const release = openCodeRelease(cli.version);
+    const untested = "tested" in release && !release.tested;
+    return { code: EngineStatusCode.Ready, detail: untested ? MESSAGE.Untested(ready) : ready };
   }
 
   /**
@@ -209,20 +237,30 @@ export class OpenCodeEngine implements Engine {
   async refreshModels(force = false): Promise<void> {
     const cli = await this.#resolveCli();
     if (!cli.ready) return;
-    await this.#catalog.refresh(`${cli.path ?? ""}\0${cli.version ?? ""}`, () => this.#readModels(cli.path), force);
+    await this.#catalog.refresh(`${cli.path ?? ""}\0${cli.version ?? ""}`, () => this.#readModels(cli), force);
   }
 
-  async #readModels(
-    binary: string | undefined,
-  ): Promise<{ models: EngineModel[]; source: typeof ModelCatalogSource.Provider }> {
-    const stdout = this.#listModels ? await this.#listModels() : await listOpenCodeModels(binary);
+  async #readModels(cli: {
+    path?: string;
+    version?: string;
+  }): Promise<{ models: EngineModel[]; source: typeof ModelCatalogSource.Provider }> {
+    const dialect = dialectOf(cli.version);
+    const stdout = this.#listModels ? await this.#listModels() : await this.#listing(cli.path, dialect);
     // A signed-in provider's models first: the picker starts with the first few it is given.
-    const parsed = parseOpenCodeModels(stdout);
+    const parsed = dialect === OpenCodeDialect.V2 ? parseOpenCodeApiModels(stdout) : parseOpenCodeModels(stdout);
     const listed = [...parsed.filter((model) => !model.anonymous), ...parsed.filter((model) => model.anonymous)];
     this.#hosts = new Map(listed.map((model) => [model.row.id, model.hosts]));
     this.#signedIn = listed.some((model) => !model.anonymous);
     this.#anonymous = new Set(listed.filter((model) => model.anonymous).map((model) => model.row.id));
     return { models: listed.map((model: OpenCodeModel) => model.row), source: ModelCatalogSource.Provider };
+  }
+
+  /** What the CLI lists: 1.18's `models --verbose`, or 2.x's `GET /api/model` from a server of the listing's own. */
+  async #listing(binary: string | undefined, dialect: OpenCodeDialect): Promise<string> {
+    if (!binary) return "";
+    if (dialect === OpenCodeDialect.V1) return listOpenCodeModels(binary);
+    await mkdir(this.#scratchRoot, { recursive: true });
+    return listOpenCodeModelsV2(binary, this.#scratchRoot);
   }
 
   /** OpenCode keeps its own default model; with none picked, `--model` is left out and it uses that. */
@@ -418,18 +456,11 @@ export class OpenCodeEngine implements Engine {
   ): Promise<OpenCodeInvocation> {
     const model = request.model;
     const variant = model && request.effort ? this.#variant(model, request.effort) : null;
-    const argv = [
-      "run",
-      "--format",
-      "json",
-      // Plugins a game folder ships (`.opencode/`) never run inside a studio session.
-      "--pure",
-      ...(model ? ["--model", model] : []),
-      ...(request.resume ? ["--session", request.resume] : []),
-      ...(variant ? ["--variant", variant] : []),
-      ...ctx.files.flatMap((file) => ["--file", file]),
-    ];
-    const env = sessionEnv(openCodeConfig(ctx.access, ctx.bridge));
+    const dialect = dialectOf((await this.#resolveCli()).version);
+    const argv = sessionArgv(dialect, { model, variant, resume: request.resume, files: ctx.files });
+    const home = path.join(this.#scratchRoot, "home");
+    await mkdir(home, { recursive: true });
+    const env = sessionEnv(dialect, { ...ctx, home });
     const sandbox = await this.#sandboxOptions(ctx, request.denyReads ?? []);
     return {
       argv,
@@ -574,9 +605,61 @@ function xdg(value: string | undefined, home: string, fallback: string): string 
   return value && path.isAbsolute(value) ? value : path.join(home, fallback);
 }
 
-/** The variables a session starts with, over the sandbox's allow-listed environment. */
-function sessionEnv(config: string): Record<string, string> {
-  const env: Record<string, string> = { OPENCODE_CONFIG_CONTENT: config, OPENCODE_DISABLE_AUTOUPDATE: "1" };
+/** The command line a ready CLI speaks; one Genex cannot place is refused, never guessed. */
+function dialectOf(version: string | undefined): OpenCodeDialect {
+  const release = openCodeRelease(version);
+  if ("dialect" in release) return release.dialect;
+  throw new EngineError(EngineFailureKind.Unavailable, EngineId.OpenCode, MESSAGE.UnknownVersion);
+}
+
+/**
+ * `opencode run`'s arguments. 1.18 leaves a game's plugins out (`--pure`) and takes the effort as
+ * `--variant`; 2.x runs on a private server inside the sandbox (`--standalone`: its shared background
+ * one runs outside it, with another process's settings), as OpenCode's builder agent, and takes the
+ * effort after the model (`provider/model#variant`).
+ */
+function sessionArgv(
+  dialect: OpenCodeDialect,
+  input: { model: string | undefined; variant: string | null; resume: string | undefined; files: string[] },
+): string[] {
+  const { model, variant, resume, files } = input;
+  const session = resume ? ["--session", resume] : [];
+  const attached = files.flatMap((file) => ["--file", file]);
+  if (dialect === OpenCodeDialect.V2) {
+    const picked = model ? ["--model", variant ? `${model}#${variant}` : model] : [];
+    return ["run", "--format", "json", "--standalone", "--agent", OPENCODE_AGENT, ...picked, ...session, ...attached];
+  }
+  return [
+    "run",
+    "--format",
+    "json",
+    // Plugins a game folder ships (`.opencode/`) never run inside a studio session.
+    "--pure",
+    ...(model ? ["--model", model] : []),
+    ...session,
+    ...(variant ? ["--variant", variant] : []),
+    ...attached,
+  ];
+}
+
+/**
+ * The variables a session starts with, over the sandbox's allow-listed environment. 2.x reads its
+ * folder from `PWD` before its working directory, and a game's own OpenCode config (its plugins,
+ * agents and rules) never loads, as 1.18's `--pure` kept its plugins out. 2.x also looks for
+ * Claude's settings in the home folder's `.claude` and stops when the sandbox refuses it, so it is
+ * given an empty home of its own (`OPENCODE_TEST_HOME` moves only that: its own folders still come
+ * from the real home or XDG, so its sign-ins stay where they are).
+ */
+function sessionEnv(
+  dialect: OpenCodeDialect,
+  ctx: { access: OpenCodeAccess; bridge: boolean; runDir: string; home: string },
+): Record<string, string> {
+  const v2 = dialect === OpenCodeDialect.V2;
+  const env: Record<string, string> = {
+    OPENCODE_CONFIG_CONTENT: v2 ? openCodeConfigV2(ctx.access, ctx.bridge) : openCodeConfig(ctx.access, ctx.bridge),
+    OPENCODE_DISABLE_AUTOUPDATE: "1",
+    ...(v2 ? { OPENCODE_DISABLE_PROJECT_CONFIG: "1", PWD: ctx.runDir, OPENCODE_TEST_HOME: ctx.home } : {}),
+  };
   // OpenCode finds its sign-ins and sessions through these; the sandbox's own environment drops them.
   for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) {
     const value = process.env[key];
@@ -725,6 +808,109 @@ async function listOpenCodeModels(binary: string | undefined): Promise<string> {
   });
   if (result.code !== 0) throw new Error(result.stderr.trim() || MESSAGE.Stopped(result.code));
   return result.stdout;
+}
+
+/**
+ * 2.x's `GET /api/model`, from a private server started for the listing alone on the host (as
+ * `opencode api --standalone` does, but read until it settles: its first answer can come before
+ * its catalog loads). Its password is made here; closing its stdin ends it.
+ */
+async function listOpenCodeModelsV2(binary: string, cwd: string): Promise<string> {
+  const password = randomBytes(32).toString("base64url");
+  const env = childEnv(process.env, {
+    base: "contractor",
+    vendor: "opencode",
+    set: { OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_PASSWORD: password },
+  });
+  const child = spawn(binary, ["serve", "--stdio", "--port", "0"], { cwd, env, stdio: ["pipe", "pipe", "ignore"] });
+  try {
+    const url = await serverReady(child);
+    const authorization = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+    const read = async (): Promise<string> => {
+      const response = await fetch(`${url}/api/model`, {
+        headers: { authorization },
+        signal: AbortSignal.timeout(LISTING_READ_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error(MESSAGE.ListingFailed(response.status));
+      return response.text();
+    };
+    return await settledListing(read, {
+      attempts: Math.ceil(LISTING_SETTLE_MS / LISTING_POLL_MS),
+      intervalMs: LISTING_POLL_MS,
+    });
+  } finally {
+    child.stdin?.end();
+    await stopChild(child, { signal: "SIGTERM" }).catch(() => {});
+  }
+}
+
+/** Where 2.x's private server answers, from the first line it prints; refused after a deadline. */
+async function serverReady(child: ChildProcess): Promise<string> {
+  const deadline = AbortSignal.timeout(SERVER_READY_TIMEOUT_MS);
+  const exited = new Promise<never>((_, reject) => {
+    child.once("error", reject);
+    child.once("close", () => reject(new Error(MESSAGE.ServerSilent)));
+  });
+  const first = (async () => {
+    if (!child.stdout) throw new Error(MESSAGE.ServerSilent);
+    for await (const line of createInterface({ input: child.stdout, signal: deadline })) {
+      const url = openCodeServerUrl(line);
+      if (url) return url;
+    }
+    throw new Error(MESSAGE.ServerSilent);
+  })();
+  return Promise.race([first, exited]);
+}
+
+/** The loopback HTTP address a 2.x server's ready line names, or null for anything else. */
+export function openCodeServerUrl(line: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
+  const raw = value && typeof value === "object" ? (value as { url?: unknown }).url : undefined;
+  if (typeof raw !== "string") return null;
+  try {
+    const url = new URL(raw);
+    const loopback = LOOPBACK_HOSTS.has(url.hostname) && url.protocol === "http:";
+    return loopback && !url.username && !url.password ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The hosts a local server may answer on. */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * A listing read until it settles: two reads in a row that agree on at least one model, or, when
+ * the attempts run out, the last read.
+ */
+export async function settledListing(
+  read: () => Promise<string>,
+  options: { attempts: number; intervalMs: number; wait?: (ms: number) => Promise<unknown> },
+): Promise<string> {
+  const wait = options.wait ?? ((ms: number) => sleep(ms));
+  let last = await read();
+  for (let attempt = 1; attempt < options.attempts; attempt++) {
+    await wait(options.intervalMs);
+    const next = await read();
+    if (next === last && listsModels(next)) return next;
+    last = next;
+  }
+  return last;
+}
+
+/** Whether a 2.x listing names any model. */
+function listsModels(listing: string): boolean {
+  try {
+    const data = (JSON.parse(listing) as { data?: unknown }).data;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** A linked worktree's Git metadata outside the workspace, which a build must be able to commit to. */

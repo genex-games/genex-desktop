@@ -5,8 +5,9 @@
  * release replaces the one before it without a table to keep. An id that cannot be read stays
  * in the picker: a model named some new way must never vanish. A catalog of hundreds (OpenRouter,
  * OpenCode) starts instead with its first few: the newest GPT and Claude it lists, a vendor at a
- * time, then the rest in the order the provider lists them. Settings choices (`state/model-picker.ts`) override the rule per model; the provider's
- * default always shows.
+ * time, then the rest in the order the provider lists them, its free models only when it lists
+ * nothing else. Settings choices (`state/model-picker.ts`) override the rule per model; the
+ * provider's default always shows.
  */
 import { EngineStatusCode, LoginSource } from "../shared/engine-descriptor.ts";
 import { EngineId, isMetered } from "../shared/providers.ts";
@@ -17,6 +18,7 @@ export interface LineupModel {
   label: string;
   resolvedModel?: string;
   providerDefault?: boolean;
+  free?: boolean;
 }
 
 /** A model's family and version, read from its provider id. */
@@ -164,12 +166,15 @@ export function latestModels(
 ): Set<string> {
   const listed = models.filter((model) => model.id !== DEFAULT_MODEL);
   const firstFew = FIRST_FEW[engine];
-  if (firstFew !== undefined)
+  if (firstFew !== undefined) {
+    // A sign-in's models start the list; the free ones start it only when there is nothing else.
+    const paid = listed.filter((model) => !model.free);
     return new Set(
-      newestFirst(listed, runnable)
+      newestFirst(paid.length ? paid : listed, runnable)
         .slice(0, firstFew)
         .map((model) => model.id),
     );
+  }
   const read = listed.flatMap((model) => {
     const lineage = lineageOf(engine, model);
     return lineage ? [{ model, lineage }] : [];
@@ -199,12 +204,17 @@ export function shownModels(
 }
 
 /**
- * Does an engine's catalog offer its default lineup? Not a paid one with no account behind it:
- * OpenCode with no provider signed in lists only its own free models, which wait in Settings until
- * the person switches one on.
+ * Does an engine's catalog offer its default lineup? Not a paid one with no account behind it,
+ * unless what it lists runs free: OpenCode with no provider signed in starts with its own free
+ * models.
  */
-export function offersLineup(engine: { id: string; account?: { source: string } | null }): boolean {
-  return !(isMetered(engine.id) && engine.account?.source === LoginSource.None);
+export function offersLineup(engine: {
+  id: string;
+  account?: { source: string } | null;
+  models: readonly LineupModel[];
+}): boolean {
+  const unpaid = isMetered(engine.id) && engine.account?.source === LoginSource.None;
+  return !unpaid || engine.models.some((model) => model.free);
 }
 
 /**

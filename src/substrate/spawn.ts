@@ -42,7 +42,7 @@ import {
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
-import { credentialHomes, sandboxedCliHomes } from "./credential-homes.ts";
+import { credentialHomes, openCodeServicePassword, sandboxedCliHomes } from "./credential-homes.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
 import {
@@ -329,7 +329,9 @@ export function baseDenyRead(
   platform: NodeJS.Platform = process.platform,
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  if (platform === StudioPlatform.Windows) return [...windowsDenyRead(home, env), ...credentialHomes()];
+  const openCodeService = openCodeServicePassword(env, home);
+  if (platform === StudioPlatform.Windows)
+    return [...windowsDenyRead(home, env), openCodeService, ...credentialHomes()];
   const linuxStores =
     platform === StudioPlatform.Linux ? LINUX_SECRET_STORES.map((parts) => path.join(home, ...parts)) : [];
   return [
@@ -338,6 +340,7 @@ export function baseDenyRead(
     path.join(home, ".aws"),
     path.join(home, ".config", "gh"),
     path.join(home, ".netrc"),
+    openCodeService,
     ...linuxStores,
     // SEC-3: the coding CLIs' sign-in homes, wherever the environment has moved them.
     ...credentialHomes(),

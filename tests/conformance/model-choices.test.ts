@@ -499,28 +499,80 @@ test("a paid provider that is not set up shows nothing in the picker, though a p
   ]);
 });
 
-test("OpenCode stays out of the picker until a provider is signed in, unless a free model is switched on", () => {
-  const freeOnly: EngineDescriptor = {
-    id: "opencode",
-    label: "OpenCode",
-    kind: "delegated",
-    status: ready,
-    account: { source: "none", afterSignOut: "signed-out", cli: { state: "ready" } },
-    supportsSessions: true,
-    defaultModel: null,
-    models: [model("opencode/big-pickle", "Big Pickle"), model("opencode/ling-3.0-flash-free", "Ling 3.0 Flash Free")],
-  };
-  assert.deepEqual(visible(toChoices([freeOnly])), [], "its free models wait in Settings");
-  assert.deepEqual(visible(toChoices([freeOnly], { opencode: { "opencode/ling-3.0-flash-free": true } })), [
-    "opencode::opencode/ling-3.0-flash-free",
+const freeModel = (id: string, label: string) => ({ ...model(id, label), free: true });
+const openCodeFreeOnly: EngineDescriptor = {
+  id: "opencode",
+  label: "OpenCode",
+  kind: "delegated",
+  status: ready,
+  account: { source: "none", afterSignOut: "signed-out", cli: { state: "ready" } },
+  supportsSessions: true,
+  defaultModel: null,
+  models: [
+    freeModel("opencode/big-pickle", "Big Pickle"),
+    freeModel("opencode/exo-free", "Exo Free"),
+    freeModel("opencode/ling-3.1-flash-free", "Ling 3.1 Flash Free"),
+    freeModel("opencode/step-5-preview-free", "Step 5 Preview Free"),
+  ],
+};
+
+/** OpenCode with a provider signed in: that provider's models, then its own free ones. */
+const openCodeSignedIn: EngineDescriptor = {
+  ...openCodeFreeOnly,
+  account: { source: "system", afterSignOut: "signed-out", cli: { state: "ready" } },
+  models: [model("anthropic/claude-opus-5-5", "Opus 5.5"), ...openCodeFreeOnly.models],
+};
+
+test("OpenCode with no provider signed in lists its first three free models, marked Free", () => {
+  const choices = toChoices([openCodeFreeOnly]);
+  assert.deepEqual(visible(choices), [
+    "opencode::opencode/big-pickle",
+    "opencode::opencode/exo-free",
+    "opencode::opencode/ling-3.1-flash-free",
   ]);
-  const signedIn = { ...freeOnly, account: { ...freeOnly.account!, source: "system" as const } };
-  assert.equal(visible(toChoices([signedIn])).length, 2, "a provider signed in lists its models");
+  const rows = choices.filter((choice) => !choice.hidden);
+  assert.ok(
+    rows.every((choice) => choice.detail === "Free" && choice.free === true),
+    "each says it costs nothing",
+  );
+  assert.deepEqual(visible(toChoices([openCodeFreeOnly], { opencode: { "opencode/exo-free": false } })), [
+    "opencode::opencode/big-pickle",
+    "opencode::opencode/ling-3.1-flash-free",
+  ]);
+  assert.deepEqual(
+    visible(toChoices([openCodeSignedIn])),
+    ["opencode::anthropic/claude-opus-5-5"],
+    "a provider signed in lists its models; the free ones wait in Settings",
+  );
   for (const status of [
     { code: "not_installed", detail: "" },
     { code: "needs_login", detail: "" },
   ] as const)
-    assert.deepEqual(toChoices([{ ...freeOnly, status, models: [] }]), [], status.code);
+    assert.deepEqual(toChoices([{ ...openCodeFreeOnly, status, models: [] }]), [], status.code);
+});
+
+test("with nothing picked, a free model is chosen only when it is all there is to choose", () => {
+  const timed = { autopilot: { hours: 1 } } as unknown as Parameters<typeof sendKey>[1];
+  const composer = (all: ReturnType<typeof toChoices>) =>
+    ({ selected: null, choices: all }) as unknown as ComposerModel;
+  const alone = toChoices([openCodeFreeOnly]);
+  assert.equal(resolveChoice(alone, null)?.key, "opencode::opencode/big-pickle");
+  assert.equal(sendKey(composer(alone), timed), "opencode::opencode/big-pickle", "a timed build can start on it");
+  assert.equal(
+    resolveChoice(toChoices([openCodeFreeOnly, claude]), null)?.key,
+    "claude-code::claude-opus-5-5",
+    "a subscription wins over a free model",
+  );
+  assert.equal(
+    resolveChoice(toChoices([openCodeFreeOnly, openRouter(ready)]), null),
+    undefined,
+    "beside a paid provider the person picks",
+  );
+  assert.equal(
+    resolveChoice(toChoices([openCodeSignedIn]), null),
+    undefined,
+    "a signed-in provider's model is only picked",
+  );
 });
 
 test("with nothing picked, the picker never chooses a paid or hidden model on the person's behalf", () => {

@@ -7,6 +7,7 @@ import {
   claudeGlobalSkills,
   codexBuilderUse,
   normalizeCodexSkills,
+  openCodeGlobalSkills,
   projectSkills,
 } from "../../src/main/provider-skills.ts";
 import { registerSkillsIpc } from "../../src/main/ipc/skills.ts";
@@ -366,4 +367,55 @@ test("studio:plugins.skill reads a plugin skill's text, and refuses a malformed 
       ["genex", "publishing", undefined],
     ]);
   });
+});
+test("OpenCode lists installed global skills by name, sorted, never for builders", async () => {
+  const config = await mkdtemp(path.join(os.tmpdir(), "opencode-skills-"));
+  try {
+    for (const [name, description] of [
+      ["zebra", "Striped helper"],
+      ["alpha", "First helper"],
+    ]) {
+      await mkdir(path.join(config, "skills", name), { recursive: true });
+      await writeFile(
+        path.join(config, "skills", name, "SKILL.md"),
+        `---\nname: ${name}\ndescription: ${description}\n---\n`,
+      );
+    }
+    const inventory = await openCodeGlobalSkills("/nonexistent-home", config, async () => true);
+    assert.deepEqual(
+      inventory.skills.map((s) => [s.name, s.description]),
+      [
+        ["alpha", "First helper"],
+        ["zebra", "Striped helper"],
+      ],
+    );
+    assert.equal(inventory.provider, "opencode");
+    assert.equal(inventory.builders, ProviderBuilderUse.NotLoaded);
+    assert.ok(inventory.note.length > 0, "the panel says builders never load these");
+  } finally {
+    await rm(config, { recursive: true, force: true });
+  }
+});
+test("OpenCode names a missing CLI as the next step, and reads around what it cannot use", async () => {
+  const config = await mkdtemp(path.join(os.tmpdir(), "opencode-skills-"));
+  try {
+    await mkdir(path.join(config, "skills", "broken"), { recursive: true });
+    await writeFile(path.join(config, "skills", "broken", "SKILL.md"), "no front matter here\n");
+    const withoutCli = await openCodeGlobalSkills("/nonexistent-home", config, async () => false);
+    assert.deepEqual(withoutCli.skills, []);
+    assert.ok(
+      withoutCli.warnings.some((warning) => /Model Providers/.test(warning)),
+      "names the next step",
+    );
+    const partial = await openCodeGlobalSkills("/nonexistent-home", config, async () => true);
+    assert.deepEqual(
+      partial.skills.map((s) => [s.name, s.description]),
+      [["broken", ""]],
+      "a skill without front matter still lists under its folder name",
+    );
+    const absent = await openCodeGlobalSkills("/nonexistent-home", path.join(config, "nope"), async () => true);
+    assert.deepEqual(absent.skills, []);
+  } finally {
+    await rm(config, { recursive: true, force: true });
+  }
 });

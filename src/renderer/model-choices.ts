@@ -145,7 +145,7 @@ function defaultRow(engine: EngineDescriptor): EngineModel {
 
 function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown: boolean): ModelChoice {
   const ready = isEngineReady(engine);
-  const detail = model.id === DEFAULT_MODEL && engine.catalog ? CATALOG_LABEL[engine.catalog.state] : undefined;
+  const detail = choiceDetail(engine, model);
   return {
     key: modelKey(engine.id, model.id),
     name: modelName(engine.id, model),
@@ -157,6 +157,7 @@ function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown:
     ...(shown ? {} : { hidden: true }),
     ...(model.providerDefault ? { providerDefault: true } : {}),
     ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
+    ...(model.free ? { free: true } : {}),
     // Each vendor publishes its own reasoning dial; the effort page offers exactly what
     // the picked model accepts, so a run never dies on a value its CLI refuses.
     contextWindow: model.contextWindow,
@@ -165,6 +166,12 @@ function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown:
     ...(model.efforts?.length ? { efforts: model.efforts } : {}),
     defaultEffort: model.defaultEffort,
   };
+}
+
+/** A row's second line: what the default row is doing while no catalog names it, or that a model is free. */
+function choiceDetail(engine: EngineDescriptor, model: EngineModel): string | undefined {
+  if (model.id === DEFAULT_MODEL && engine.catalog) return CATALOG_LABEL[engine.catalog.state];
+  return model.free ? MODEL_PICKER_WORDS.free : undefined;
 }
 
 function subscriptionTag(engine: EngineDescriptor, ready: boolean, signIn: boolean): string {
@@ -263,10 +270,13 @@ export function resolveChoice(choices: ModelChoice[], key: string | null | undef
 /**
  * The row a pick falls back to when none was made: the first usable row the picker lists, on a
  * provider the studio may choose by itself. Never a paid one (OpenRouter, OpenCode): the person
- * picks those.
+ * picks those. A free model is chosen only when every row the picker lists is one.
  */
 export function autoChoice(choices: readonly ModelChoice[]): ModelChoice | undefined {
-  return choices.find((choice) => !choice.disabled && !choice.hidden && !isMetered(parseModelKey(choice.key).engine));
+  const usable = choices.filter((choice) => !choice.disabled && !choice.hidden);
+  const own = usable.find((choice) => !isMetered(parseModelKey(choice.key).engine));
+  if (own) return own;
+  return usable.every((choice) => choice.free) ? usable[0] : undefined;
 }
 
 export function effectiveEffort(model: ModelChoice | undefined, value?: string | null): string | undefined {
