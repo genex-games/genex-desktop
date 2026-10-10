@@ -2225,8 +2225,13 @@ export const SANDBOX_SETUP_WORDS = {
     "not-provisioned": "Windows needs a one-time setup of the protected workspace, approved by an administrator.",
     "git-missing":
       "Agents run their commands in Git Bash, which comes with Git for Windows. Install it from git-scm.com, then retry.",
+    "isolation-blocked": "This system is blocking the isolation the protected workspace uses to keep agents apart.",
   } satisfies Record<SandboxProblemCode, string>,
   installThenRetry: "Install them in a terminal, then retry:",
+  /** Isolation blocked by AppArmor: the profile only applies to a Studio started after it. */
+  allowThenReopen: "Allow it for Studio in a terminal, then quit and reopen Studio:",
+  /** Who the allow command is for. */
+  allowFor: "Ubuntu 24.04 and later (AppArmor)",
   /** Who each install command is for, by `PackageManager`. */
   system: { apt: "Ubuntu, Debian", dnf: "Fedora" } satisfies Record<PackageManager, string>,
   copy: "Copy",
