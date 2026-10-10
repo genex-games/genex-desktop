@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { latestModels, modelName, runnableModels, shownModels } from "../../src/renderer/model-lineup.ts";
+import { latestModels, modelName, offersLineup, runnableModels, shownModels } from "../../src/renderer/model-lineup.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 
 const row = (id: string, label: string, resolvedModel?: string, providerDefault?: boolean) => ({
@@ -177,5 +177,23 @@ test("at the same version, a long catalog prefers a vendor's larger models to it
     [...latestModels(EngineId.OpenRouter, listed)],
     ["anthropic/claude-sonnet-5-5", "openai/gpt-6-luna", "anthropic/claude-opus-5-5"],
     "Haiku and Mini wait behind their vendor's larger models of the same version",
+  );
+});
+
+test("a catalog with no default lineup lists only what the person switched on", () => {
+  const listed = [row("opencode/big-pickle", "Big Pickle"), row("opencode/ling", "Ling")];
+  const none = new Set<string>();
+  assert.deepEqual([...shownModels(EngineId.OpenCode, listed, {}, none, false)], []);
+  assert.deepEqual(
+    [...shownModels(EngineId.OpenCode, listed, { "opencode/ling": true }, none, false)],
+    ["opencode/ling"],
+  );
+  assert.equal(offersLineup({ id: EngineId.OpenCode, account: { source: "none" } }), false, "no provider signed in");
+  assert.equal(offersLineup({ id: EngineId.OpenCode, account: { source: "system" } }), true);
+  assert.equal(offersLineup({ id: EngineId.OpenRouter }), true);
+  assert.equal(
+    offersLineup({ id: EngineId.ClaudeCode, account: { source: "none" } }),
+    true,
+    "only a paid catalog waits",
   );
 });

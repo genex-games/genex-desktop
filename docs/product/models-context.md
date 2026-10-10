@@ -19,8 +19,8 @@ on the main agent's levels, serves every role at its closest.
 Workers and Reviewers run only in Loop and survive a main-agent change. Each Ollama job takes its
 own model; Reviewers must see images.
 
-Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenCode and OpenRouter get their own
-groups and are never auto-chosen ([details](../connections-and-context.md#openrouter-and-opencode)).
+Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenCode and OpenRouter show once set up,
+never auto-chosen ([details](../connections-and-context.md#openrouter-and-opencode)).
 
 ## What the model knows
 

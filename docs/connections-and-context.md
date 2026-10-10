@@ -128,7 +128,8 @@ its own sign-ins (`opencode auth login`, which Sign in runs in a terminal inside
 never the dock, so Settings stays open; when it prints an https page, main keeps the address and the
 row offers Open sign-in page, `studio:terminal.open-link`) and the studio never reads them: it is Ready once `opencode models --verbose` lists a model. OpenCode lists its
 own free models to anyone, so while those are all it lists the account is `none` and the Settings
-row reads Free models only with Sign in first; the free models still run. It has no sandbox of
+row reads Free models only with Sign in first; the picker lists none of them until one is switched
+on in Settings (`offersLineup`), and a paid provider not yet set up shows no rows at all. It has no sandbox of
 its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder when read-only)
 plus OpenCode's state and cache are writable, its own data folder is exempt from the credential
 denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's provider hosts
