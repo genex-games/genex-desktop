@@ -5,6 +5,13 @@
  */
 import type { PluginInfo } from "../shared/plugins.ts";
 
+/** The pictures a review may show: inline PNG, JPEG or WebP, never a link to fetch. */
+const REVIEW_IMAGE = /^data:image\/(png|jpeg|webp);base64,/;
+
+/** Whether `dataUrl` is a picture Studio shows in a plugin's review. */
+export const isReviewImage = (dataUrl: unknown): dataUrl is string =>
+  typeof dataUrl === "string" && REVIEW_IMAGE.test(dataUrl);
+
 /** What the host shows before a confirmed action goes to the native dialog; `resolve(false)` cancels. */
 export interface PluginReviewRequest {
   message: string;
@@ -33,7 +40,7 @@ export async function runPluginAction({
   if (declaration.confirmation) {
     const info = await window.studio.pluginReview(plugin.manifest.id, name, actual, project ?? undefined);
     ticket = info.ticket;
-    const images = (info.images ?? []).filter((i) => /^data:image\/(png|jpeg|webp);base64,/.test(i.dataUrl));
+    const images = (info.images ?? []).filter((i) => isReviewImage(i.dataUrl));
     if (images.length !== (info.images ?? []).length) throw new Error("Invalid approval image");
     // Text-only actions are reviewed once in the trusted native dialog. Candidate pictures
     // still need the Studio image review before that final approval.

@@ -480,7 +480,9 @@ which lists the action's arguments under its question (nothing when there are no
 Optional backend `review` returns a message and labeled image data URLs. Studio requires all
 images to load before continuing. Approval tickets are short-lived, single-use and bound to
 plugin/action/arguments/project. A panel never supplies its own approval ticket. Genex uses this
-for candidate/remesh review, allowance changes and credential operations. Account connection
+for candidate/remesh review, allowance changes and credential operations; a preview's review
+carries only the candidate its arguments name, captioned as the one being approved, and a
+remesh's carries every view. Account connection
 URLs must be HTTPS and open only after an approved connection action.
 
 ## Marketplace

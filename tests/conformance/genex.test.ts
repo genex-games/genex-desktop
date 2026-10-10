@@ -1,10 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import http from "node:http";
 import { GenexTools, validateGenexRequest, parseGenexJson } from "../../src/plugins/genex/adapter.ts";
+import { createGenexPlugin } from "../../src/plugins/genex/backend.ts";
 
 const credentials = new Map<
   string,
@@ -856,4 +857,91 @@ it("names the local copy when a worker-delivered job is inspected from another w
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/**
+ * Studio's review before a character approval: the person must see that the picture in front of
+ * them is the one being approved. A paying user who opened "Review candidate 2" to look, liked 3
+ * and continued, approved 2: the review showed all three candidates alike and named the choice
+ * only inside its text.
+ */
+describe("character approval review", () => {
+  const PROJECT = "game";
+  const picture = (label: string) => `data:image/png;base64,${Buffer.from(`picture ${label}`).toString("base64")}`;
+
+  /** The plugin's review of one job waiting on the person, saved as Studio saves it. */
+  async function pendingApproval(operation: string, labels: string[]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "studio-genex-review-"));
+    const id = "33333333-3333-4333-8333-333333333333";
+    const dir = path.join(root, "projects", PROJECT, "jobs", id);
+    await mkdir(dir, { recursive: true });
+    const job = {
+      id,
+      project: PROJECT,
+      operation,
+      status: "approval_required",
+      files: [],
+      createdAt: new Date().toISOString(),
+      approval: { sourceId: "concept", images: labels.map((label) => ({ label, dataUrl: picture(label) })) },
+    };
+    await writeFile(path.join(dir, "job.json"), JSON.stringify(job));
+    const plugin = await createGenexPlugin("http://127.0.0.1:9");
+    const ctx = {
+      project: PROJECT,
+      host: async (method: string) => {
+        if (method === "storage.root") return root;
+        if (method === "credentials.session") return null;
+        throw new Error(`unexpected host call ${method}`);
+      },
+    };
+    const review = (args: Record<string, unknown>) =>
+      plugin.review("approve", { id, ...args }, ctx) as Promise<{
+        message: string;
+        images: Array<{ label: string; dataUrl: string }>;
+      }>;
+    return { review, cleanup: () => rm(root, { recursive: true, force: true }) };
+  }
+
+  for (const candidate of [1, 2, 3]) {
+    it(`shows candidate ${candidate} alone, captioned as the one being approved, and names it`, async () => {
+      const fx = await pendingApproval("character.preview", ["1", "2", "3"]);
+      try {
+        const shown = await fx.review({ candidate });
+        assert.deepEqual(
+          shown.images.map((image) => image.dataUrl),
+          [picture(String(candidate))],
+          "the review shows the chosen candidate's picture, and no other",
+        );
+        assert.match(shown.images[0]?.label ?? "", new RegExp(`^approving candidate ${candidate}$`, "i"));
+        assert.match(shown.message, new RegExp(`\\bcandidate ${candidate}\\b`, "i"));
+      } finally {
+        await fx.cleanup();
+      }
+    });
+  }
+
+  it("refuses to review a preview without a candidate it can show", async () => {
+    const fx = await pendingApproval("character.preview", ["1", "2", "3"]);
+    try {
+      for (const candidate of [undefined, 0, 4, "3", 2.5])
+        await assert.rejects(fx.review({ candidate }), /Choose candidate/, String(candidate));
+    } finally {
+      await fx.cleanup();
+    }
+  });
+
+  it("keeps the remesh review: every view, and the rigging copy it approves", async () => {
+    const views = ["front", "back", "left", "right"];
+    const fx = await pendingApproval("character.finalize", views);
+    try {
+      const shown = await fx.review({});
+      assert.deepEqual(
+        shown.images,
+        views.map((label) => ({ label, dataUrl: picture(label) })),
+      );
+      assert.match(shown.message, /10,000-face rigging copy/);
+    } finally {
+      await fx.cleanup();
+    }
+  });
 });

@@ -212,8 +212,8 @@ with a setup card, panels, settings, enable/remove/watch actions, `[data-plugin-
 (`[data-plugin-connection="<server>"][data-state]`), Skills behind Show all, and Information
 (capabilities in words, scan). The list ends with Make your own plugin (the plugin guide).
 Genex's detail page is host-drawn (`panels/plugins/genex/`): `[data-genex-account="<state>"]`
-(balance for all games, no per-game numbers), `[data-genex-review]` only while the open game has
-a generation awaiting review (`Review candidate <n>` / `Review remesh`), and `[data-genex-tools]` (`[data-genex-tool="<id>"]`); it reads the plugin's
+(balance for all games, no per-game numbers), `[data-genex-review]` while the open game has
+a review waiting (`[data-genex-candidate="<n>"]`: picture over `Review candidate <n>`; `Review remesh`), and `[data-genex-tools]` (`[data-genex-tool="<id>"]`); it reads the plugin's
 `status` action for no game and runs its declared actions. Local Blender's page leads with
 `[data-blender-runtime="<state>"]` (ready / missing / downloading) instead of its frame.
 The post-welcome promo is `aside[data-genex-promo="<phase>"]` (`panels/GenexPromo.tsx`,

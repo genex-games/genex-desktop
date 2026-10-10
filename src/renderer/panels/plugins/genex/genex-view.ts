@@ -11,6 +11,7 @@ import {
   type GenexStatus,
   GenexUseStage,
 } from "../../../../shared/genex.ts";
+import { isReviewImage } from "../../../plugin-actions.ts";
 import type { IconName } from "../../../ui/icons.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
 
@@ -197,6 +198,8 @@ export interface GenexJobRow {
   error: string | null;
   /** What a review waits on: numbered candidates, one `null` for a remesh, or nothing. */
   candidates: Array<number | null>;
+  /** Each candidate's picture by its number, when its review could show it; a remesh has none. */
+  pictures: Partial<Record<number, string>>;
 }
 
 function stateOf(job: GenexJob): JobState {
@@ -220,6 +223,17 @@ function candidatesOf(job: GenexJob, state: JobState): Array<number | null> {
   return job.operation === GenexOperation.CharacterPreview ? PREVIEW_CANDIDATES : [null];
 }
 
+/** The candidates' pictures, so the person chooses by looking before any review opens. */
+function picturesOf(job: GenexJob, candidates: Array<number | null>): Partial<Record<number, string>> {
+  const pictures: Partial<Record<number, string>> = {};
+  for (const candidate of candidates) {
+    if (candidate === null) continue;
+    const image = job.approval?.images?.find((each) => each.label === String(candidate));
+    if (isReviewImage(image?.dataUrl)) pictures[candidate] = image.dataUrl;
+  }
+  return pictures;
+}
+
 const fileName = (file: string | undefined): string | null => (file ? (file.split("/").pop() ?? file) : null);
 
 /** The game's generations, newest first. */
@@ -227,6 +241,7 @@ export function genexJobRows(jobs: readonly GenexJob[]): GenexJobRow[] {
   return [...jobs].reverse().map((job) => {
     const family = OPERATION[job.operation] ?? UNKNOWN_OPERATION;
     const state = stateOf(job);
+    const candidates = candidatesOf(job, state);
     return {
       id: job.id,
       label: family.label,
@@ -235,7 +250,8 @@ export function genexJobRows(jobs: readonly GenexJob[]): GenexJobRow[] {
       state,
       credits: creditWords(job),
       error: job.error ?? null,
-      candidates: candidatesOf(job, state),
+      candidates,
+      pictures: picturesOf(job, candidates),
     };
   });
 }

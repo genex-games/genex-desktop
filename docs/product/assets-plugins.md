@@ -20,19 +20,19 @@ proves neither correct integration nor passing checks.
 The prompt bar's Add menu holds reference attachments, plugin and MCP switches, Connect and
 Manage. Enabled, connected, signed in and permitted are different states.
 
-Plugins opens a page with Plugins/Skills, search, rows and details. Plugins and MCP
+The Plugins page has Plugins/Skills, search, rows and details. Plugins and MCP
 servers show their pictures ([Icons](../plugins.md#icons)) or an initial. It
 lists installed plugins (Genex routes game dev tools), your servers, the
 Marketplace (Coming soon until the catalog has something new) and the plugin guide. Install from GitHub pins a pasted link's latest release
 (else the default branch's newest commit). Games build, preview and export without plugins.
-The host draws Genex's app-wide page (shared balance, routed tools) and Local Blender's
+The host draws Genex's app-wide page (shared balance, routed tools, candidate pictures) and Local Blender's
 runtime card. Connect, unapproved, reuses a saved account or
 opens browser sign-in; setup survives restart and reinstall. Game spend is in the usage panel.
 Enabled Genex suggests assets in planning; workers use it once the account is ready. User
 preferences win; failures and fallbacks are disclosed.
 Genex bundles its MCP with the same account: game/animation search, owned games and
-generation status. Host tools handle generation, delivery, credits and publishing
-and run the pinned CLI outside the game: `genex__cli` free; `genex__cli-paid` and
+generation status. Host tools handle generation, delivery, credits and publishing,
+running the pinned CLI outside the game: `genex__cli` free; `genex__cli-paid` and
 `genex__package` (pinned multiplayer or player-identity package, build games) after consent.
 Publish (a host-drawn stage dialog) tests the draft, makes it public, then sends the
 game's `genex-cover` demo frame as its Genex cover (not the sidebar sphere); without one, Ask for a

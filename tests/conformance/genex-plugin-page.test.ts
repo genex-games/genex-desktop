@@ -185,6 +185,36 @@ describe("Genex generations", () => {
     assert.deepEqual(done?.candidates, []);
   });
 
+  it("shows each candidate's picture beside its number, so the choice is made by looking", () => {
+    const picture = (n: number) => `data:image/png;base64,${btoa(`candidate ${n}`)}`;
+    const images = [1, 2, 3].map((n) => ({ label: String(n), dataUrl: picture(n) }));
+    const [preview] = genexJobRows([
+      job({ operation: "character.preview", status: "approval_required", approval: { sourceId: "concept", images } }),
+    ]);
+    assert.deepEqual(preview?.pictures, { 1: picture(1), 2: picture(2), 3: picture(3) });
+    const views = ["front", "back", "left", "right"].map((label) => ({ label, dataUrl: picture(1) }));
+    const [remesh] = genexJobRows([
+      job({
+        operation: "character.finalize",
+        status: "approval_required",
+        approval: { sourceId: "preview", images: views },
+      }),
+    ]);
+    assert.deepEqual(remesh?.pictures, {}, "a remesh keeps its views for the review");
+  });
+
+  it("never shows a candidate picture the review itself would refuse", () => {
+    const images = [
+      { label: "1", dataUrl: "https://assets.example.invalid/1.png" },
+      { label: "2", dataUrl: "data:image/svg+xml;base64,PHN2Zy8+" },
+      { label: "3", dataUrl: "data:image/webp;base64,UklGRg==" },
+    ];
+    const [preview] = genexJobRows([
+      job({ operation: "character.preview", status: "approval_required", approval: { sourceId: "concept", images } }),
+    ]);
+    assert.deepEqual(preview?.pictures, { 3: "data:image/webp;base64,UklGRg==" });
+  });
+
   it("keeps unknown operations and statuses readable", () => {
     const [row] = genexJobRows([job({ operation: "hologram", status: "queued-remotely" })]);
     assert.equal(row?.label, "Asset");
