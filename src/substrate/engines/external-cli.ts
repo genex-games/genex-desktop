@@ -23,6 +23,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { OpenCodeDialect, OpenCodeVersionProblem, openCodeRelease } from "./opencode-cli.ts";
 export interface CliInstallation {
   status: CodingCliStatus;
   env: NodeJS.ProcessEnv;
@@ -58,7 +59,7 @@ const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
 };
-const REQUIRED_FLAGS: Record<CodingProvider, string[]> = {
+const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
   [EngineId.ClaudeCode]: [
     "--input-format",
@@ -70,8 +71,14 @@ const REQUIRED_FLAGS: Record<CodingProvider, string[]> = {
     "--allowedTools",
     "--disallowedTools",
   ],
-  // `opencode run` 1.18 lists every one; an older CLI without `--variant` or `--pure` is refused.
-  [EngineId.OpenCode]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
+};
+/**
+ * `opencode run`'s options by the command line its version speaks: 1.18 lists every one (an older
+ * 1.x without `--variant` or `--pure` is refused); 2.x runs each session on a private server.
+ */
+const OPENCODE_FLAGS: Record<OpenCodeDialect, string[]> = {
+  [OpenCodeDialect.V1]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
+  [OpenCodeDialect.V2]: ["--format", "--session", "--model", "--file", "--standalone"],
 };
 /** How long reading the login shell's PATH, and each `--version`/`--help` probe, may take. */
 const LOGIN_PATH_TIMEOUT_MS = 8 * SECOND_MS;
@@ -99,6 +106,11 @@ const MESSAGE = {
   ProbeTimedOut: `CLI diagnostic timed out after ${PROBE_TIMEOUT_MS / SECOND_MS} seconds`,
   NoVersion: "CLI did not report a version",
   MissingOptions: (missing: string[]) => `Required CLI options are unavailable: ${missing.join(", ")}`,
+  OpenCodeUnreadable: "Genex can't tell which OpenCode version this is. Install a released OpenCode, then check again.",
+  OpenCodeTooOld:
+    "This OpenCode is too old for Genex. Update OpenCode (Genex runs 1.18, and 2.x from 2.0.20), then check again.",
+  OpenCodeTooNew: (major: number | null) =>
+    `Genex doesn't run OpenCode ${major ?? ""}.x yet. Install OpenCode 2.x or 1.18, then check again.`,
 } as const;
 
 const diagnostics = new Map<string, { at: number; value: CliInstallation }>();
@@ -347,8 +359,9 @@ export function cliVersion(raw?: string): string | undefined {
 
 /**
  * Find a provider's CLI on this computer — the override when one is set, else the first external
- * executable on the login shell's PATH (the process's on Windows, under its PATHEXT names) — and
- * check that it runs and speaks the flags we need.
+ * executable on the login shell's PATH (the process's on Windows, under its PATHEXT names) that
+ * runs and speaks the flags we need. One that cannot run (an old copy left on the PATH) yields to a
+ * working one further along; with none working, the first one found says why.
  */
 export async function discoverCodingCli(
   provider: CodingProvider,
@@ -371,8 +384,8 @@ export async function discoverCodingCli(
   const names = executableNames(CLI_BINARY[provider], platform, env);
   const automatic = dirs.flatMap((dir) => names.map((name) => path.join(dir, name)));
   const candidates = options.override !== undefined ? [options.override] : automatic;
-  const selected = await firstExternalExecutable(candidates, await excludedRealRoots(options), { manual, platform });
-  if (!selected) {
+  const found = await externalExecutables(candidates, await excludedRealRoots(options), { manual, platform });
+  if (!found.length) {
     if (options.override !== undefined) {
       status.state = CodingCliState.InvalidPath;
       status.path = options.override;
@@ -380,9 +393,14 @@ export async function discoverCodingCli(
     }
     return { status, env };
   }
-  status.path = selected;
-  await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform }, status);
-  return { status, env };
+  let first: CodingCliStatus | undefined;
+  for (const selected of found) {
+    const checked: CodingCliStatus = { ...status, path: selected };
+    await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform }, checked);
+    if (checked.state === CodingCliState.Ready) return { status: checked, env };
+    first ??= checked;
+  }
+  return { status: first ?? status, env };
 }
 
 /** The folders searched for a CLI: the login shell's PATH, then ours, then the usual install folders. */
@@ -494,19 +512,21 @@ async function excludedRealRoots(options: DiscoveryOptions): Promise<string[]> {
   );
 }
 
-/** The first candidate that is an executable file outside Studio and every game. */
-async function firstExternalExecutable(
+/** The candidates that are executable files outside Studio and every game, in order, each file once. */
+async function externalExecutables(
   candidates: string[],
   roots: string[],
   selection: { manual: boolean; platform: NodeJS.Platform },
-): Promise<string | undefined> {
+): Promise<string[]> {
+  const found = new Map<string, string>();
   for (const candidate of candidates) {
     const runnable = path.isAbsolute(candidate) && (await executable(candidate, selection.platform));
     if (!runnable) continue;
     const target = await realpath(candidate);
-    if (!belongsToStudioOrGame(candidate, target, roots, selection.manual)) return candidate;
+    if (!found.has(target) && !belongsToStudioOrGame(candidate, target, roots, selection.manual))
+      found.set(target, candidate);
   }
-  return undefined;
+  return [...found.values()];
 }
 
 /**
@@ -582,10 +602,24 @@ async function checkCliCapabilities(
   status.version =
     known?.version ?? (await probe(file, ["--version"], probeEnv, signal, platform)).split("\n")[0]?.trim();
   if (!status.version) throw new Error(MESSAGE.NoVersion);
+  const required = requiredFlags(provider, status.version);
   const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, signal, platform));
-  const missing = REQUIRED_FLAGS[provider].filter((flag) => !help.includes(flag));
+  const missing = required.filter((flag) => !help.includes(flag));
   if (missing.length) throw new Error(MESSAGE.MissingOptions(missing));
   if (identity && !known) answered.set(identity, { version: status.version, help });
+}
+/** The options a CLI must list: OpenCode's by the command line its version speaks; throws for a version it cannot run. */
+function requiredFlags(provider: CodingProvider, version: string): string[] {
+  if (provider !== EngineId.OpenCode) return REQUIRED_FLAGS[provider];
+  const release = openCodeRelease(version);
+  if ("problem" in release) throw new Error(openCodeVersionMessage(release.problem, release.major));
+  return OPENCODE_FLAGS[release.dialect];
+}
+/** What to do about an OpenCode version Genex does not run. */
+function openCodeVersionMessage(problem: OpenCodeVersionProblem, major: number | null): string {
+  if (problem === OpenCodeVersionProblem.TooNew) return MESSAGE.OpenCodeTooNew(major);
+  if (problem === OpenCodeVersionProblem.TooOld) return MESSAGE.OpenCodeTooOld;
+  return MESSAGE.OpenCodeUnreadable;
 }
 /** Brief cache for UI/model-list reads only. Sessions and explicit Recheck bypass it. */
 export async function resolveCodingCli(

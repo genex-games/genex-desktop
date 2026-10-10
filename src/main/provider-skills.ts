@@ -45,8 +45,7 @@ const MESSAGE = {
   claudeNote:
     "Installed globally. Studio currently loads project skills only; these personal skills are not enabled in its Claude sessions.",
   openCodeUnavailable: "OpenCode CLI is unavailable. Check Model Providers, then refresh skills.",
-  openCodeNote:
-    "Installed globally. Studio's OpenCode sessions load project skills only; these global skills are not enabled in them.",
+  openCodeNote: "Installed globally. Studio's OpenCode sessions load no skills, so these are not enabled in them.",
   codexNote:
     "Reported by the selected Codex CLI profile. Availability does not mean a skill was used in a conversation.",
   invalidSkillMetadata: "Invalid skill metadata",
@@ -357,7 +356,7 @@ async function openCodeCliReady(): Promise<boolean> {
 
 /**
  * OpenCode's global skills, read-only: the `skills` folders its global config loads. Studio's
- * OpenCode sessions load project skills only, so these never reach a builder (`NotLoaded`). A
+ * OpenCode sessions deny every skill (`openCodeConfig`), so these never reach a builder (`NotLoaded`). A
  * missing CLI reads as a warning naming the next step, never a throw, as Codex's does.
  */
 export async function openCodeGlobalSkills(

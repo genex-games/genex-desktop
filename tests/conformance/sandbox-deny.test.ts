@@ -89,6 +89,21 @@ describe("base deny-read list", () => {
     assert.ok(!denied.includes(path.join(HOME, "AppData", "Roaming", "Microsoft", "Credentials")));
   });
 
+  it("hides OpenCode 2.x's background-server password, where its config folder is", () => {
+    // With it, any process allowed onto localhost could drive OpenCode's server, which runs outside every sandbox.
+    for (const row of TABLE) {
+      const denied = baseDenyRead(HOME, row.platform, {});
+      assert.ok(denied.includes(path.join(HOME, ".config", "opencode", "service.json")), row.platform);
+    }
+    const moved = baseDenyRead(HOME, "darwin", { XDG_CONFIG_HOME: "/xdg/config" });
+    assert.ok(moved.includes(path.join("/xdg/config", "opencode", "service.json")));
+    const relative = baseDenyRead(HOME, "linux", { XDG_CONFIG_HOME: "relative" });
+    assert.ok(
+      relative.includes(path.join(HOME, ".config", "opencode", "service.json")),
+      "a relative XDG folder is ignored",
+    );
+  });
+
   it("never denies the home folder itself", () => {
     for (const row of TABLE) assert.ok(!baseDenyRead(HOME, row.platform, {}).includes(HOME), row.platform);
   });

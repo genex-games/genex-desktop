@@ -430,6 +430,56 @@ test("display versions drop product names", () => {
   assert.equal(cliVersion("fixture-1"), "fixture-1");
   assert.equal(cliVersion(undefined), undefined);
 });
+/** `opencode run --help`'s options: 1.18's, and 2.x's (which has no `--pure`, `--variant` or `--dir`). */
+const OPENCODE_V1_FLAGS = "--format --session --model --agent --file --variant --pure --dir";
+const OPENCODE_V2_FLAGS =
+  "--standalone --server --continue --session --fork --model --agent --format --file --title --thinking --auto";
+/** A fixture `opencode` answering `--version` with `version` and `run --help` with `flags`. */
+async function openCodeCli(relative: string, version: string, flags: string): Promise<string> {
+  const file = path.join(root, exe(relative));
+  await launcher(
+    file,
+    `#!/bin/sh\ncase "$1" in\n --version) echo '${version}';;\n *) echo '${flags}';;\nesac\n`,
+    `console.log(process.argv[2] === "--version" ? ${JSON.stringify(version)} : ${JSON.stringify(flags)});\n`,
+  );
+  await chmod(file, 0o755);
+  return file;
+}
+test("OpenCode runs as 1.18 or as 2.x from 2.0.20; a version it cannot place is refused with what to do", async () => {
+  const rows: Array<[version: string, flags: string, state: string, detail: RegExp | null]> = [
+    ["1.18.35", OPENCODE_V1_FLAGS, "ready", null],
+    ["opencode v2.0.20", OPENCODE_V2_FLAGS, "ready", null],
+    ["opencode v2.0.26", OPENCODE_V2_FLAGS, "ready", null],
+    ["opencode v2.4.1", OPENCODE_V2_FLAGS, "ready", null],
+    ["opencode v2.0.19", OPENCODE_V2_FLAGS, "incompatible", /2\.0\.20/],
+    ["0.15.3", OPENCODE_V1_FLAGS, "incompatible", /[Uu]pdate OpenCode/],
+    ["opencode v3.0.0", OPENCODE_V2_FLAGS, "incompatible", /OpenCode 3/],
+    ["opencode nightly", OPENCODE_V2_FLAGS, "incompatible", /version/],
+    ["1.17.2", "--format --session --model --agent --file --dir", "incompatible", /--variant, --pure/],
+    ["1.18.35", OPENCODE_V2_FLAGS, "incompatible", /--pure/],
+    ["opencode v2.0.26", OPENCODE_V1_FLAGS, "incompatible", /--standalone/],
+  ];
+  for (const [index, [version, flags, state, detail]] of rows.entries()) {
+    const binary = await openCodeCli(`opencode-gate/${index}/opencode`, version, flags);
+    const found = await discoverCodingCli("opencode", { ...options, override: binary });
+    assert.equal(found.status.state, state, version);
+    if (detail) assert.match(found.status.detail, detail, version);
+  }
+});
+test("an installation that cannot run yields to a working one further along the search; a manual choice never does", async () => {
+  const outdated = await openCodeCli("search-old/opencode", "opencode v2.0.5", OPENCODE_V2_FLAGS);
+  const working = await openCodeCli("search-ok/opencode", "1.18.35", OPENCODE_V1_FLAGS);
+  const search = { ...options, loginPath: path.dirname(outdated), standardDirs: [path.dirname(working)] };
+  const found = await discoverCodingCli("opencode", search);
+  assert.equal(found.status.state, "ready");
+  assert.equal(found.status.path, working);
+  const onlyBroken = await discoverCodingCli("opencode", { ...options, loginPath: path.dirname(outdated) });
+  assert.equal(onlyBroken.status.state, "incompatible", "with nothing better, the first one found explains why");
+  assert.equal(onlyBroken.status.path, outdated);
+  const manual = await discoverCodingCli("opencode", { ...search, override: outdated });
+  assert.equal(manual.status.state, "incompatible");
+  assert.equal(manual.status.path, outdated);
+});
 test.after(async () => {
   await rm(root, { recursive: true, force: true });
 });
