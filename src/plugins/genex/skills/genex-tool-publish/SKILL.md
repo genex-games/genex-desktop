@@ -32,7 +32,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.2 sha256 5fb8097f9cd1285227d25f09498d3e87d52ba5e3af8d5b5083e715bf91e3c9fc -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.4 sha256 5fb8097f9cd1285227d25f09498d3e87d52ba5e3af8d5b5083e715bf91e3c9fc -->
 ---
 name: genex-tool-publish
 description: Put the game in this folder on the web with Genex — the draft page, `npx genex preview`, then `promote` / `publish`; the link you hand the user, the size limits, and what to do with the preflight lines. Installed once the folder is connected to a hosted Genex game (`npx genex init --convert`). Load it before the first preview.

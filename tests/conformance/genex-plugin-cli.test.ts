@@ -36,7 +36,7 @@ test("a worktree with shared dependencies keeps the pinned CLI inside its plugin
     const target = await realpath(path.join(resources, "plugins/genex"));
     const packaged = createRequire(path.join(target, "backend.mjs")).resolve("@genex-ai/cli-demo/package.json");
     assert.equal(packaged, path.join(target, "node_modules/@genex-ai/cli-demo/package.json"));
-    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.2");
+    assert.equal(JSON.parse(await readFile(packaged, "utf8")).version, "1.36.4");
   } finally {
     await removeTree(temp);
   }
