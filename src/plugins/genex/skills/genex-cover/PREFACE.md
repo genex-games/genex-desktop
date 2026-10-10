@@ -7,6 +7,18 @@ judging), with §4's steps 1, 6 and 7 as this preface says for a demo. That sect
 entry, both of its lanes and its table of answers) does not apply in Studio: this preface replaces
 it.
 
+## When, in Studio
+
+- The card's "always before the first publish" is, in Studio, before every publish: the first or
+  an update, gallery or draft. Check `genex__cover {"operation":"status"}` first; with no kept shot
+  and no cover the owner chose, stage `genex-cover` and shoot it before publishing, so a game made
+  before covers gets one at its next update. Never every turn.
+- After a publish whose own cover outcome is `none` (`cover.last.jobId` is that publish's
+  `jobId`), offer once to make one; once the user says no, do not offer again in this chat. A
+  `none` left by an earlier publish is not this one's: a draft of a public game sends nothing.
+- Neither applies to a game whose owner keeps its code untouched (see below): it gets no
+  `genex-cover` demo.
+
 ## The cover shot is the demo named `genex-cover`
 
 - The card's named cover shot is, in Studio, a demo in `config.demos` named exactly `genex-cover`
@@ -39,13 +51,16 @@ it.
   shoot it, compare, and leave `genex-cover` on the winner, then shoot it once more: the kept shot
   is always the last one taken, and that is what `genex__cover-set` sends. Publish shoots whatever
   `genex-cover` stages at that moment.
+- The person sees that last shot: the chat shows the thread's latest kept shot as a card captioned
+  Genex cover, with a Publish button that opens Studio's Publish dialog. So shoot the winner last,
+  and after it say one short line about the cover; never walk the person through publishing.
 - The demo is a standing choice: Publish shoots and sends what it stages without asking. Keep
   `genex-cover` only while its frame passes §5. When none does, or Genex refused it as too dark and
   the game is dark by design, delete the demo: with none, Publish sends nothing and the owner can
   set a cover on the game's page.
 - A game whose code its owner keeps untouched (a folder they brought and asked only to publish;
   never a game Studio built) gets no `genex-cover` demo: Publish then sends no cover and Genex keeps
-  its own. A game Studio built gets its demo before its first publish.
+  its own. A game Studio built gets its demo before its next publish.
 
 ## Check it: `genex__cover`
 
@@ -86,6 +101,6 @@ it.
 | `rejected` | `reason` `too_dark`: one brighter honest moment of the same game, or, dark by design, delete the `genex-cover` demo and stop: the owner can set one on the game's page. `flat`: the canvas had not drawn, a fade or loading screen was up, or sky or fog fills the frame: reframe. Any other reason: fix the file, not the game. |
 | `invalid` | Refused before sending: fix the shot, not the game. |
 | `failed` | Not sent (sign-in, the hourly limit, the network or no answer in time). Nothing is wrong with the frame; the next publish tries again. |
-| `none` | There was no `genex-cover` shot: Genex keeps its own cover. |
+| `none` | There was no `genex-cover` shot: Genex keeps its own cover. When it is this publish's own (`cover.last.jobId`), offer once to make one, unless the owner keeps the game's code untouched; never again once the user says no. |
 | `not_hosted` | No hosted project yet: the first publish sends it. |
 | `busy` | A publish of this game is running: check `genex__cover {"operation":"status"}` once it is done. |

@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { safeChild, readVersion } from "../../scripts/studio-dev/files.mjs";
 import { allocateProfile, validateProfile, assertStopped } from "../../scripts/studio-dev/ownership.mjs";
-import { operationSchema } from "../../src/main/dev/protocol.ts";
+import { DevErrorCode, operationSchema } from "../../src/main/dev/protocol.ts";
 test("build identity includes project licenses and refuses notice changes during publication", async (t) => {
   const { sourceIdentity, publishBuild, maintained } = await import("../../scripts/studio-dev/files.mjs");
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-notices-")));
@@ -130,6 +130,55 @@ test("interrupted controller response cannot be reported as a successful capture
     ),
     /closed before response/,
   );
+});
+test("an input whose target is still opening is tried again until reachable; any other refusal is final", async (t) => {
+  const { createServer } = await import("node:net");
+  const { requestWhenReachable } = await import("../../scripts/studio-dev/client.ts");
+  const { tmpDir } = await import("../helpers/tmp.ts");
+  const refused = (code: string) => ({ ok: false, error: { code, message: code } });
+  const reached = { ok: true, value: { dispatched: true } };
+  let answers: object[] = [];
+  let requests = 0;
+  const dir = await tmpDir("ipc-reach-");
+  const socket = process.platform === "win32" ? `\\\\.\\pipe\\${path.basename(dir)}` : path.join(dir, "s");
+  const server = createServer((client) =>
+    client.once("data", (line) => {
+      const { requestId } = JSON.parse(line.toString());
+      const answer = answers[Math.min(requests++, answers.length - 1)];
+      client.end(`${JSON.stringify({ version: 1, requestId, ...answer })}\n`);
+    }),
+  );
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socket, () => resolve());
+  });
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const descriptor = { instanceId: "00000000-0000-4000-8000-000000000001", capability: "0".repeat(64), socket };
+  const click = { method: "click", params: { selector: '[data-chat-action="export"]' } } as const;
+  const cases = [
+    // A modal dialog or menu that has just opened takes pointer input one render later.
+    { answers: [refused(DevErrorCode.TargetNotVisible), reached], timeoutMs: 5000, requests: 2 },
+    {
+      answers: [refused(DevErrorCode.AmbiguousSelector), reached],
+      timeoutMs: 5000,
+      requests: 1,
+      refusal: DevErrorCode.AmbiguousSelector,
+    },
+    {
+      answers: [refused(DevErrorCode.TargetNotVisible), reached],
+      timeoutMs: 0,
+      requests: 1,
+      refusal: DevErrorCode.TargetNotVisible,
+    },
+  ];
+  for (const [n, row] of cases.entries()) {
+    answers = row.answers;
+    requests = 0;
+    const sent = requestWhenReachable(descriptor, click, row.timeoutMs);
+    if (row.refusal) await assert.rejects(sent, (e: { code?: string }) => e.code === row.refusal, `case ${n}`);
+    else assert.deepEqual(await sent, reached.value, `case ${n}`);
+    assert.equal(requests, row.requests, `case ${n}`);
+  }
 });
 test("source fingerprints re-read only files whose size or modification time changed", async (t) => {
   const { fingerprints } = await import("../../scripts/studio-dev/files.mjs");

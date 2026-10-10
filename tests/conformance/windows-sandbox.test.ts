@@ -62,6 +62,8 @@ import { tmpDir } from "../helpers/tmp.ts";
 /** How long a test waits for a file removed in the background: polls of POLL_MS each. */
 const ENV_FILE_POLLS = 200;
 const POLL_MS = 10;
+/** Run input larger than any OS pipe buffer, so no write of it can finish before the reader closes. */
+const PIPE_OVERFLOW_BYTES = 1024 * 1024;
 const PROFILE = "C:\\Users\\Ann";
 const at = (...parts: string[]) => [PROFILE, ...parts].join("\\");
 
@@ -1004,6 +1006,18 @@ describe("ProcessSandbox on Windows", () => {
       (name) => name.startsWith(".stdin-") || name.startsWith(".env-"),
     );
     assert.deepEqual(leftovers, []);
+  });
+
+  it("sends a run's stdin only through the file, never down the pipe the command swaps away", async () => {
+    // The command replaces its stdin with the file before reading any: input written down the
+    // pipe as well would meet a closed reader (EPIPE), and this much input always outlasts it.
+    const w = await windowsSandbox();
+    const result = await w.sandbox.run({
+      command: "wc -c",
+      cwd: w.workspace,
+      stdin: "x".repeat(PIPE_OVERFLOW_BYTES),
+    });
+    assert.equal(result.stdout.trim(), String(PIPE_OVERFLOW_BYTES), result.stderr);
   });
 
   it("with the sandbox off (tests only), runs Git Bash with the Windows basics, never /bin/sh", async () => {

@@ -20,7 +20,13 @@ import { isCoordinatorTool } from "../shared/coordinator.ts";
 import { SessionActivityRole } from "../shared/chat-activity.ts";
 import type { EventData, Message } from "../shared/event-log.ts";
 import { EventKind } from "../shared/event-log.ts";
-import { type AssetDeliveredPayload, deliveredToBuild, isAssetDelivery } from "../shared/game-assets.ts";
+import {
+  type AssetDeliveredPayload,
+  deliveredToBuild,
+  digestOperation,
+  isAssetDelivery,
+} from "../shared/game-assets.ts";
+import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../shared/genex.ts";
 import { SteerDelivery } from "../shared/message-queue.ts";
 import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
@@ -86,6 +92,8 @@ export const EntryKind = {
   Learning: "learning",
   Question: "question",
   Assets: "assets",
+  /** The Genex cover a builder kept, with Publish beside it. */
+  GenexCover: "genex-cover",
   Action: "action",
   Morning: "morning",
   Compaction: "compaction",
@@ -136,6 +144,12 @@ export type Entry =
       pending: boolean;
     }
   | { kind: typeof EntryKind.Assets; id: string; delivery: AssetDeliveredPayload }
+  /**
+   * The game's kept Genex cover, for the thread's latest `genex__cover` shoot that kept one, once the
+   * work that took it has ended: its picture is read from Genex's storage by the game's name, so
+   * only that last shot has a card.
+   */
+  | { kind: typeof EntryKind.GenexCover; id: string; callId: string; project?: string }
   /** A card with one affordance: Resume a paused run, prefill a steering message, or Rewind. */
   | {
       kind: typeof EntryKind.Action;
@@ -200,6 +214,8 @@ export type Entry =
     };
 
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
+/** The card of the Genex cover a builder kept. */
+export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
 
 /** A plugin's permission card in the transcript. */
@@ -361,6 +377,17 @@ const pluginToolKey = (name: string): string =>
 /** How an engine mirrors a call to one of the studio's own tools (Claude's MCP, Codex's bridge). */
 const STUDIO_TOOL_PREFIX = /^mcp__studio__/i;
 
+/**
+ * The Genex cover card and the work it waits for: like a build's result card, it goes up once the
+ * work that took its shot has ended (the chat turn, or the build `runId` names), never mid-way.
+ */
+interface CoverCard {
+  entry: GenexCoverEntry;
+  thread: string;
+  runId: string | null;
+  placed: boolean;
+}
+
 /** Everything `toEntries` keeps while it walks the log. */
 interface ChatDraft {
   signInReplies: Set<string>;
@@ -378,6 +405,8 @@ interface ChatDraft {
    * straight away and the second rewrites that same line — one line per call, not two.
    */
   pluginCalls: Map<string, ToolChipRow>;
+  /** The Genex cover card of the latest shoot that kept a shot, held until the work that took it ends. */
+  cover: CoverCard | null;
   /**
    * A delegated builder's own chip row, by the tool it called. The SDK mirrors the call but never
    * its result, so a plugin tool that failed used to leave a row that looked like it worked; the
@@ -401,6 +430,7 @@ interface ChatDraft {
 export function toEntries(events: EventEnvelope[]): Entry[] {
   const chat = newChatDraft(events);
   for (const event of events) readEvent(chat, event);
+  placeLastCoverCard(chat);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
     if (result) result.assets = deliveries;
@@ -428,6 +458,7 @@ function newChatDraft(events: EventEnvelope[]): ChatDraft {
     runByCall: new Map(),
     workerCalls: new Set(),
     pluginCalls: new Map(),
+    cover: null,
     hostedTools: new Set(
       events.flatMap((e) => {
         const started = customEvent(e, CustomEvent.PluginToolStarted);
@@ -501,6 +532,8 @@ function endTurn(chat: ChatDraft, event: EventEnvelope, status: string | undefin
   }
   for (const [id, row] of chat.pluginCalls)
     if (row.state === ToolState.Running && !chat.runByCall.has(id)) row.state = ended;
+  // After the turn's reply: a stopped turn too, since the shot it kept stays kept.
+  if (coverWaitsForTurn(chat.cover, event.thread_id)) placeCoverCard(chat);
 }
 
 /** A question or a steering card still waiting for the user. */
@@ -1098,6 +1131,57 @@ function narratePluginCall(chat: ChatDraft, event: EventEnvelope): void {
   row.state = pluginCallState(closing, payload.ok);
   row.failed = row.state === ToolState.Failed;
   row.detail = [{ text }, ...(raw.result ? [{ text: String(raw.result) }] : [])];
+  if (row.state === ToolState.Succeeded && keptGenexCover(payload)) holdCoverCard(chat, event, payload);
+}
+
+type PluginCallPayload = CustomPayload<typeof CustomEvent.PluginTool | typeof CustomEvent.PluginToolStarted>;
+
+/**
+ * A finished `genex__cover` shoot that kept a new shot: Genex's own tool asked to shoot, and its
+ * answer carried the shot's preview (a shot the host could not take answers none, and the last
+ * shot stays kept). The tool is read however the record names it (`cover`, `genex__cover`,
+ * `mcp__studio__genex__cover`).
+ */
+function keptGenexCover(payload: PluginCallPayload): boolean {
+  const named = pluginToolKey(String(payload.tool ?? payload.toolName ?? ""));
+  const tool = named.startsWith(`${GENEX_PLUGIN_ID}__`) ? named.slice(GENEX_PLUGIN_ID.length + 2) : named;
+  const genexCover = payload.pluginId === GENEX_PLUGIN_ID && tool === GENEX_COVER_TOOL;
+  const shoot = digestOperation(payload.args) === GenexCoverOperation.Shoot;
+  return genexCover && shoot && Number(payload.images ?? 0) > 0;
+}
+
+/**
+ * This shoot's shot is the one Genex's storage holds now, so the card is its: an earlier card comes
+ * down, and this one waits for the work that took the shot to end (`placeCoverCard`).
+ */
+function holdCoverCard(chat: ChatDraft, event: EventEnvelope, payload: PluginCallPayload): void {
+  const earlier = chat.cover?.placed ? chat.entries.indexOf(chat.cover.entry) : -1;
+  if (earlier >= 0) chat.entries.splice(earlier, 1);
+  const entry: GenexCoverEntry = {
+    kind: EntryKind.GenexCover,
+    id: event.id,
+    callId: payload.callId ?? event.id,
+    ...(payload.project ? { project: payload.project } : {}),
+  };
+  chat.cover = { entry, thread: event.thread_id, runId: payload.runId ?? null, placed: false };
+}
+
+/** The held card goes up, after everything the work that took its shot said and did. */
+function placeCoverCard(chat: ChatDraft): void {
+  if (!chat.cover || chat.cover.placed) return;
+  chat.entries.push(chat.cover.entry);
+  chat.cover.placed = true;
+}
+
+/** A held card that waits for its thread's chat turn to end: the chat's shot, not a build's. */
+const coverWaitsForTurn = (cover: CoverCard | null, thread: string): boolean =>
+  cover !== null && cover.runId === null && cover.thread === thread;
+
+/** A log that ends with no turn open in the card's thread (one kept without turn markers) shows it last. */
+function placeLastCoverCard(chat: ChatDraft): void {
+  const thread = chat.cover?.thread;
+  if (thread === undefined || chat.activeTurns.has(thread)) return;
+  if (coverWaitsForTurn(chat.cover, thread)) placeCoverCard(chat);
 }
 
 function pluginCallState(closing: boolean, ok: boolean | undefined): ToolState {
@@ -1334,6 +1418,7 @@ function narrateFinished(chat: ChatDraft, event: EventEnvelope): void {
   settleRunTools(chat, finished);
   const result = morningCard(chat, event.id, finished);
   chat.entries.push(result);
+  if (result.runId && chat.cover?.runId === result.runId) placeCoverCard(chat);
   // A paused or reopened run closes more than once; its latest result carries everything it
   // generated, and the earlier cards no longer speak for where it stands.
   if (result.runId) {

@@ -1456,6 +1456,7 @@ export const MODEL_PICKER_WORDS = {
   cannotSeeImages: "This model cannot see images, so it cannot review screenshots",
   subscription: "subscription",
   signIn: "sign in",
+  free: "Free",
 } as const;
 
 /** Settings → Model Providers: the metered rows, OpenCode and OpenRouter (`panels/MeteredProviders.tsx`). */
@@ -1603,6 +1604,21 @@ export const UPDATE_WORDS = {
   /** Linux: a newer release to download and install over this one. */
   download: (version: string | null) => (version ? `Download Genex ${version}` : "Download the new Genex"),
   downloadHint: "Opens the release page",
+} as const;
+
+/** How many waiting releases the Update plugins tooltip names before it counts them instead. */
+const PLUGIN_RELEASES_NAMED = 3;
+const RELEASE_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/** The sidebar's Update plugins, while installed plugins have newer versions waiting (`state/plugins.ts`). */
+export const PLUGIN_UPDATE_WORDS = {
+  update: (count: number) => (count === 1 ? "Update plugin" : `Update ${count} plugins`),
+  updating: "Updating plugins…",
+  /** The button's tooltip: the releases it installs ("Local Blender 1.2.0"), each after its own approval. */
+  hint: (releases: readonly string[]) =>
+    releases.length > PLUGIN_RELEASES_NAMED
+      ? `Installs ${releases.length} plugin updates`
+      : `Installs ${RELEASE_LIST.format(releases)}`,
 } as const;
 
 /** Send feedback, from the bug button at the top of the sidebar (`panels/FeedbackDialog.tsx`). */
@@ -2225,8 +2241,13 @@ export const SANDBOX_SETUP_WORDS = {
     "not-provisioned": "Windows needs a one-time setup of the protected workspace, approved by an administrator.",
     "git-missing":
       "Agents run their commands in Git Bash, which comes with Git for Windows. Install it from git-scm.com, then retry.",
+    "isolation-blocked": "This system is blocking the isolation the protected workspace uses to keep agents apart.",
   } satisfies Record<SandboxProblemCode, string>,
   installThenRetry: "Install them in a terminal, then retry:",
+  /** Isolation blocked by AppArmor: the profile only applies to a Studio started after it. */
+  allowThenReopen: "Allow it for Studio in a terminal, then quit and reopen Studio:",
+  /** Who the allow command is for. */
+  allowFor: "Ubuntu 24.04 and later (AppArmor)",
   /** Who each install command is for, by `PackageManager`. */
   system: { apt: "Ubuntu, Debian", dnf: "Fedora" } satisfies Record<PackageManager, string>,
   copy: "Copy",
@@ -2565,6 +2586,16 @@ export const GENEX_WORDS = {
     filesLoading: "Listing files…",
     filesLabel: "Files Publish uploads",
     filesLeftOut: (count: number) => `${count} left out`,
+    /** While the game has no Genex cover to send: one quiet line, and the press that asks its chat for one. */
+    coverNone: "No cover yet. Genex shows a real frame of your game.",
+    coverAsk: "Ask for a cover",
+    coverAskLabel: "Ask for a cover in this game's chat",
+    /** What that press leaves in the game's composer, for the person to send. */
+    coverPrompt: "Make this game's Genex cover.",
+    /** The chat's card for the cover a builder kept: its caption, its picture's name, and Publish, which opens this dialog. */
+    coverCard: "Genex cover",
+    coverCardAlt: "This game's Genex cover",
+    coverCardPublishLabel: "Publish this game",
     failedTitle: "It didn't go online this time",
     failedText: "Your game is safe and nothing changed. Check your internet connection and try again.",
     failedKept: "Your game is safe, and players still get the version they had. Try again in a moment.",
@@ -2623,6 +2654,8 @@ export const GENEX_WORDS = {
   review: {
     title: "Waiting for your review",
     button: (candidate: number | null) => (candidate === null ? "Review remesh" : `Review candidate ${candidate}`),
+    /** A candidate's picture above its Review button. */
+    picture: (candidate: number) => `Candidate ${candidate}`,
   },
   /** A generation's state, by `JobState`. */
   state: {

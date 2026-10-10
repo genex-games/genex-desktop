@@ -11,7 +11,7 @@ model lane, unchanged. Where it disagrees with this preface, this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.2 sha256 5c36a3715b43ceee8aef777769298d8a686b5fa64b81013b4d4babf49c99ca42 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.36.4 sha256 5c36a3715b43ceee8aef777769298d8a686b5fa64b81013b4d4babf49c99ca42 -->
 ---
 name: genex-tool-llm
 description: A language model running while somebody PLAYS the finished game — an NPC that answers in its own words, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter. Read this the moment a request implies a model at play time, before building anything.

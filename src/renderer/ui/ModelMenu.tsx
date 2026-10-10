@@ -14,7 +14,7 @@ import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
-import { findChoice, roleChoices } from "../model-choices.ts";
+import { autoChoice, findChoice, roleChoices } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
 import type { RunRoles } from "../../shared/protocol.ts";
@@ -49,6 +49,8 @@ export interface ModelChoice extends ModelCapabilities {
   providerDefault?: boolean;
   /** The provider's id for the model this row runs, so a pick saved under another id still finds it. */
   resolvedModel?: string;
+  /** Runs at no cost and with no account: the studio may pick it when there is nothing else. */
+  free?: boolean;
 }
 /** The composer's way to open the menu (a plan that failed on its model offers "Choose model"). */
 export interface ModelMenuHandle {
@@ -118,7 +120,7 @@ function useRolePicks({
   onModel: (key: string) => void;
   onRoles?: (roles: RoleRecord) => void;
 }) {
-  const selected = choices.find((c) => c.key === modelKey) ?? choices.find((c) => !c.disabled);
+  const selected = choices.find((c) => c.key === modelKey) ?? autoChoice(choices);
   const engine = selected ? parseModelKey(selected.key).engine : undefined;
   const roleChoice = (role: RoleKey) => {
     if (role === "planner") return selected;

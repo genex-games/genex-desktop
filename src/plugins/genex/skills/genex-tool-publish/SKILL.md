@@ -23,14 +23,16 @@ unchanged. Where it disagrees with this preface, this preface wins.
   Publishing a game Studio built starts no rework either, but its cover demo is not a rework: see
   the next point.
 - The card's "The cover": in Studio the frame is the game's demo named `genex-cover`, game code the
-  game keeps, and Publish shoots and sends it; read `genex__skill {"name":"genex-cover"}`. A game
-  Studio built that has no `genex-cover` demo yet gets one, checked with `genex__cover`, before its
-  first publish. Only a game whose owner keeps its code untouched gets none: Publish then sends no
-  cover and Genex keeps its own.
+  game keeps, and Publish shoots and sends it; read `genex__skill {"name":"genex-cover"}`. Before
+  any publish of a game Studio built, the first or an update, check `genex__cover
+  {"operation":"status"}`: with no kept shot it gets its `genex-cover` demo, shot and checked,
+  first. After a publish whose own cover outcome is `none` (`cover.last.jobId` is its `jobId`),
+  offer once to make one, and not again in this chat once the user says no. Only a game whose
+  owner keeps its code untouched gets none: Publish then sends no cover and Genex keeps its own.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.2 sha256 5fb8097f9cd1285227d25f09498d3e87d52ba5e3af8d5b5083e715bf91e3c9fc -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.4 sha256 5fb8097f9cd1285227d25f09498d3e87d52ba5e3af8d5b5083e715bf91e3c9fc -->
 ---
 name: genex-tool-publish
 description: Put the game in this folder on the web with Genex — the draft page, `npx genex preview`, then `promote` / `publish`; the link you hand the user, the size limits, and what to do with the preflight lines. Installed once the folder is connected to a hosted Genex game (`npx genex init --convert`). Load it before the first preview.

@@ -117,7 +117,10 @@ the record was written installs rather than being refused with no way forward.
 
 Bundled seeds are inspected for explicit versioned updates. Existing profiles keep their pinned
 version until the user chooses Update; active leases defer activation, while disabling still
-blocks calls immediately. A removed preference suppresses the seed across Studio upgrades.
+blocks calls immediately. The renderer lists a seed's newer version and the index's newer release
+as one set (`pluginUpdates` in `renderer/state/plugins.ts`; none for a plugin whose update already
+waits for sessions): each plugin's row and page offer **Update to x**, and the sidebar's **Update
+plugins** runs them one after another, each through its own trust dialog. A removed preference suppresses the seed across Studio upgrades.
 Normal updates preserve settings, protected credentials and job state. The Genex plugin adopts
 `engine-homes/genex`, keeping existing allowances and unresolved jobs; remove/reinstall is not a
 required upgrade step.
@@ -451,8 +454,12 @@ Available services are capability checked and scoped to the calling plugin:
 The host never retries a failed tool invocation. Persist remote references before returning and
 reconcile uncertain submissions instead of creating again. Cancellation stops local waiting;
 it does not promise remote cancellation or refunds. Genex keeps its CLI admission ledger as the
-single billing authority. Plugin process failures are shown in Plugins and reported as a
-`failed` change.
+single billing authority. Every client of a Genex account shares one per-account request limit,
+and a paid request refused by it fails: a status read asks Genex again only about generations it
+has not seen settle (`completed`, `failed`, `canceled`; remembered by the backend until sign-out),
+and the Genex page re-reads every 5 s only while a job is requested, submitting, accepted or
+generating or a sign-in waits, otherwise once a minute (`genexPollMs`). Plugin process failures
+are shown in Plugins and reported as a `failed` change.
 
 ## Panels and trusted approval
 
@@ -473,7 +480,9 @@ which lists the action's arguments under its question (nothing when there are no
 Optional backend `review` returns a message and labeled image data URLs. Studio requires all
 images to load before continuing. Approval tickets are short-lived, single-use and bound to
 plugin/action/arguments/project. A panel never supplies its own approval ticket. Genex uses this
-for candidate/remesh review, allowance changes and credential operations. Account connection
+for candidate/remesh review, allowance changes and credential operations; a preview's review
+carries only the candidate its arguments name, captioned as the one being approved, and a
+remesh's carries every view. Account connection
 URLs must be HTTPS and open only after an approved connection action.
 
 ## Marketplace
@@ -664,11 +673,45 @@ Genex:
   only during that publish, five minutes at most). Other files are asked about in chat as usual.
   Only the bundled Genex, on; the same action from a panel or toolbar still goes through the
   review, ticket and native confirmation.
+- That dialog also reads the cover record publish-status answers (`GenexPublishState.cover`, typed
+  in `shared/genex.ts` with the plugin's outcome kinds as `GenexCoverOutcome`). While it reports no
+  kept shot and no send running, the owner chose no cover on genex.games (`kept_owner`, which the
+  plugin records whenever Genex reports the owner's pick, at a send or a status check, a shot kept
+  or not; `outranked`) and no publish runs, one quiet line offers Ask for a cover (`[data-genex-cover-ask]`,
+  `coverAsk` in `genex-publish-view.ts`): it closes the dialog and leaves "Make this game's Genex
+  cover." in that game's chat composer (`renderer/compose-in-chat.ts`), never sent. A Genex plugin
+  older than covers answers no record, and the line stays hidden. Genex-specific core UI, accepted
+  by the owner; a second plugin with a cover would need a declared host surface instead.
+- The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
+  thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
+  answer carried a picture (`chat-entries.ts`, the tool read with or without `genex__` and
+  `mcp__studio__`). Like a build's result card it goes up once that work has ended, after the turn's
+  reply (or a build's result card when the build's builder shot it), never mid-turn, and a newer
+  kept shot takes it down at once; earlier shots stay rows of the work. Its picture is the kept shot
+  read through `readProjectAsset`'s `genex-cover` scope (below), never a tool result's image, so a
+  shot that can no longer be read leaves no card. Under it, the caption Genex cover and a primary
+  Publish (`[data-genex-cover-publish]`) that dispatches the `studio:plugin-setup` window event with
+  `{id: "genex"}` (`renderer/plugin-setup.ts`), so the stage strip opens Studio's own Publish
+  dialog; that dialog's press is the consent, and for a live game it offers Publish update. Publish
+  is left out while Genex puts no Publish on the strip (off or removed), while publish-status
+  reports an attempt running, and once Genex has answered for the kept frame itself (`applied`,
+  `unchanged`, `outranked` or `kept_owner` for its hash: a publish re-shoots and sends it, so the
+  cover's next step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount,
+  on Genex's plugin events and on the dialog's cadence by `use-genex-publishing.ts`). The cover
+  guidance (inline `cover` skill, `genex-cover` preface) tells the builder to shoot the winner last
+  and then say one line, never how to publish. Genex-specific on purpose and with no manifest field:
+  when plugin pictures get a general home in the chat, the card moves onto it and keeps only
+  Publish.
 - `~/.genex` is on the protected and secret path lists every sandboxed engine and native job is
   denied, and the workspace content filters skip `.genex` folders.
 - Core reads Genex job folders under `engine-homes/genex/projects/*/jobs` for the Assets inventory
   and provenance, resolves `@genex/` retained-asset references, and serves one saved inspection
-  frame through the `genex-inspection` scope of `readProjectAsset`.
+  frame through the `genex-inspection` scope of `readProjectAsset`. Its `genex-cover` scope serves
+  the game's kept cover shot (`readGenexCoverShot` in `main/game-assets.ts`): the host builds
+  `engine-homes/genex/covers/<project>/` from the validated game name, never from a path the
+  renderer or the plugin names, refuses a link anywhere on the way, and reads only `shot.png` or
+  `shot.jpg` (no link, at most 8 MiB, bytes of the type its name says; the newer when both are
+  there); anything else answers null. `genex-cover-shot.test.ts` holds its hostile table.
 - A game using `@genex-ai/embed-sdk` is previewed with `?genex_local_test=1`.
 - `tools[].host` (API 3, id `genex`, source `bundled`, else refused before any hook runs) names a
   program Studio runs for the tool through the registry's `hostTool` hook. `genex-cli` backs
@@ -843,11 +886,18 @@ fixture accounts and existing assets, with no additional paid generation.
 on the fixture API: `genex__cover` shoots only the `genex-cover` demo into the plugin's storage
 (the game folder locked, never read) and answers its preview; a publish sends the frame only after
 its upload is recorded (a draft's page check may still be running), sends nothing for unchanged
-bytes or over the owner's own cover, stays done with a warning when the commit is refused, limited,
+bytes or over the owner's own cover (recorded as such with no shot kept, by a publish and by a
+status check), stays done with a warning when the commit is refused, limited,
 failed or silent or the shot cannot be kept, skips the shot without enough of its invocation left,
 never sends from a listed game's draft (listed from the dashboard too), sends the bytes it records
 however shots interleave, and is stopped by the next publish; `genex__cover-set` waits for consent
 and sends nothing without a hosted project; a bad project name reaches no host and writes nothing.
+The chat's cover card: `chat-transcript.test.ts` pins which shoot gets it (the latest that kept a
+shot, read by plugin, tool and operation) and when (its turn or build ended, the work one group),
+`genex-publish-view.test.ts` when it offers Publish,
+and `npm run test:ui -- chat-cover-card-ui` renders the production chat beside the stage strip:
+the kept shot at 16:9, Publish opening the dialog, Publish hidden while publishing, with Genex
+off or once Genex took the frame, and no card once the shot is gone.
 
 `plugin-marketplace.test.ts` drives `PluginMarketplace` with an injected `fetchImpl` and never
 touches the network: index validation, spec parsing, the 6 h cache with its stale-plus-error path,

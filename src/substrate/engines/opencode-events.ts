@@ -4,8 +4,9 @@
  * Each line is one event: `step_start`, `text`, `reasoning`, `tool_use` (a tool call with its
  * outcome), `step_finish` (that step's tokens and price) and `error`, every one tagged with the
  * session's id. They are mirrored in the compacted Claude Code shape every consumer already reads
- * (the chat rows, the run graph, the morning review), as `codex.ts` mirrors Codex's. Recorded
- * samples: `tests/fixtures/transcripts/opencode-*.jsonl` (OpenCode 1.18).
+ * (the chat rows, the run graph, the morning review), as `codex.ts` mirrors Codex's. 2.x names
+ * some tools anew (`shell`, `subagent`, `patch`) and carries a failure's status in the error itself.
+ * Recorded samples: `tests/fixtures/transcripts/opencode-*.jsonl` (OpenCode 1.18 and 2.0.20).
  */
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
@@ -29,6 +30,9 @@ const ToolStatus = { Completed: "completed", Error: "error" } as const;
 /** OpenCode's own tool names, as the chat names the Claude Code tool each one is. */
 const TOOL_NAMES: Readonly<Record<string, string>> = {
   bash: "Bash",
+  shell: "Bash",
+  patch: "Edit",
+  subagent: "Task",
   edit: "Edit",
   write: "Write",
   read: "Read",
@@ -167,16 +171,22 @@ function stepFinish(part: Record_): Translated {
   };
 }
 
-/** A failed turn: its words, and the HTTP status the provider answered, when it said one. */
+/**
+ * A failed turn: its words, and the HTTP status the provider answered, when it said one (1.18 in
+ * `data.statusCode`, 2.x in `status`).
+ */
 function error(failure: Record_): Translated {
   const data = record(failure.data);
   const message = String(data.message ?? failure.message ?? failure.name ?? "OpenCode stopped") || "OpenCode stopped";
-  const status = typeof data.statusCode === "number" && Number.isInteger(data.statusCode) ? data.statusCode : null;
+  const status = httpStatus(data.statusCode) ?? httpStatus(failure.status);
   return {
     events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: message } }],
     failure: { message, status },
   };
 }
+
+const httpStatus = (value: unknown): number | null =>
+  typeof value === "number" && Number.isInteger(value) ? value : null;
 
 function assistant(parts: unknown[]): MirroredEvent {
   return { type: DelegateEventType.Assistant, payload: { role: "assistant", parts } };

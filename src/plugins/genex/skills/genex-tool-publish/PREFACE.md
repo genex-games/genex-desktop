@@ -23,9 +23,11 @@ unchanged. Where it disagrees with this preface, this preface wins.
   Publishing a game Studio built starts no rework either, but its cover demo is not a rework: see
   the next point.
 - The card's "The cover": in Studio the frame is the game's demo named `genex-cover`, game code the
-  game keeps, and Publish shoots and sends it; read `genex__skill {"name":"genex-cover"}`. A game
-  Studio built that has no `genex-cover` demo yet gets one, checked with `genex__cover`, before its
-  first publish. Only a game whose owner keeps its code untouched gets none: Publish then sends no
-  cover and Genex keeps its own.
+  game keeps, and Publish shoots and sends it; read `genex__skill {"name":"genex-cover"}`. Before
+  any publish of a game Studio built, the first or an update, check `genex__cover
+  {"operation":"status"}`: with no kept shot it gets its `genex-cover` demo, shot and checked,
+  first. After a publish whose own cover outcome is `none` (`cover.last.jobId` is its `jobId`),
+  offer once to make one, and not again in this chat once the user says no. Only a game whose
+  owner keeps its code untouched gets none: Publish then sends no cover and Genex keeps its own.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).

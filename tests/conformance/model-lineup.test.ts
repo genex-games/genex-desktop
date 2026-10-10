@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { latestModels, modelName, runnableModels, shownModels } from "../../src/renderer/model-lineup.ts";
+import { latestModels, modelName, offersLineup, runnableModels, shownModels } from "../../src/renderer/model-lineup.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 
 const row = (id: string, label: string, resolvedModel?: string, providerDefault?: boolean) => ({
@@ -177,5 +177,41 @@ test("at the same version, a long catalog prefers a vendor's larger models to it
     [...latestModels(EngineId.OpenRouter, listed)],
     ["anthropic/claude-sonnet-5-5", "openai/gpt-6-luna", "anthropic/claude-opus-5-5"],
     "Haiku and Mini wait behind their vendor's larger models of the same version",
+  );
+});
+
+test("a catalog with no default lineup lists only what the person switched on", () => {
+  const listed = [row("vendor/a", "A"), row("vendor/b", "B")];
+  const none = new Set<string>();
+  assert.deepEqual([...shownModels(EngineId.OpenRouter, listed, {}, none, false)], []);
+  assert.deepEqual([...shownModels(EngineId.OpenRouter, listed, { "vendor/b": true }, none, false)], ["vendor/b"]);
+  const free = (id: string) => ({ ...row(id, id), free: true });
+  const freeOnly = { id: EngineId.OpenCode, account: { source: "none" }, models: [free("opencode/big-pickle")] };
+  assert.equal(offersLineup(freeOnly), true, "OpenCode with no sign-in starts with its free models");
+  assert.equal(offersLineup({ ...freeOnly, models: [row("opencode/paid", "Paid")] }), false, "a paid one waits");
+  assert.equal(offersLineup({ id: EngineId.OpenCode, account: { source: "system" }, models: [] }), true);
+  assert.equal(offersLineup({ id: EngineId.OpenRouter, models: [] }), true);
+  assert.equal(
+    offersLineup({ id: EngineId.ClaudeCode, account: { source: "none" }, models: [] }),
+    true,
+    "only a paid catalog waits",
+  );
+});
+
+test("OpenCode starts with a signed-in provider's models; its free ones start it only when there is nothing else", () => {
+  const free = (id: string) => ({ ...row(id, id), free: true });
+  const freeModels = ["big-pickle", "exo-free", "ling-3.1-flash-free", "step-5-preview-free"].map((id) =>
+    free(`opencode/${id}`),
+  );
+  assert.deepEqual(
+    [...latestModels(EngineId.OpenCode, freeModels)],
+    ["opencode/big-pickle", "opencode/exo-free", "opencode/ling-3.1-flash-free"],
+    "with no sign-in, the first three free ones, in OpenCode's order",
+  );
+  const signedIn = [row("anthropic/claude-opus-5-5", "Opus 5.5"), ...freeModels];
+  assert.deepEqual(
+    [...latestModels(EngineId.OpenCode, signedIn)],
+    ["anthropic/claude-opus-5-5"],
+    "a sign-in's models only: the free ones wait in Settings",
   );
 });

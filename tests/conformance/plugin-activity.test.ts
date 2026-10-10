@@ -1,6 +1,7 @@
 import { it } from "node:test";
 import assert from "node:assert/strict";
 import { argsDigest, finishedPayload, resultDigest, roleOf, startedPayload } from "../../src/main/plugin-activity.ts";
+import { digestOperation } from "../../src/shared/game-assets.ts";
 
 const start = (over: Partial<Parameters<typeof startedPayload>[0]> = {}) =>
   startedPayload({
@@ -33,6 +34,15 @@ it("the arguments digest leads with what a generation varies and never grows pas
     argsDigest({ prompt: "an unbroken sentence about a barn that runs well past sixty four characters" }),
     /^prompt=an unbroken/,
   );
+});
+
+it("the chat reads a call's operation back from its digest, and only from the operation field", () => {
+  assert.equal(digestOperation(argsDigest({ operation: "shoot" })), "shoot");
+  assert.equal(digestOperation(argsDigest({ prompt: "x operation=status", operation: "shoot" })), "shoot");
+  assert.equal(digestOperation(argsDigest({ prompt: "operation=shoot" })), null, "a prompt that mentions one");
+  assert.equal(digestOperation(argsDigest({ id: "job-1" })), null);
+  assert.equal(digestOperation(""), null);
+  assert.equal(digestOperation(undefined), null);
 });
 
 it("neither digest can carry image bytes out of a tool result", () => {

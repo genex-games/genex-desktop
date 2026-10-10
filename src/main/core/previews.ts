@@ -3,7 +3,13 @@
  * captures and computer sessions agents look through, the agent screens on the stage, and a run's
  * builds played or landed. Composed by `StudioCore`; its state stays in the core.
  */
-import { genexJobDir, isGenexInspectionFile, readContainedImage, readGenexJobs } from "../game-assets.ts";
+import {
+  genexJobDir,
+  isGenexInspectionFile,
+  readContainedImage,
+  readGenexCoverShot,
+  readGenexJobs,
+} from "../game-assets.ts";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -17,6 +23,7 @@ import {
 } from "../../substrate/game-workspace.ts";
 import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
+import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
 import { buildFailureNote, servedAfterBuild } from "../game-build.ts";
 import type { BuildProblem, InstallResult } from "../../shared/build-problem.ts";
@@ -1270,17 +1277,14 @@ export class PreviewService {
     );
   }
 
-  async readProjectAsset(p: {
-    project: string;
-    file: string;
-    maxPx?: number;
-    scope?: "game" | "genex-inspection";
-    jobId?: string;
-  }): Promise<{ mimeType: string; data: string } | null> {
-    const malformed = !p || typeof p.project !== "string" || typeof p.file !== "string";
-    if (malformed) return null;
+  async readProjectAsset(p: ProjectAssetRead): Promise<{ mimeType: string; data: string } | null> {
+    if (!p || typeof p.project !== "string") return null;
     const resize = this.#resizeTo(p.maxPx);
-    if (p.scope === "genex-inspection") {
+    // The game's kept Genex cover shot: its place is the host's, from the game's name alone.
+    if (p.scope === ProjectAssetScope.GenexCover)
+      return readGenexCoverShot(this.#core.layout.engineHomes, p.project, resize);
+    if (typeof p.file !== "string") return null;
+    if (p.scope === ProjectAssetScope.GenexInspection) {
       const dir = genexJobDir(this.#core.layout.engineHomes, p.project, String(p.jobId ?? ""));
       if (!dir || !isGenexInspectionFile(p.file)) return null;
       return readContainedImage(dir, p.file, { prefixes: [], ...resize });

@@ -101,6 +101,8 @@ export interface EngineModel {
   /** Set on a short alias the CLI resolves to another listed model, so pickers list that model once. */
   aliasOf?: string;
   note?: string;
+  /** Runs at no cost and with no account (OpenCode's own free models). */
+  free?: boolean;
 }
 
 export interface CompleteRequest {

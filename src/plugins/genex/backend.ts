@@ -6,6 +6,7 @@ import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import {
   GenexAction,
   GenexHostedStatus,
+  type GenexJob,
   GenexJobStatus,
   GenexOperation,
   GenexPublishJobState,
@@ -35,8 +36,12 @@ const GenexToolName = {
 
 const MESSAGE = {
   ApprovalGone: "Character approval no longer available",
+  ChooseCandidate: "Choose candidate 1, 2, or 3",
   FinalizeReview: "Review all views. Approve a separate 10,000-face rigging copy.",
-  PreviewReview: (candidate: unknown) => `Review all candidates. Selected candidate: ${candidate}`,
+  /** The review's question, which the native confirmation asks again without the picture. */
+  PreviewReview: (candidate: number) => `Approve candidate ${candidate} for your character’s 3D preview?`,
+  /** The caption under the one picture a preview's review shows. */
+  ApprovingCandidate: (candidate: number) => `Approving candidate ${candidate}`,
   ProjectRequired: "A project is required",
   BadPublishOperation: "Publish operation must be 'draft' or 'gallery'",
   OpenProject: "Open a project",
@@ -182,19 +187,32 @@ function runTool(
   return assetTool(genex, ctx.project, ctx.directory, args, ctx);
 }
 
-/** The approval dialog's evidence: every candidate or view image, and what approving does. */
+type ApprovalImage = NonNullable<GenexJob["approval"]>["images"][number];
+
+/**
+ * A preview's review: only the candidate this approval names, captioned as the one being approved,
+ * so nobody approves one picture while looking at another. The person compares the candidates on
+ * the Genex page before choosing; the number shown here is the one the approval ticket binds.
+ */
+function previewReview(images: ApprovalImage[], candidate: unknown) {
+  if (typeof candidate !== "number") throw new Error(MESSAGE.ChooseCandidate);
+  const chosen = images.find((image) => image.label === String(candidate));
+  if (!chosen) throw new Error(MESSAGE.ChooseCandidate);
+  return {
+    images: [{ label: MESSAGE.ApprovingCandidate(candidate), dataUrl: chosen.dataUrl }],
+    message: MESSAGE.PreviewReview(candidate),
+  };
+}
+
+/** The approval dialog's evidence: a remesh's every view or a preview's chosen candidate, and what approving does. */
 async function approvalReview(genex: GenexTools, args: Args, ctx: Invocation) {
   const status = await genex.status(ctx.project);
   const job = status.jobs.find((j) => j.id === args.id);
   const pending = job?.status === GenexJobStatus.ApprovalRequired && job.approval?.images?.length;
   if (!job?.approval || !pending) throw new Error(MESSAGE.ApprovalGone);
-  return {
-    images: job.approval.images,
-    message:
-      job.operation === GenexOperation.CharacterFinalize
-        ? MESSAGE.FinalizeReview
-        : MESSAGE.PreviewReview(args.candidate),
-  };
+  if (job.operation === GenexOperation.CharacterFinalize)
+    return { images: job.approval.images, message: MESSAGE.FinalizeReview };
+  return previewReview(job.approval.images, args.candidate);
 }
 
 /** One user action; `invokedAt` is when its invocation began, which a publish's cover shot is measured from. */

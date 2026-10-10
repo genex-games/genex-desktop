@@ -4,10 +4,11 @@
  * Genex account), then shows one dialog with one main button: the game and the name players will
  * see, Publish, its progress in that same button and under it, and the link once the game is live.
  * A failed attempt is said calmly, with the raw detail kept for support. The Publish press is the
- * consent to the files it uploads (listed on request beside it); nothing asks again.
+ * consent to the files it uploads (listed on request beside it); nothing asks again. While the
+ * game has no Genex cover to send, one quiet line offers to ask its chat for one.
  */
-import type { JSX, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import type { JSX, ReactNode, RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../../shared/duration.ts";
 import {
   GENEX_PLUGIN_ID,
@@ -16,6 +17,7 @@ import {
   type GenexPublishState,
 } from "../../../../shared/genex.ts";
 import type { ExportReview, PluginInfo } from "../../../../shared/plugins.ts";
+import { chatPrompt, composeInChat } from "../../../compose-in-chat.ts";
 import { useLibrary } from "../../../state/hooks.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OPEN_PLUGINS_EVENT } from "../../../ui/ComposerAddMenu.tsx";
@@ -181,6 +183,18 @@ function Failure({ title, text }: { title: string; text: string }): JSX.Element 
   );
 }
 
+/** No Genex cover to send yet: one quiet line, and the press that leaves the ask in the game's chat. */
+function CoverAsk({ onAsk }: { onAsk: () => void }): JSX.Element {
+  return (
+    <div className="genex-publish-cover-ask" data-genex-cover-ask>
+      <p>{WORDS.coverNone}</p>
+      <Button aria-label={WORDS.coverAskLabel} onClick={onAsk}>
+        {WORDS.coverAsk}
+      </Button>
+    </div>
+  );
+}
+
 /** The exact files a Publish press uploads, and how many the export leaves out. */
 function FileList({ files }: { files: ExportReview }): JSX.Element {
   return (
@@ -218,11 +232,14 @@ function PublishFrame({
   intro,
   state = null,
   onClose,
+  returnFocus,
   children,
 }: {
   intro: string;
   state?: GenexPublishState | null;
   onClose: () => void;
+  /** Where focus goes as the dialog closes, when not back to the press that opened it. */
+  returnFocus?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }): JSX.Element {
   return (
@@ -233,6 +250,7 @@ function PublishFrame({
       onDismiss={onClose}
       size="lg"
       testId="genex-publish"
+      returnFocus={returnFocus}
     >
       <div
         className="genex-publish-body"
@@ -483,6 +501,14 @@ export function GenexPublishDialog({
 }): JSX.Element {
   const record = usePublishRecord(plugin, project);
   const { state } = record;
+  const returnFocus = useRef<HTMLElement | null>(null);
+  /** Close, leaving the cover ask in this game's composer for the person to send; the cursor goes there. */
+  const askForCover = (): void => {
+    if (!project) return;
+    returnFocus.current = chatPrompt();
+    composeInChat({ project, text: WORDS.coverPrompt });
+    onClose();
+  };
   if (state && publishGate(plugin, state.connected) === PublishGate.Connect)
     return (
       <PublishFrame intro={WORDS.intro} state={state} onClose={onClose}>
@@ -491,30 +517,32 @@ export function GenexPublishDialog({
     );
   const view = state ? publishView(state) : null;
   return (
-    <PublishFrame intro={view?.intro ?? WORDS.intro} state={state} onClose={onClose}>
+    <PublishFrame intro={view?.intro ?? WORDS.intro} state={state} onClose={onClose} returnFocus={returnFocus}>
       {!view && record.readError && (
         <p role="alert" className="genex-publish-problem">
           {record.readError}
         </p>
       )}
-      {view && <PublishBody view={view} record={record} project={project ?? ""} />}
+      {view && <PublishBody view={view} record={record} project={project ?? ""} onAskCover={askForCover} />}
       {record.review && <PluginApproval review={record.review} onClose={record.closeReview} />}
     </PublishFrame>
   );
 }
 
 /**
- * The read record: the game and its name, the running attempt's progress, the live link or what
- * went wrong, the files on request, and the footer's presses.
+ * The read record: the game and its name, the cover ask while it has no cover to send, the running
+ * attempt's progress, the live link or what went wrong, the files on request, and the footer's presses.
  */
 function PublishBody({
   view,
   record,
   project,
+  onAskCover,
 }: {
   view: PublishView;
   record: ReturnType<typeof usePublishRecord>;
   project: string;
+  onAskCover: () => void;
 }): JSX.Element {
   const gameTitle = useLibrary((s) => s.games.find((g) => g.name === project)?.title);
   const [title, setTitle] = useState<string | null>(null);
@@ -534,6 +562,7 @@ function PublishBody({
         </p>
       ))}
       <GameLine project={project} title={name} onTitle={setTitle} view={view} publishing={publishing} />
+      {view.coverAsk && !publishing && <CoverAsk onAsk={onAskCover} />}
       {view.running && <Progress view={view} />}
       {view.link && !publishing && <LinkField link={view.link} />}
       {failure && !publishing && <Failure title={failure.title} text={failure.text} />}
@@ -626,10 +655,11 @@ function Presses({
   return (
     <>
       {publish}
+      {/* Hugs its label. The arrow's glyph sits inset in its box, so the label side takes the wider padding. */}
       <Button
         variant="default"
         size="default"
-        className="genex-publish-primary"
+        className="has-[>svg]:pl-4"
         busy={acting}
         onClick={() => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery })}
       >

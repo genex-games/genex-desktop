@@ -7,6 +7,7 @@ import os from "node:os";
 import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
+import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
 import type { ClaudeLoginState } from "../shared/claude-login.ts";
 import type { CodexLoginState } from "../shared/codex-login.ts";
@@ -111,7 +112,7 @@ export function createLoginControllers({
       if (!cli) return { started: false, missingCli: true };
       terminals.open({
         file: cli.path,
-        args: ["auth", "login"],
+        args: openCodeSignInArgs(cli.status.version),
         cwd: os.tmpdir(),
         // Its own sign-in: OpenCode's settings, no other vendor's variables and no credential. Its
         // provider list comes from the catalog it already has: a refresh can stall for minutes

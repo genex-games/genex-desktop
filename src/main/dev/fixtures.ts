@@ -1,7 +1,8 @@
 /**
  * Named developer fixtures: what a `studio:dev` fixture profile holds before its window opens
  * ({@link prepareFixture}) and what it adds once the window is up ({@link activateChatFixture}).
- * Each fixture's seed lives in its own `fixture-*.ts` module; this one picks them.
+ * Each fixture's seed lives in its own `fixture-*.ts` module; this one picks them. The one seed
+ * the core must find already there, the plugin-updates fixture's older plugins, is re-exported.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -33,6 +34,7 @@ const MESSAGE = {
 } as const;
 
 export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
+export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
   FIXTURE_NAMES,

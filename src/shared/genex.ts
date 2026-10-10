@@ -1,4 +1,5 @@
 import type { AudioPlaybackEvidence } from "./audio-observation.ts";
+import { type CaptureSource, type StillExposure, StillMimeType } from "./preview-contract.ts";
 
 /** The bundled Genex plugin's id: the host's own Genex surfaces (its page, the promo) look it up by this. */
 export const GENEX_PLUGIN_ID = "genex";
@@ -275,6 +276,94 @@ export interface GenexPublishJob {
   /** How many times this attempt uploaded the build: a draft that fails its test is uploaded once more. */
   uploads?: number;
 }
+/**
+ * How a Genex cover send ended (`GenexCoverSent.kind`). The first five are the CLI's own answers
+ * (`genex cover <file> --json` `kind`); the rest are Studio's: no shot to send, a frame Genex
+ * already answered for, the owner's own pick holding, no hosted project yet, and a publish in the
+ * way. Persisted: never rename one.
+ */
+export const GenexCoverOutcome = {
+  Applied: "applied",
+  Outranked: "outranked",
+  Rejected: "rejected",
+  Invalid: "invalid",
+  Failed: "failed",
+  None: "none",
+  Unchanged: "unchanged",
+  KeptOwner: "kept_owner",
+  NotHosted: "not_hosted",
+  Busy: "busy",
+} as const;
+export type GenexCoverOutcome = (typeof GenexCoverOutcome)[keyof typeof GenexCoverOutcome];
+
+/** The cover tool plugin.json declares (`genex__cover`): its kept shot is the card the chat shows. */
+export const GENEX_COVER_TOOL = "cover";
+
+/** What genex__cover does: photograph the genex-cover demo and keep it, or report the cover's state. */
+export const GenexCoverOperation = { Shoot: "shoot", Status: "status" } as const;
+export type GenexCoverOperation = (typeof GenexCoverOperation)[keyof typeof GenexCoverOperation];
+
+/** The folder of the Genex plugin's storage that holds one folder per game's cover, `covers/<project>/`. */
+export const GENEX_COVERS_DIR = "covers";
+
+/** The kept shot's image beside its record in `covers/<project>/`, named by its type. */
+export const GENEX_COVER_SHOT_FILE = {
+  [StillMimeType.Png]: "shot.png",
+  [StillMimeType.Jpeg]: "shot.jpg",
+} as const satisfies Record<StillMimeType, string>;
+
+/** Mirror of Genex's cover upload limit (the CLI's `COVER_MAX_BYTES`, the API's `COVER_MAX_UPLOAD_BYTES`). */
+export const GENEX_COVER_MAX_BYTES = 8 * 1024 * 1024;
+
+/** The game's Genex cover shot the plugin keeps (`covers/<project>/shot.json`), beside its image. */
+export interface GenexCoverShot {
+  sha256: string;
+  width: number;
+  height: number;
+  mimeType: StillMimeType;
+  bytes: number;
+  source: CaptureSource;
+  stats: StillExposure;
+  takenAt: string;
+}
+
+/** Genex's luma numbers on a refused frame, as the CLI reports them (0–1). */
+export interface GenexCoverFrameStats {
+  mean: number;
+  std: number;
+  darkShare: number;
+}
+
+/**
+ * The game's last cover answer, kept in `covers/<project>/sent.json`: a send's outcome, or the
+ * owner's pick a status check heard of (`kept_owner`, no `sha256`). It decides whether a frame is
+ * sent again.
+ */
+export interface GenexCoverSent {
+  kind: GenexCoverOutcome;
+  at: string;
+  /** The frame this answer is about; absent when there was none. */
+  sha256?: string;
+  /** The publish whose trailing step sent it; absent for genex__cover-set. */
+  jobId?: string;
+  coverUrl?: string | null;
+  coverSource?: string | null;
+  reason?: string;
+  stats?: GenexCoverFrameStats | null;
+  /** What the person and the agent are told about it: a publish shows these as its warnings. */
+  lines?: string[];
+  /** For `unchanged`: the answer Genex gave these bytes when they were sent. */
+  settled?: GenexCoverOutcome;
+}
+
+/** The game's Genex cover as the plugin reports it: the kept shot, the last send, and whether one runs. */
+export interface GenexCoverRecord {
+  shot: GenexCoverShot | null;
+  last: GenexCoverSent | null;
+  /** A send is running for this game right now. */
+  sending: boolean;
+}
+
 /** What Studio knows about this game's Genex pages. Never a credential, never the user's game folder. */
 export interface GenexPublishState {
   version: 1;
@@ -297,4 +386,9 @@ export interface GenexPublishState {
   /** Non-blocking conditions: reported, never a refusal. Missing git or git-lfs is a refusal, not one of these. */
   warnings?: string[];
   job?: GenexPublishJob;
+  /**
+   * The game's Genex cover, which publish-status answers beside the record and never stores in it.
+   * Absent from a Genex plugin older than covers.
+   */
+  cover?: GenexCoverRecord;
 }

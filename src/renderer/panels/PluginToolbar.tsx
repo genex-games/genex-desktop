@@ -23,6 +23,7 @@ import {
 } from "../../shared/plugins.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { type PluginReviewRequest, runPluginAction } from "../plugin-actions.ts";
+import { PLUGIN_SETUP_EVENT } from "../plugin-setup.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { OPEN_PLUGINS_EVENT } from "../ui/ComposerAddMenu.tsx";
@@ -54,9 +55,6 @@ interface Props {
   /** A panel dialog is on screen — the stage zeroes the native view while it is. */
   onOpenChange: (open: boolean) => void;
 }
-
-/** Opened with a plugin id to set that plugin up: its panel when it has a toolbar one, else the Plugins page. */
-const PLUGIN_SETUP_EVENT = "studio:plugin-setup";
 
 /** A panel open over the stage: the plugin's own document in its frame, or (`drawn`) one Studio draws itself. */
 type ToolbarPanel = {

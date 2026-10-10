@@ -48,6 +48,14 @@ const DMG_ICON_SIZE = 128;
 /** What the app refuses to start without on Linux: the process sandbox and code search. */
 const LINUX_DEPENDS = ["bubblewrap", "socat", "ripgrep"];
 const LINUX_CATEGORIES = ["Development", "Game"];
+/**
+ * The deb's maintainer scripts: install and remove the AppArmor profile that lets the sandbox
+ * create user namespaces on Ubuntu 24.04 and the distributions built on it.
+ */
+const DEB_SCRIPTS = {
+  postinst: path.join(__dirname, "build", "linux", "postinst"),
+  postrm: path.join(__dirname, "build", "linux", "postrm"),
+};
 /** The Windows installer's file name, the same for every version so a download link can stay put. */
 const WINDOWS_SETUP_EXE = "Genex-Setup.exe";
 /** Only with a WINDOWS_SIGN_* certificate, parameters or hook; otherwise unsigned. */
@@ -179,6 +187,7 @@ module.exports = {
           homepage: HOMEPAGE,
           icon: `${ICON}.png`,
           depends: LINUX_DEPENDS,
+          scripts: DEB_SCRIPTS,
         },
       },
     },

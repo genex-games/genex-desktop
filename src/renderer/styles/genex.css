@@ -337,6 +337,23 @@
   gap: 8px;
   padding-block: 6px 2px;
 }
+/* A preview candidate: its picture above its Review button, as wide as the button. */
+.genex-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min-content;
+}
+.genex-candidate-picture {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--soft);
+  outline: 1px solid var(--image-outline);
+  outline-offset: -1px;
+  user-select: none;
+}
 .genex-advanced {
   margin-block-start: 36px;
   padding-block-end: 4px;
@@ -645,6 +662,19 @@
   flex: none;
   border-radius: 999px;
   background: var(--green);
+}
+/* No Genex cover to send yet: one quiet line, its press at the trailing edge. */
+.genex-publish-cover-ask {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.genex-publish-cover-ask p {
+  min-width: 0;
 }
 /* The running attempt: what it does now, its clock, and its steps as one bar with their names. */
 .genex-publish-progress {

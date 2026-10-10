@@ -267,11 +267,14 @@ export function dashboardFor(meta: HostedMeta | null | undefined): string {
   return isGenexLink(origin) ? String(origin).replace(/\/+$/, "") : DEFAULT_DASHBOARD;
 }
 
-/** Both pages of a hosted game. The CLI prints the same forms; a printed link wins when it is one of ours. */
+/**
+ * Both pages of a hosted game, in the forms genex.games serves and the CLI prints: the public page
+ * at the dashboard root (the old `world/` address only redirects there), the draft under `draft/`.
+ */
 export function publishUrls(meta: HostedMeta | null | undefined): { draftUrl?: string; galleryUrl?: string } {
   if (!hasSlug(meta)) return {};
   const dashboard = dashboardFor(meta);
-  return { draftUrl: `${dashboard}/draft/${meta.slug}`, galleryUrl: `${dashboard}/world/${meta.slug}` };
+  return { draftUrl: `${dashboard}/draft/${meta.slug}`, galleryUrl: `${dashboard}/${meta.slug}` };
 }
 
 /** Copy what the hosted project says about itself into Studio's publish record. */

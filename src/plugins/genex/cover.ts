@@ -14,7 +14,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { GenexHostedStatus, GenexPublishKind, type GenexPublishState } from "../../shared/genex.ts";
+import {
+  GENEX_COVER_MAX_BYTES,
+  GENEX_COVER_SHOT_FILE,
+  type GenexCoverFrameStats,
+  GenexCoverOperation,
+  GenexCoverOutcome,
+  type GenexCoverSent,
+  type GenexCoverShot,
+  GenexHostedStatus,
+  GenexPublishKind,
+  type GenexPublishState,
+} from "../../shared/genex.ts";
 import { PluginStillProblemCode, type PluginStillProblem } from "../../shared/plugins.ts";
 import { CaptureSource, type StillExposure, StillMimeType } from "../../shared/preview-contract.ts";
 import { atomicWriteText, isJsonObject, replaceFile } from "../../substrate/fsx.ts";
@@ -23,7 +34,7 @@ import { stripAnsi } from "./cli.ts";
 /** The demo a game stages its cover in (`config.demos`). */
 export const COVER_VIEW = "genex-cover";
 /** Mirror of Genex's cover upload limit (the CLI's `COVER_MAX_BYTES`, the API's `COVER_MAX_UPLOAD_BYTES`). */
-export const COVER_MAX_BYTES = 8 * 1024 * 1024;
+export const COVER_MAX_BYTES = GENEX_COVER_MAX_BYTES;
 /** What the host is asked for: the genex-cover demo at Genex's recommended 1920×1080, within its limit. */
 export const COVER_STILL = { demo: COVER_VIEW, width: 1920, height: 1080, maxBytes: COVER_MAX_BYTES } as const;
 /** Mirror of the host's ceiling for one backend call (`CALL_TIMEOUT_MS` in the plugin registry). */
@@ -49,7 +60,6 @@ const WIDE_TOLERANCE = 0.01;
 /** How much of the page's or the CLI's own words a record keeps. */
 const REASON_CHARS = 240;
 const AVAILABLE_MAX = 32;
-const SHOT_FILE = "shot";
 const SHOT_RECORD = "shot.json";
 const SENT_RECORD = "sent.json";
 /** A send's own copy of the shot it uploads, beside the shot: removed when the send ends. */
@@ -57,45 +67,27 @@ const SEND_COPY_PREFIX = ".send-";
 const PRIVATE_FILE = 0o600;
 const PRIVATE_DIR = 0o700;
 
-/** What genex__cover does. */
-export const CoverOperation = { Shoot: "shoot", Status: "status" } as const;
-export type CoverOperation = (typeof CoverOperation)[keyof typeof CoverOperation];
+/** What genex__cover does (`GenexCoverOperation`, which Studio's chat reads too). */
+export const CoverOperation = GenexCoverOperation;
+export type CoverOperation = GenexCoverOperation;
 
-/**
- * How a cover send ended. The first five are the CLI's own answers (`genex cover <file> --json`
- * `kind`); the rest are Studio's: no shot to send, a frame Genex already answered for, the owner's
- * own pick holding, no hosted project yet, and a publish in the way. Persisted: never rename one.
- */
-export const CoverOutcomeKind = {
-  Applied: "applied",
-  Outranked: "outranked",
-  Rejected: "rejected",
-  Invalid: "invalid",
-  Failed: "failed",
-  None: "none",
-  Unchanged: "unchanged",
-  KeptOwner: "kept_owner",
-  NotHosted: "not_hosted",
-  Busy: "busy",
-} as const;
-export type CoverOutcomeKind = (typeof CoverOutcomeKind)[keyof typeof CoverOutcomeKind];
-const OUTCOME_KINDS = new Set<string>(Object.values(CoverOutcomeKind));
+const OUTCOME_KINDS = new Set<string>(Object.values(GenexCoverOutcome));
 /** Answers that settle a frame: sending the same bytes again would only get the same answer. */
-const FINAL_OUTCOMES = new Set<CoverOutcomeKind>([
-  CoverOutcomeKind.Applied,
-  CoverOutcomeKind.Outranked,
-  CoverOutcomeKind.Rejected,
-  CoverOutcomeKind.Invalid,
-  CoverOutcomeKind.KeptOwner,
-  CoverOutcomeKind.Unchanged,
+const FINAL_OUTCOMES = new Set<GenexCoverOutcome>([
+  GenexCoverOutcome.Applied,
+  GenexCoverOutcome.Outranked,
+  GenexCoverOutcome.Rejected,
+  GenexCoverOutcome.Invalid,
+  GenexCoverOutcome.KeptOwner,
+  GenexCoverOutcome.Unchanged,
 ]);
 /** Answers about a frame that was sent, which therefore carry its size advice. */
-const SENT_OUTCOMES = new Set<CoverOutcomeKind>([
-  CoverOutcomeKind.Applied,
-  CoverOutcomeKind.Outranked,
-  CoverOutcomeKind.Rejected,
-  CoverOutcomeKind.Invalid,
-  CoverOutcomeKind.Failed,
+const SENT_OUTCOMES = new Set<GenexCoverOutcome>([
+  GenexCoverOutcome.Applied,
+  GenexCoverOutcome.Outranked,
+  GenexCoverOutcome.Rejected,
+  GenexCoverOutcome.Invalid,
+  GenexCoverOutcome.Failed,
 ]);
 
 /** What a shot's numbers and size suggest before Genex sees it. Advisory: the server decides. */
@@ -119,54 +111,6 @@ export const CoverDelivery = {
 } as const;
 export type CoverDelivery = (typeof CoverDelivery)[keyof typeof CoverDelivery];
 
-/** The shot kept in `covers/<project>/shot.json`, beside its image. */
-export interface CoverShot {
-  sha256: string;
-  width: number;
-  height: number;
-  mimeType: StillMimeType;
-  bytes: number;
-  source: CaptureSource;
-  stats: StillExposure;
-  takenAt: string;
-}
-
-/** Genex's luma numbers on a refused frame, as the CLI reports them (0–1). */
-export interface CoverFrameStats {
-  mean: number;
-  std: number;
-  darkShare: number;
-}
-
-/** The last send, kept in `covers/<project>/sent.json`: what decides whether a frame is sent again. */
-export interface CoverSent {
-  kind: CoverOutcomeKind;
-  at: string;
-  /** The frame this answer is about; absent when there was none. */
-  sha256?: string;
-  /** The publish whose trailing step sent it; absent for genex__cover-set. */
-  jobId?: string;
-  coverUrl?: string | null;
-  coverSource?: string | null;
-  reason?: string;
-  stats?: CoverFrameStats | null;
-  /** What the person and the agent are told about it: a publish shows these as its warnings. */
-  lines?: string[];
-  /** For `unchanged`: the answer Genex gave these bytes when they were sent. */
-  settled?: CoverOutcomeKind;
-}
-
-/** The cover as publish-status, publish.html and genex__cover report it. */
-export interface GenexCoverRecord {
-  shot: CoverShot | null;
-  last: CoverSent | null;
-  /** A send is running for this game right now. */
-  sending: boolean;
-}
-
-/** Publish state as the plugin answers it: the shared record plus this plugin's cover. */
-export type GenexPublishView = GenexPublishState & { cover?: GenexCoverRecord };
-
 /**
  * The host's camera for one invocation: a still of the genex-cover demo through `observe`, and
  * when the invocation began on the tools' clock, since host services answer only inside it.
@@ -179,12 +123,12 @@ export interface CoverCamera {
 /** The CLI's answer to an upload. */
 export type CoverAnswer =
   | {
-      kind: typeof CoverOutcomeKind.Applied | typeof CoverOutcomeKind.Outranked;
+      kind: typeof GenexCoverOutcome.Applied | typeof GenexCoverOutcome.Outranked;
       coverUrl: string | null;
       coverSource: string | null;
     }
-  | { kind: typeof CoverOutcomeKind.Rejected; reason: string; stats: CoverFrameStats | null }
-  | { kind: typeof CoverOutcomeKind.Invalid | typeof CoverOutcomeKind.Failed; message: string | null };
+  | { kind: typeof GenexCoverOutcome.Rejected; reason: string; stats: GenexCoverFrameStats | null }
+  | { kind: typeof GenexCoverOutcome.Invalid | typeof GenexCoverOutcome.Failed; message: string | null };
 
 /** The game's current cover on Genex and who chose it (`genex cover --json` with no file). */
 export interface CoverView {
@@ -236,7 +180,7 @@ export const MESSAGE = {
     "Genex will likely refuse this frame as too dark (mean brightness under 0.12, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
   Flat: "Genex will likely refuse this frame as one flat colour (contrast under 0.04): the canvas may not have drawn, or a fade, a loading screen, sky or fog fills it.",
   Dim: "This frame only just clears Genex's gate and will read murky on a card: where the game's own light allows, aim for brightness 0.2 or more, contrast 0.08 or more and under 70% near-black.",
-  Rejected: (reason: string, stats: CoverFrameStats | null) => {
+  Rejected: (reason: string, stats: GenexCoverFrameStats | null) => {
     const numbers = stats
       ? ` (brightness ${percent(stats.mean)}, contrast ${percent(stats.std)}, ${percent(stats.darkShare)} near-black)`
       : "";
@@ -253,24 +197,24 @@ export const MESSAGE = {
 } as const;
 
 /** What the agent is told about each send outcome. */
-export const OUTCOME_GUIDANCE: Record<CoverOutcomeKind, string> = {
-  [CoverOutcomeKind.Applied]:
+export const OUTCOME_GUIDANCE: Record<GenexCoverOutcome, string> = {
+  [GenexCoverOutcome.Applied]:
     "Genex uses this frame as the game's cover now. Record the shot in the project's design notes if it keeps them.",
-  [CoverOutcomeKind.Outranked]:
+  [GenexCoverOutcome.Outranked]:
     "The owner chose this game's cover on genex.games and that choice stands. Never send another or ask them to clear it.",
-  [CoverOutcomeKind.KeptOwner]:
+  [GenexCoverOutcome.KeptOwner]:
     "The owner chose this game's cover on genex.games, so nothing was uploaded. Never send another or ask them to clear it.",
-  [CoverOutcomeKind.Rejected]:
+  [GenexCoverOutcome.Rejected]:
     "Genex refused the frame. Too dark: only if the game has a brighter honest moment, stage that and shoot again; if it is dark by design, stop and never relight it. Flat: wait for the render or reframe. Otherwise fix the file, not the game.",
-  [CoverOutcomeKind.Invalid]: "The frame was refused before sending: fix the shot, not the game.",
-  [CoverOutcomeKind.Failed]:
+  [GenexCoverOutcome.Invalid]: "The frame was refused before sending: fix the shot, not the game.",
+  [GenexCoverOutcome.Failed]:
     "The frame did not reach Genex (sign-in, the hourly limit or the network). Nothing is wrong with it; the next publish tries again.",
-  [CoverOutcomeKind.None]:
+  [GenexCoverOutcome.None]:
     'There is no genex-cover shot to send. Stage the cover as a demo named genex-cover and check it with genex__cover {"operation":"shoot"} first.',
-  [CoverOutcomeKind.Unchanged]: "Genex already has this exact frame; nothing was sent.",
-  [CoverOutcomeKind.NotHosted]:
+  [GenexCoverOutcome.Unchanged]: "Genex already has this exact frame; nothing was sent.",
+  [GenexCoverOutcome.NotHosted]:
     "This game has no hosted Genex project yet, so nothing was sent: the shot goes with the first publish.",
-  [CoverOutcomeKind.Busy]:
+  [GenexCoverOutcome.Busy]:
     'A publish is running for this game, so nothing was sent now. When genex__publish-status says it is done, check genex__cover {"operation":"status"} before sending again.',
 };
 
@@ -299,7 +243,7 @@ export const DELIVERY_GUIDANCE: Record<CoverDelivery, string> = {
     "The next Publish shoots it again and sends it (a draft never does); genex__cover-set sends this shot now.",
 };
 
-const ADVICE_LINE: Record<CoverAdvice, (shot: Pick<CoverShot, "width" | "height">) => string> = {
+const ADVICE_LINE: Record<CoverAdvice, (shot: Pick<GenexCoverShot, "width" | "height">) => string> = {
   [CoverAdvice.TooDark]: () => MESSAGE.TooDark,
   [CoverAdvice.Flat]: () => MESSAGE.Flat,
   [CoverAdvice.Dim]: () => MESSAGE.Dim,
@@ -377,7 +321,7 @@ export function readStillAnswer(answer: unknown): { still: CoverStill } | { prob
 }
 
 /** What a shot's numbers and size suggest, in the order they matter. */
-export function coverAdvice(shot: Pick<CoverShot, "width" | "height" | "stats">): CoverAdvice[] {
+export function coverAdvice(shot: Pick<GenexCoverShot, "width" | "height" | "stats">): CoverAdvice[] {
   const { lumaMean, lumaStdDev, nearBlackFraction } = shot.stats;
   const advice: CoverAdvice[] = [];
   const dark = lumaMean < GATE.MinMean || nearBlackFraction > GATE.MaxNearBlack;
@@ -392,20 +336,20 @@ export function coverAdvice(shot: Pick<CoverShot, "width" | "height" | "stats">)
 }
 
 /** The sentences for a shot's advice. */
-export const adviceLines = (shot: Pick<CoverShot, "width" | "height" | "stats">): string[] =>
+export const adviceLines = (shot: Pick<GenexCoverShot, "width" | "height" | "stats">): string[] =>
   coverAdvice(shot).map((advice) => ADVICE_LINE[advice](shot));
 
 /** A frame Genex has already answered for in a way sending it again cannot change. */
-export const isFinalOutcome = (kind: CoverOutcomeKind) => FINAL_OUTCOMES.has(kind);
+export const isFinalOutcome = (kind: GenexCoverOutcome) => FINAL_OUTCOMES.has(kind);
 
 /** Whether a frame goes to Genex: one is staged, and Genex has not settled these exact bytes. */
 export function decideSend(
-  shot: CoverShot | null,
-  sent: CoverSent | null,
-): { send: true } | { send: false; kind: typeof CoverOutcomeKind.None | typeof CoverOutcomeKind.Unchanged } {
-  if (!shot) return { send: false, kind: CoverOutcomeKind.None };
+  shot: GenexCoverShot | null,
+  sent: GenexCoverSent | null,
+): { send: true } | { send: false; kind: typeof GenexCoverOutcome.None | typeof GenexCoverOutcome.Unchanged } {
+  if (!shot) return { send: false, kind: GenexCoverOutcome.None };
   const settled = sent?.sha256 === shot.sha256 && isFinalOutcome(sent.kind);
-  return settled ? { send: false, kind: CoverOutcomeKind.Unchanged } : { send: true };
+  return settled ? { send: false, kind: GenexCoverOutcome.Unchanged } : { send: true };
 }
 
 /** Whether the owner's own pick is the game's cover: then nothing is uploaded over it. */
@@ -440,11 +384,11 @@ function lastJsonObject(stdout: string): Record<string, unknown> | null {
 }
 
 /** Genex's luma numbers on a refused frame, or null when they are missing or malformed. */
-function frameStats(value: unknown): CoverFrameStats | null {
+function frameStats(value: unknown): GenexCoverFrameStats | null {
   if (!isJsonObject(value)) return null;
   const { mean, std, darkShare } = value;
   const numbers = [mean, std, darkShare].every((n) => typeof n === "number" && Number.isFinite(n));
-  return numbers ? ({ mean, std, darkShare } as CoverFrameStats) : null;
+  return numbers ? ({ mean, std, darkShare } as GenexCoverFrameStats) : null;
 }
 
 /**
@@ -454,14 +398,14 @@ function frameStats(value: unknown): CoverFrameStats | null {
 export function parseCoverAnswer(stdout: string): CoverAnswer {
   const value = lastJsonObject(stdout);
   const kind = value?.kind;
-  if (!value) return { kind: CoverOutcomeKind.Failed, message: null };
-  if (kind === CoverOutcomeKind.Applied || kind === CoverOutcomeKind.Outranked)
+  if (!value) return { kind: GenexCoverOutcome.Failed, message: null };
+  if (kind === GenexCoverOutcome.Applied || kind === GenexCoverOutcome.Outranked)
     return { kind, coverUrl: text(value.coverUrl), coverSource: text(value.coverSource) };
-  if (kind === CoverOutcomeKind.Rejected)
-    return { kind, reason: text(value.reason) || CoverOutcomeKind.Rejected, stats: frameStats(value.stats) };
-  if (kind === CoverOutcomeKind.Invalid || kind === CoverOutcomeKind.Failed)
+  if (kind === GenexCoverOutcome.Rejected)
+    return { kind, reason: text(value.reason) || GenexCoverOutcome.Rejected, stats: frameStats(value.stats) };
+  if (kind === GenexCoverOutcome.Invalid || kind === GenexCoverOutcome.Failed)
     return { kind, message: text(value.message) };
-  return { kind: CoverOutcomeKind.Failed, message: null };
+  return { kind: GenexCoverOutcome.Failed, message: null };
 }
 
 /** `genex cover --json` with no file: the game's cover and who chose it, or null when the CLI could not say. */
@@ -474,8 +418,8 @@ export function parseCoverView(stdout: string): CoverView | null {
 const jobOf = (jobId: string | undefined) => (jobId ? { jobId } : {});
 
 /** The record of one send, with the lines a publish shows for it. */
-export function sentRecord(answer: CoverAnswer, shot: CoverShot, at: string, jobId?: string): CoverSent {
-  const record: CoverSent = { kind: answer.kind, at, sha256: shot.sha256, ...jobOf(jobId) };
+export function sentRecord(answer: CoverAnswer, shot: GenexCoverShot, at: string, jobId?: string): GenexCoverSent {
+  const record: GenexCoverSent = { kind: answer.kind, at, sha256: shot.sha256, ...jobOf(jobId) };
   if ("coverUrl" in answer) Object.assign(record, { coverUrl: answer.coverUrl, coverSource: answer.coverSource });
   if ("reason" in answer) Object.assign(record, { reason: answer.reason, stats: answer.stats });
   const message = "message" in answer ? (answer.message?.slice(0, REASON_CHARS) ?? null) : null;
@@ -487,36 +431,44 @@ export function sentRecord(answer: CoverAnswer, shot: CoverShot, at: string, job
 
 /** The warning an answer earns: a refusal, a file Genex could not take, or a send that did not land. */
 function outcomeLine(answer: CoverAnswer, message: string | null): string[] {
-  if (answer.kind === CoverOutcomeKind.Rejected) return [MESSAGE.Rejected(answer.reason, answer.stats)];
-  if (answer.kind === CoverOutcomeKind.Invalid) return [MESSAGE.Invalid(message)];
-  if (answer.kind === CoverOutcomeKind.Failed) return [MESSAGE.Failed(message)];
+  if (answer.kind === GenexCoverOutcome.Rejected) return [MESSAGE.Rejected(answer.reason, answer.stats)];
+  if (answer.kind === GenexCoverOutcome.Invalid) return [MESSAGE.Invalid(message)];
+  if (answer.kind === GenexCoverOutcome.Failed) return [MESSAGE.Failed(message)];
   return [];
 }
 
 /** A send that found no shot: Genex keeps the cover it has. */
-export const noneRecord = (at: string, jobId?: string): CoverSent => ({
-  kind: CoverOutcomeKind.None,
+export const noneRecord = (at: string, jobId?: string): GenexCoverSent => ({
+  kind: GenexCoverOutcome.None,
   at,
   ...jobOf(jobId),
   lines: [MESSAGE.NoShotSent],
 });
 
 /** A send of bytes Genex already settled: nothing goes out, and the answer they got stands. */
-export function unchangedRecord(last: CoverSent, at: string, jobId?: string): CoverSent {
-  const record: CoverSent = { ...last, kind: CoverOutcomeKind.Unchanged, settled: last.settled ?? last.kind, at };
+export function unchangedRecord(last: GenexCoverSent, at: string, jobId?: string): GenexCoverSent {
+  const record: GenexCoverSent = { ...last, kind: GenexCoverOutcome.Unchanged, settled: last.settled ?? last.kind, at };
   delete record.jobId;
   return { ...record, ...jobOf(jobId) };
 }
 
-/** The owner's own pick is the cover: nothing was uploaded over it. */
-export const keptOwnerRecord = (shot: CoverShot, view: CoverView, at: string, jobId?: string): CoverSent => ({
-  kind: CoverOutcomeKind.KeptOwner,
+/** The owner's own pick is the cover: nothing was uploaded over it (the kept shot, when there was one). */
+export const keptOwnerRecord = (
+  shot: GenexCoverShot | null,
+  view: CoverView,
+  at: string,
+  jobId?: string,
+): GenexCoverSent => ({
+  kind: GenexCoverOutcome.KeptOwner,
   at,
-  sha256: shot.sha256,
+  ...(shot ? { sha256: shot.sha256 } : {}),
   ...jobOf(jobId),
   coverUrl: view.coverUrl,
   coverSource: view.coverSource,
 });
+
+/** Genex's view when it says the owner's own pick is the cover, else null. */
+export const ownerPick = (view: CoverView | null): CoverView | null => (ownerHolds(view) ? view : null);
 
 /** Why a publish took no new shot, from the problem the host named. */
 export function reshootLine(code: PluginStillProblem["code"]): string {
@@ -526,26 +478,26 @@ export function reshootLine(code: PluginStillProblem["code"]): string {
 }
 
 /** What genex__cover status tells the agent to do next. */
-export function statusGuidance(shot: CoverShot | null, hosted: CoverView | null, delivery: CoverDelivery): string {
+export function statusGuidance(shot: GenexCoverShot | null, hosted: CoverView | null, delivery: CoverDelivery): string {
   if (ownerHolds(hosted)) return MESSAGE.OwnerHolds;
-  if (!shot) return OUTCOME_GUIDANCE[CoverOutcomeKind.None];
+  if (!shot) return OUTCOME_GUIDANCE[GenexCoverOutcome.None];
   return DELIVERY_GUIDANCE[delivery];
 }
 
 /** The size advice of a frame that went out. */
-const sentSizeLines = (kind: CoverOutcomeKind, shot: CoverShot) =>
+const sentSizeLines = (kind: GenexCoverOutcome, shot: GenexCoverShot) =>
   SENT_OUTCOMES.has(kind)
     ? coverAdvice(shot)
         .filter((advice) => SIZE_ADVICE.has(advice))
         .map((advice) => ADVICE_LINE[advice](shot))
     : [];
 
-/** One shot's image file, by its type. */
-export const shotPath = (dir: string, shot: Pick<CoverShot, "mimeType">) =>
-  path.join(dir, `${SHOT_FILE}.${shot.mimeType === StillMimeType.Png ? "png" : "jpg"}`);
+/** One shot's image file, by its type (the names Studio's chat card reads it by, `GENEX_COVER_SHOT_FILE`). */
+export const shotPath = (dir: string, shot: Pick<GenexCoverShot, "mimeType">) =>
+  path.join(dir, GENEX_COVER_SHOT_FILE[shot.mimeType]);
 
 /** Whether a kept shot record is whole: every field typed as written. */
-function isShot(value: unknown): value is CoverShot {
+function isShot(value: unknown): value is GenexCoverShot {
   if (!isJsonObject(value)) return false;
   const typed = typeof value.sha256 === "string" && typeof value.takenAt === "string";
   const sized = wholePixels(value.width) && wholePixels(value.height) && wholePixels(value.bytes);
@@ -562,7 +514,7 @@ async function readJsonFile(file: string): Promise<unknown> {
 }
 
 /** The shot kept for a game, or null when there is none or its image is gone. */
-export async function readShot(dir: string): Promise<CoverShot | null> {
+export async function readShot(dir: string): Promise<GenexCoverShot | null> {
   const shot = await readJsonFile(path.join(dir, SHOT_RECORD));
   if (!isShot(shot)) return null;
   const image = await lstat(shotPath(dir, shot)).catch(() => null);
@@ -570,10 +522,10 @@ export async function readShot(dir: string): Promise<CoverShot | null> {
 }
 
 /** The last send for a game, or null. */
-export async function readSent(dir: string): Promise<CoverSent | null> {
+export async function readSent(dir: string): Promise<GenexCoverSent | null> {
   const sent = await readJsonFile(path.join(dir, SENT_RECORD));
   const valid = isJsonObject(sent) && OUTCOME_KINDS.has(String(sent.kind)) && typeof sent.at === "string";
-  return valid ? (sent as unknown as CoverSent) : null;
+  return valid ? (sent as unknown as GenexCoverSent) : null;
 }
 
 /** Write bytes beside their final name, private, then put them in place in one rename. */
@@ -595,9 +547,9 @@ async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> 
 }
 
 /** Keep a still as the game's shot: its image, then its record, then drop an image of the other type. */
-export async function saveShot(dir: string, still: CoverStill, takenAt: string): Promise<CoverShot> {
+export async function saveShot(dir: string, still: CoverStill, takenAt: string): Promise<GenexCoverShot> {
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR });
-  const shot: CoverShot = {
+  const shot: GenexCoverShot = {
     sha256: sha256(still.image),
     width: still.width,
     height: still.height,
@@ -620,7 +572,7 @@ export async function saveShot(dir: string, still: CoverStill, takenAt: string):
  * is not the one its record names. A copy a stopped Studio left behind is cleared first: one send
  * runs per game at a time.
  */
-export async function freezeShot(dir: string, shot: CoverShot): Promise<string | null> {
+export async function freezeShot(dir: string, shot: GenexCoverShot): Promise<string | null> {
   for (const name of await readdir(dir).catch(() => [] as string[]))
     if (name.startsWith(SEND_COPY_PREFIX)) await rm(path.join(dir, name), { force: true });
   const bytes = await readFile(shotPath(dir, shot)).catch(() => null);
@@ -631,7 +583,7 @@ export async function freezeShot(dir: string, shot: CoverShot): Promise<string |
 }
 
 /** Keep the last send. */
-export async function writeSent(dir: string, sent: CoverSent): Promise<void> {
+export async function writeSent(dir: string, sent: GenexCoverSent): Promise<void> {
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR });
   await atomicWriteText(path.join(dir, SENT_RECORD), `${JSON.stringify(sent, null, 2)}\n`, { mode: PRIVATE_FILE });
 }

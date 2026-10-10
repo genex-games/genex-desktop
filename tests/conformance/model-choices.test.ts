@@ -9,7 +9,10 @@ import {
   effortScale,
   unifiedEffort,
   roleChoices,
+  autoChoice,
 } from "../../src/renderer/model-choices.ts";
+import { sendKey } from "../../src/renderer/chat/send-route.ts";
+import type { ComposerModel } from "../../src/renderer/chat/use-composer-model.ts";
 import type { EngineDescriptor } from "../../src/renderer/types.ts";
 import { MODEL_PICKER_WORDS } from "../../src/renderer/words.ts";
 const model = (id: string, label = id, efforts = ["low", "medium", "high"], defaultEffort = "medium") => ({
@@ -425,11 +428,7 @@ test("metered engines sit in groups of their own, never among local models, and 
   );
 
   const signedOut = toChoices([{ ...metered[0]!, status: { code: "needs_login", detail: "no key" }, models: [] }]);
-  assert.deepEqual(
-    signedOut.map((choice) => [choice.key, choice.group, choice.disabled]),
-    [["openrouter::", "OpenRouter", false]],
-    "one row to set it up, not a model list",
-  );
+  assert.deepEqual(signedOut, [], "a paid provider that is not set up has no row in the picker; Settings sets it up");
 });
 
 test("OpenCode on a ChatGPT plan lists the GPT models Codex says the plan runs, not newer ones OpenAI refuses", () => {
@@ -463,4 +462,132 @@ test("OpenCode on a ChatGPT plan lists the GPT models Codex says the plan runs, 
     ["opencode::openai/gpt-6-luna", "opencode::openai/gpt-6.1-sol"],
     "without a Codex sign-in to ask, the newest are listed too",
   );
+});
+
+const ready = { code: "ready", detail: "ready" } as const;
+const visible = (choices: ReturnType<typeof toChoices>) =>
+  choices.filter((choice) => !choice.hidden).map((choice) => choice.key);
+const openRouter = (status: EngineDescriptor["status"]): EngineDescriptor => ({
+  id: "openrouter",
+  label: "OpenRouter",
+  kind: "direct",
+  status,
+  supportsSessions: true,
+  defaultModel: null,
+  // OpenRouter's catalog is public: the engine has its models before any key is saved.
+  models: [model("openai/gpt-6.1-sol", "GPT-6.1 Sol"), model("anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5")],
+});
+const claude: EngineDescriptor = {
+  id: "claude-code",
+  label: "Claude Code",
+  kind: "delegated",
+  status: ready,
+  defaultModel: null,
+  models: [{ ...model("claude-opus-5-5", "Opus 5.5"), providerDefault: true }],
+};
+
+test("a paid provider that is not set up shows nothing in the picker, though a pick saved on it still resolves", () => {
+  const choices = toChoices([openRouter({ code: "needs_login", detail: "no key" })]);
+  assert.deepEqual(visible(choices), [], "its public catalog lists no models for a person without a key");
+  assert.ok(!choices.some((choice) => choice.key === "openrouter::"), "and no row to set it up");
+  const saved = resolveChoice(choices, "openrouter::openai/gpt-6.1-sol");
+  assert.equal(saved?.name, "GPT-6.1 Sol", "a game already on it shows the model it was on");
+  assert.equal(saved?.disabled, true, "and cannot send until OpenRouter is set up again");
+  assert.deepEqual(visible(toChoices([openRouter(ready)])), [
+    "openrouter::openai/gpt-6.1-sol",
+    "openrouter::anthropic/claude-sonnet-5.5",
+  ]);
+});
+
+const freeModel = (id: string, label: string) => ({ ...model(id, label), free: true });
+const openCodeFreeOnly: EngineDescriptor = {
+  id: "opencode",
+  label: "OpenCode",
+  kind: "delegated",
+  status: ready,
+  account: { source: "none", afterSignOut: "signed-out", cli: { state: "ready" } },
+  supportsSessions: true,
+  defaultModel: null,
+  models: [
+    freeModel("opencode/big-pickle", "Big Pickle"),
+    freeModel("opencode/exo-free", "Exo Free"),
+    freeModel("opencode/ling-3.1-flash-free", "Ling 3.1 Flash Free"),
+    freeModel("opencode/step-5-preview-free", "Step 5 Preview Free"),
+  ],
+};
+
+/** OpenCode with a provider signed in: that provider's models, then its own free ones. */
+const openCodeSignedIn: EngineDescriptor = {
+  ...openCodeFreeOnly,
+  account: { source: "system", afterSignOut: "signed-out", cli: { state: "ready" } },
+  models: [model("anthropic/claude-opus-5-5", "Opus 5.5"), ...openCodeFreeOnly.models],
+};
+
+test("OpenCode with no provider signed in lists its first three free models, marked Free", () => {
+  const choices = toChoices([openCodeFreeOnly]);
+  assert.deepEqual(visible(choices), [
+    "opencode::opencode/big-pickle",
+    "opencode::opencode/exo-free",
+    "opencode::opencode/ling-3.1-flash-free",
+  ]);
+  const rows = choices.filter((choice) => !choice.hidden);
+  assert.ok(
+    rows.every((choice) => choice.detail === "Free" && choice.free === true),
+    "each says it costs nothing",
+  );
+  assert.deepEqual(visible(toChoices([openCodeFreeOnly], { opencode: { "opencode/exo-free": false } })), [
+    "opencode::opencode/big-pickle",
+    "opencode::opencode/ling-3.1-flash-free",
+  ]);
+  assert.deepEqual(
+    visible(toChoices([openCodeSignedIn])),
+    ["opencode::anthropic/claude-opus-5-5"],
+    "a provider signed in lists its models; the free ones wait in Settings",
+  );
+  for (const status of [
+    { code: "not_installed", detail: "" },
+    { code: "needs_login", detail: "" },
+  ] as const)
+    assert.deepEqual(toChoices([{ ...openCodeFreeOnly, status, models: [] }]), [], status.code);
+});
+
+test("with nothing picked, a free model is chosen only when it is all there is to choose", () => {
+  const timed = { autopilot: { hours: 1 } } as unknown as Parameters<typeof sendKey>[1];
+  const composer = (all: ReturnType<typeof toChoices>) =>
+    ({ selected: null, choices: all }) as unknown as ComposerModel;
+  const alone = toChoices([openCodeFreeOnly]);
+  assert.equal(resolveChoice(alone, null)?.key, "opencode::opencode/big-pickle");
+  assert.equal(sendKey(composer(alone), timed), "opencode::opencode/big-pickle", "a timed build can start on it");
+  assert.equal(
+    resolveChoice(toChoices([openCodeFreeOnly, claude]), null)?.key,
+    "claude-code::claude-opus-5-5",
+    "a subscription wins over a free model",
+  );
+  assert.equal(
+    resolveChoice(toChoices([openCodeFreeOnly, openRouter(ready)]), null),
+    undefined,
+    "beside a paid provider the person picks",
+  );
+  assert.equal(
+    resolveChoice(toChoices([openCodeSignedIn]), null),
+    undefined,
+    "a signed-in provider's model is only picked",
+  );
+});
+
+test("with nothing picked, the picker never chooses a paid or hidden model on the person's behalf", () => {
+  assert.equal(resolveChoice(toChoices([openRouter(ready)]), null), undefined, "OpenRouter is only ever picked");
+  assert.equal(resolveChoice(toChoices([openRouter(ready), claude]), null)?.key, "claude-code::claude-opus-5-5");
+  const twoModels = { ...claude, models: [model("claude-opus-4-8", "Opus 4.8"), ...claude.models] };
+  const choices = toChoices([twoModels], { "claude-code": { "claude-opus-4-8": false } });
+  assert.equal(autoChoice(choices)?.key, "claude-code::claude-opus-5-5", "a model switched off is never the fallback");
+  const composer = (all: ReturnType<typeof toChoices>) =>
+    ({ selected: null, choices: all }) as unknown as ComposerModel;
+  const timed = { autopilot: { hours: 1 } } as unknown as Parameters<typeof sendKey>[1];
+  assert.equal(
+    sendKey(composer(toChoices([openRouter(ready)])), timed),
+    null,
+    "a timed build never starts on a paid model",
+  );
+  assert.equal(sendKey(composer(toChoices([openRouter(ready), claude])), timed), "claude-code::claude-opus-5-5");
 });
