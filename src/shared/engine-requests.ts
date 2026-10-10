@@ -5,6 +5,7 @@
  * travel — callbacks, abort signals and the host-injected tool handlers.
  */
 import type { Message, Usage } from "./event-log.ts";
+import type { ComputerTraceSummary } from "./computer-target.ts";
 import type { PreviewSetup } from "./preview-contract.ts";
 
 export interface ToolDefinition {
@@ -83,8 +84,15 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
 }
 
 /**
@@ -218,4 +226,6 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
 }

@@ -12,7 +12,7 @@ run at its checkpoint. User Finish overrides the clock, never the final judge.
 recovery details.
 
 An active run opens Builds once; later tab choices are the user's, except that showing a
-build from the chat opens Live. Without a plan or run, a stored Builds
+build from the chat opens Live. With no plan or run, a stored Builds
 choice falls back to Live. A file or image opened from the chat adds a tab named for it until
 closed, with Show in Finder for game-folder files.
 
@@ -21,8 +21,7 @@ closed, with Show in Finder for game-folder files.
 **Live** plays the browser game in a native view (WebGL and WebGPU); hidden unobserved previews
 pause. The strip holds Live/Builds/Assets, Play/Stop, Reload, the sound switch (⌥⌘M; only a shown
 Live in front is heard), Full screen (hold Esc to leave) and plugin actions such as Publish (accent
-until listed). Stop halts the game until Play or Reload. Slow loads show a halftone loader and
-shimmering “Loading game”. An empty scaffold shows “Ready for your first idea” (a computer), or
+until listed). Stop halts the game until Play or Reload. Slow loads show a halftone “Loading game”. An empty scaffold shows “Ready for your first idea” (a computer), or
 “Building your game” (a crane) with Watch progress while a run works, Play latest once a build is
 ready; the first healthy build then shows itself. Otherwise only the user changes Live (opening a
 game, Reload, Play, Make live, a chat request while Live is hidden). A newer healthy build, a
@@ -34,14 +33,14 @@ preview reaches only public library CDNs; Open Game names other hosts.
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
 hangs below. An eye marks nodes the reviewers looked at. A new build is “Checking it starts…” until
-it has run. Its header shows only time worked. A working node shows its agent's screen and action (“Pressing Space · 3s”). A selected
+it has run. Its header shows time worked. A working node shows its agent's screen and action (“Pressing Space · 3s”). A selected
 node opens in place as a card without zooming; an eye opens it on the reviewers' notes. **Follow up in chat** turns the next message into a note to that node's build.
 An earlier build opens from its chat card.
 
-Agents test in hidden windows, never in Live; the lead's frames the chat reuses
-never certify a delivered build. A finished worker, passing checks, integration and Live's
-revision are distinct facts that summaries never merge. Chat shows the delivery's capture and Play, failures included; Builds
-and Studio report missing checks, coverage limits, counts and revisions.
+Agents test in hidden windows, never Live; judges play blind when screenshots cannot decide. Lead frames never certify delivery. Finished workers, passing checks, integration
+and Live's revision are distinct facts summaries never merge. Chat shows the delivery's capture and
+Play, failures included; Builds and Studio report missing checks, coverage, counts, revisions and
+which played checks the studio verified.
 
 ## Continuation and interruption
 

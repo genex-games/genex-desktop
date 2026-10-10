@@ -136,6 +136,13 @@ denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked mod
 browser sign-in hosts) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are reachable.
 `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web fetch and other folders to a build, and lets a read-only session run only the
 studio bridge (`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex.
+A session with live tools (the `computer`) also gets them as a local MCP server, `studio`
+([studio-mcp-shim.ts](../src/substrate/engines/studio-mcp-shim.ts)): OpenCode starts
+`node .studio/bridge/mcp.mjs` as its own child inside the same sandbox, the shim relays each call
+over the same bridge, and a picture comes back as MCP image content the model sees inline. The
+config allows `studio_*` (OpenCode's `run` rejects any tool it would ask about); the bridge command
+stays the fallback, and `mcpTools: false` turns the server off. A blind judge (`OpenCodeAccess.Blind`)
+reads no file at all.
 A provider's HTTP status in an `error` event decides the failure kind, as for OpenRouter; a 400 or
 404 for a picked model ends the build saying which model the provider refused and to pick another;
 a 403 for a picked model whose provider has no host Genex knows says the sandbox kept OpenCode from
@@ -212,6 +219,21 @@ the host's attributed tool record supplies the source.
 Codex bridge instructions use JSON for numeric/boolean plugin arguments as well as nested MCP
 schemas. String-only tools retain simple flags; validation never silently coerces a string into
 an agent's numeric or boolean request.
+
+Codex dynamic tools are an opt-in alternative to the bridge
+(`CodexEngineOptions.codexDynamicTools`, off until a live spike confirms CLI 0.159's experimental
+`dynamicTools`). With it on, a new session with live tools on CLI 0.159.0 or later runs its turn
+on `codex app-server` (`substrate/engines/codex-turns.ts`): `initialize` opts into
+`experimentalApi`, `thread/start` declares every tool the bridge would carry as a function with
+its schema, and each `item/tool/call` goes to the bridge's handler, its pictures sent inline as
+data URLs (`codex-dynamic-tools.ts`: answers capped at 12 MiB; malformed calls, undeclared tools,
+another thread's calls and arguments over 1 MiB are refused in words). Notifications are
+rewritten as `codex exec --json` events, so the log and chat read the same, and the brief is told
+its bridge commands are function tools. The sandbox and approvals are the exec turn's, as `-c`
+config and typed `thread/start`/`turn/start` params; `-c mcp_servers={}` stands in for the
+missing `--ignore-user-config`. A handshake refusal falls back to exec and the bridge for that
+turn and the engine's lifetime; resumed sessions, older CLIs and the default keep exec. The
+session's `system/init` event records `tool_delivery` (`dynamic_tools` or `file_bridge`).
 
 A read-only follow-up that leaves the game's content unchanged does not reload the preview or
 warn about an untouched empty scaffold. The bounded content stamp includes Git-ignored runtime

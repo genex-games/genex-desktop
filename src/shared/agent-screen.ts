@@ -4,7 +4,15 @@
  * just did. Main emits `preview.screen` (opened/closed) and `preview.frame` (a new picture);
  * the Builds graph shows each on the node of the part it works on, the lead's on the lead's.
  */
-export type AgentScreenRole = "builder" | "playtester" | "scout" | "judge" | "director";
+/** Who holds a window: the agent behind an agent screen, in its wire spelling. */
+export const ScreenRole = {
+  Builder: "builder",
+  Playtester: "playtester",
+  Scout: "scout",
+  Judge: "judge",
+  Director: "director",
+} as const;
+export type AgentScreenRole = (typeof ScreenRole)[keyof typeof ScreenRole];
 
 /**
  * What the agent just did at its screen, as a code the Builds graph words ("Pressing Space").

@@ -3,12 +3,14 @@
  * the tools a session is given (computer, director, playtest), and the game-file access they share.
  * Composed by `StudioCore`; its state stays in the core.
  */
+import { ScreenRole } from "../../shared/agent-screen.ts";
 import { uuidv7 } from "../../substrate/ids.ts";
 import { replaceableCover } from "../../shared/game-library.ts";
 import { COVER_TOOL } from "../../shared/cover-recipe.ts";
 import { ChatActivityPhase, SessionActivityRole, delegationActivityScope } from "../../shared/chat-activity.ts";
 import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
 import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
+import type { ComputerTraceSummary } from "../../shared/computer-target.ts";
 import {
   DelegationRefusal,
   EngineFailureKind,
@@ -25,7 +27,8 @@ import { coordinatorTools, isRunControl, runControlTools } from "../../shared/co
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { ensureDir, realpathNearest } from "../../substrate/fsx.ts";
-import { isImageFile } from "../../substrate/game-workspace.ts";
+import { isImageFile, readProjectShape } from "../../substrate/game-workspace.ts";
+import { TargetRuntime } from "../../shared/computer-target.ts";
 import type { HostMethod, HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import { git } from "../../substrate/snapshots.ts";
@@ -93,6 +96,8 @@ const MESSAGE = {
   foreignCwd: (cwd: string) => `delegation cwd must be the project folder or a scratch worktree: ${cwd}`,
   outsideProject: (file: string) => `path is outside this project's folder: ${file}`,
   symlink: (file: string) => `refused: ${file} is a symlink`,
+  noPlaytestWindow: (tool: string) =>
+    `${tool} drives the studio's browser window, and this game runs as its own process — use the computer tool instead`,
   directEngine: (engineId: string) => `${engineId} is a direct engine; use engine.complete`,
   cannotCompact: (engineId: string) => `${engineId} has no compaction of its own, or no session was named to compact`,
   coordinatorOnCandidate: "coordinator cannot edit an optimization candidate",
@@ -135,16 +140,28 @@ const DIRECTOR_LOOK: LiveTool = {
   },
 };
 
+/** A playtest's or judge's result, with what its computer's trace adds up to. */
+function withPlayTrace(result: DelegateResult, tools: SessionTools): DelegateResult {
+  return tools.playtest ? { ...result, trace: tools.playtest.trace() } : result;
+}
+
+/** The scratch folder a blind judge starts in: empty, shared, and never a build. */
+const BLIND_JUDGE_FOLDER = "blind-judge";
+
 interface PlaytestTools {
   liveTools: NonNullable<DelegateRequest["liveTools"]>;
   onLiveTool: OnLiveTool;
   release: () => Promise<void>;
+  /** What the session's computer trace adds up to: where it was written, whether the goal was verified. */
+  trace: () => ComputerTraceSummary;
 }
 
 interface DirectorTools {
   liveTools: NonNullable<DelegateRequest["liveTools"]>;
   onLiveTool: OnLiveTool;
   onCapture: NonNullable<DelegateRequest["onCapture"]>;
+  /** Stop what the director's computer started (a Play Protocol game); its window is released apart. */
+  release: () => Promise<void>;
 }
 
 /** Where a delegation runs, with what, and under which budget class. */
@@ -450,7 +467,19 @@ export class DelegationService {
     outDir: string,
     session: SessionPort,
   ): Promise<ComputerTools> {
-    return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    // A build whose studio.json declares the bridge runtime is played as its own process, started
+    // in the studio's sandbox; every other build in the session's browser window, as before.
+    const shape = await readProjectShape(initialRoot).catch(() => null);
+    if (shape?.runtime !== TargetRuntime.Bridge)
+      return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
+      bridge: { sandbox: this.#core.sandbox },
+    });
+    // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
+    // session is handed offers only what this game can do. A game that fails to start is said on
+    // the first call.
+    await tools.prepare().catch(() => {});
+    return tools;
   }
 
   /**
@@ -485,7 +514,12 @@ export class DelegationService {
       if (name === DirectorTool.Look) return this.#directorLook(d, computer, forward, args);
       return forward(name, args);
     };
-    return { liveTools: [...computer.liveTools, DIRECTOR_LOOK, ...forwarded], onLiveTool, onCapture };
+    return {
+      liveTools: [...computer.liveTools, DIRECTOR_LOOK, ...forwarded],
+      onLiveTool,
+      onCapture,
+      release: () => computer.release(),
+    };
   }
 
   /** A run tool, answered by the harness process that owns the loops and the merge. */
@@ -564,13 +598,33 @@ export class DelegationService {
         await sleep(ms);
       },
     };
+    const trace = () => computer.trace();
+    const release = async () => {
+      await computer.release().catch(() => {});
+      await session.release();
+    };
+    // A judge plays with the computer alone: the shorthands are a playtester's, and their files
+    // land outside the trace a judge's evidence is read from.
+    if (pt.role === ScreenRole.Judge) {
+      return { liveTools: computer.liveTools, onLiveTool: computer.onLiveTool, release, trace };
+    }
+    // The shorthands drive the browser window; a Play Protocol game has none, so they are not
+    // offered there, and a call by name anyway is answered with the tool that does work.
+    const browserWindow = computer.runtime === TargetRuntime.Browser;
     const onLiveTool: OnLiveTool = async (name, args) => {
       if (name === COMPUTER_TOOL_NAME) return computer.onLiveTool(name, args);
+      if (!browserWindow) return MESSAGE.noPlaytestWindow(name);
       const { port: live, problem } = await computer.ensureLoaded();
       if (problem) return problem;
+      if (!live) return MESSAGE.noPlaytestWindow(name);
       return runPlaytestTool(name, args, live, context);
     };
-    return { liveTools: [...computer.liveTools, ...PLAYTEST_TOOLS], onLiveTool, release: () => session.release() };
+    return {
+      liveTools: [...computer.liveTools, ...(browserWindow ? PLAYTEST_TOOLS : [])],
+      onLiveTool,
+      release,
+      trace,
+    };
   }
 
   /**
@@ -805,7 +859,7 @@ export class DelegationService {
       });
       await this.#settled(p, engineId, session, result, tools);
       this.#core.budget.recordUsage(workClass, result.usage, engineId);
-      return result;
+      return withPlayTrace(result, tools);
     } catch (err) {
       throw await this.#failed(engineId, session, err);
     } finally {
@@ -816,6 +870,8 @@ export class DelegationService {
       await releasePlugins().catch((error) => this.#logCleanupFailure("plugin lease", error));
       await releaseMcp().catch((error) => this.#logCleanupFailure("connector lease", error));
       if (tools.playtest) await tools.playtest.release().catch(() => {});
+      if (tools.builder) await tools.builder.release().catch(() => {});
+      if (tools.director) await tools.director.release().catch(() => {});
       if (windows.self) await windows.self.release().catch(() => {});
       if (windows.director) await windows.director.release().catch(() => {});
       this.#core.budget.endWork(workClass);
@@ -1055,6 +1111,11 @@ export class DelegationService {
    */
   async #runOfGame(project: string, runId: string): Promise<boolean> {
     return this.#startedInGame(project, await this.#runStarts(runId));
+  }
+
+  /** Whether this run is this game's by the host's own records: `preview.computer`'s run check. */
+  runOfGame(project: string, runId: string): Promise<boolean> {
+    return this.#runOfGame(project, runId);
   }
 
   /** This game's run (`#runOfGame`), started in this chat. */
@@ -1308,10 +1369,11 @@ export class DelegationService {
     tools: SessionTools,
     reach: SessionReach,
   ): Promise<DelegateRequest> {
-    const { engineId, workCwd, optimization } = target;
-    const { extraReads, denyReads } = reach;
+    const { engineId, optimization } = target;
+    const { blindness, workCwd, extraReads, denyReads } = await this.#sessionReach(target, grants, reach);
     const ownership = normalizeOwnership(p.ownership);
     return {
+      ...blindness,
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
       trustedProjectSettings: (await this.#core.games.presentation(p.project)).trustProjectSettings === true,
       ...(optimization ? { optimization } : {}),
@@ -1340,6 +1402,36 @@ export class DelegationService {
       ...steerField(session),
       onEvent: this.#onEvent(session),
     };
+  }
+
+  /**
+   * Where the session starts and what it may read. A judge that plays starts in an empty folder
+   * and reads nothing but its own frames: the build reaches it only through the computer tool, so
+   * no note in the code can answer for the game.
+   */
+  async #sessionReach(
+    target: DelegationTarget,
+    grants: DelegationGrants,
+    reach: SessionReach,
+  ): Promise<{ blindness: { blind?: true }; workCwd: string; extraReads: string[]; denyReads: string[] }> {
+    if (grants.playtest?.role !== ScreenRole.Judge) {
+      return { blindness: {}, workCwd: target.workCwd, extraReads: reach.extraReads, denyReads: reach.denyReads };
+    }
+    return {
+      blindness: { blind: true },
+      workCwd: await this.#blindCwd(),
+      extraReads: grants.playShotsDir ? [grants.playShotsDir] : [],
+      // The build's path is not named to it: a judge that is never told where the code is has one
+      // reason fewer to look, and Claude Code's blind session cannot read files at all.
+      denyReads: reach.denyReads,
+    };
+  }
+
+  /** The one empty folder every blind judge starts in, made again if something swept it. */
+  async #blindCwd(): Promise<string> {
+    const dir = path.join(this.#core.layout.scratch, BLIND_JUDGE_FOLDER);
+    await ensureDir(dir);
+    return dir;
   }
 
   /**

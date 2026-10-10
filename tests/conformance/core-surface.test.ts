@@ -14,6 +14,7 @@ const METHODS = [
   "_computerToolsFor",
   "_directorToolsFor",
   "_playtestToolsFor",
+  "_runOfGame",
   "acceptStagedProposal",
   "activeBuilders",
   "activityEvents",

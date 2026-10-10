@@ -19,6 +19,7 @@
  *      director invented with a sha in it comes out readable.
  */
 
+import { InteractionObjective, InteractionSource } from "../shared/run-summary.ts";
 import { type PackageManager, type SandboxProblemCode, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
@@ -2719,3 +2720,16 @@ export function privacyDeleteWords(result: RunSharingDeleteResult): string {
   };
   return words[result.outcome];
 }
+
+/** Who took a check, for the sources that played the build. */
+export const PLAYED_SOURCE_WORDS: Record<InteractionSource, string> = {
+  [InteractionSource.IndependentPlaytester]: "Independent playtester",
+  [InteractionSource.HandsOnJudge]: "Judge who played it",
+  [InteractionSource.RouteReplay]: "Replayed route",
+};
+
+/** What an interaction result rests on: the studio's own check of the game's state, or the player's word. */
+export const OBJECTIVE_WORDS: Record<InteractionObjective, string> = {
+  [InteractionObjective.StudioVerified]: "verified by the studio",
+  [InteractionObjective.ModelSaid]: "the player's word",
+};

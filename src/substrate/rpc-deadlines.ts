@@ -109,6 +109,8 @@ export const RPC_CLASSES = {
   "preview.crop": RpcClass.Page,
   "preview.diff": RpcClass.Page,
   "preview.input": RpcClass.Page,
+  // Its first call loads the build into the window, and a wait may run five minutes.
+  "preview.computer": RpcClass.PageLoad,
   "preview.console": RpcClass.Page,
   "preview.gpuErrors": RpcClass.Page,
   "preview.status": RpcClass.Page,

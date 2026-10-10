@@ -122,6 +122,33 @@ test("incomplete playtest stays separate from structural passes", () => {
     4,
   );
 });
+test("a judge that played keeps what its result rests on and where its trace is; a forged objective is dropped", () => {
+  const head = summarize().head;
+  const s = summarize([
+    ...events,
+    extra("run_interaction_evidence", {
+      head,
+      status: "passed",
+      label: "Reach the race",
+      source: "hands-on-judge",
+      objective: "studio-verified",
+      trace: "/runs/r/facet_integration/playtest/iter_001/trace.jsonl",
+    }),
+    extra("run_interaction_evidence", {
+      head,
+      status: "passed",
+      label: "Feels fast",
+      source: "hands-on-judge",
+      objective: "trust me",
+      trace: 7,
+    }),
+  ]);
+  const [verified, forged] = s.evidence.filter((e) => e.category === "interaction");
+  assert.equal(verified?.objective, "studio-verified");
+  assert.match(String(verified?.trace), /trace\.jsonl$/);
+  assert.equal(forged?.objective, undefined);
+  assert.equal(forged?.trace, undefined);
+});
 test("unknown stop reason, explicit failed and superseded states retain their meaning", () => {
   const s = summarize([
     extra("run_started", {}),

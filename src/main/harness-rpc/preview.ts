@@ -7,6 +7,7 @@ import type { CaptureSurface } from "../../substrate/preview-port.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture } from "../../substrate/preview-ready.ts";
 import { observeBuild } from "../../substrate/build-probe.ts";
+import { computerRpc } from "../core/computer-rpc.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import {
   DEFAULT_STILL_QUALITY,
@@ -35,6 +36,25 @@ const MESSAGE = {
   pairNeedsTwoImages: "preview.pair needs two images",
   harnessRestarted: "the harness that asked for this preview window has restarted",
 } as const;
+
+/** One computer service per core: the harness's leased windows outlive any one `api()` table. */
+const COMPUTERS = new WeakMap<CoreInternals, ReturnType<typeof computerRpc>>();
+
+/** The core's `preview.computer` service, made on first use. */
+function computersOf(core: StudioCore, x: CoreInternals): ReturnType<typeof computerRpc> {
+  const known = COMPUTERS.get(x);
+  if (known) return known;
+  const made = computerRpc({
+    gameDir: (project) => core.games.dirFor(project),
+    scratch: () => core.layout.scratch,
+    runs: () => core.layout.runs,
+    port: (handle) => x.previews.preview(handle),
+    computerTools: (grant, root, outDir, session) => core._computerToolsFor(grant, root, outDir, session),
+    runOfGame: (project, runId) => core._runOfGame(project, runId),
+  });
+  COMPUTERS.set(x, made);
+  return made;
+}
 
 /** A still named by its bytes or by a path the previews may read. */
 type StillSource = { base64?: string; path?: string } | null | undefined;
@@ -97,6 +117,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewCrop]: async (p) => crop(core, x, p),
     // Challenger vs incumbent on one camera: diff fraction + heatmap, the invisible-diff detector.
     [HostMethod.PreviewDiff]: async (p) => diff(core, x, p),
+    [HostMethod.PreviewComputer]: async (p) => computersOf(core, x).call(p),
     [HostMethod.PreviewInput]: routed(async (p: HarnessParams<typeof HostMethod.PreviewInput>) =>
       x.previews.preview(p?.handle).input(Array.isArray(p?.actions) ? p.actions : []),
     ),
@@ -136,6 +157,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewAcquire]: async (p) => acquire(x, p),
     [HostMethod.PreviewRelease]: async (p) => {
       x.profileSources.delete(p.handle);
+      await computersOf(core, x).forget(p.handle);
       await x.previewPool?.release(p.handle);
       return true;
     },

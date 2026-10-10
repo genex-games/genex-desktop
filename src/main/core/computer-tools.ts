@@ -1,44 +1,40 @@
 /**
- * The computer: hands and eyes on one pooled window for a whole
- * session. Actions are Anthropic's computer vocabulary plus the studio's own verbs; the input
- * actions become input events on the preview, and the host actions (looking, waiting, the studio
- * verbs) are answered here, each by its own handler. Every action leaves a frame on the agent's screen.
+ * The computer on a delegation's pooled window: who holds it (the role), which build it shows, and
+ * how the studio's own browser window loads that build. Everything an action does — parsing,
+ * refusing what the target cannot do, pacing the clock, looking, input — is the generic
+ * {@link computerSession}; this module is its browser source (`browser-preview-target.ts`), or,
+ * for a game whose studio.json declares the `bridge` runtime, the Play Protocol source
+ * (`game-bridge-target.ts`).
  */
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { type AgentScreen, type AgentScreenRole, type ScreenAct, ScreenDeed } from "../../shared/agent-screen.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { type AgentScreen, type AgentScreenRole, ScreenDeed, ScreenRole } from "../../shared/agent-screen.ts";
 import {
-  COMPUTER_TOOL_NAME,
-  COMPUTER_VIEW,
-  type ComputerHostAction,
-  type ComputerRequest,
-  computerAct,
-  computerToInput,
-  computerToolDefinition,
-  describeComputerAction,
-  parseComputerArgs,
-} from "../../substrate/computer-tool.ts";
-import type { DelegateRequest, LiveToolResult } from "../../substrate/engines/types.ts";
+  BROWSER_CAPABILITIES,
+  ComputerPacing,
+  type ComputerTraceSummary,
+  StateLevel,
+  type TargetCapabilities,
+  TargetRuntime,
+} from "../../shared/computer-target.ts";
+import { computerToolDefinition, normalizeSetup } from "../../substrate/computer-tool.ts";
+import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { ComputerToolRole } from "../../substrate/computer-tool-prompts.ts";
-import { ensureDir } from "../../substrate/fsx.ts";
 import { LIVE_HANDLE } from "../../substrate/preview-pool.ts";
-import { CAMERA_SETTLE_MS, DEFAULT_SHOT_QUALITY, captureSurface, requestedSurface, surfaceWord } from "./capture.ts";
-import type { PreviewService } from "./previews.ts";
-import { iterationDir, safePathSegment } from "./run-shots.ts";
+import { CaptureSurface } from "../../shared/preview-contract.ts";
+import type { ProcessSandbox } from "../../substrate/spawn.ts";
+import type { ComputerTarget } from "../../substrate/computer-target.ts";
+import { type BrowserPreviewTarget, browserPreviewTarget } from "./browser-preview-target.ts";
+import {
+  type ComputerSession,
+  type ComputerSessionOptions,
+  computerSession,
+  type TargetSource,
+} from "./computer-session.ts";
+import { gameBridgeSource } from "./game-bridge-target.ts";
+import type { FramePort, PreviewService } from "./previews.ts";
+import { iterationDir } from "./run-shots.ts";
+import { markVerified } from "./verified-traces.ts";
 import type { SessionPort } from "./session-port.ts";
-import { CaptureSurface, GameClock } from "../../shared/preview-contract.ts";
-
-/** How long an input settles before the state is read back. */
-const INPUT_SETTLE_MS = 120;
-/** Characters of the game's state in an answer: after an action, by default, and when asked for. */
-const STATE_CHARS = { afterAction: 600, default: 1_200, asked: 4_000 } as const;
-/** How many of the latest console errors an answer lists. */
-const CONSOLE_ERRORS_SHOWN = 12;
-/** Characters of an action's name kept in a frame's file name. */
-const FRAME_NAME_CHARS = 40;
 
 /** The tool's own wording for each screen role; a judge (or anything else) is told it plays. */
 const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
@@ -46,14 +42,14 @@ const TOOL_ROLE: Record<AgentScreenRole, ComputerToolRole> = {
   scout: "scout",
   director: "director",
   playtester: "playtester",
-  judge: "playtester",
+  judge: "judge",
 };
 
 /**
  * The roles that play a build to judge it: they take seconds to look and decide, so the game's clock
  * stands still between their moves (golden-boot-glory: one key press ran four match minutes).
  */
-const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester", "judge"]);
+const PACED_ROLES: ReadonlySet<AgentScreenRole> = new Set([ScreenRole.Playtester, ScreenRole.Judge]);
 
 /**
  * The roles that meet the game's own title and menu as a player does: the studio never begins
@@ -64,9 +60,12 @@ const FRONT_END_ROLES: ReadonlySet<AgentScreenRole> = new Set(["playtester"]);
 /** Who holds the computer, and on which build: a playtest grant with any screen role. */
 export type ComputerGrant = Omit<NonNullable<DelegateRequest["playtest"]>, "role"> & { role?: AgentScreen["role"] };
 
-/** A load of the build into the window: the port, and what went wrong or is worth saying. */
+/**
+ * A load of the build: the browser window's port (null for a Play Protocol game, which has no
+ * window the playtest shorthands could drive), and what went wrong or is worth saying.
+ */
 export interface ComputerLoad {
-  port: PreviewPort;
+  port: PreviewPort | null;
   problem: string | null;
   note: string | null;
 }
@@ -79,201 +78,153 @@ export interface ComputerTools {
   /** The build the window shows; the director's `look` moves it. */
   root: () => string;
   retarget: (root: string) => void;
-}
-
-/** Everything a host action reads: the request, the window, and the session's helpers. */
-interface ActionContext {
-  request: ComputerRequest;
-  port: PreviewPort;
-  size: { width: number; height: number };
-  caption: string;
-  /** The same action as a code, for the agent's screen. */
-  act: ScreenAct;
-  /** The note of the load this action caused, if it caused one. */
-  note: string | null;
-  /** The setup note to append to the answer (`\nnote: …`), or nothing. */
-  noteLine: string;
-  surface: CaptureSurface;
-  /** What the studio says about the surface asked for, on its own line above the answer. */
-  surfaceLine: string;
-  session: ComputerSession;
-}
-
-type HostActionHandler = (ctx: ActionContext) => Promise<LiveToolResult>;
-
-/** A session's state and the helpers its actions share. */
-interface ComputerSession {
-  readonly root: () => string;
-  readonly loadedAt: () => number;
-  /** The note of the last load, until a look has shown it. */
-  readonly setupNote: () => string | null;
-  readonly clearSetupNote: () => void;
-  readonly cursor: (port: PreviewPort, size: { width: number; height: number }) => { x: number; y: number };
-  readonly stateText: (port: PreviewPort, max?: number) => Promise<string>;
-  readonly saveFrame: (jpeg: Buffer, name: string) => Promise<string>;
-  readonly frame: (port: PreviewPort, jpeg: Buffer | null, caption: string, act: ScreenAct) => Promise<void>;
-  /** Run the game's clock for one move, then stand it still again when the session is paced. */
-  readonly moving: <T>(port: PreviewPort, move: () => Promise<T>) => Promise<T>;
-}
-
-async function look(ctx: ActionContext): Promise<LiveToolResult> {
-  const { request, port, session } = ctx;
-  const warning = request.action === "camera" ? await switchCamera(port, request.text) : "";
-  const shot = await captureSurface(port, DEFAULT_SHOT_QUALITY, ctx.surface);
-  const { jpeg, stats } = shot;
-  const file = await session.saveFrame(jpeg, request.action === "camera" ? `cam-${request.text}` : "screen");
-  await session.frame(port, jpeg, ctx.caption, ctx.act);
-  const c = session.cursor(port, ctx.size);
-  session.clearSetupNote();
-  const took = surfaceWord(shot.surface);
-  const tookText = took ? ` (${took})` : "";
-  const measured = stats ? `, litFraction ${stats.litFraction.toFixed(2)}, meanLuma ${Math.round(stats.meanLuma)}` : "";
-  return {
-    text: `${ctx.surfaceLine}${file} — ${ctx.size.width}×${ctx.size.height}${tookText}, cursor at ${c.x},${c.y}${measured}${warning}${ctx.noteLine}`,
-    images: [{ mimeType: "image/jpeg", data: jpeg.toString("base64"), label: ctx.caption }],
-  };
-}
-
-/** Point the game's debug camera; a camera the game does not know is a warning, never a refusal. */
-async function switchCamera(port: PreviewPort, camera: string | undefined): Promise<string> {
-  let warning = "";
-  const placed = (await port.studioCall("debugCamera", camera).catch(() => null)) as {
-    ok?: boolean;
-    reason?: string;
-    available?: string[];
-  } | null;
-  const refused = typeof placed === "object" && placed?.ok === false;
-  if (refused) {
-    const why = placed.reason ?? `available: ${(placed.available ?? []).join(", ") || "none"}`;
-    warning = ` — WARNING: camera "${camera}" is not registered (${why}); this is the current view instead`;
-  }
-  await sleep(CAMERA_SETTLE_MS);
-  return warning;
-}
-
-async function zoom(ctx: ActionContext): Promise<LiveToolResult> {
-  const { request, port, size, surface } = ctx;
-  const zoomer = port.zoom;
-  if (!zoomer || !request.region) return "zoom is not available on this preview — take a screenshot instead";
-  const z = await zoomer.call(port, request.region, undefined, { surface });
-  const file = await ctx.session.saveFrame(z.jpeg, "zoom");
-  const took = surfaceWord(surface === CaptureSurface.Auto ? null : surface);
-  const tookText = took ? ` (${took})` : "";
-  return {
-    text: `${ctx.surfaceLine}${file} — region ${z.region.map(Math.round).join(",")} of the ${size.width}×${size.height} frame${tookText}, shown at ${z.width}×${z.height}; coordinates stay those of the whole frame`,
-    images: [{ mimeType: "image/jpeg", data: z.jpeg.toString("base64"), label: ctx.caption }],
-  };
-}
-
-async function wait(ctx: ActionContext): Promise<LiveToolResult> {
-  const seconds = ctx.request.duration ?? 1;
-  await ctx.session.moving(ctx.port, () => sleep(Math.round(seconds * SECOND_MS)));
-  await ctx.session.frame(ctx.port, null, ctx.caption, ctx.act);
-  return `waited ${seconds}s — ${await ctx.session.stateText(ctx.port, STATE_CHARS.afterAction)}${ctx.noteLine}`;
-}
-
-async function consoleErrors(ctx: ActionContext): Promise<LiveToolResult> {
-  const errors = ctx.port.consoleEntries(ctx.session.loadedAt()).filter((entry) => entry.level === "error");
-  if (!errors.length) return "console errors since load: none";
-  const listed = errors
-    .slice(-CONSOLE_ERRORS_SHOWN)
-    .map((entry) => `- ${entry.message}`)
-    .join("\n");
-  return `console errors since load (${errors.length}):\n${listed}`;
-}
-
-const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
-  screenshot: look,
-  camera: look,
-  zoom,
-  cursor_position: async (ctx) => {
-    const c = ctx.session.cursor(ctx.port, ctx.size);
-    return `X=${c.x}, Y=${c.y}`;
-  },
-  wait,
-  state: async (ctx) => `${await ctx.session.stateText(ctx.port, STATE_CHARS.asked)}${ctx.noteLine}`,
-  console: consoleErrors,
-  reload: async (ctx) => {
-    const noted = ctx.note ? ` — ${ctx.note}` : "";
-    const state = await ctx.session.stateText(ctx.port, STATE_CHARS.afterAction);
-    return `reloaded ${path.basename(ctx.session.root())}${noted} — ${state}`;
-  },
-};
-
-function isHostAction(action: string): action is ComputerHostAction {
-  return Object.hasOwn(HOST_ACTIONS, action);
-}
-
-/** An input action: sent to the page as input events, then the state read back. */
-async function input(ctx: ActionContext): Promise<LiveToolResult> {
-  const { port, session, caption } = ctx;
-  const actions = computerToInput(ctx.request, session.cursor(port, ctx.size));
-  if (!actions.length) return `${ctx.request.action}: nothing to do (${caption})`;
-  await session.moving(port, async () => {
-    await port.input(actions);
-    await sleep(INPUT_SETTLE_MS);
-  });
-  await session.frame(port, null, caption, ctx.act);
-  const c = session.cursor(port, ctx.size);
-  const state = await session.stateText(port, STATE_CHARS.afterAction);
-  return `OK — ${caption}; cursor at ${c.x},${c.y}. ${state}${ctx.noteLine}\nScreenshot to see the result.`;
-}
-
-/** Stand the game's clock still; a page with no clock to pause keeps running. */
-async function stillClock(port: PreviewPort): Promise<void> {
-  await port.studioCall(GameClock.Pause).catch(() => null);
-}
-
-/** One computer call: parsed, the build loaded (reloaded when asked), then answered by its action. */
-async function runComputerTool(
-  name: string,
-  args: Record<string, unknown>,
-  ensureLoaded: (force?: boolean) => Promise<ComputerLoad>,
-  session: ComputerSession,
-): Promise<LiveToolResult> {
-  if (name !== COMPUTER_TOOL_NAME) return `unknown tool ${name}`;
-  const parsed = parseComputerArgs(args);
-  if (!parsed.ok) return parsed.error;
-  const request = parsed.request;
-  const { port, problem, note } = await ensureLoaded(request.action === "reload");
-  if (problem) return problem;
-  const setupNote = note ?? session.setupNote();
-  // Which picture this look takes. An unparseable surface is never a refusal — the studio
-  // picks and says so on the line above the answer, because a turn spent arguing about a
-  // flag costs the engine that cannot see the image more than the picture is worth.
-  const ctx: ActionContext = {
-    request,
-    port,
-    size: port.viewSize?.() ?? COMPUTER_VIEW,
-    caption: describeComputerAction(request),
-    act: computerAct(request),
-    note,
-    noteLine: setupNote ? `\nnote: ${setupNote}` : "",
-    surface: requestedSurface(request),
-    surfaceLine: request.surfaceNote ? `${request.surfaceNote}\n` : "",
-    session,
-  };
-  return isHostAction(request.action) ? HOST_ACTIONS[request.action](ctx) : input(ctx);
+  /** What the session's trace adds up to so far. */
+  trace: () => ComputerTraceSummary;
+  /** How the game runs: the browser window, or its own Play Protocol process. */
+  runtime: TargetRuntime;
+  /** Stop what the computer started: a Play Protocol game's process. The browser window is the session's. */
+  release: () => Promise<void>;
+  /**
+   * Load the target now and describe the tool from what it says it can do — a Play Protocol game
+   * says so only in its `hello`, so until then the tool is described from what such a game may do.
+   */
+  prepare: () => Promise<void>;
 }
 
 /**
- * A load that concurrent callers share: parallel state/console requests share the first
- * navigation, rather than aborting each other. A forced load waits for the one in flight, then runs.
+ * How a role's session runs: a judge on a seeded, stepped clock (its run can be replayed), a
+ * playtester paced on wall time, everyone else on a running game. The roles that play to judge
+ * see the result of every move without asking; the grant's goal and budget ride along.
  */
-function sharedLoad(load: (force: boolean) => Promise<ComputerLoad>): (force?: boolean) => Promise<ComputerLoad> {
-  let loading: Promise<ComputerLoad> | null = null;
-  return async (force = false) => {
-    if (loading) {
-      if (!force) return loading;
-      await loading;
-    }
-    const pending = load(force);
-    loading = pending;
-    try {
-      return await pending;
-    } finally {
-      if (loading === pending) loading = null;
-    }
+function sessionOptionsFor(role: AgentScreenRole, grant: ComputerGrant, frameDir: string): ComputerSessionOptions {
+  const judging = role === ScreenRole.Judge;
+  const pacing = PACED_ROLES.has(role)
+    ? (grant.pacing ?? (judging ? ComputerPacing.Stepped : ComputerPacing.Paced))
+    : ComputerPacing.Running;
+  const quest = questOf(grant);
+  return {
+    pacing,
+    frameDir,
+    observeByDefault: PACED_ROLES.has(role),
+    onReached: markVerified,
+    ...(judging ? JUDGE_VIEW : {}),
+    ...(grant.maxActions !== undefined ? { maxActions: grant.maxActions } : {}),
+    ...(quest ? { quest } : {}),
+  };
+}
+
+/**
+ * What a judge sees of the game: never its `state` or `console`, which the builder under judgement
+ * wrote — the session still reads the state to check the goal, and the judge answers from playing.
+ */
+const JUDGE_VIEW: Pick<ComputerSessionOptions, "offer" | "showState"> = {
+  offer: (caps) => ({ ...caps, state: StateLevel.None, console: false }),
+  showState: false,
+};
+
+/** The grant's goal, as the host reads it: a plain dotted path and a plain value, or no goal at all. */
+function questOf(grant: ComputerGrant): ComputerSessionOptions["quest"] {
+  const until = grant.quest ? normalizeSetup({ verify: grant.quest.until })?.verify : undefined;
+  return grant.quest && until ? { id: String(grant.quest.id), until } : undefined;
+}
+
+/** The quality of a frame a target that is no preview window takes for the agent's screen. */
+const TARGET_FRAME_QUALITY = 60;
+
+/**
+ * A target that is no preview window, read as one by the agent screen: its picture, its size and
+ * its pointer, so a Play Protocol game's moves are drawn on the worker's node as a browser game's are.
+ */
+function targetFramePort(target: ComputerTarget): FramePort {
+  const centre = () => {
+    const size = target.viewSize();
+    return { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
+  };
+  return {
+    screenshot: async (quality = TARGET_FRAME_QUALITY) =>
+      (await target.screenshot({ quality, surface: CaptureSurface.Auto })).jpeg,
+    viewSize: () => target.viewSize(),
+    pointer: () => target.pointer() ?? centre(),
+  };
+}
+
+/** What else a computer may need: a sandbox to start a Play Protocol game in, when the build is one. */
+export interface ComputerToolsOptions {
+  /** Set when the build's studio.json declares the `bridge` runtime: its game is started here. */
+  bridge?: { sandbox: Pick<ProcessSandbox, "spawnLongLived"> };
+}
+
+/** The tools over one session, whatever its target: the tool definition, its calls, its load and its trace. */
+function toolsOver<T extends ComputerTarget>(
+  session: ComputerSession<T>,
+  parts: {
+    caps: TargetCapabilities;
+    toolRole: ComputerToolRole;
+    observeByDefault: boolean;
+    screen: () => AgentScreen;
+    portOf: (target: T) => PreviewPort | null;
+    release: () => Promise<void>;
+    offer?: (caps: TargetCapabilities) => TargetCapabilities;
+  },
+): ComputerTools {
+  const describe = (caps: TargetCapabilities) =>
+    computerToolDefinition({
+      role: parts.toolRole,
+      capabilities: parts.offer ? parts.offer(caps) : caps,
+      observeByDefault: parts.observeByDefault,
+    });
+  const liveTools = [describe(parts.caps)];
+  return {
+    liveTools,
+    onLiveTool: (name, args) => session.run(name, args),
+    ensureLoaded: async (force = false) => {
+      const loaded = await session.ensureLoaded(force);
+      return { port: parts.portOf(loaded.target), problem: loaded.problem, note: loaded.note };
+    },
+    screen: parts.screen,
+    root: () => session.root(),
+    retarget: (next: string) => session.retarget(next),
+    trace: () => session.trace(),
+    runtime: parts.caps.runtime,
+    release: parts.release,
+    prepare: async () => {
+      const loaded = await session.ensureLoaded();
+      if (!loaded.problem) liveTools[0] = describe(loaded.target.caps);
+    },
+  };
+}
+
+/**
+ * The studio's own browser window as a target source: the session's pooled window, loaded through
+ * the served entry with the setup script applied, and its frames sent to the agent's screen.
+ */
+function browserSource(
+  previews: PreviewService,
+  grant: ComputerGrant,
+  role: AgentScreenRole,
+  sessionPort: SessionPort,
+  screen: () => AgentScreen,
+): TargetSource<BrowserPreviewTarget> {
+  return {
+    caps: BROWSER_CAPABILITIES,
+    load: async (root, force) => {
+      const window = await sessionPort.get();
+      const target = browserPreviewTarget(window);
+      const alreadyLoaded = !force && sessionPort.loaded?.root === root;
+      if (alreadyLoaded) return { target, problem: null, note: null, fresh: false };
+      const loaded = await previews.loadServed(window, grant.project, root, grant.entry);
+      if (loaded.problem) {
+        sessionPort.loaded = null;
+        return { target, problem: `the build failed to load: ${loaded.problem}`, note: null, fresh: true };
+      }
+      const applied = await previews.applySetup(window, grant.setup, { keepFrontEnd: FRONT_END_ROLES.has(role) });
+      const note = [loaded.note, applied].filter(Boolean).join("; ") || null;
+      sessionPort.loaded = { root, at: Date.now() };
+      previews.openScreen(screen());
+      await previews.frame(window, screen(), null, "loaded", { deed: ScreenDeed.Load });
+      return { target, problem: null, note, fresh: true };
+    },
+    frame: (target, jpeg, caption, act) => previews.frame(target.port, screen(), jpeg, caption, act),
   };
 }
 
@@ -289,15 +240,10 @@ export function computerTools(
   initialRoot: string,
   outDir: string,
   sessionPort: SessionPort,
+  options: ComputerToolsOptions = {},
 ): ComputerTools {
-  let root = initialRoot;
   const role: AgentScreen["role"] = grant.role ?? "builder";
-  const paced = PACED_ROLES.has(role);
   const label = grant.label ?? grant.facetId ?? grant.project;
-  const iterDir = iterationDir(outDir, grant.iteration);
-  let shots = 0;
-  let loadedAt = 0;
-  let lastSetupNote: string | null = null;
   const screen = (): AgentScreen => ({
     handle: sessionPort.handle() ?? LIVE_HANDLE,
     label,
@@ -306,64 +252,56 @@ export function computerTools(
     facetId: grant.facetId ?? null,
     role,
   });
-  const loadOnce = async (force = false): Promise<ComputerLoad> => {
-    const window = await sessionPort.get();
-    const alreadyLoaded = !force && sessionPort.loaded?.root === root;
-    if (alreadyLoaded) return { port: window, problem: null, note: null };
-    const loaded = await previews.loadServed(window, grant.project, root, grant.entry);
-    if (loaded.problem) {
-      sessionPort.loaded = null;
-      return { port: window, problem: `the build failed to load: ${loaded.problem}`, note: null };
-    }
-    const applied = await previews.applySetup(window, grant.setup, { keepFrontEnd: FRONT_END_ROLES.has(role) });
-    if (paced) await stillClock(window);
-    const note = [loaded.note, applied].filter(Boolean).join("; ") || null;
-    sessionPort.loaded = { root, at: Date.now() };
-    loadedAt = Date.now();
-    lastSetupNote = note;
-    previews.openScreen(screen());
-    await previews.frame(window, screen(), null, "loaded", { deed: ScreenDeed.Load });
-    return { port: window, problem: null, note };
-  };
-  const ensureLoaded = sharedLoad(loadOnce);
-  const moving = async <T>(window: PreviewPort, move: () => Promise<T>): Promise<T> => {
-    if (!paced) return move();
-    await window.studioCall(GameClock.Start).catch(() => null);
-    try {
-      return await move();
-    } finally {
-      await stillClock(window);
-    }
-  };
-  const session: ComputerSession = {
-    root: () => root,
-    loadedAt: () => loadedAt,
-    setupNote: () => lastSetupNote,
-    clearSetupNote: () => {
-      lastSetupNote = null;
-    },
-    cursor: (window, size) => window.pointer?.() ?? { x: Math.round(size.width / 2), y: Math.round(size.height / 2) },
-    stateText: async (window, max = STATE_CHARS.default) => {
-      const state = await window.studioState().catch(() => null);
-      return `state: ${JSON.stringify(state ?? { __missing: true }).slice(0, max)}`;
-    },
-    saveFrame: async (jpeg, name) => {
-      await ensureDir(iterDir);
-      const file = path.join(iterDir, `s${++shots}_${safePathSegment(name).slice(0, FRAME_NAME_CHARS)}.jpg`);
-      await writeFile(file, jpeg);
-      return file;
-    },
-    frame: (window, jpeg, caption, act) => previews.frame(window, screen(), jpeg, caption, act),
-    moving,
-  };
-  return {
-    liveTools: [computerToolDefinition({ role: Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : "playtester" })],
-    onLiveTool: (name, args) => runComputerTool(name, args, ensureLoaded, session),
-    ensureLoaded,
+  const sessionOptions = sessionOptionsFor(role, grant, iterationDir(outDir, grant.iteration));
+  const toolRole = Object.hasOwn(TOOL_ROLE, role) ? TOOL_ROLE[role] : ScreenRole.Playtester;
+  const shared = {
+    toolRole,
+    observeByDefault: PACED_ROLES.has(role),
     screen,
-    root: () => root,
-    retarget: (next: string) => {
-      root = next;
-    },
+    ...(sessionOptions.offer ? { offer: sessionOptions.offer } : {}),
   };
+  const runtime = options.bridge ? TargetRuntime.Bridge : TargetRuntime.Browser;
+  const deps: SourceDeps = { previews, grant, role, sessionPort, screen, options };
+  return TARGET_SOURCES[runtime](deps, (source, parts) =>
+    toolsOver(computerSession(source, initialRoot, sessionOptions), { ...shared, ...parts }),
+  );
 }
+
+/** What any target source is built from: the previews, the grant, the window and the extras. */
+interface SourceDeps {
+  previews: PreviewService;
+  grant: ComputerGrant;
+  role: AgentScreenRole;
+  sessionPort: SessionPort;
+  screen: () => AgentScreen;
+  options: ComputerToolsOptions;
+}
+
+/** Builds the tools over a source once its runtime-specific parts are known. */
+type ToolsBuilder = <T extends ComputerTarget>(
+  source: TargetSource<T>,
+  parts: { caps: TargetCapabilities; portOf: (target: T) => PreviewPort | null; release: () => Promise<void> },
+) => ComputerTools;
+
+/**
+ * One row per runtime: how its target source is made. A new kind of target — a window, a desktop,
+ * a VM — is a new runtime and a new row here; the session, the tool and every engine stay as they are.
+ */
+const TARGET_SOURCES: Record<TargetRuntime, (deps: SourceDeps, build: ToolsBuilder) => ComputerTools> = {
+  [TargetRuntime.Browser]: (deps, build) => {
+    const source = browserSource(deps.previews, deps.grant, deps.role, deps.sessionPort, deps.screen);
+    return build(source, { caps: source.caps, portOf: (target) => target.port, release: async () => {} });
+  },
+  [TargetRuntime.Bridge]: (deps, build) => {
+    const sandbox = deps.options.bridge?.sandbox;
+    if (!sandbox) return TARGET_SOURCES[TargetRuntime.Browser](deps, build);
+    const source = gameBridgeSource({
+      sandbox,
+      frame: (target, jpeg, caption, act) => {
+        deps.previews.openScreen(deps.screen());
+        return deps.previews.frame(targetFramePort(target), deps.screen(), jpeg, caption, act);
+      },
+    });
+    return build(source, { caps: source.caps, portOf: () => null, release: source.release });
+  },
+};

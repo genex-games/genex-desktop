@@ -258,7 +258,8 @@ search default.
 Connector tools are host-owned and arrive from one list. Studio main is the only MCP client: the
 connector registry connects each enabled connector, namespaces its tools `<connector>__<tool>` and
 appends them to the same `liveTools` every path already carries, so Claude Code gets them on the
-in-process `studio` server, Codex through the file bridge and the local harness over `mcp.tools` /
+in-process `studio` server, Codex through the file bridge (or, opted in, as app-server dynamic
+tools: [Model setup and activity](connections-and-context.md#model-setup-and-activity)) and the local harness over `mcp.tools` /
 `mcp.invoke`. The harness never speaks MCP itself, and it never learns a connector's name from a
 prompt file: guidance is one short paragraph the registry composes for whatever was in scope, tool
 schemas travel as `inputSchema` beside the flat `parameters`, and a name collision with a plugin
@@ -725,6 +726,26 @@ unverified (`required outcomes: N/M verified on this revision`, `progress.ts` `o
 every 60 working minutes (`VERIFY_NUDGE_EVERY_MS`) and after each ship review adds VERIFY THE
 OUTCOMES, asking for `playtest goal=<id>` on each one still unverified (journaled as
 `verifyNudgedWorkedMs`; never in the wrap-up).
+
+**Judges that play.** `loop/hands-on-judge.ts` sends a blind `judge` (computer tool only, stepped
+clock, no setup script) into a build with a quest the studio checks after every move; a direct
+engine plays the same tool through `preview.computer` (`loop/computer-loop.ts`), as the direct
+playtester does when the host serves it. A quest is set for one question (`quest.checkId`, or the
+only one asked): its "yes" passes only when `trace.reachedAt` is set and the frame it cites, read
+by `preview.statsOf` from the trace row that saved it at or after that move, is lit; otherwise it
+is unmeasured. Every other answer is the model's word (`model-said`). No window is unmeasured,
+never a fail. The director's `playtest goal_state=…` uses it, as does the integration play when a
+play check says `"reaches":"setup"` and the run's setup has a `verify` (otherwise the playtester
+plays). Facet scoring escalates an unmeasured or below-0.5 picture answer to one probe per pass
+(`loop/vision-escalation.ts`, at most 8 a run, counted in the journal's run): a probe has no quest,
+so what it resolves is recorded `model-said` at 0.4; a confident answer is never overturned, and a
+flip stands only when a second picture look at the probe's frames agrees. A verified session is
+kept as a route (`loop/routes.ts`): its computer calls, replayed at the end of every leased
+evidence pass one at a time through a fresh `preview.computer` session (judge, stepped, the kept
+quest); an older host is reported, not replayed. A deterministic route that misses the goal fails
+a check naming the step and the replay's trace, a non-deterministic one is only reported, and
+three divergences retire it. The host keeps `objective: "studio-verified"` only for a trace it saw
+reach its goal. A run turns all of this off with `handsOnJudges: false`.
 
 The initial plan freezes required acceptance scenarios in the versioned director journal. A
 reopened build is a goal commission, the Loop's hours or ∞ its ceiling (`reopen-run.ts`

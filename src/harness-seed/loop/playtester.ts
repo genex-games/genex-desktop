@@ -35,6 +35,9 @@ import { PageMethod } from "./page-contract.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import type { CheckResult } from "./checks.ts";
+import { describeComputer, PlayRole, playWithComputer, type ComputerGrant } from "./computer-loop.ts";
+import { COMPUTER_ONLY_LINE } from "./hands-on-prompts.ts";
+import { FacetRole } from "./facet/state.ts";
 
 /** The preview tools a direct play session may call. */
 const PLAY_TOOL_NAMES = ["press_keys", "look", "click", "screenshot", "game_state"];
@@ -302,8 +305,13 @@ type DirectPlaytest = PlaytestOptions & {
   maxActions: number;
 };
 
-/** The direct-engine session: the same preview tools, a small in-memory tool loop. */
+/**
+ * The direct-engine session: the full `computer` tool through `preview.computer` on its leased
+ * window when the host runs one there, else the preview shorthands in a small in-memory tool loop.
+ */
 async function directPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise<Played> {
+  const computer = await computerPlaytest(ctx, session);
+  if (computer) return computer;
   const { maxActions, deadline, brief } = session;
   const wrapped = await openPlaySession(ctx, session);
   const toolset = previewTools.filter((tool) => PLAY_TOOL_NAMES.includes(tool.name));
@@ -315,6 +323,43 @@ async function directPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise
     if (transcript !== null) return { actions: loop.actions, transcript };
   }
   return { actions: loop.actions, transcript: "" };
+}
+
+/**
+ * The direct session on the one `computer` tool every session engine holds, or null when there is
+ * no leased window or the host cannot run the tool on it (an older host): the shorthands then play.
+ */
+async function computerPlaytest(ctx: HarnessCtx, session: DirectPlaytest): Promise<Played | null> {
+  const { run, spec, root, entry, handle, iteration, maxActions, deadline, engineId, model, system, brief } = session;
+  if (!handle) return null;
+  const grant: ComputerGrant = {
+    project: run.project,
+    root,
+    handle,
+    runId: run.runId,
+    facetId: spec?.id ?? FacetRole.Integration,
+    iteration: iteration ?? 0,
+    ...(entry ? { entry } : {}),
+    setup: { ...(run.setup ?? {}), begin: false },
+    label: PlayRole.Playtester,
+    role: PlayRole.Playtester,
+    maxActions,
+  };
+  const tool = await describeComputer(ctx, grant);
+  if (!tool) return null;
+  const played = await playWithComputer(ctx, {
+    engineId,
+    model,
+    system,
+    brief: `${brief}\n\n${COMPUTER_ONLY_LINE}`,
+    grant,
+    tool,
+    maxActions,
+    deadline: deadline ?? null,
+    role: CompletionRole.Playtester,
+    runId: run.runId,
+  });
+  return { actions: played.actions, transcript: played.transcript };
 }
 
 /** Load the build in the session's preview (on its lease, when it has one) and start it. */

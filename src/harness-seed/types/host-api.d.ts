@@ -270,8 +270,15 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -919,6 +926,23 @@ export interface CompleteResponse {
 }
 // ↑ src/shared/engine-requests.ts
 
+export type InputRoute = 'browser' | 'bridge' | 'os-background' | 'os-foreground';
+// ↑ src/shared/computer-target.ts
+
+/** What a finished computer session's trace adds up to, as a delegation's result carries it. */
+export interface ComputerTraceSummary {
+  /** Where the trace was written; null before the first action. */
+  path: string | null;
+  steps: number;
+  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
+  deterministic: boolean;
+  /** The index of the action after which the studio verified the goal was reached, or null. */
+  reachedAt: number | null;
+  /** Every route the session's input took: evidence is as strong as the weakest of them. */
+  routes?: InputRoute[];
+}
+// ↑ src/shared/computer-target.ts
+
 export interface DelegateResult {
   requestedModel?: string;
   cliVersion?: string;
@@ -950,6 +974,8 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -1074,6 +1100,19 @@ export type ProjectKind =
   | "own-script";
 // ↑ src/shared/game-project.ts
 
+export type TargetRuntime = 'browser' | 'bridge';
+// ↑ src/shared/computer-target.ts
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
+}
+// ↑ src/shared/game-project.ts
+
 /**
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
  * as a native ES module. A folder the user brings — Vite, TypeScript, any bundler — keeps its
@@ -1110,6 +1149,13 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: TargetRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
 }
 // ↑ src/shared/game-project.ts
 
@@ -1384,13 +1430,7 @@ export interface BuildObservation {
 }
 // ↑ src/shared/preview-contract.ts
 
-/**
- * An agent's screen — the hidden preview window one worker is driving with the computer
- * tool, as the studio window shows it: the last frame, where the cursor is, what the agent
- * just did. Main emits `preview.screen` (opened/closed) and `preview.frame` (a new picture);
- * the Builds graph shows each on the node of the part it works on, the lead's on the lead's.
- */
-export type AgentScreenRole = "builder" | "playtester" | "scout" | "judge" | "director";
+export type AgentScreenRole = 'judge' | 'playtester' | 'builder' | 'scout' | 'director';
 // ↑ src/shared/agent-screen.ts
 
 export interface AgentScreen {
@@ -1692,6 +1732,21 @@ export interface HarnessHostApi {
   "preview.diff": {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
+  };
+  /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
   };
   "preview.input": {
     params: { actions?: PreviewInputAction[]; handle?: string };

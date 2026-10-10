@@ -73,6 +73,7 @@ import {
   saveJournal as saveRunJournal,
 } from "./run-events.ts";
 import { readJournal, writeJournal } from "./run-journal.ts";
+import { journalProbes } from "./probe-count.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
@@ -1254,7 +1255,11 @@ async function openReport(pipeline: Pipeline): Promise<PipelineEnd> {
     ...(priorJournal?.optimization ? { optimization: priorJournal.optimization } : {}),
   };
   pipeline.journal = journal;
-  const saveJournal = () => saveRunJournal(ctx, threadId, run.runId, journal);
+  // The hands-on probes the run spent ride on the journal's copy of the run, which a Resume starts from.
+  const saveJournal = () => {
+    journalProbes(journal, run);
+    return saveRunJournal(ctx, threadId, run.runId, journal);
+  };
   pipeline.saveJournal = saveJournal;
   await saveJournal();
   await prepareFolder(pipeline);

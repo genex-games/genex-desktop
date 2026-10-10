@@ -1997,6 +1997,7 @@ function researches(request: DelegateRequest): boolean {
  * keeps, its helpers included; the chat's mode decides each call.
  */
 function disallowedToolsFor(request: DelegateRequest): string[] {
+  if (request.blind) return [...new Set([...JUDGE_DISALLOWED_TOOLS, ...EDIT_TOOLS, ...ASKING_TOOLS])];
   if (request.readOnly && request.leadAsks) return [...MESSAGING_TOOLS, ...ASKING_TOOLS];
   if (request.readOnly) return [...MESSAGING_TOOLS, ...EDIT_TOOLS, SHELL_TOOL, ...SUBAGENT_TOOLS, ...WEB_TOOLS];
   return [

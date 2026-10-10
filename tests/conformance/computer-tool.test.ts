@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import {
   COMPUTER_ACTIONS,
   computerToInput,
+  computerActionsFor,
   computerToolDefinition,
   describeComputerAction,
   normalizeSetup,
@@ -17,7 +18,9 @@ import {
   parseSurface,
   setupReached,
   setupVerifyExpr,
+  unsupportedAction,
 } from "../../src/substrate/computer-tool.ts";
+import { BROWSER_CAPABILITIES, ClockLevel, PointerLevel, TargetRuntime } from "../../src/shared/computer-target.ts";
 import { clickModifiers, parseCombo, pointInView, capActions } from "../../src/substrate/preview-input.ts";
 
 describe("computer tool — parsing either transport", () => {
@@ -240,6 +243,7 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
         return { ok: true, applied: 1, width: 960, height: 600 };
       },
       studioState: async () => ({ frame: 1 }),
+      screenshot: async () => Buffer.from("jpeg"),
       pointer: () => ({ x: 480, y: 300 }),
       viewSize: () => ({ width: 960, height: 600 }),
       consoleEntries: () => [],
@@ -273,5 +277,200 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
     const built = await playOn("builder");
     assert.deepEqual(built.reached, ["input"]);
     assert.match(built.prompt, /keeps running between actions/);
+  });
+});
+
+describe("computer tool — built from what the target can do", () => {
+  const bridge = {
+    ...BROWSER_CAPABILITIES,
+    runtime: TargetRuntime.Bridge,
+    pointer: PointerLevel.Relative,
+    cameras: false,
+    console: false,
+    zoom: false,
+    surfaces: false,
+    reload: false,
+  };
+
+  it("offers a browser game every verb but named game actions, which only a Play Protocol game declares", () => {
+    assert.deepEqual(
+      computerActionsFor(BROWSER_CAPABILITIES),
+      COMPUTER_ACTIONS.filter((action) => action !== "act"),
+    );
+    const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
+    assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
+    assert.ok("surface" in browser.parameters.properties);
+  });
+
+  it("never offers a verb the target lacks, and says so instead of failing silently", () => {
+    const actions = computerActionsFor(bridge);
+    for (const missing of ["zoom", "camera", "console", "reload", "left_click", "left_click_drag", "mouse_move"])
+      assert.ok(!actions.includes(missing as never), `${missing} is not offered`);
+    for (const kept of ["screenshot", "key", "hold_key", "type", "scroll", "wait", "state"])
+      assert.ok(actions.includes(kept as never), `${kept} is offered`);
+    const schema = computerToolDefinition({ role: "playtester", capabilities: bridge });
+    assert.ok(!("surface" in schema.parameters.properties), "no surface parameter on a target with one surface");
+    assert.doesNotMatch(schema.description, /left_click \|/);
+    assert.doesNotMatch(schema.description, /camera text=/);
+    assert.match(schema.description, /its own game process/);
+    assert.equal(unsupportedAction("zoom", bridge)?.includes("not available"), true);
+    assert.equal(unsupportedAction("key", bridge), null);
+  });
+
+  it("tells a paced role the truth when the target cannot hold its clock", () => {
+    const unheld = computerToolDefinition({
+      role: "playtester",
+      capabilities: { ...bridge, clock: ClockLevel.None },
+    }).description;
+    assert.match(unheld, /cannot be held still/);
+    assert.doesNotMatch(unheld, /stands still between your actions/);
+  });
+});
+
+describe("computer tool v2 — tolerant names, observing, batching", () => {
+  it("accepts the names cua and OpenAI models use, without advertising them", () => {
+    const rows: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        { action: "click", coordinate: "10,20" },
+        { action: "left_click", coordinate: [10, 20] },
+      ],
+      [
+        { action: "click", x: 5, y: 6, button: "right" },
+        { action: "right_click", coordinate: [5, 6] },
+      ],
+      [
+        { action: "click", x: 5, y: 6, button: "wheel" },
+        { action: "middle_click", coordinate: [5, 6] },
+      ],
+      [
+        { action: "type_text", text: "hi" },
+        { action: "type", text: "hi" },
+      ],
+      [
+        { action: "press_key", text: "Return" },
+        { action: "key", text: "Return" },
+      ],
+      [
+        { action: "hotkey", text: "ctrl+s" },
+        { action: "key", text: "ctrl+s" },
+      ],
+      [
+        { action: "keypress", keys: ["CTRL", "S"] },
+        { action: "key", text: "CTRL+S" },
+      ],
+      [
+        { action: "move_cursor", coordinate: "1,2" },
+        { action: "mouse_move", coordinate: [1, 2] },
+      ],
+      [
+        {
+          action: "drag",
+          path: [
+            { x: 1, y: 2 },
+            { x: 3, y: 4 },
+            { x: 9, y: 9 },
+          ],
+        },
+        { action: "left_click_drag", start_coordinate: [1, 2], coordinate: [9, 9] },
+      ],
+      [{ action: "scroll_up" }, { action: "scroll", scroll_direction: "up" }],
+      [
+        { action: "scroll", scroll_y: 360, x: 1, y: 2 },
+        { action: "scroll", scroll_direction: "down", scroll_amount: 3 },
+      ],
+      [
+        { action: "scroll", scroll_x: -120 },
+        { action: "scroll", scroll_direction: "left", scroll_amount: 1 },
+      ],
+      [{ action: "get_cursor_position" }, { action: "cursor_position" }],
+    ];
+    for (const [given, expected] of rows) {
+      const parsed = parseComputerArgs(given);
+      assert.equal(parsed.ok, true, `${JSON.stringify(given)} parses`);
+      const request: Record<string, unknown> = parsed.ok ? { ...parsed.request } : {};
+      for (const [key, value] of Object.entries(expected))
+        assert.deepEqual(request[key], value, `${JSON.stringify(given)} → ${key}`);
+    }
+    const description = computerToolDefinition().description;
+    assert.doesNotMatch(description, /type_text|press_key|hotkey/, "aliases stay out of the description");
+  });
+
+  it("reads observe on input actions, and says so when it does not know the word", () => {
+    const seen = parseComputerArgs({ action: "key", text: "w", observe: "screenshot" });
+    assert.equal(seen.ok && seen.request.observe, "screenshot");
+    const none = parseComputerArgs({ action: "key", text: "w", observe: "none" });
+    assert.equal(none.ok && none.request.observe, "none");
+    const odd = parseComputerArgs({ action: "key", text: "w", observe: "maybe" });
+    assert.equal(odd.ok && odd.request.observe, undefined);
+    assert.match(String(odd.ok && odd.request.observeNote), /observe "maybe"/);
+  });
+
+  it("batches input and waits, and refuses what a batch may not hold", () => {
+    const ok = parseComputerArgs({
+      action: "batch",
+      actions: JSON.stringify([
+        { action: "key", text: "w" },
+        { action: "wait", duration: 0.2 },
+        { action: "left_click", coordinate: "1,1" },
+      ]),
+    });
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.ok && ok.request.steps?.map((step) => step.action), ["key", "wait", "left_click"]);
+    const asArray = parseComputerArgs({ action: "batch", actions: [{ action: "type", text: "go" }] });
+    assert.equal(asArray.ok && asArray.request.steps?.length, 1);
+    const refusals: Array<[unknown, RegExp]> = [
+      [undefined, /batch needs actions/],
+      ["not json", /batch needs actions/],
+      [[], /batch needs actions/],
+      [[{ action: "screenshot" }], /only input actions and wait/],
+      [[{ action: "batch", actions: [] }], /only input actions and wait/],
+      [[{ action: "reload" }], /only input actions and wait/],
+      [Array.from({ length: 9 }, () => ({ action: "key", text: "w" })), /at most 8 steps/],
+      [[{ action: "left_click_drag" }], /step 1: left_click_drag needs/],
+    ];
+    for (const [actions, error] of refusals) {
+      const parsed = parseComputerArgs({ action: "batch", actions });
+      assert.equal(parsed.ok, false, `${JSON.stringify(actions)} is refused`);
+      assert.match((parsed as { error: string }).error, error);
+    }
+  });
+});
+
+describe("computer tool — a goal the host checks cannot be gamed by its own path", () => {
+  it("reads own fields only: nothing on the prototype, no missing value equal to the word undefined", () => {
+    const state = { flow: { phase: "menu" } };
+    assert.equal(setupReached({ path: "constructor", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "__proto__", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "flow.toString", truthy: true }, state), false);
+    assert.equal(setupReached({ path: "missing", equals: "undefined" }, state), false);
+    assert.equal(setupReached({ path: "flow.phase", equals: "menu" }, state), true);
+    assert.equal(normalizeSetup({ verify: { path: "__proto__.x", truthy: true } }), null);
+  });
+});
+
+describe("computer tool — mouse-look and named game actions, where the target has them", () => {
+  it("offers look on any target with a pointer, and act only on one that takes named actions", () => {
+    const relative = { ...BROWSER_CAPABILITIES, pointer: PointerLevel.Relative };
+    assert.ok(computerActionsFor(relative).includes("look" as never));
+    assert.ok(!computerActionsFor(relative).includes("left_click" as never));
+    assert.ok(!computerActionsFor({ ...BROWSER_CAPABILITIES, pointer: PointerLevel.None }).includes("look" as never));
+    assert.ok(!computerActionsFor(BROWSER_CAPABILITIES).includes("act" as never), "the browser takes no named actions");
+    const acting = { ...BROWSER_CAPABILITIES, actions: true };
+    assert.ok(computerActionsFor(acting).includes("act" as never));
+    assert.match(computerToolDefinition({ capabilities: acting }).description, /act text=<action>/);
+    assert.doesNotMatch(computerToolDefinition().description, /act text=<action>/);
+  });
+
+  it("reads look's deltas and act's name, and says what is missing", () => {
+    const look = parseComputerArgs({ action: "look", dx: "40", dy: -10 });
+    assert.equal(look.ok, true);
+    assert.deepEqual(look.ok && computerToInput(look.request, { x: 0, y: 0 }), [{ type: "look", dx: 40, dy: -10 }]);
+    const lookNothing = parseComputerArgs({ action: "look" });
+    assert.equal(lookNothing.ok, false);
+    assert.match((lookNothing as { error: string }).error, /look needs dx/);
+    const act = parseComputerArgs({ action: "act", text: "jump", duration: 0.5 });
+    assert.equal(act.ok && act.request.text, "jump");
+    const actNothing = parseComputerArgs({ action: "act" });
+    assert.match((actNothing as { error: string }).error, /act needs text/);
   });
 });

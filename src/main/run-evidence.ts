@@ -2,7 +2,7 @@
 import type { Dirent } from "node:fs";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { RunSummary } from "../shared/run-summary.ts";
+import { InteractionSource, type RunSummary } from "../shared/run-summary.ts";
 import { isBelow } from "../substrate/paths.ts";
 
 /** The longest report the supplement reads, in characters. */
@@ -106,7 +106,7 @@ async function supplementPlaytests(summary: RunSummary, dir: string, entries: re
         label: `Independent playtest ${folder.name.slice(5)} — ${check} (question not recorded)`,
         status: playtestStatus(answer.pass),
         note: typeof answer.note === "string" ? answer.note : null,
-        source: "independent-playtester",
+        source: InteractionSource.IndependentPlaytester,
       });
     }
   }

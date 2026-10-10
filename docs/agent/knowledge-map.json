@@ -165,13 +165,22 @@
         "src/shared/preview-contract.ts",
         "tests/conformance/page-serve.test.ts",
         "tests/conformance/page-shim.test.ts",
-        "src/substrate/pixel-stats.ts"
+        "src/substrate/pixel-stats.ts",
+        "src/substrate/computer-*.ts",
+        "src/main/core/computer-*.ts",
+        "src/main/core/browser-preview-target.ts",
+        "src/shared/computer-target.ts",
+        "src/shared/play-protocol.ts",
+        "src/substrate/play-protocol-client.ts",
+        "src/main/core/game-bridge-target.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/builds-live.md",
-        "docs/performance.md"
+        "docs/performance.md",
+        "docs/computer-use.md",
+        "docs/play-protocol.md"
       ],
       "commands": ["check", "test:fast", "test:ui"]
     },

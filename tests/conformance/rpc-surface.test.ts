@@ -72,6 +72,7 @@ const API_KEYS = [
   "preview.gesture",
   "preview.gpuErrors",
   "preview.input",
+  "preview.computer",
   "preview.load",
   "preview.observe",
   "preview.pageUi",

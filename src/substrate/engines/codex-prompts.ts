@@ -3,6 +3,7 @@
  * at the boundary: the critic's rules, the folders a builder must not read, and where a
  * read-only session may write.
  */
+import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
 
 /**
  * The critic's two rules, appended to every judge prompt. The Claude critic has its tools,
@@ -42,4 +43,31 @@ export function readOnlyNote(cwd: string, scratch: string | null, leads: string 
  */
 export function planModeNote(cwd: string, scratch: string): string {
   return `\n\nPLAN MODE — the user wants a plan before any change. This game's folder is ${cwd}: read it freely by its full path (start with its AGENTS.md or CLAUDE.md if it has one), but change nothing there or anywhere else. You are running from ${scratch}, which holds only the studio's tools. Find out what you need, then reply with your plan in Markdown: what you will change, where and how. The user approves it before you carry it out.`;
+}
+
+/**
+ * A session whose studio tools are Codex dynamic tools (`codex-turns.ts`): the brief was written
+ * for the file bridge's command syntax, so it is told the same tools are its own function tools.
+ */
+/**
+ * What a session that has the studio's live tools as an MCP server is told: they are its own tools
+ * under the server's prefix, and the bridge command is the fallback when one is refused.
+ */
+export function mcpToolsNote(tools: readonly string[]): string {
+  if (!tools.length) return "";
+  const named = tools.map((tool) => `${MCP_SERVER_NAME}_${tool}`).join(", ");
+  return `STUDIO TOOLS — ${named} are your own tools in this session: call them directly with JSON arguments, and a tool that looks at the build answers with the picture itself. Only if one is refused, run \`node .studio/bridge/tool.mjs <tool> ...\` for the same tool instead.`;
+}
+
+/**
+ * What a judge that plays is told on an engine that cannot take its file tools away at the
+ * boundary (Codex reads the whole disk): it judges only from playing. The studio's own goal check
+ * does not rest on this — it reads the game's state itself — but the judge's other answers do.
+ */
+export const BLIND_JUDGE_NOTE =
+  "YOU JUDGE BY PLAYING — read, list or search no file of the build or anywhere else; the only files you may open are the pictures your studio tools save. Everything you say must come from what you did and saw in the game.";
+
+export function dynamicToolsNote(tools: readonly string[]): string {
+  if (!tools.length) return "";
+  return `STUDIO TOOLS — ${tools.join(", ")} are your own function tools in this session; call them directly. Where these instructions say to run \`node .studio/bridge/tool.mjs <tool> ...\`, call the tool <tool> with the same fields as JSON arguments instead: there is no bridge folder to run. A tool that looks at the build answers with the picture itself.`;
 }

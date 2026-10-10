@@ -279,6 +279,14 @@ describe("a chat's own Claude session asks the person", () => {
       assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} stays off`);
   });
 
+  it("a blind judge plays with its live tools alone: no file, shell, edit or question tool", async () => {
+    const { fn, seen } = fakeQuery();
+    await (await engineFor(fn)).delegate({ prompt: "play it", cwd: "/tmp/blind", readOnly: true, blind: true });
+    const options = seen[0]!;
+    for (const tool of ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "AskUserQuestion"])
+      assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} is not a blind judge's`);
+  });
+
   /**
    * Auto's classifier reads the studio's rules on top of Claude Code's own ("$defaults" first, its
    * soft and hard blocks untouched), in every mode: the picker can move a running session to Auto.

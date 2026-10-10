@@ -14,7 +14,11 @@ import { askVisionBoard, blindCompare, Side, visionCheck } from "../judge.ts";
 import { EngineFailure, outageDelays, withProviderPatience } from "../outage.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { runPlaytest } from "../playtester.ts";
+import { handsOnJudgesOn, runHandsOnJudge } from "../hands-on-judge.ts";
+import { parseGoalState, questId, type Quest } from "../quest.ts";
+import { keepRouteOf } from "../routes.ts";
 import { attemptRef } from "../repo.ts";
+import { InteractionObjective, InteractionSource } from "../interaction-words.ts";
 import { RunEvent, SteeringSource } from "../run-events.ts";
 import { CheckKind, CheckWeight, MoveOwner, normalizeFacetSpec, normalizeMilestone } from "../spec.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
@@ -885,43 +889,106 @@ async function folderState(loopRun: LoopRun, root: string): Promise<{ head: stri
   return { head, clean };
 }
 
+/** What one session in a build established: its answer, its record, who played and what it rests on. */
+interface PlaySession {
+  result: CheckResult | null;
+  report: AnyRecord | null;
+  source: InteractionSource;
+  objective: InteractionObjective;
+  trace: string | null;
+}
+
+/**
+ * One session in the build: a blind judge that plays to the lead's goal state when it named one
+ * (the studio checks the state; a verified, replayable route is kept for later builds), else the
+ * playtester on the lead's question.
+ */
+async function sessionIn(
+  loopRun: LoopRun,
+  { ask, n, playRoot, handle, deadline, setup, quest }: AnyRecord,
+): Promise<PlaySession> {
+  const { ctx, run } = loopRun;
+  const checks = [{ id: "director-play", kind: CheckKind.Play, ask, expect: "yes", weight: CheckWeight.Normal }];
+  const labelPrefix = `director/play_${n}`;
+  if (quest) {
+    const judged = await runHandsOnJudge(ctx, {
+      run: { ...run, setup },
+      root: playRoot,
+      handle,
+      questions: checks as Check[],
+      quest,
+      deadline,
+      labelPrefix,
+      iteration: n,
+      facetId: `play-${n}`,
+    });
+    if (judged.objective === InteractionObjective.StudioVerified)
+      await keepRouteOf({ run, journal: loopRun.journal }, judged.trace, quest).catch(() => null);
+    return {
+      result: judged.results[0] ?? null,
+      report: judged.report,
+      source: InteractionSource.HandsOnJudge,
+      objective: judged.objective,
+      trace: judged.trace?.path ?? null,
+    };
+  }
+  const played = await runPlaytest(ctx, {
+    run: { ...run, setup },
+    spec: { id: `play-${n}`, title: "director playtest", intent: ask, cameras: ["default"] },
+    checks: checks as Check[],
+    root: playRoot,
+    handle,
+    deadline,
+    iteration: n,
+    labelPrefix,
+    maxActions: PLAYTEST_MAX_ACTIONS,
+  });
+  return {
+    result: played?.results?.[0] ?? null,
+    report: played?.report ?? null,
+    source: InteractionSource.IndependentPlaytester,
+    objective: InteractionObjective.ModelSaid,
+    trace: null,
+  };
+}
+
 /** One playtest in a folder that is the build: play it, record what it established, and answer. */
 async function playIn(
   loopRun: LoopRun,
-  { target, ask, n, playRoot, handle, budget, goalId, scenario }: AnyRecord,
+  { target, ask, n, playRoot, handle, budget, goalId, scenario, quest }: AnyRecord,
 ): Promise<string> {
-  const { appendRun, ctx, finalDeadline, note, run, softDeadline } = loopRun;
+  const { appendRun, finalDeadline, note, run, softDeadline } = loopRun;
   const before = await folderState(loopRun, playRoot);
   // A playtest in the wrap-up plays until the wrap-up's end, not the working deadline behind it.
   const until = passDeadline({ now: Date.now(), softDeadline, finalDeadline });
-  const played = await runPlaytest(ctx, {
-    run: { ...run, setup: target.worker?.setup ?? run.setup ?? null },
-    spec: { id: `play-${n}`, title: "director playtest", intent: ask, cameras: ["default"] },
-    checks: [{ id: "director-play", kind: CheckKind.Play, ask, expect: "yes", weight: CheckWeight.Normal }] as Check[],
-    root: playRoot,
+  const session = await sessionIn(loopRun, {
+    ask,
+    n,
+    playRoot,
     handle,
     deadline: Math.min(until, Date.now() + budget),
-    iteration: n,
-    labelPrefix: `director/play_${n}`,
-    maxActions: PLAYTEST_MAX_ACTIONS,
+    setup: target.worker?.setup ?? run.setup ?? null,
+    quest,
   });
   const after = await folderState(loopRun, playRoot);
   const untouched = before.clean && after.clean && before.head === after.head;
-  const result = played?.results?.[0] ?? null;
+  const result = session.result;
   const words = playWords(result?.pass);
   await appendRun(RunEvent.RunInteractionEvidence, {
     head: untouched ? before.head : null,
     label: ask,
     status: words.status,
     note: result?.note ?? result?.reason ?? null,
-    source: "independent-playtester",
+    source: session.source,
+    objective: session.objective,
+    ...(session.trace ? { trace: session.trace } : {}),
   }).catch(() => {});
   if (goalId && loopRun.state.goals && untouched && before.head && target.root === loopRun.integrationWorktree) {
     recordGoalEvidence(loopRun.state.goals, goalId, before.head, result?.pass ?? undefined, scenario);
     await keepCheckpoint(loopRun, before.head);
     await loopRun.saveJournal();
   }
-  const bigMove = played?.report?.bigMove ?? null;
+  const bigMove = session.report?.bigMove ?? null;
   // A step beyond the ask is labelled for the lead and put to the user (facet/beyond.ts), never a move.
   const step = playtestStepWords(bigMove);
   note(`playtested ${target.label}: ${words.said}${step.note}`);
@@ -931,11 +998,29 @@ async function playIn(
     question: ask,
     answer: words.answer,
     note: result?.note ?? result?.reason ?? "",
-    actions: played?.report?.actions ?? 0,
-    report: played?.report?.report ?? "",
+    actions: session.report?.actions ?? 0,
+    report: session.report?.report ?? "",
+    ...(session.source === InteractionSource.HandsOnJudge ? { objective: session.objective } : {}),
     bigMove,
     ...(step.card ? { bigMoveOutsideAsk: "put to the user as a decision card; never a move" } : {}),
   });
+}
+
+/**
+ * The lead's `goal_state` as the quest a judge that plays is sent to reach: null without one (or
+ * with judges that play turned off for the run), the refusal when it cannot be read.
+ */
+function questOf(run: LoopRun["run"], goalState: unknown, ask: string): Quest | { error: string } | null {
+  const parsed = parseGoalState(goalState);
+  if (!parsed || !handsOnJudgesOn(run)) return null;
+  if ("error" in parsed) return parsed;
+  return { id: questId(ask, "goal"), until: parsed.until };
+}
+
+/** Is `scenario` absent, or a zero-based index of the goal's acceptance scenarios? */
+function scenarioOf(acceptance: readonly unknown[], scenario: number | undefined): boolean {
+  if (scenario === undefined) return true;
+  return Number.isInteger(scenario) && scenario >= 0 && scenario < acceptance.length;
 }
 
 export async function playtest(loopRun: LoopRun, args: AnyRecord) {
@@ -946,17 +1031,15 @@ export async function playtest(loopRun: LoopRun, args: AnyRecord) {
   if (args.goal && !goal) return "Unknown required goal; read run_status.";
   if (goal && target.root !== loopRun.integrationWorktree) return "Goal evidence must verify the integration revision.";
   const scenario = args.scenario === undefined ? undefined : Number(args.scenario);
-  if (
-    goal &&
-    scenario !== undefined &&
-    (!Number.isInteger(scenario) || scenario < 0 || scenario >= goal.acceptance.length)
-  )
+  if (goal && !scenarioOf(goal.acceptance, scenario))
     return "scenario must name a zero-based acceptance index from run_status";
   const scenarios = scenario === undefined ? goal?.acceptance : [goal?.acceptance[scenario]];
   const ask = goal
     ? `Verify every required scenario through actual interaction: ${scenarios?.join("; ")}. Report no or unmeasured when a dependency or hosted two-client route is unavailable. Screenshots and protocol tests alone cannot prove multiplayer.`
     : String(args.ask ?? "").trim();
   if (!ask) return "playtest needs one yes/no question (ask)";
+  const quest = questOf(run, args.goal_state, ask);
+  if (quest && "error" in quest) return quest.error;
   const n = ++state.plays;
   const budget =
     Math.min(PLAYTEST_MAX_MINUTES, Math.max(PLAYTEST_MIN_MINUTES, num(args.minutes, PLAYTEST_DEFAULT_MINUTES))) *
@@ -976,6 +1059,7 @@ export async function playtest(loopRun: LoopRun, args: AnyRecord) {
         budget,
         goalId: goal?.id,
         scenario,
+        quest,
       });
     } catch (err: any) {
       return `playtest failed: ${err?.message ?? err}`;

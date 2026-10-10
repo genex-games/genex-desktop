@@ -152,6 +152,7 @@
   "tests/conformance/pixel-stats.test.ts",
   "tests/conformance/plan-drafting.test.ts",
   "tests/conformance/planning-capabilities.test.ts",
+  "tests/conformance/play-protocol-client.test.ts",
   "tests/conformance/playtest-tools.test.ts",
   "tests/conformance/plugin-activity.test.ts",
   "tests/conformance/plugin-consent.test.ts",

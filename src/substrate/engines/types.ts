@@ -283,6 +283,11 @@ export interface DelegateRequest {
    * asks in the chat's mode (`leadAsks`: a waking run's lead, the run's coordinator).
    */
   readOnly?: boolean;
+  /**
+   * A judge that plays: read-only, and it may not read files either. It sees the build only through
+   * its live tools, from an empty folder, so a note the builder left in the code cannot sway it.
+   */
+  blind?: boolean;
   /** Host-owned stable coordinator workspace; keep session cwd across chat turns. */
   coordinator?: boolean;
   /**

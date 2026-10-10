@@ -696,6 +696,52 @@ describe("the computer tool's host", () => {
   });
 });
 
+describe("a judge that plays", () => {
+  it("holds the computer alone, blind in an empty folder, steps its clock, and hands back a verified trace", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const project = await rig.core.games.scaffold("judge-smoke", { title: "judge" });
+    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
+    const seen: DelegateRequest[] = [];
+    fakeEngine(rig, "codex", async (request) => {
+      seen.push(request);
+      const moved = await request.onLiveTool!("computer", { action: "key", text: "Return" });
+      assert.ok(typeof moved !== "string" && moved.images?.length, "the judge sees the result of its move");
+      const shorthand = await request.onLiveTool!("press_keys", { keys: "w" });
+      assert.doesNotMatch(text(shorthand), /^OK/, "the playtester's shorthands are not a judge's");
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "j", summary: "{}" };
+    });
+    const result = (await api["engine.delegate"]!({
+      engine: "codex",
+      prompt: "play and judge",
+      project: project.name,
+      playtest: {
+        project: project.name,
+        root: project.dir,
+        runId: "run_j",
+        facetId: "integration",
+        iteration: 1,
+        role: "judge",
+        label: "judge",
+        maxActions: 4,
+        quest: { id: "booted", until: { path: "ready", truthy: true } },
+      },
+      readOnly: true,
+    })) as { trace?: { steps: number; path: string | null } };
+    const request = seen[0]!;
+    assert.deepEqual(
+      (request.liveTools ?? []).map((t) => t.name),
+      ["computer"],
+    );
+    assert.equal(request.blind, true);
+    assert.equal(request.readOnly, true);
+    assert.notEqual(path.resolve(request.cwd), path.resolve(project.dir), "the judge does not start in the build");
+    assert.ok(!(request.extraReads ?? []).some((dir) => path.resolve(dir) === path.resolve(project.dir)));
+    assert.equal(result.trace?.steps, 1, "the refused shorthand never reached the computer");
+    assert.ok(result.trace?.path && (await readFile(result.trace.path, "utf8")).includes('"action":"key"'));
+  });
+});
+
 describe("what a load waits for", () => {
   /** A scaffolded game whose studio.json declares how long it takes to boot. */
   async function bootGame(rig: Rig, name: string, bootMs: number): Promise<{ dir: string; name: string }> {
