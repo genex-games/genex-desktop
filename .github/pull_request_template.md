@@ -1,9 +1,6 @@
 ## What and why
 
-Closes #
-
-<!-- The issue you were assigned (see CONTRIBUTING.md); pull requests without one may be
-closed. Then the behavior this changes and the reason. -->
+<!-- The behavior this changes and the reason. Link the issue. -->
 
 ## Validation
 
