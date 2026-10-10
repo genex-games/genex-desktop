@@ -12,6 +12,14 @@
  */
 
 export type AssetKind = "image" | "model" | "audio" | "video" | "other";
+/** Host-owned asset trees; Unity authoring files outside Generated are not preview authority. */
+export const ASSET_FOLDERS = {
+  Browser: "assets",
+  BrowserBuild: "public/assets",
+  UnityGenerated: "Assets/Generated",
+} as const;
+/** The same bounded folders, for file requests that require a trailing separator. */
+export const ASSET_PREFIXES: readonly string[] = Object.values(ASSET_FOLDERS).map((folder) => `${folder}/`);
 /** `genex` and `blender` are the two the studio ships; any other value is a plugin id. */
 export type AssetSource = "genex" | "blender" | "imported" | (string & {});
 

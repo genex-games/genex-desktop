@@ -1,4 +1,4 @@
-import { ASSET_FORMATS, assetExtension, assetFormat, type AssetPreviewMode } from "./game-assets.ts";
+import { ASSET_FOLDERS, ASSET_FORMATS, assetExtension, assetFormat, type AssetPreviewMode } from "./game-assets.ts";
 import { isGenexRef } from "./genex-ref.ts";
 
 export { assetExtension };
@@ -13,10 +13,13 @@ export const ASSET_PREVIEW_MIME: Readonly<Record<string, string>> = Object.freez
 export function assetPreviewMode(file: string): AssetPreviewMode {
   return assetFormat(file)?.preview ?? "unsupported";
 }
-/** The folder a model's resources must stay inside: its Genex ref, `public/assets` or `assets`. */
+/** A model's resources stay inside its Genex ref or the same host-owned asset tree. */
 function companionRoot(base: string): string[] {
   if (isGenexRef(base)) return base.split("/").slice(0, 2);
-  return base.startsWith("public/assets/") ? ["public", "assets"] : ["assets"];
+  if (base.startsWith(`${ASSET_FOLDERS.UnityGenerated}/`)) return ASSET_FOLDERS.UnityGenerated.split("/");
+  return base.startsWith(`${ASSET_FOLDERS.BrowserBuild}/`)
+    ? ASSET_FOLDERS.BrowserBuild.split("/")
+    : [ASSET_FOLDERS.Browser];
 }
 
 function decodedResource(uri: string): string {

@@ -132,12 +132,6 @@ const HOSTILE: Array<[string, () => Promise<unknown>, () => ProjectAssetRead]> =
   ["a shot that is a link out", () => plantShot(path.join(outside, "secret.png")), () => cover(GAME)],
   ["a shot that is a link to a folder", () => plantShot(path.join(outside, "planted")), () => cover(GAME)],
   ["a shot that is a folder", async () => mkdir(path.join(await keep({}), "shot.png")), () => cover(GAME)],
-  // A read that opened it would wait for a writer forever: refused before it is opened.
-  [
-    "a shot that is a named pipe",
-    async () => void execFileSync("mkfifo", [path.join(await keep({}), "shot.png")]),
-    () => cover(GAME),
-  ],
   [
     "a shot over the size cap",
     () => keep({ "shot.png": Buffer.concat([PNG, Buffer.alloc(GENEX_COVER_MAX_BYTES)]) }),
@@ -160,6 +154,15 @@ it("answers null and changes nothing for hostile games, places and files", async
     assert.equal(await read(request()), null, name);
     assert.deepEqual(await everything(), before, `${name}: nothing touched`);
   }
+});
+
+it("refuses a POSIX FIFO before opening it, without waiting for a writer", {
+  skip: process.platform === "win32" && "Windows named pipes are not POSIX filesystem FIFOs",
+}, async () => {
+  execFileSync("mkfifo", [path.join(await keep({}), "shot.png")]);
+  const before = await everything();
+  assert.equal(await read(cover(GAME)), null);
+  assert.deepEqual(await everything(), before, "the refused FIFO changes nothing");
 });
 
 it("answers null for Genex storage or its covers folder reached through a link", async () => {

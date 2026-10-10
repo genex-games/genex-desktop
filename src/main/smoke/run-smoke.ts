@@ -2,7 +2,7 @@
  * The build smoke (`--studio-smoke`): loaded by main with a dynamic import only when that flag is
  * set, so no smoke code runs, or is even evaluated, in a normal launch.
  */
-import { type BrowserWindow, app, type WebContents, type WebFrameMain } from "electron";
+import { type BrowserWindow, app, ipcMain, type WebContents, type WebFrameMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -16,7 +16,8 @@ import { QUEUE_PLACEHOLDER } from "../../renderer/composer-placeholder.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { HarnessState, DispatchActionType } from "../../shared/protocol.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
-import { pushToRenderer } from "../ipc-handle.ts";
+import { createIpcHandle, pushToRenderer } from "../ipc-handle.ts";
+import { recommendModels, type HardwareInfo } from "../../substrate/hardware.ts";
 import { finishedPayload, startedPayload } from "../plugin-activity.ts";
 import type { GamePreview } from "../preview.ts";
 import type { StudioCore } from "../studio-core.ts";
@@ -52,6 +53,8 @@ const BUILD_WAIT_MS = 15 * SECOND_MS;
 const COMPUTER_WAIT_MS = 10 * SECOND_MS;
 /** The pause that lets the window paint, and the native preview settle, before a screenshot or a read. */
 const SETTLE_MS = 250;
+/** The macOS traffic lights occupy this part of the plugin header; other platforms have none there. */
+const MAC_HEADER_INSET = 76;
 
 /** A renderer console line main collected, as the smoke reads it. */
 export interface RendererConsoleEntry {
@@ -145,6 +148,7 @@ interface Smoke {
 const MESSAGE = {
   missing: (what: string) => `smoke setup is missing ${what}`,
   coordinatorExpected: "Smoke expected a coordinator; a worker must not launch",
+  modelDownloadUnavailable: "unsupported-in-fixture",
 } as const;
 
 /** A value the smoke cannot go on without; a named smoke failure when it is missing. */
@@ -630,8 +634,8 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
   await wc.executeJavaScript(
     `localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)}, "codex::gpt-5.6-sol")`,
   );
-  const waitFor = (expression: string, timeoutMs = BUILD_WAIT_MS) =>
-    waitUntil(
+  const waitFor = async (expression: string, timeoutMs = BUILD_WAIT_MS) => {
+    const matched = await waitUntil(
       async () => {
         // This fixture window is hidden: capture advances its compositor so ResizeObserver,
         // media queries and overlay exit animations can settle as they do in a visible app.
@@ -640,6 +644,16 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
       },
       { timeoutMs, intervalMs: WINDOW_POLL_MS },
     );
+    if (!matched) {
+      const state = await wc
+        .executeJavaScript(
+          `JSON.stringify({text:document.body.innerText.slice(0,2400),room:document.querySelector('[data-studio-state]')?.dataset.room,activeThread:document.querySelector('[data-studio-state]')?.dataset.activeThread,savedThread:localStorage.getItem('studio.activeThread'),modelButtons:Array.from(document.querySelectorAll('[aria-label="Model settings"]')).map(e=>({text:e.textContent,expanded:e.getAttribute('aria-expanded')})),alerts:Array.from(document.querySelectorAll('[role="alert"]')).map(e=>e.textContent),focus:document.activeElement?.getAttribute('aria-label'),sidebar:document.querySelector('[data-studio-state]')?.dataset.sidebarOpen,mainInert:document.querySelector('main')?.inert,sidebarRect:document.querySelector('.studio-sidebar')?.getBoundingClientRect().toJSON()})`,
+        )
+        .catch(errorMessage);
+      process.stderr.write(`[build-smoke timeout] ${expression}\n${state}\n`);
+    }
+    return matched;
+  };
   return { ...smoke, project, threadId, runId, append, waitFor };
 }
 
@@ -647,6 +661,7 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
 async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
   const { smokeReads } = buildSmoke.ctx;
+  const { threadId } = buildSmoke;
   // Delay actual IPC reads; empty data and unavailable data must never look alike.
   // Faults persist until the explicit retry: StrictMode may replay mount reads,
   // so a one-shot rejection can be consumed by an already-disposed effect.
@@ -677,10 +692,14 @@ async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
   );
   releaseBootstrap();
   smokeReads.bootstrap = undefined;
+  // Every launch opens Home. Select the fixture chat before testing its pending read;
+  // Home retains a hidden chat skeleton, which is not evidence of an IPC request.
+  await waitFor(`!!document.querySelector('nav [data-thread="${threadId}"]')`);
+  await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
   check(
     "games can load while the chat is still pending",
     await waitFor(
-      `!document.body.innerText.includes('Could not load games and chats.')&&!!document.querySelector('[aria-label="Loading conversation…"]')&&!!document.querySelector('nav [data-project]')`,
+      `document.querySelector('[data-studio-state]')?.dataset.activeThread===${JSON.stringify(threadId)}&&!document.body.innerText.includes('Could not load games and chats.')&&!!document.querySelector('[aria-label="Loading conversation…"]')&&!!document.querySelector('nav [data-project]')`,
     ),
   );
   smokeReads.failThread = true;
@@ -727,6 +746,7 @@ async function checkSidebarToggle(buildSmoke: BuildSmoke): Promise<void> {
 async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
   const { core, pushUiEvent } = buildSmoke.ctx;
+  installModelSetupFixture(wc);
   // Bonsai UI acceptance uses only a descriptor fixture: no weights, runtime or accounts.
   core.engines.register({
     id: EngineId.Bonsai,
@@ -792,6 +812,38 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await waitFor(`!document.querySelector('[data-testid="settings-dialog"]')`);
 }
 
+/** Fixed hardware and a refused download for this disposable UI run; never fetch model weights. */
+function installModelSetupFixture(wc: WebContents): void {
+  const hardware: HardwareInfo = {
+    cpu: "Apple M2 (UI fixture)",
+    ramBytes: 16 * 1024 ** 3,
+    ramGb: 16,
+    usableModelGb: 11.5,
+    platform: "darwin",
+    arch: "arm64",
+    appleSilicon: true,
+  };
+  const handle = createIpcHandle(ipcMain, {
+    fixture: false,
+    isStudioUi: (event) => event.sender === wc && event.senderFrame === wc.mainFrame,
+  });
+  ipcMain.removeHandler("studio:hardware");
+  handle("studio:hardware", async () => ({ hardware, recommendation: await recommendModels(hardware) }));
+  ipcMain.removeHandler("studio:pull-model");
+  handle("studio:pull-model", () => {
+    throw new Error(MESSAGE.modelDownloadUnavailable);
+  });
+}
+
+/** Re-enter the fixture game after reload; Home is the application's intended launch surface. */
+async function reloadFixtureChat(buildSmoke: BuildSmoke): Promise<void> {
+  const { wc, threadId, waitFor } = buildSmoke;
+  wc.reload();
+  await waitFor(`!!document.querySelector('nav [data-thread="${threadId}"]')`);
+  await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
+  await waitFor(`document.querySelector('[data-studio-state]')?.dataset.activeThread===${JSON.stringify(threadId)}`);
+}
+
 /** A game chat picks its builder and judge, and the choice survives a reload. */
 async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, threadId, waitFor } = buildSmoke;
@@ -813,7 +865,7 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.removeItem('studio.roles.codex');localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'bonsai::bonsai-2:27b-pq2_0')`,
   );
-  wc.reload();
+  await reloadFixtureChat(buildSmoke);
   check(
     "Bonsai selection restores on reload",
     await waitFor(`document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Bonsai')`),
@@ -834,7 +886,7 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'codex::gpt-5.6-sol')`,
   );
-  wc.reload();
+  await reloadFixtureChat(buildSmoke);
   check(
     "returning to Codex preserves the project",
     await waitFor(
@@ -991,12 +1043,13 @@ async function checkPluginSearchAndZoom(buildSmoke: BuildSmoke): Promise<void> {
   await capturePlugins("skills");
   const [pluginWidth = 0, pluginHeight = 0] = window.getSize();
   const pluginZoom = wc.getZoomFactor();
+  const headerInset = process.platform === StudioPlatform.Mac ? MAC_HEADER_INSET : 0;
   window.setSize(1000, 720);
   wc.setZoomFactor(2);
   check(
     "Plugins at 200 percent zoom keeps header actions reachable",
     await waitFor(
-      `(()=>{const p=document.querySelector('[data-plugins-page]'),a=p?.querySelector('[aria-label="Add integration"]'),s=p?.querySelector('[aria-label="Show sidebar"]');return !!a&&!!s&&a.getBoundingClientRect().right<=innerWidth&&s.getBoundingClientRect().left>=76&&p.scrollWidth<=p.clientWidth;})()`,
+      `(()=>{const p=document.querySelector('[data-plugins-page]'),a=p?.querySelector('[aria-label="Add integration"]'),s=p?.querySelector('[aria-label="Show sidebar"]');return !!a&&!!s&&a.getBoundingClientRect().right<=innerWidth&&s.getBoundingClientRect().left>=${headerInset}&&p.scrollWidth<=p.clientWidth;})()`,
     ),
   );
   check(
@@ -2373,7 +2426,7 @@ async function checkDesignAt(buildSmoke: BuildSmoke, width: number, height: numb
   const { wc, check, waitFor } = buildSmoke;
   const { window } = buildSmoke.ctx;
   const buildShot = flagValue(StudioFlag.BuildShot);
-  window.setSize(width, height);
+  window.setContentSize(width, height);
   wc.setZoomFactor(zoom);
   await wc.capturePage();
   check(
@@ -2463,7 +2516,7 @@ async function checkChromeAndCursors(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
   const { window } = buildSmoke.ctx;
   wc.setZoomFactor(1);
-  window.setSize(1440, 900);
+  window.setContentSize(1440, 900);
   await wc.capturePage();
   await waitFor(`innerWidth===1440 && innerHeight===900`);
   check(

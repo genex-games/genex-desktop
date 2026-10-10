@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -23,7 +23,8 @@ import { after, before, describe, it } from "node:test";
 import { HarnessInbox } from "../../src/substrate/harness-inbox.ts";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, killChild } from "../../src/substrate/spawn.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { removeTree, tmpDir } from "../helpers/tmp.ts";
+import { observeExit } from "../helpers/windows-process.ts";
 
 /** Why this machine cannot run the suite, or false when it can. */
 function skipReason(): string | false {
@@ -53,6 +54,7 @@ let scratch: string;
 let secrets: string;
 let profileDir: string;
 let electronInstall: string;
+let bootstrap: string;
 
 before(async () => {
   if (SKIP) return;
@@ -72,21 +74,24 @@ before(async () => {
   await mkdir(profileDir, { recursive: true });
   await writeFile(path.join(secrets, "token.txt"), SECRET);
   await writeFile(path.join(profileDir, "private.txt"), SECRET);
+  const bootstrapDir = path.join(root, "bootstrap");
+  await mkdir(bootstrapDir);
+  bootstrap = path.join(bootstrapDir, "bootstrap.mjs");
+  await cp(BOOTSTRAP, bootstrap);
   if (existsSync(ELECTRON_DIST)) await cp(ELECTRON_DIST, electronInstall, { recursive: true });
   sandbox = await ProcessSandbox.create({
     writableRoots: [workspace],
     scratchDir: scratch,
     secretPaths: [secrets],
-    readableRoots: [electronInstall],
+    readableRoots: [electronInstall, bootstrapDir],
   });
 });
 
 after(async () => {
   if (SKIP) return;
-  const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
-  await SandboxManager.reset();
-  await rm(profileDir, { recursive: true, force: true });
-  await rm(path.dirname(electronInstall), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  await sandbox.dispose();
+  await removeTree(profileDir);
+  await removeTree(path.dirname(electronInstall));
 });
 
 const inside = (command: string, extra: Partial<Parameters<ProcessSandbox["run"]>[0]> = {}) =>
@@ -196,9 +201,10 @@ describe("Windows sandbox: stdio", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () 
   it("boots the harness bootstrap and hears it over the loopback inbox (stdin does not reach it)", async () => {
     const harness = path.join(workspace, "inbox-harness");
     await cp(FIXTURE_OK, harness, { recursive: true });
+    assert.notEqual((await inside(`printf changed > ${q(bootstrap)}`)).code, 0, "the trusted bootstrap is read-only");
     const inbox = await HarnessInbox.open();
     const { child } = await sandbox.spawnLongLived({
-      command: `${q(process.execPath)} ${q(BOOTSTRAP)}`,
+      command: `${q(process.execPath)} ${q(bootstrap)}`,
       cwd: harness,
       env: { HARNESS_WS: harness, NODE_OPTIONS: "", ...inbox.env() },
     });
@@ -375,17 +381,29 @@ async function beatsReach(file: string, count: number): Promise<number> {
 
 describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
   /** A Node process in the workspace that appends a line to `name` five times a second. */
-  const heartbeat = (name: string) => `node -e 'setInterval(()=>require("fs").appendFileSync("${name}", "b\\n"),200)'`;
+  const heartbeat = (name: string) =>
+    `node -e 'const fs=require("fs");fs.writeFileSync("${name}.pid",String(process.pid));setInterval(()=>fs.appendFileSync("${name}", "b\\n"),200)'`;
 
   it("a timeout ends the whole tree", async () => {
     const file = path.join(workspace, "timeout.hb");
     const run = inside(`${heartbeat("timeout.hb")} & wait`, { timeoutMs: 6_000 });
-    assert.ok((await beatsReach(file, 3)) >= 3, "the heartbeat started");
-    const result = await run;
-    assert.equal(result.timedOut, true);
-    const atKill = await beats(file);
-    await sleep(KILL_SETTLE_MS);
-    assert.equal(await beats(file), atKill, "nothing keeps beating after the kill");
+    let observed: Awaited<ReturnType<typeof observeExit>> | undefined;
+    try {
+      assert.ok((await beatsReach(file, 3)) >= 3, "the heartbeat started");
+      const pid = Number(await readFile(`${file}.pid`, "utf8"));
+      observed = await observeExit(pid, { immediate: true });
+      const result = await run;
+      assert.equal(result.timedOut, true);
+      // Broker pipe closure is not the child process's exit notification. Check the pinned
+      // process immediately, before taking the file snapshot used to detect further writes.
+      await observed.assertExited();
+      const atKill = await beats(file);
+      await sleep(KILL_SETTLE_MS);
+      assert.equal(await beats(file), atKill, "nothing keeps beating after the kill");
+    } finally {
+      await run;
+      await observed?.assertExited();
+    }
   });
 
   it("killing a long-lived process ends its children", async () => {

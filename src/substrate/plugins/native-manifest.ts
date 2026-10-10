@@ -1,12 +1,20 @@
-import type { PluginManifest, PluginNativeRuntime, PluginNativeJob, PluginNativeArg } from "../../shared/plugins.ts";
+import type {
+  PluginManifest,
+  PluginNativeRuntime,
+  PluginNativeJob,
+  PluginNativeArg,
+  PluginNativePlatform,
+} from "../../shared/plugins.ts";
 import { assertRelativePath } from "../paths.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
+import { validateRuntimeCandidate } from "./native-platform.ts";
 /** Runtime, job and value names follow the plugin id rule. */
 const name = PLUGIN_ID;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
-const CANDIDATE_ALIAS = /^(home|studio|storage):(.+)$/;
-const ARCHIVE_FORMATS = ["dmg", "tar.gz"];
+const ARCHIVE_FORMATS = ["dmg", "tar.gz", "zip"];
+const RUNTIME_PLATFORMS = ["darwin", "win32", "linux"];
+const RUNTIME_ARCHITECTURES = ["x64", "arm64"];
 const ARG_SOURCES = ["package", "input", "output", "value"];
 /** The largest each native declaration may be. */
 const NATIVE_MANIFEST_LIMITS = {
@@ -14,6 +22,7 @@ const NATIVE_MANIFEST_LIMITS = {
   jobs: 8,
   labelChars: 120,
   candidates: 16,
+  platforms: 6,
   versionArgs: 16,
   versionPatternChars: 200,
   urlChars: 2048,
@@ -34,9 +43,9 @@ const L = NATIVE_MANIFEST_LIMITS;
 
 /** What a publisher reads when a native runtime or job declaration is refused. */
 const MESSAGE = {
-  CandidatePath: "Runtime candidates must use absolute, home:, studio: or storage: paths",
   InvalidInstall: "Invalid pinned native installation or missing trusted install action",
   InvalidRuntime: "Invalid native runtime",
+  InvalidPlatform: "Invalid or duplicate native runtime platform",
   InvalidVersionPattern: "Invalid runtime version pattern",
   TimeoutRange: (label: string) => `${label}: timeoutMs must be an integer from 1000 to 300000 milliseconds`,
   OutputLimit: (label: string) =>
@@ -83,14 +92,6 @@ function isValidRuntime(r: PluginNativeRuntime, ids: Set<string>): boolean {
   );
 }
 
-/** A candidate is absolute, or a `home:`, `studio:` or `storage:` path that stays inside its root. */
-function validateCandidate(candidate: string): void {
-  if (candidate.startsWith("/")) return;
-  const alias = CANDIDATE_ALIAS.exec(candidate);
-  if (!alias) throw new Error(MESSAGE.CandidatePath);
-  assertRelativePath(alias[2]);
-}
-
 type RuntimeInstall = NonNullable<PluginNativeRuntime["install"]>;
 
 /** A pinned download behind a confirmed setup action: https, a digest, sizes, a known format. */
@@ -115,7 +116,7 @@ function validateInstall(i: RuntimeInstall, m: PluginManifest): RuntimeInstall {
 
 function validateRuntime(r: PluginNativeRuntime, m: PluginManifest, ids: Set<string>): PluginNativeRuntime {
   if (!isValidRuntime(r, ids)) throw new Error(MESSAGE.InvalidRuntime);
-  for (const c of r.candidates) validateCandidate(c);
+  for (const c of r.candidates) validateRuntimeCandidate(c);
   if (!isValidPattern(r.version.pattern)) throw new Error(MESSAGE.InvalidVersionPattern);
   ids.add(r.id);
   const runtime: PluginNativeRuntime = {
@@ -125,7 +126,29 @@ function validateRuntime(r: PluginNativeRuntime, m: PluginManifest, ids: Set<str
     version: { ...r.version, args: [...r.version.args] },
   };
   if (r.install) runtime.install = validateInstall(r.install, m);
+  if (r.platforms !== undefined) runtime.platforms = validatePlatforms(r.platforms, m);
   return runtime;
+}
+
+/** Validate all artifacts independently of the current host, refusing ambiguous duplicate variants. */
+function validatePlatforms(platforms: PluginNativePlatform[], manifest: PluginManifest): PluginNativePlatform[] {
+  if (!Array.isArray(platforms) || !platforms.length || platforms.length > L.platforms)
+    throw new Error(MESSAGE.InvalidPlatform);
+  const seen = new Set<string>();
+  return platforms.map((item) => {
+    const key = `${item?.platform}:${item?.arch}`;
+    const valid = item && RUNTIME_PLATFORMS.includes(item.platform) && RUNTIME_ARCHITECTURES.includes(item.arch);
+    if (!valid || seen.has(key) || !paths(item.candidates, L.candidates) || !item.candidates.length)
+      throw new Error(MESSAGE.InvalidPlatform);
+    seen.add(key);
+    for (const candidate of item.candidates) validateRuntimeCandidate(candidate);
+    return {
+      platform: item.platform,
+      arch: item.arch,
+      candidates: [...item.candidates],
+      ...(item.install ? { install: validateInstall(item.install, manifest) } : {}),
+    };
+  });
 }
 
 /** The limit-specific errors, so a publisher learns which limit a recipe broke. */

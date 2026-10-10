@@ -9,6 +9,9 @@ name: Windows
 on:
   pull_request:
     branches: [main]
+  # A fork owner can validate feature branches without charging upstream's Windows minutes.
+  push:
+    branches-ignore: [dev, main]
   workflow_dispatch:
     inputs:
       files:
@@ -26,6 +29,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   windows:
+    if: github.event_name != 'push' || github.event.repository.fork
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:

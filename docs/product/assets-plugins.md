@@ -2,7 +2,7 @@
 
 ## Assets in a game
 
-Assets groups `assets/` and `public/assets/` files by source and generation, even before a
+Assets groups `assets/`, `public/assets/` and Unity `Assets/Generated/` files by source and generation, even before a
 build; deliveries and external changes refresh it. Cards hide metadata; animation-only GLBs fold
 into their model.
 
@@ -24,9 +24,10 @@ Plugins opens a page with Plugins/Skills, search, rows and details. Plugins and 
 servers show their own pictures ([Icons](../plugins.md#icons)) or an initial. The
 list shows installed plugins (Genex routes game dev tools), your servers, the
 Marketplace (Coming soon until the catalog has something new) and the plugin guide. Install from GitHub pins a pasted link's latest release
-(else the default branch's newest commit). Games build, preview and export without plugins.
+(else the default branch's newest commit). Browser games build, preview and export without plugins.
 The host draws Genex's app-wide page (shared balance, the tools it routes) and Local Blender's
-runtime card. Connect, unapproved, reuses a saved account or
+runtime card. Unity source projects use the bundled [Unity Editor workspace](../unity.md),
+including bridge setup, native tools and player builds. Connect, unapproved, reuses a saved account or
 opens browser sign-in; setup survives restart and reinstall. Game spend is in the usage panel.
 Enabled Genex suggests assets in planning; workers use it once the account is ready. User
 preferences win; failures and fallbacks are disclosed.

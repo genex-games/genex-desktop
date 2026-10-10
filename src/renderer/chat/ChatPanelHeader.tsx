@@ -14,13 +14,17 @@ export function ChatPanelHeader({
   chatExport,
 }: ChatParts & { chatExport: ChatExport }): JSX.Element {
   const { project, threadId } = chat;
+  const nativeUnity = chat.folder?.shape.kind === "unity";
+  let onExport: (() => void) | undefined;
+  if (project) onExport = nativeUnity ? props.onShowLive : chatExport.exportGame(project);
   return (
     <ChatHeader
       key={threadId}
       sidebarHidden={props.sidebarHidden}
       onToggleSidebar={props.onToggleSidebar}
-      exporting={chatExport.exporting}
-      onExport={project ? chatExport.exportGame(project) : undefined}
+      exporting={nativeUnity ? false : chatExport.exporting}
+      exportLabel={nativeUnity ? "Build Unity player…" : undefined}
+      onExport={onExport}
       chatTitle={chat.chatTitle}
       isStudio={chat.isStudioThread}
       isDraft={chat.isDraft}

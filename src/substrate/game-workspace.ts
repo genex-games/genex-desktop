@@ -55,6 +55,8 @@ import {
   recordsShape,
 } from "./project-shape.ts";
 import { ensureRepo } from "./snapshots.ts";
+import { assertUnityAdoptionTargets, ensureUnityIgnoreRules, missingUnityIgnoreRules } from "./unity-project.ts";
+import { UNITY_PROJECT_RULES, unityProjectNotes } from "./unity-project-prompts.ts";
 
 /** The public shape of a game folder is a contract the UI reads too; it lives in `shared/game-project.ts`. */
 export type {
@@ -882,7 +884,7 @@ export class GameWorkspaces {
 
   async #preflight(candidate: GameCandidate): Promise<FolderPreflight> {
     const { dir, shape } = candidate;
-    const declared = declaresDependencies(await readPackageManifest(dir));
+    const declared = shape.kind !== "unity" && declaresDependencies(await readPackageManifest(dir));
     const nested = await nestedRepos(dir);
     const checked = await this.validateAt(dir);
     return {
@@ -925,6 +927,7 @@ export class GameWorkspaces {
     // studio's contract module and helpers are still added — the game imports what it needs —
     // and its rules are written for the game that is actually here, not for an empty project.
     const shape = await readProjectShape(dir);
+    if (shape.kind === "unity") return this.#adoptUnity(dir, name, title, shape, options);
     const own = isBuiltShape(shape);
     // Adoption updates studio.json below; one it cannot parse stops it here, before any write.
     if (own || options.versionNested) await readJsonForUpdate(path.join(dir, "studio.json"));
@@ -933,6 +936,31 @@ export class GameWorkspaces {
       await this.#writeOwnPages(dir, title, shape);
       await this.#recordShape(dir, shape);
     }
+    if (options.versionNested) await this.#recordConsent(dir);
+  }
+
+  /** Adopt native Unity sources without copying any browser template or changing existing instructions. */
+  async #adoptUnity(
+    dir: string,
+    name: string,
+    title: string,
+    shape: ProjectShape,
+    options: AdoptOptions,
+  ): Promise<void> {
+    await assertUnityAdoptionTargets(dir);
+    const studio = path.join(dir, "studio.json");
+    const current = await readJsonForUpdate<Record<string, unknown>>(studio);
+    for (const [file, content] of [
+      ["CLAUDE.md", UNITY_PROJECT_RULES],
+      ["NOTES.md", unityProjectNotes(title)],
+    ]) {
+      if (!(await pathExists(path.join(dir, file)))) await writeFile(path.join(dir, file), content);
+    }
+    if (current === null) await atomicWriteJson(studio, { name, title, createdAt: new Date().toISOString() });
+    await this.#recordShape(dir, shape);
+    await ensureIgnoreRules(dir);
+    await ensureUnityIgnoreRules(dir);
+    await ensureRepo(dir);
     if (options.versionNested) await this.#recordConsent(dir);
   }
 
@@ -973,6 +1001,7 @@ export class GameWorkspaces {
    */
   async plannedWrites(dir: string, options: AdoptOptions = {}): Promise<string[]> {
     const shape = await readProjectShape(dir);
+    if (shape.kind === "unity") return this.#unityPlannedWrites(dir, shape, options);
     const writes = await this.#missingTemplateFiles(dir, templateKeep(shape, options));
     // A game of its own is held out of the template's pages above and given its own two.
     if (isBuiltShape(shape)) {
@@ -984,6 +1013,18 @@ export class GameWorkspaces {
     const ignored = await readFile(path.join(dir, ".gitignore"), "utf8").catch(() => null);
     if (missingIgnoreRules(ignored).length > 0) writes.push(".gitignore");
     // Version history is what makes a run undoable; an existing repository is left alone.
+    if (!(await pathExists(path.join(dir, ".git")))) writes.push(".git");
+    return writes;
+  }
+
+  /** The native adoption plan follows exactly the metadata and history writes in `#adoptUnity`. */
+  async #unityPlannedWrites(dir: string, shape: ProjectShape, options: AdoptOptions): Promise<string[]> {
+    await assertUnityAdoptionTargets(dir);
+    const writes: string[] = [];
+    for (const file of OWN_PAGES) if (!(await pathExists(path.join(dir, file)))) writes.push(file);
+    if (await this.#writesStudioJson(dir, shape, options)) writes.push("studio.json");
+    const ignored = await readFile(path.join(dir, ".gitignore"), "utf8").catch(() => null);
+    if (missingIgnoreRules(ignored).length || missingUnityIgnoreRules(ignored).length) writes.push(".gitignore");
     if (!(await pathExists(path.join(dir, ".git")))) writes.push(".git");
     return writes;
   }
@@ -1086,6 +1127,10 @@ export class GameWorkspaces {
   ): Promise<ExportResult> {
     const dir = this.dirFor(name);
     const shape = await detectProjectShape(dir);
+    if (shape?.kind === "unity")
+      throw new Error(
+        "Unity source projects must be built through the Unity plugin. Choose an installed build target and export its completed build output.",
+      );
     const config = await readJsonIfExists<{ exportFiles?: string[] }>(path.join(dir, "studio.json"));
     if (builtOutput) return exportPublicGame(builtOutput, targetDir, await readdir(builtOutput), undefined, options);
     if (shape?.build) throw new Error(MESSAGE.BuildBeforeExport);

@@ -664,6 +664,8 @@ export interface WindowsSessionDeps {
   ancestors: AncestorGrants;
   /** Filters deny paths before they reach srt-win ({@link keepWindowsDenies}). */
   keepDenies?: (paths: readonly string[], scope: DenyScope) => string[];
+  /** The trusted broker needs read/execute access before the SDK's first WFP probe. */
+  broker?: { path: string; prepare(): Promise<void>; release(): void };
 }
 
 /**
@@ -788,6 +790,7 @@ export class WindowsSandboxSession {
     this.#queued = false;
     if (this.#applied) await this.#deps.runtime.reset();
     this.#applied = null;
+    this.#deps.broker?.release();
     await this.#deps.ancestors.revokeAll();
   }
 
@@ -795,9 +798,11 @@ export class WindowsSandboxSession {
   async #initialize(config: SandboxRuntimeConfig): Promise<void> {
     for (let attempt = 1; ; attempt++) {
       try {
+        await this.#deps.broker?.prepare();
         await this.#deps.runtime.initialize(config);
         return;
       } catch (error) {
+        this.#deps.broker?.release();
         const timedOut =
           typeof error === "object" && error !== null && "code" in error && error.code === SRT_WIN_TIMEOUT;
         if (!timedOut || attempt >= INITIALIZE_ATTEMPTS) throw error;
@@ -851,6 +856,7 @@ export class WindowsSandboxSession {
     this.#applied = null;
     this.#appliedDenies = new Set();
     if (wasApplied) await this.#deps.runtime.reset();
+    this.#deps.broker?.release();
     await this.#deps.ancestors.revokeAll();
   }
 
@@ -864,6 +870,7 @@ export class WindowsSandboxSession {
       await this.#deps.ancestors.sync(ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read]));
     } catch (error) {
       await this.#deps.runtime.reset().catch(() => {});
+      this.#deps.broker?.release();
       throw error;
     }
   }
@@ -873,7 +880,8 @@ export class WindowsSandboxSession {
     const members = [...this.#members.values()];
     const latest = members.at(-1)?.config;
     if (!latest) throw new Error(MESSAGE.NoMembers);
-    const roots = [...grants.write, ...grants.read];
+    const read = this.#deps.broker ? [...grants.read, this.#deps.broker.path] : grants.read;
+    const roots = [...grants.write, ...read];
     const keep = this.#deps.keepDenies ?? ((paths, scope) => keepWindowsDenies(paths, scope));
     const scope = { roots, profile: this.#deps.profile };
     const union = (pick: (member: SessionMember) => readonly string[]) => keep(members.flatMap(pick), scope);
@@ -886,7 +894,7 @@ export class WindowsSandboxSession {
       filesystem: {
         ...latest.filesystem,
         allowWrite: grants.write,
-        allowRead: grants.read,
+        allowRead: read,
         denyRead,
         denyWrite: writeDeniesBeyondRead(denyWrite, denyRead),
       },
@@ -920,6 +928,25 @@ export async function srtSandboxSid(srtWin: string): Promise<string | null> {
 
 const sessions = new WeakMap<object, WindowsSandboxSession>();
 
+/** Lease read/execute on the trusted broker file before its sandbox-user WFP probe. */
+function brokerAccess(file: string): NonNullable<WindowsSessionDeps["broker"]> {
+  const srt = createRequire(import.meta.url)(SRT_PACKAGE) as typeof import("@anthropic-ai/sandbox-runtime");
+  const srtWin = srt.resolveSrtWin({ path: file });
+  let sid: string | null = null;
+  return {
+    path: file,
+    prepare: async () => {
+      const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin });
+      sid = status.sid ?? null;
+      if (sid) srt.grantWindowsAcl({ write: [], read: [file], sandboxUserSid: sid, srtWin });
+    },
+    release: () => {
+      if (sid) srt.revokeWindowsAcl({ sandboxUserSid: sid, srtWin });
+      sid = null;
+    },
+  };
+}
+
 /**
  * The process's one session for `runtime` (sandbox-runtime's singleton), created by the first
  * `ProcessSandbox` to need it. Its ancestor grants are recorded under {@link windowsGrantHolders}
@@ -933,8 +960,12 @@ export function windowsSessionFor(
   if (existing) return existing;
   const holders = windowsGrantHolders(options.profile);
   const ancestors = ancestorGrants(holders, { sid: () => srtSandboxSid(options.srtWin) });
-  const session = new WindowsSandboxSession({ runtime, profile: options.profile, ancestors });
-  process.once("exit", () => ancestors.revokeAllSync());
+  const broker = brokerAccess(options.srtWin);
+  const session = new WindowsSandboxSession({ runtime, profile: options.profile, ancestors, broker });
+  process.once("exit", () => {
+    broker.release();
+    ancestors.revokeAllSync();
+  });
   sessions.set(runtime, session);
   return session;
 }

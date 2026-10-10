@@ -99,6 +99,9 @@ const ran = async (dir: string) => (await readdir(dir)).filter((name) => name.st
 async function repoWith(files: Record<string, string>): Promise<string> {
   const dir = await tmpDir("studio-hostile-repo-");
   await fixtureGit(dir, ["init", "-q", "-b", "main"]);
+  // Fixture creation and the isolated harness shell must compare the same bytes, regardless
+  // of the host's autocrlf setting when a merge checks a file out again.
+  await fixtureGit(dir, ["config", "core.autocrlf", "false"]);
   await writeFile(path.join(dir, "index.html"), "<canvas></canvas>\n");
   for (const [name, text] of Object.entries(files)) {
     await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
@@ -291,7 +294,9 @@ describe("hostile names and hashes on the loop's command lines (M3)", () => {
 
   it("the merge-ownership functions read names git quotes (non-ASCII, quotes, backslashes) as the files they are", async () => {
     const accented = "src/café.js";
-    const quoted = 'src/say "hi" \\ back.js';
+    // Double quotes and backslashes cannot be filename characters on Windows. Non-ASCII,
+    // apostrophes and dollars still exercise Git's quoted listing and shell-safe paths there.
+    const quoted = process.platform === "win32" ? "src/say café's $cash.js" : 'src/say "hi" \\ back.js';
     const worktree = await repoWith({ [accented]: "base\n", [quoted]: "base\n" });
     await fixtureGit(worktree, ["checkout", "-q", "-b", "theirs"]);
     await writeFile(path.join(worktree, accented), "theirs\n");

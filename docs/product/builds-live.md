@@ -21,7 +21,7 @@ closed, with Show in Finder for game-folder files.
 **Live** plays the browser game in a native view (WebGL and WebGPU); hidden unobserved previews
 pause. The strip holds Live/Builds/Assets, Play/Stop, Reload, the sound switch (⌥⌘M; only a shown
 Live in front is heard), Full screen (hold Esc to leave) and plugin actions such as Publish (accent
-until listed). Stop halts the game until Play or Reload. Slow loads show a halftone loader and
+until listed). Stop waits for pending loads, then halts until Play or Reload. Slow loads show a halftone loader and
 shimmering “Loading game”. An empty scaffold shows “Ready for your first idea” (a computer), or
 “Building your game” (a crane) with Watch progress while a run works, Play latest once a build is
 ready; the first healthy build then shows itself. Otherwise only the user changes Live (opening a

@@ -76,6 +76,14 @@ look, not just a build; follow the [design workflow](docs/agent/design.md).
   boundaries, typecheck, Biome lint, test-style, baseline behavior contracts and affected L1
   tests in the Linux `gate` job. PR tests compare against the target branch's exact base SHA. The macOS
   `fast` job runs non-rig tests only on PRs targeting `main`, pushes to `main`, and dispatches.
+  Manual runs accept an exact comparison `base`; set `fast=false` for a Linux-only fork run.
+  Set `full=true` to run `npm run verify` on macOS, including serial rigs and fixture Electron
+  acceptance. This is opt-in and uses a billed runner; it does not sign into live providers.
+  `full_mode=acceptance` resumes only build/Electron stages; cite the earlier Node/rig pass and
+  verify that its inputs still match. A continuation alone is not full verification.
+  The gate also checks shared vocabulary and changed-script syntax.
+  Fork feature pushes run Linux, documentation and Windows checks before upstream approval;
+  upstream feature pushes skip these jobs, preserving the dev/main push policy.
 - **Rig** (`rig.yml`) runs the serial rig group on pull requests labelled `full-tests` and on
   demand. Add that label when you touch core, harness or engine code.
 - **Developer documentation** (`context.yml`) checks handbook size, links and the knowledge map.

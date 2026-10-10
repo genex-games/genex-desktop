@@ -42,6 +42,8 @@ const MESSAGE = {
     `A build is already running for **${project}** — nothing new was started. Ask here about the one that is running, or stop it first.`,
   engineExport: (name: string | undefined) =>
     `${name} was exported from a game engine, so the studio cannot edit or judge it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
+  unityNative:
+    "This Unity project uses native Unity Editor tools in chat and the Unity workbench for scene and script editing, compilation checks, Play mode, captures, tests and player builds. The current unattended run modes use browser scoring and cannot judge a Unity source project. Open the Unity plugin and connect this project's Editor before continuing in chat.",
   stoppedBeforeStart: "Stopped before the build started — nothing was built.",
   notReady: (name: string, missing: readonly string[]) =>
     `${name} is not ready for a run: ${missing.join("; ")}. Fix that first (a chat build can), then start again.`,
@@ -134,6 +136,12 @@ function runClose(): RunClose {
  */
 async function afterClosedRuns(studio: Studio, action: RunStart): Promise<{ stopped: boolean }> {
   let conflict = conflictOf(studio, action);
+  const resumesStoppingRun =
+    action.resume === true && conflict?.run.runId === action.run.runId && conflict.stopped === true;
+  // A paused journal/event precedes the runner returning and marking its reservation done.
+  // The person's explicit Resume waits for that same stopped run, rather than racing its close.
+  if (conflict && resumesStoppingRun) await (conflict.closed ?? conflict.settled);
+  conflict = conflictOf(studio, action);
   while (conflict?.done) {
     const stoppedBefore = conflict.stopped === true;
     await conflict.settled;
@@ -414,7 +422,8 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
 /**
  * Why this folder cannot have a run spent on it — a sentence for the chat, or null to launch.
  *
- * Two refusals, and both are about the folder rather than the model. A folder that cannot load
+ * These refusals describe the folder rather than the model. Native Unity projects use their
+ * Editor's tools in chat; the current unattended runners score browser games. A folder that cannot load
  * has nothing for six builders to work on: say what is missing now instead of judging black
  * frames for the whole run. And an engine export is already compiled — there is
  * no source to edit and no contract to read, so the run would photograph a page nobody can
@@ -426,6 +435,7 @@ export function loopRunRefusal(
   problems: readonly string[] | null | undefined,
 ): string | null {
   if (descriptor?.shape?.kind === "engine-export") return MESSAGE.engineExport(descriptor.name);
+  if (descriptor?.shape?.kind === "unity") return MESSAGE.unityNative;
   const missing = (problems ?? []).filter((problem) => /is missing$/.test(problem));
   if (missing.length) return MESSAGE.notReady(descriptor?.name ?? "this game", missing);
   return null;

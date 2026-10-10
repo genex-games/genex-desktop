@@ -70,6 +70,7 @@ describe("Blender through the public plugin API", () => {
     const binary = await fakeBlender(path.join(await tmpDir("blender-runtime-"), "Blender.app"), "5.2.1");
     const manifest = JSON.parse(await readFile(path.join(source, "plugin.json"), "utf8"));
     manifest.nativeRuntimes[0].candidates = [binary];
+    for (const platform of manifest.nativeRuntimes[0].platforms ?? []) platform.candidates = [binary];
     manifest.nativeJobs[0].gpu = false;
     await writeFile(path.join(source, "plugin.json"), JSON.stringify(manifest));
     // Studio's own blender with a fake runtime: a local folder can no longer take a bundled id.

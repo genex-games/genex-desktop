@@ -1,0 +1,8 @@
+{
+  "name": "Genex.Unity.Editor.Tests",
+  "references": ["Genex.Unity.Editor", "Unity.Newtonsoft.Json"],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "autoReferenced": false
+}

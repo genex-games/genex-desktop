@@ -1,4 +1,45 @@
 import { ReferenceKind } from "../../src/harness-seed/loop/run-events.ts";
+
+describe("Unity native project routing", () => {
+  it("UNITY1. blocks browser-scored unattended runs before registering or billing any engine work", async () => {
+    const { createStudio, loopRunRefusal } = await import("../../src/harness-seed/loop/main.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const recorder = ctxRecorder({
+      workspace: await tmpDir("unity-native-run-"),
+      unknown: { value: [] },
+      handlers: {
+        "game.list": () => [{ name: "unity-game", shape: { kind: "unity" } }],
+        "events.append": () => true,
+      },
+    });
+    const studio = await createStudio({ ...recorder.ctx.host, heartbeat: () => {} } as never);
+    try {
+      await studio.dispatch({
+        type: "run_start",
+        threadId: "unity-thread",
+        run: {
+          runId: "unity-run",
+          project: "unity-game",
+          goal: "Improve this Unity scene",
+          mode: "autopilot",
+          engine: "codex",
+        },
+      } as never);
+      assert.deepEqual(recorder.paramsOf("engine.describe"), []);
+      assert.deepEqual(recorder.paramsOf("engine.complete"), []);
+      assert.deepEqual(recorder.paramsOf("engine.delegate"), []);
+      assert.deepEqual(recorder.paramsOf("preview.load"), []);
+      const records = recorder.paramsOf("events.append").flatMap((entry) => entry.batch as Array<Record<string, any>>);
+      assert.equal(records.filter((entry) => entry.event_type === "run_registered").length, 0);
+      const blocked = records.find((entry) => entry.event_type === "run_start_blocked");
+      assert.match(String(blocked?.payload?.reason), /Unity.*chat|chat.*Unity/);
+      assert.match(String(blocked?.payload?.reason), /browser/i);
+      assert.equal(loopRunRefusal({ name: "web-game", shape: { kind: "three-vite" } }, []), null);
+    } finally {
+      await studio.shutdown();
+    }
+  });
+});
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { gitFile } from "../helpers/git.ts";
@@ -7003,6 +7044,69 @@ describe("a failed tool call on the local engine", () => {
 });
 
 describe("two starts of a run on one chat at once", () => {
+  it("MAP-5i. Resume while Stop is closing its run waits for that close, instead of refusing the user's Resume", async () => {
+    const { handleRunStart } = await import("../../src/harness-seed/loop/run-dispatch.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        [HostMethod.GameList]: () => [{ name: "plaza", shape: { kind: "engine-export" } }],
+        [HostMethod.EventsAppend]: () => true,
+      },
+    });
+    let close = () => {};
+    const closed = new Promise<void>((resolve) => {
+      close = resolve;
+    });
+    let settle = () => {};
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const run = {
+      runId: "run-resume",
+      project: "plaza",
+      goal: "a plaza",
+      budgets: { wallClockMs: HOUR_MS },
+      reference: { name: "plaza", shots: [] },
+    };
+    const holding = { run, threadId: "chat-resume", closed, settled, stopped: true, done: false };
+    const studio = {
+      host: { ...recorder.ctx.host, heartbeat: () => {} },
+      cancels: new Set([holding.threadId]),
+      moodBoards: new Map(),
+      activeRuns: new Map([[run.runId, holding]]),
+      startingRuns: new Map(),
+      orphanRuns: new Map(),
+      scoped: () => recorder.ctx,
+    };
+    const resuming = handleRunStart(studio, {
+      type: "run_start",
+      threadId: holding.threadId,
+      run,
+      resume: true,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      assert.deepEqual(recorder.paramsOf(HostMethod.EventsAppend), [], "Resume waits while the stopped run closes");
+      holding.done = true;
+      close();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(
+        recorder.paramsOf(HostMethod.GameList),
+        [],
+        "the old reservation still owns its learning cleanup",
+      );
+    } finally {
+      holding.done = true;
+      close();
+      studio.activeRuns.delete(run.runId);
+      settle();
+      await resuming;
+    }
+    assert.equal(recorder.paramsOf(HostMethod.GameList).length, 1, "the user's Resume reached project discovery");
+    assert.equal(studio.cancels.has(holding.threadId), false, "Resume clears the previous Stop after cleanup");
+  });
+
   it("reserves the chat for the first; the second is refused, not started beside it", async () => {
     const { handleRunStart } = await import("../../src/harness-seed/loop/run-dispatch.ts");
     const appended: Array<Record<string, any>> = [];

@@ -692,6 +692,60 @@ const WS = at("AppData", "Roaming", "Genex", "workspaces");
 const LATE = "D:\\Elsewhere\\Pong";
 
 describe("the grant session", () => {
+  it("grants only the broker file before initialize, renews it after reset and releases it on disposal", async () => {
+    const runtime = fakeSessionRuntime();
+    const brokerPath = at("private", "srt-win.exe");
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      broker: {
+        path: brokerPath,
+        prepare: async () => {
+          runtime.calls.push("broker:prepare");
+        },
+        release: () => {
+          runtime.calls.push("broker:release");
+        },
+      },
+    });
+    const owner = {};
+    await value.join(owner, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(runtime.calls, ["broker:prepare", "initialize"]);
+    assert.deepEqual(runtime.last().filesystem.allowRead, [brokerPath]);
+    assert.deepEqual(runtime.last().filesystem.allowWrite, [GAMES]);
+    value.update(owner, { write: [GAMES, LATE], read: [] });
+    await value.settled();
+    assert.deepEqual(runtime.calls, ["broker:prepare", "initialize", "reset", "broker:prepare", "initialize"]);
+    await value.dispose();
+    assert.deepEqual(runtime.calls.slice(-2), ["reset", "broker:release"]);
+  });
+
+  it("releases a broker grant when initialize fails and prepares it again before retrying", async () => {
+    const runtime = fakeSessionRuntime();
+    runtime.failInitialize("not_provisioned");
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      broker: {
+        path: at("private", "srt-win.exe"),
+        prepare: async () => {
+          runtime.calls.push("broker:prepare");
+        },
+        release: () => {
+          runtime.calls.push("broker:release");
+        },
+      },
+    });
+    await assert.rejects(value.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }));
+    assert.deepEqual(runtime.calls, ["broker:prepare", "initialize", "broker:release"]);
+    const release = await value.acquire();
+    release();
+    assert.deepEqual(runtime.calls.slice(-2), ["broker:prepare", "initialize"]);
+    await value.dispose();
+  });
+
   it("initializes once, on the first join, with the member's grants and the folders above them", async () => {
     const s = session();
     await s.session.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });

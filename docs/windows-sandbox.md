@@ -8,6 +8,10 @@ drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.
 commands run as the local `srt-sandbox` user under Git Bash (no Git for Windows opens the setup
 screen on `git-missing`). What differs from macOS:
 
+- Before initialization, the trusted `srt-win.exe` file receives a read/execute lease through
+  the SDK's refcounted ACL API. Its WFP probe launches that same file as the sandbox user before
+  ordinary working-folder grants exist. The lease grants no directory listing or write access,
+  is renewed after reset, and is released on failure, last-member departure or process exit.
 - Grants are NTFS ACL entries set at `initialize()` for the whole process. One
   `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
   or a disposed member's folders, queue one `reset()` + `initialize()` that runs once no command

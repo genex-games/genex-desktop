@@ -22,6 +22,7 @@ import { listPackage, extractFile } from "@electron/asar";
 import { FuseState, FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
 import { packagedApp, posixEntries } from "./packaged-app.mjs";
+import { verifyPackagedPluginResources } from "./packaged-plugin-resources.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const target = `${process.platform}-${process.arch}`;
@@ -126,6 +127,11 @@ report.checks.push({
 if (privateEntries.length) report.failed++;
 const forbidden = /(?:^|\/)node_modules\/(?:@openai\/codex(?:-[^/]+)?|@anthropic-ai\/claude-agent-sdk-[^/]+)(?:\/|$)/;
 const unpacked = posixEntries(await readdir(`${archive}.unpacked`, { recursive: true }));
+for (const check of await verifyPackagedPluginResources({
+  root,
+  resources: path.join(`${archive}.unpacked`, "dist", "resources"),
+}))
+  addCheck(check.name, check.ok, check.detail);
 const codingBinaries = [...entries, ...unpacked].filter((entry) => forbidden.test(entry));
 report.checks.push({
   name: "archive and unpacked resources contain no coding CLI packages",

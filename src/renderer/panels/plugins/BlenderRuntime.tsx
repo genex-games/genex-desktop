@@ -18,6 +18,8 @@ import { Icon, type IconName } from "../../ui/icons.tsx";
 import { Pending } from "../../ui/Pending.tsx";
 import { PLUGINS_WORDS } from "../../words.ts";
 import { Section } from "./rows.tsx";
+import { hostPlatform } from "../../platform.ts";
+import { StudioPlatform } from "../../../shared/boot.ts";
 
 const WORDS = PLUGINS_WORDS.blender;
 /** How often the card re-reads Blender while a download runs. */
@@ -92,7 +94,8 @@ function notReadyWords(runtime: LocalBlenderStatus["runtime"], pinned: string, s
 /** The card's body for where Blender stands: ready, downloading, or missing (or too old) with Download. */
 function RuntimeBody({ plugin, blender }: { plugin: PluginInfo; blender: ReturnType<typeof useBlenderStatus> }) {
   const { status } = blender;
-  const install = plugin.manifest.nativeRuntimes?.[0]?.install;
+  const declared = plugin.manifest.nativeRuntimes?.[0];
+  const install = status?.runtime.install ?? (!declared?.platforms ? declared?.install : undefined);
   const pinned = /(\d+\.\d+\.\d+)/.exec(install?.url ?? "")?.[1] ?? "";
   const size = install ? megabytes(install.bytes) : "";
   if (!status) return <Pending label={WORDS.checking} className="genex-checking" />;
@@ -116,17 +119,11 @@ function RuntimeBody({ plugin, blender }: { plugin: PluginInfo; blender: ReturnT
     );
   const { runtime } = status;
   if (runtime.state === NativeRuntimeState.Ready)
+    return <ReadyRuntime runtime={runtime} install={install} blender={blender} />;
+  if (!install)
     return (
-      <Prompt
-        title={
-          <>
-            <span className="genex-dot" aria-hidden="true" />
-            {WORDS.ready(runtime.version ?? "")}
-          </>
-        }
-        actions={<Button onClick={() => void blender.refresh()}>{WORDS.checkAgain}</Button>}
-      >
-        {runtime.path && <p className="blender-path">{appBundle(runtime.path)}</p>}
+      <Prompt title={WORDS.missingTitle}>
+        <p>{runtime.detail}</p>
       </Prompt>
     );
   const { title, text } = notReadyWords(runtime, pinned, size);
@@ -142,6 +139,38 @@ function RuntimeBody({ plugin, blender }: { plugin: PluginInfo; blender: ReturnT
       }
     >
       <p>{text}</p>
+    </Prompt>
+  );
+}
+
+function ReadyRuntime({
+  runtime,
+  install,
+  blender,
+}: {
+  runtime: LocalBlenderStatus["runtime"];
+  install: LocalBlenderStatus["runtime"]["install"];
+  blender: ReturnType<typeof useBlenderStatus>;
+}) {
+  const privateCopy = hostPlatform() === StudioPlatform.Windows && runtime.managed === false && install;
+  return (
+    <Prompt
+      title={
+        <>
+          <span className="genex-dot" aria-hidden="true" />
+          {WORDS.ready(runtime.version ?? "")}
+        </>
+      }
+      actions={
+        <>
+          <Button onClick={() => void blender.refresh()}>{WORDS.checkAgain}</Button>
+          {privateCopy ? (
+            <Button onClick={() => void blender.act(privateCopy.action)}>{WORDS.privateCopy}</Button>
+          ) : null}
+        </>
+      }
+    >
+      {runtime.path && <p className="blender-path">{appBundle(runtime.path)}</p>}
     </Prompt>
   );
 }

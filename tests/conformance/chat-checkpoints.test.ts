@@ -10,10 +10,11 @@ import {
   chatCheckpointRef,
 } from "../../src/main/chat-checkpoints.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
+import { removeTree } from "../helpers/tmp.ts";
 
 async function game(t: { after: (fn: () => Promise<void>) => void }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-chat-checkpoint-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   const dir = path.join(root, "game");
   await fs.mkdir(path.join(dir, "src"), { recursive: true });
   await fs.writeFile(path.join(dir, ".gitignore"), "dist/\n");

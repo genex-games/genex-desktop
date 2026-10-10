@@ -239,15 +239,30 @@ describe("removeTree", () => {
     await writeFile(path.join(dir, "file.txt"), "x");
     // A process's working folder is held open without delete sharing, as a folder another
     // process is walking is: Windows refuses to remove it until the process lets go.
-    const holder = spawn(process.execPath, ["-e", "process.stdin.resume()"], { cwd: dir, stdio: "pipe" });
-    await once(holder, "spawn");
-    await assert.rejects(rm(dir, { recursive: true, force: true }), { code: "EBUSY" });
-    await removeTree(dir, {
-      sleep: async () => {
-        holder.stdin.end();
-        if (holder.exitCode === null) await once(holder, "exit");
-      },
+    const holder = spawn(process.execPath, ["-e", 'process.stdout.write("held\\n"); process.stdin.resume()'], {
+      cwd: dir,
+      stdio: "pipe",
     });
-    assert.equal(existsSync(dir), false);
+    await once(holder, "spawn");
+    try {
+      // The spawn event reports process creation, before the child's Windows startup has
+      // established its working-directory hold. Observe the child before trying removal.
+      const [ready] = await once(holder.stdout, "data");
+      assert.equal(String(ready), "held\n");
+      await assert.rejects(rm(dir, { recursive: true, force: true }), { code: "EBUSY" });
+      await removeTree(dir, {
+        sleep: async () => {
+          holder.stdin.end();
+          if (holder.exitCode === null) await once(holder, "exit");
+        },
+      });
+      assert.equal(existsSync(dir), false);
+    } finally {
+      if (holder.exitCode === null && holder.signalCode === null) {
+        const exited = once(holder, "exit");
+        holder.kill("SIGKILL");
+        await exited;
+      }
+    }
   });
 });

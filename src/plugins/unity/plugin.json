@@ -1,0 +1,478 @@
+{
+  "apiVersion": 3,
+  "id": "unity",
+  "version": "0.1.0",
+  "name": "Unity",
+  "publisher": "Studio",
+  "description": "Build Unity 6 games with a local Editor: scenes, C# scripts, assets, visual checks, tests and player builds.",
+  "icon": "icon.svg",
+  "backend": "backend.mjs",
+  "capabilities": ["settings", "project.read", "project.write", "jobs", "observe", "network"],
+  "tools": [
+    {
+      "name": "status",
+      "description": "Check the selected Unity project, detected Editor versions and authenticated bridge readiness.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "editor",
+      "description": "Inspect Editor state, read console, or control Play mode. Check status before edits; do not replay an uncertain operation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: status, console, play, stop, pause, step"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "scene",
+      "description": "List, create, open or save Unity scenes, or read build scenes. New/open scenes default to additive. Save dirty scenes before closing or replacement. Build-scene changes use the confirmed change tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: list, create, open, save, build-scenes"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "hierarchy",
+      "description": "Read a recursive, paginated Unity hierarchy. Follow nextOffset; use returned object IDs for subsequent operations. Saved scenes use stable GlobalObjectIds; unsaved scenes use explicit session IDs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: list"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "object",
+      "description": "Inspect, create or update a scene GameObject. Use an ID, never guess an ambiguous name. Edits participate in Unity Undo.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: inspect, create, update"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "component",
+      "description": "Discover component types and inspect, add or edit serialized properties on a component. Supports Unity subsystems through their real installed component types; inspect fields before setting them.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: list, types, inspect-type, add, get, set"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "asset",
+      "description": "Search, inspect or import existing Assets files; read/write supported text assets with expectedSha256 when overwriting. Paths stay under Assets. Moving/deleting uses the confirmed change tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: search, inspect, import, read-text, write-text"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "prefab",
+      "description": "Create a prefab, instantiate it or apply an instance's changes using Unity Prefab APIs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: create, instantiate"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "material",
+      "description": "Create or update a material using an installed shader and real shader properties. Inspect rendering pipeline and properties before changing them.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: create, update"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "script",
+      "description": "Read or write a C# script. An overwrite requires the SHA returned by read. After write wait for compilation to finish, inspect console errors, then attach its component.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: read, write"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "capture",
+      "description": "Capture a real camera or Scene view. Returns a bounded PNG for visual verification; capture success does not establish gameplay correctness.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: camera, scene"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "jobs",
+      "description": "Inspect or cancel an accepted Editor job by its returned ID. Poll the same ID; never repeat creation merely because a response was lost. Building cannot be interrupted after Unity starts BuildPlayer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: status, cancel"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "packages",
+      "description": "List Unity packages through Package Manager. Listing returns a job; poll its ID. Package installation and removal use the confirmed change tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: list"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      }
+    },
+    {
+      "name": "change",
+      "description": "Confirmed operations: delete, move, apply/overwrite prefab, package changes, Undo/Redo, scene replacement/closing or build-scene configuration. Dirty scenes must be saved first. Inspect the exact target before requesting consent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Choose: object-delete, component-remove, asset-delete, script-delete, package-remove, undo, redo, scene-open, scene-close, scene-create, asset-move, prefab-apply, prefab-overwrite, package-add, scene-overwrite, build-scenes"
+          },
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["operation"]
+      },
+      "confirmation": "Apply this Unity change to the connected project. Review its target and operation; deletion, moves, prefab changes and package changes can affect existing work."
+    },
+    {
+      "name": "batch",
+      "description": "Run 1 to 25 ordinary Unity commands in order. Uses params.commands [{method,params}], failFast optional. Batches are nontransactional; jobs/packages and confirmed changes are excluded.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        },
+        "required": ["params"]
+      }
+    },
+    {
+      "name": "verify",
+      "description": "Read current Unity compilation/import state and missing scripts in loaded scenes. This is a structural check, not a test of gameplay.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        }
+      }
+    },
+    {
+      "name": "test",
+      "description": "Start real Unity EditMode or PlayMode tests with optional assemblyNames/testNames. Returns an accepted job ID; poll unity__jobs without restarting the run.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        }
+      }
+    },
+    {
+      "name": "build",
+      "description": "Build saved Unity scenes for the active installed target into a unique project output directory. Save dirty scenes and select the target in Unity Build Profiles first. Returns a job ID; poll it and require Succeeded before claiming a build.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "acceptJsonString": true,
+            "description": "Exact method arguments from the Unity skill and Editor protocol; never include confirmed."
+          }
+        }
+      },
+      "confirmation": "Build the connected Unity project for the requested target. This executes project build hooks and writes a player build into a new project output directory."
+    }
+  ],
+  "skills": [
+    {
+      "name": "unity-development",
+      "summary": "Read before working on a Unity project: setup, scene/code edits, reload recovery, subsystems, real visual/test/build evidence and consent.",
+      "file": "skills/SKILL.md",
+      "references": ["skills/recipes.md", "editor-package/PROTOCOL.md"]
+    }
+  ],
+  "panels": [
+    {
+      "id": "setup",
+      "title": "Unity",
+      "file": "panel.html",
+      "placement": "settings"
+    },
+    {
+      "id": "project",
+      "title": "Unity Editor",
+      "file": "panel.html",
+      "placement": "project"
+    }
+  ],
+  "settings": [
+    {
+      "key": "project-path",
+      "label": "Project folder",
+      "type": "string",
+      "default": ""
+    }
+  ],
+  "actions": [
+    {
+      "name": "status",
+      "label": "Check connection"
+    },
+    {
+      "name": "toolbar-status",
+      "label": "Editor state"
+    },
+    {
+      "name": "install-bridge",
+      "label": "Install Editor bridge",
+      "confirmation": "Add the Genex Unity bridge package to this project. Preserve its existing dependencies and project files; reviewed bridge updates refuse edited source."
+    },
+    {
+      "name": "open-editor",
+      "label": "Open in Unity",
+      "confirmation": "Open this project in the selected installed Unity Editor. The existing Editor session and project work remain under your control."
+    },
+    {
+      "name": "create-project",
+      "label": "Create Unity project",
+      "confirmation": "Create a new Unity 6 project in the specified empty folder and install the Genex bridge. This does not install Unity or activate a license."
+    },
+    {
+      "name": "connect",
+      "label": "Connect Unity",
+      "confirmation": "Allow the Unity plugin to control the selected project through its local Editor bridge."
+    },
+    {
+      "name": "disconnect",
+      "label": "Disconnect Unity",
+      "confirmation": "Disconnect this plugin from Unity. Editor operations already accepted may continue."
+    },
+    {
+      "name": "scenes",
+      "label": "Read scenes"
+    },
+    {
+      "name": "hierarchy",
+      "label": "Read hierarchy"
+    },
+    {
+      "name": "console",
+      "label": "Read console"
+    },
+    {
+      "name": "verify",
+      "label": "Check project"
+    },
+    {
+      "name": "play",
+      "label": "Start Play mode"
+    },
+    {
+      "name": "stop",
+      "label": "Stop Play mode"
+    },
+    {
+      "name": "pause",
+      "label": "Pause Play mode"
+    },
+    {
+      "name": "step",
+      "label": "Step frame"
+    },
+    {
+      "name": "capture-camera",
+      "label": "Capture camera"
+    },
+    {
+      "name": "run-tests",
+      "label": "Run tests"
+    },
+    {
+      "name": "job-status",
+      "label": "Read job"
+    },
+    {
+      "name": "cancel-job",
+      "label": "Cancel job"
+    },
+    {
+      "name": "build-player",
+      "label": "Build player",
+      "confirmation": "Build the selected Unity project and target. Project build hooks execute and the player files are written into a new output directory."
+    },
+    {
+      "name": "inspect-object",
+      "label": "Read selected object"
+    },
+    {
+      "name": "build-scenes",
+      "label": "Read build scenes"
+    },
+    {
+      "name": "assets",
+      "label": "Search Assets"
+    },
+    {
+      "name": "inspect-asset",
+      "label": "Inspect asset"
+    }
+  ],
+  "toolbar": [
+    {
+      "id": "editor",
+      "label": "Unity Editor",
+      "ariaLabel": "Open Unity Editor tools",
+      "icon": "box",
+      "requiresProject": false,
+      "target": {
+        "kind": "panel",
+        "id": "project"
+      },
+      "status": "toolbar-status"
+    }
+  ],
+  "network": {
+    "hosts": ["127.0.0.1"]
+  }
+}

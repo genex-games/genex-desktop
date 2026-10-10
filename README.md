@@ -37,7 +37,8 @@ Genex is early: expect rough edges, and tell us about them in
 → Make 3D assets locally with the Blender plugin\
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
-→ Unity and Unreal plugins soon\
+→ Edit Unity 6 scenes, scripts and assets; run native tests and builds with the Unity plugin\
+→ Unreal plugin soon\
 → Native C++ games soon
 
 > [!TIP]
@@ -60,6 +61,10 @@ The fixture runs the app with scripted models and sample games, so it needs no a
 [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request; coding agents start at
 [AGENTS.md](AGENTS.md).
 
+**AI-assisted contribution:** The Windows native runtime and Unity 6 integration in
+[PR #54](https://github.com/genex-games/genex-desktop/pull/54) were developed with assistance
+from OpenAI Codex. The PR documents validation results and remaining acceptance checks.
+
 ### Build a plugin
 
 Plugins give Genex's agents new tools: an asset generator, an engine bridge, a service your
@@ -79,6 +84,7 @@ npm run plugin:doctor -- ~/studio-plugins/my-plugin      # check it the way Gene
    maintainer reviews it, and it appears in every Genex app's Marketplace.
 
 The [plugin guide](docs/PLUGIN_GUIDE.md) covers tools, panels, settings and accounts.
+The [Unity guide](docs/unity.md) covers the activated Editor requirement and native workflow.
 
 ### Documentation
 

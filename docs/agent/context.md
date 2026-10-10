@@ -1,9 +1,7 @@
 # Genex: product overview
 
-Genex (formerly AI Game Studio) is a macOS Electron application for making local browser games
-with AI. A person describes a game or a change, answers questions when needed, and reviews
-the running game and build results. The game is a real local project that can be opened,
-edited and exported. Unity is retired.
+Genex is an Electron app for creating, editing and exporting games with AI. Unity 6 uses
+native Editor tools; Auto/Loop remains browser-only ([Unity](../unity.md)).
 
 ## What the app contains
 
@@ -31,9 +29,8 @@ must survive application changes.
 | [Assets and plugins](../product/assets-plugins.md) | Media, asset previews, tools, plugin setup and permissions |
 | [Studio and learning](../product/studio-learning.md) | Studio chat, Activity, instruction proposals and rollback |
 
-Start here, then read only the relevant page and follow its technical links only when the task
-needs them. Product pages describe visible behavior; references describe mechanisms. Code and
-tests resolve discrepancies.
+Read the relevant page and technical links as needed. Product pages describe visible behavior;
+references describe mechanisms. Code and tests resolve discrepancies.
 
 ## For the developer
 
@@ -46,5 +43,5 @@ This handbook is shared developer knowledge, not a session diary: update the aff
 the behavior change's PR, replacing outdated statements ([AGENTS.md](../../AGENTS.md#documentation-and-prs));
 `npm run verify:context` checks its size.
 
-The external developer edits this repository. The in-app harness builds games with narrower
-authority; its conversation history and learning are separate from this handbook.
+External developers edit this repository. The in-app harness builds games with narrower
+authority; its history stays separate.

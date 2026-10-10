@@ -11,6 +11,11 @@ holds for any Three.js game of any shape — inline, ES modules with an import m
 (which adds the two-line `installStudio({ renderer, player })` and nothing else), WebGL or WebGPU.
 It does not hold for Phaser, plain canvas 2D or an engine export: those are out of scope, and a
 folder whose kind is `engine-export` can be played and photographed but can never start a run.
+Unity source projects use [native Editor tools](unity.md) and cannot start browser-scored runs.
+
+An explicit Resume pressed while Stop is closing that same run waits for its reservation and
+cleanup to finish. It clears the earlier Stop before starting again; a different run still cannot
+take an occupied chat or project (`run-dispatch.ts`).
 
 The kind of game (`loop/kinds.ts`). Eight kinds — first-person, third-person, top-down, side-2d,
 racing, flight, static-board, free-camera. Each names the traits it implies, the state axes its

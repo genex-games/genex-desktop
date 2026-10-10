@@ -1,7 +1,7 @@
 import type { RuntimeInstallPhase } from "./model-install.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
 
-/** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
+/** Where a plugin's native runtime stands on this computer (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
   Ready: "ready",
   Missing: "missing",
@@ -20,25 +20,49 @@ export const NativeJobState = {
 } as const;
 export type NativeJobState = (typeof NativeJobState)[keyof typeof NativeJobState];
 
+/** A verified archive installed into private plugin storage. */
+export interface PluginNativeInstall {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: "dmg" | "tar.gz" | "zip";
+  entry: string;
+  executable: string;
+  notices: string[];
+}
+/** A runtime's launch candidates and optional archive for one host platform and architecture. */
+export interface PluginNativePlatform {
+  platform: "darwin" | "win32" | "linux";
+  arch: "x64" | "arm64";
+  candidates: string[];
+  install?: PluginNativeInstall;
+}
 /** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  install?: PluginNativeInstall;
+  /** When present, only an exact platform and architecture match may be used. */
+  platforms?: PluginNativePlatform[];
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
+
+/** Select a host's reviewed runtime declaration; legacy manifests remain supported. */
+export function nativeRuntimeForPlatform(
+  runtime: PluginNativeRuntime,
+  platform: string,
+  arch: string,
+): PluginNativeRuntime | undefined {
+  if (!runtime.platforms) return runtime;
+  const selected = runtime.platforms.find((item) => item.platform === platform && item.arch === arch);
+  if (!selected) return undefined;
+  const { platforms: _platforms, install: _install, ...base } = runtime;
+  return { ...base, candidates: selected.candidates, install: selected.install };
+}
 export interface PluginNativeJob {
   id: string;
   runtime: string;
@@ -56,6 +80,10 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** Install available for the current host, absent on unsupported hosts. */
+  install?: PluginNativeInstall;
+  /** The executable belongs to this plugin's managed runtime installation. */
+  managed?: boolean;
 }
 export interface PluginRuntimeInstall {
   runtime: string;

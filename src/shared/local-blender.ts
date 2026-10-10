@@ -1,5 +1,5 @@
 /**
- * Local Blender, the bundled plugin that runs Blender on this Mac: its id and the actions its
+ * Local Blender, the bundled plugin that runs Blender on this computer: its id and the actions its
  * setup card calls. The plugin keeps its own copy of the action names (`plugins/blender/backend.ts`).
  */
 import type { PluginNativeStatus, PluginRuntimeInstall } from "./plugins.ts";

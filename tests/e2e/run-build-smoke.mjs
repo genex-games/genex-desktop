@@ -67,6 +67,11 @@ try {
   const match = /__SMOKE_JSON__([\s\S]*?)__END__/.exec(stdout);
   if (!match) throw new Error(`No smoke report (exit ${code}). ${stderr.slice(-6000)}`);
   const report = JSON.parse(match[1]);
+  if (report.failed) {
+    // The failed predicate and fixture DOM explain a timeout; the final check name alone does not.
+    const diagnostics = stderr.match(/\[build-smoke timeout\][^\n]*\n[^\n]*/g) ?? [];
+    for (const diagnostic of diagnostics) console.error(diagnostic);
+  }
   for (const check of report.checks)
     console.log(`${check.ok ? "✔" : "✖"} ${check.name}${check.detail ? ` — ${check.detail}` : ""}`);
   console.log(`${report.checks.length - report.failed}/${report.checks.length} checks passed`);

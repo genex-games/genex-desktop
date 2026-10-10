@@ -755,7 +755,11 @@ Core owns only generic runtime discovery, pinned installation, process execution
 project-bound inputs and asset delivery. Blender-specific bpy wrapping, model export and renders
 live inside its plugin. No private core Blender hook is part of an agent's tool list.
 
-A manifest declares fixed `nativeRuntimes` candidates and version probes. An optional installer
+A manifest declares fixed `nativeRuntimes` candidates and version probes. Optional `platforms`
+variants select candidates and installation metadata by exact `platform` (`darwin`, `win32`,
+`linux`) and `arch` (`x64`, `arm64`); an unmatched variant is unsupported, with no fallback to
+another platform's executable. Legacy runtimes keep their original candidates and installer.
+An optional installer
 requires an exact HTTPS URL, bytes, SHA-256, archive shape, executable and license notices, plus a
 matching confirmed user action. `runtime.detect` is read-only; `runtime.installation` hydrates a
 durable installation job; `runtime.install` and `runtime.cancelInstall` are user-action services.
@@ -767,11 +771,24 @@ stages only declared project input files; the child receives no full-project rea
 `timeoutMs` is 1,000–300,000 milliseconds. `maxOutputBytes` retains the last 1–256,000 bytes
 of each process log stream; it does not limit asset files. `maxAssetBytes` limits the combined
 declared generated files to 1–104,857,600 bytes. Delivery additionally enforces `assetLimits`.
-Set `gpu: true` for GPU rendering, including Blender EEVEE; it permits GPU services and the
-runtime's own Metal cache. It grants no network or full-project access. Runtime detection runs
+On macOS, `gpu: true` permits GPU services and the runtime's own Metal cache. Windows managed
+jobs retain their restricted token; Local Blender uses CPU Cycles for its two thumbnails.
+Neither grants network or full-project access. Runtime detection runs
 the declared version probe, but never starts a generation recipe or installs software.
-Managed jobs use the macOS sandbox, deny network and protected host state, and retain a durable
-job ID before process launch. The profile (`nativeSandboxProfile`) names what a job may do: start
+Managed jobs deny network and protected host state, and retain a durable job ID before process
+launch. Windows uses a distinct temporary Less Privileged AppContainer (LPAC) SID per job, with
+only registry-read capability and grants to the runtime, staged inputs, declared output roots
+and scratch folder. Overlapping jobs do not share file grants. A kill-on-close Job Object stops
+all descendants on exit, timeout or cancel; the trusted broker removes its grants and profile
+before returning. Flushed host-owned recovery records precede each ACL change; after a broker
+crash, a fresh broker restores only that job's SID grants and original integrity labels. Pinned
+per-object grants preserve existing ACE order and DACL control flags, including canonical legacy
+permissions; cleanup skips junction targets. A failed
+recovery retains those records and reports their location. A failed sandbox launch never falls
+back to an unrestricted process. An
+externally installed runtime whose ACL the current user cannot grant may be unusable; the
+managed per-user ZIP installation avoids that requirement. This path needs the built-in Windows
+PowerShell and .NET runtime. On macOS, the profile (`nativeSandboxProfile`) names what a job may do: start
 programs only from its runtime's folder (the `.app` bundle, or the executable's directory), the
 interpreter a script runtime's `#!` line names (for `#!/usr/bin/env <program>`, that program as
 found on the job's `PATH`, `/usr/bin:/bin`), and a short list of text utilities (`JOB_UTILITIES`:
@@ -788,7 +805,9 @@ most 2 s more for its pipes. Only declared regular output files reach the delive
 each opened without following links and checked by device and inode (`copyDeclaredOutput`): a
 link, a hard-linked file or a file swapped during delivery is refused. A pinned `.dmg` runtime is
 copied with its relative links kept (`copyRuntimeTree`; a link out of the runtime is refused) and
-probed after the image is detached.
+probed after the image is detached. Windows pins use `format: "zip"`: the host streams a bounded,
+verified archive into private staging, refuses absolute/traversal paths, duplicates, links and
+special files, and probes the extracted executable before committing the installation.
 `native.jobs` / `native.result` read recorded jobs and never replay an interrupted operation.
 The backend then calls `assets.deliver`, stores the reference and verifies actual preview use.
 Raw host output roots and process logs should stay in the trusted setup UI, not agent results.

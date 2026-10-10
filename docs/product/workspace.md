@@ -10,6 +10,9 @@ selected, one composer over an optional dithered picture. A game opens its conve
 the stage (Live, Builds once planned, Assets); Harness opens its conversation and Activity;
 Plugins fills the workspace.
 
+Unity 6 uses a native stage and explicitly installed bridge to an activated Editor;
+browser-scored Auto/Loop remains browser-only ([Unity](../unity.md)).
+
 Settings is a modal: Model Providers, Local Models, Appearance, Games, Harness, Permissions,
 Privacy and About. Narrow windows use a drawer; wide ones remember the sidebar.
 

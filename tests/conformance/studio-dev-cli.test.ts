@@ -203,7 +203,7 @@ test("the eval lanes strip the same session variables a live launch does, and th
 });
 
 test("a live games root under a .claude folder is warned about, through a link too, and nothing is created", (t) => {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "games-root-")));
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "games-root-")));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const claudeTree = path.join(base, "repo/.claude/worktrees/wt");
   fs.mkdirSync(claudeTree, { recursive: true });

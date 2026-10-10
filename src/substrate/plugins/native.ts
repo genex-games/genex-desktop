@@ -23,6 +23,7 @@ import {
   NativeJobState,
   NativeRuntimeState,
   PluginService,
+  nativeRuntimeForPlatform,
   type PluginManifest,
   type PluginBinding,
   type PluginNativeJob,
@@ -39,6 +40,10 @@ import { atomicWriteJson, openNoFollow } from "../fsx.ts";
 import { NativeEndReason, runNativeProcess, runtimeRoot } from "./native-process.ts";
 import { credentialHomes } from "../credential-homes.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { windowsBaseEnv } from "../child-env.ts";
+import { envValue } from "../toolchain.ts";
+import { runtimeCandidates } from "./native-platform.ts";
+import { extractRuntimeZip } from "./native-zip.ts";
 
 const exec = promisify(execFile);
 const VERSION_PROBE_TIMEOUT_MS = 8 * SECOND_MS;
@@ -53,8 +58,6 @@ const idPattern = /^[a-f0-9-]{36}$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 /** The environment a runtime's version probe runs with: nothing of Studio's. */
 const PROBE_ENV = { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" };
-/** Candidate path prefixes a runtime declaration may start with, and the folder each stands for. */
-const CANDIDATE_ROOTS = ["home:", "studio:", "storage:"] as const;
 /** Input path segments a job may never be handed: dotfiles, dependencies, agent instructions and key material. */
 const PROTECTED_INPUT_SEGMENTS = ["node_modules", "AGENTS.md", "CLAUDE.md"];
 const SECRET_NAME = /^(credentials|secrets|id_rsa|id_ed25519)(\.|$)/i;
@@ -101,6 +104,7 @@ const MESSAGE = {
     `Native job output is ${total} bytes; the declared aggregate size limit is ${limit} bytes, including renders. Original inputs were preserved.`,
   NoOutput: "Runtime exited successfully but produced no declared output",
   AppleSiliconOnly: "This pinned runtime supports macOS Apple Silicon only",
+  UnsupportedPlatform: (label: string) => `${label} has no runtime for ${process.platform} ${process.arch}.`,
   NoSpace: "Not enough space for the pinned runtime and staging copy",
   UnsafeArchive: "Unsafe runtime archive",
 } as const;
@@ -415,6 +419,19 @@ async function extractTarball(archive: string, stage: string, signal: AbortSigna
   await exec("/usr/bin/tar", ["-xzf", archive, "-C", stage], { signal, timeout: TAR_EXTRACT_TIMEOUT_MS });
 }
 
+/** Dispatch only the reviewed archive format into the install's fresh staging copy. */
+async function extractRuntimeArchive(
+  install: RuntimeInstall,
+  archive: string,
+  downloads: string,
+  swap: RuntimeSwap,
+  signal: AbortSignal,
+): Promise<void> {
+  if (install.format === "dmg") return extractDmg(install, archive, downloads, swap, signal);
+  if (install.format === "zip") return extractRuntimeZip(archive, swap.stage, install.unpackedBytes, signal);
+  return extractTarball(archive, swap.stage, signal);
+}
+
 /** Reusable host-owned runtime and job service. Plugin code remains trusted executable code;
  * only declared managed jobs get this filesystem/network confinement. */
 export class PluginNativeServices {
@@ -427,15 +444,6 @@ export class PluginNativeServices {
     this.studioData = studioData;
     this.protectedPaths = protectedPaths;
   }
-  #candidate(raw: string, root: string) {
-    const bases: Record<(typeof CANDIDATE_ROOTS)[number], () => string> = {
-      "home:": () => os.homedir(),
-      "studio:": () => this.studioData,
-      "storage:": () => root,
-    };
-    const prefix = CANDIDATE_ROOTS.find((p) => raw.startsWith(p));
-    return prefix ? path.join(bases[prefix](), raw.slice(prefix.length)) : raw;
-  }
   /** Probe one candidate binary: ready, or why not. Undefined when it does not exist. */
   async #probe(runtime: PluginNativeRuntime, candidate: string): Promise<PluginNativeStatus | undefined> {
     try {
@@ -444,7 +452,8 @@ export class PluginNativeServices {
       const result = await exec(binary, runtime.version.args, {
         timeout: VERSION_PROBE_TIMEOUT_MS,
         maxBuffer: VERSION_PROBE_MAX_BUFFER,
-        env: PROBE_ENV,
+        env: { ...windowsBaseEnv(process.env), ...PROBE_ENV },
+        windowsHide: true,
       });
       const version = new RegExp(runtime.version.pattern).exec(result.stdout)?.[1];
       if (!version || !SEMVER.test(version))
@@ -463,19 +472,39 @@ export class PluginNativeServices {
     }
   }
   async detect(runtime: PluginNativeRuntime, root: string): Promise<PluginNativeStatus> {
+    const selected = nativeRuntimeForPlatform(runtime, process.platform, process.arch);
+    if (!selected)
+      return { state: NativeRuntimeState.Incompatible, detail: MESSAGE.UnsupportedPlatform(runtime.label) };
     let incompatible: PluginNativeStatus | undefined;
-    const candidates = [
-      ...runtime.candidates.map((c) => this.#candidate(c, root)),
-      ...(runtime.install ? [path.join(root, "runtimes", runtime.id, runtime.install.executable)] : []),
-    ];
-    for (const candidate of candidates) {
-      const status = await this.#probe(runtime, candidate);
-      if (status?.state === NativeRuntimeState.Ready) return status;
+    for await (const candidate of this.#candidates(selected, root)) {
+      const status = await this.#probe(selected, candidate.path);
+      if (status?.state === NativeRuntimeState.Ready)
+        return { ...status, install: selected.install, managed: candidate.managed };
       if (status) incompatible = status;
     }
-    return (
-      incompatible ?? { state: NativeRuntimeState.Missing, detail: MESSAGE.Missing(runtime.label, !!runtime.install) }
-    );
+    return {
+      ...(incompatible ?? {
+        state: NativeRuntimeState.Missing,
+        detail: MESSAGE.Missing(selected.label, !!selected.install),
+      }),
+      install: selected.install,
+    };
+  }
+
+  /** Windows private storage is usable under LPAC even when an external installation cannot grant access. */
+  async *#candidates(runtime: PluginNativeRuntime, root: string) {
+    const managed = runtime.install
+      ? [{ path: path.join(root, "runtimes", runtime.id, runtime.install.executable), managed: true }]
+      : [];
+    if (process.platform === "win32") yield* managed;
+    const external = await runtimeCandidates(runtime.candidates, {
+      home: os.homedir(),
+      studio: this.studioData,
+      storage: root,
+      programFiles: process.platform === "win32" ? envValue(process.env, "ProgramFiles") : undefined,
+    });
+    yield* external.map((candidate) => ({ path: candidate, managed: false }));
+    if (process.platform !== "win32") yield* managed;
   }
   async call(
     manifest: PluginManifest,
@@ -515,8 +544,9 @@ export class PluginNativeServices {
       return true;
     }
     if (method !== PluginService.RuntimeInstall) throw new Error(MESSAGE.UnknownRuntimeOperation);
-    const install = runtime.install;
-    if (!install) throw new Error(MESSAGE.InstallNeedsAction);
+    const selected = nativeRuntimeForPlatform(runtime, process.platform, process.arch);
+    const install = selected?.install;
+    if (!selected || !install) throw new Error(MESSAGE.InstallNeedsAction);
     const trusted =
       invocation.method === "action" &&
       invocation.name === install.action &&
@@ -527,12 +557,17 @@ export class PluginNativeServices {
       this.#installControllers.set(key, controller);
       this.#installing.set(
         key,
-        this.#install(runtime, install, root, AbortSignal.any([invocation.signal, controller.signal]), emit).finally(
-          () => {
-            this.#installing.delete(key);
-            this.#installControllers.delete(key);
-          },
-        ),
+        this.#install(
+          selected,
+          install,
+          root,
+          AbortSignal.any([invocation.signal, controller.signal]),
+          emit,
+          Boolean(runtime.platforms),
+        ).finally(() => {
+          this.#installing.delete(key);
+          this.#installControllers.delete(key);
+        }),
       );
     }
     return this.#installing.get(key);
@@ -688,6 +723,7 @@ export class PluginNativeServices {
     root: string,
     signal: AbortSignal,
     emit: Emit,
+    platformDeclared: boolean,
   ): Promise<PluginNativeStatus> {
     const downloads = path.join(root, "runtime-downloads");
     const recorder = installRecorder(
@@ -707,7 +743,7 @@ export class PluginNativeServices {
     try {
       recorder.progress(InstallPhase.Preflight);
       await recorder.flush();
-      if (!isAppleSilicon()) throw new Error(MESSAGE.AppleSiliconOnly);
+      if (!platformDeclared && !isAppleSilicon()) throw new Error(MESSAGE.AppleSiliconOnly);
       await mkdir(downloads, { recursive: true });
       const disk = await statfs(root);
       if (disk.bavail * disk.bsize < install.bytes + install.unpackedBytes + DISK_RESERVE_BYTES)
@@ -734,8 +770,7 @@ export class PluginNativeServices {
       await recorder.flush();
       await mkdir(swap.stage, { recursive: true });
       recorder.progress(InstallPhase.Extracting);
-      if (install.format === "dmg") await extractDmg(install, archive, downloads, swap, signal);
-      else await extractTarball(archive, swap.stage, signal);
+      await extractRuntimeArchive(install, archive, downloads, swap, signal);
       signal.throwIfAborted();
       await this.#verifyStaged(runtime, install, root, swap.stage);
       await activateRuntime(swap);

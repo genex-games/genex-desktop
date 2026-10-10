@@ -293,6 +293,9 @@ function buildTheme() {
 
 async function copyResources() {
   const resources = path.join(dist, "resources");
+  await mkdir(path.join(resources, "windows-native"), { recursive: true });
+  for (const file of ["windows-native.cs", "windows-native.ps1"])
+    await cp(path.join(root, "src/substrate/plugins", file), path.join(resources, "windows-native", file));
   await mkdir(resources, { recursive: true });
 
   // The agent-editable self, seeded into userData on first launch.

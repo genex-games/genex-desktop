@@ -9,6 +9,7 @@ import { pathExists, readJsonIfExists } from "./fsx.ts";
 import { isRemoteSrc, pageScripts, projectRelative } from "./game-page.ts";
 import { declaredBootMs } from "./preview-ready.ts";
 import { isInstallCommand, packageCommands } from "./toolchain.ts";
+import { isUnityProject, UNITY_PROJECT_SHAPE } from "./unity-project.ts";
 
 const PROJECT_KINDS: readonly ProjectKind[] = [
   "studio-template",
@@ -17,6 +18,7 @@ const PROJECT_KINDS: readonly ProjectKind[] = [
   "canvas2d",
   "phaser",
   "engine-export",
+  "unity",
   "own-script",
 ];
 
@@ -143,6 +145,7 @@ function isGenexGame(pkg: PackageManifest | null): boolean {
  * else in the world is somebody's own game.
  */
 export async function detectProjectShape(dir: string): Promise<ProjectShape | null> {
+  if (await isUnityProject(dir)) return { ...UNITY_PROJECT_SHAPE };
   const html = await readFile(path.join(dir, "index.html"), "utf8").catch(() => null);
   if (html === null) return null;
   const meta = await readJsonIfExists<{ contractVersion?: unknown }>(path.join(dir, "studio.json")).catch(() => null);
@@ -261,6 +264,7 @@ async function recordedShape(dir: string, meta: ShapeMeta): Promise<ProjectShape
  * inspector — gets the same answer.
  */
 export async function readProjectShape(dir: string): Promise<ProjectShape> {
+  if (await isUnityProject(dir)) return { ...UNITY_PROJECT_SHAPE };
   const meta = await readJsonIfExists<ShapeMeta>(path.join(dir, "studio.json")).catch(() => null);
   // A folder may declare only how long it takes to boot, so the number is read before the
   // shape's own early return — and attached with a spread, never a mutation: TEMPLATE_SHAPE is
@@ -293,8 +297,15 @@ export function isScannedChild(entry: { name: string; isDirectory(): boolean }):
   return entry.isDirectory() && !entry.name.startsWith(".") && !NOT_A_GAME.has(entry.name);
 }
 
-/** One folder as a game candidate, or null when it has no page a browser can open. */
+/** One folder as a game candidate: a browser page or native Unity project markers. */
 async function gameCandidate(target: string, rel: string): Promise<GameCandidate | null> {
+  if (await isUnityProject(target))
+    return {
+      rel,
+      dir: target,
+      shape: { ...UNITY_PROJECT_SHAPE },
+      why: ["Assets/", "Packages/", "ProjectSettings/ProjectVersion.txt"],
+    };
   if (!(await pathExists(path.join(target, "index.html")))) return null;
   const pkg = await readPackageManifest(target);
   const shape = await readProjectShape(target);
@@ -309,7 +320,7 @@ async function gameCandidate(target: string, rel: string): Promise<GameCandidate
  * folder used to be told the folder was empty, wrapped in a template and hand-ported for the whole run
  *; the fix is to look one level down and say what is there.
  *
- * A candidate is a folder with an `index.html` — the page a browser can open. Nothing is
+ * A candidate is a folder with `index.html` or Unity source project markers. Nothing is
  * written, nothing is chosen: the caller decides, and can ask.
  */
 export async function findGameRoot(dir: string): Promise<GameCandidate[]> {

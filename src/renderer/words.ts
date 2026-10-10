@@ -2340,6 +2340,7 @@ export const PLUGINS_WORDS = {
       `Download Blender ${version} (about ${size}) for Studio. The Blender you have stays as it is.`,
     failedTitle: "Blender couldn’t start",
     download: "Download Blender",
+    privateCopy: "Install private Blender copy",
     downloading: (version: string) => `Downloading Blender ${version}`,
     installing: (version: string) => `Installing Blender ${version}`,
     progress: (done: string, total: string) => `${done} of ${total}`,

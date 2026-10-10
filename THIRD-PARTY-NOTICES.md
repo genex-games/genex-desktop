@@ -22,6 +22,17 @@ licenses and terms of included third-party software.
 
 ## Bundled plugin icons
 
+The new `com.genex.unity-bridge` Editor package is Genex source under MIT, with its own
+`src/plugins/unity/editor-package/LICENSE` carried into installed projects. Its cube icon is
+original Genex artwork. Unity Editor, Hub and build modules are not redistributed by Genex;
+their license and integration terms remain separate. Unity Package Manager resolves the
+declared Newtonsoft JSON and Test Framework dependencies under their own package licenses.
+The bridge's MIT license does not establish permission for automated Editor access.
+
+Local Blender's Windows runtime is downloaded separately from Blender's official archive,
+with pinned size and SHA-256. Genex does not include the executable in its installer; the
+managed archive retains Blender's GPL and third-party license files.
+
 - `src/plugins/blender/icon.png` (shipped as `dist/resources/plugins/blender/icon.png`) is the
   official Blender mark, as Blender's own app icon shows it. The Blender logo is a registered
   trademark of the Blender Foundation; Local Blender uses it only to identify Blender, which it
