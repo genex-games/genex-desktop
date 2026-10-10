@@ -124,27 +124,28 @@ application is visible in the snapshot/diff list.
 Sidebar **Plugins** opens installed integrations and the curated catalog (API 2; API 1
 packages keep working). The plugins store (`state/plugins.ts`) owns the plugin list, fetched at bootstrap and on
 every `plugins.changed` UI event (main relays the registry's `onChange`: install, update, enable,
-disable, remove, failure, reload); toolbar, Plugins page and stage all read it. Genex starts bundled/enabled but signed out or locked; paid asset
+disable, remove, failure, reload); toolbar, Plugins page and stage read it. Genex starts bundled/enabled but signed out or locked; paid asset
 authorization is separate. Disable removes agent tools/skills, panel and toolbar contributions.
-Remove persists across restarts and retains files, credentials and accounting; **Reinstall**
-re-acquires the package from its recorded origin (bundled seed, the local folder it was loaded
-from, its catalog release, or — for a `github`/`index` origin — the pinned commit re-fetched and
-re-checked through the marketplace). Local loading uses an explicit directory picker and the trust
+Remove persists across restarts, retaining files, credentials and accounting; **Reinstall**
+re-acquires the package from its recorded origin (bundled seed, its local folder, its catalog
+release or, for a `github`/`index` origin, the pinned commit re-fetched and re-checked through the
+marketplace). Bundled plugins behind their seed offer **Update to x** on their page
+(`plugin-updates` fixture). Local loading uses a directory picker and the trust
 dialog (publisher, capabilities, static scan verdict; the backend runs as trusted native code in a
 crash-isolated child process, not an OS sandbox).
 Code dropped under the packages folder without a record is listed under **Not enabled** and runs
-only after **Allow…** (the same trust dialog); it never gets an enable toggle.
+only after **Allow…** (the same trust dialog), with no enable toggle.
 
 Plugins may contribute toolbar buttons beside Live/Builds (see the Plugin toolbar and Genex
 publish rows). A tool declared with `confirmation` runs only after the host asks the user in the chat's pinned permission question
 (see the Agent consent cards row): the registry's consent seam fails closed when nobody can ask,
-agents never approve, and a declined or expired request is returned to the agent as text. Custom
+agents never approve, and a declined or expired request returns to the agent as text. Custom
 frames have no Studio preload; account/spending actions use trusted reviews. Standard settings and
 the independent SDK example exercise the same API. A curated index, sha-pinned GitHub installs, the
 install-time static scan and watch-folder hot reload are on the same page (see the Marketplace
-row); authors scaffold and check packages with `npm run plugin:new` / `plugin:doctor` /
+row); authors scaffold and check packages with `npm run plugin:new`, `plugin:doctor` and
 `plugin:pack` against the typed `src/plugin-sdk/index.d.ts`. See [Plugin SDK](../plugins.md) and
-the [plugin guide](../PLUGIN_GUIDE.md). Orchestration hooks remain an explicit follow-up; the shared
+the [plugin guide](../PLUGIN_GUIDE.md). Orchestration hooks remain a follow-up; the shared
 asset canvas is the Assets stage tab, fed by the host-owned `asset_delivered` record every
 `assets.deliver` leaves and by the `plugin_tool_started`/`plugin_tool` pair the host writes
 around every plugin tool call.
