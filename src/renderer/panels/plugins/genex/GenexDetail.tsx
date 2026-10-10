@@ -46,6 +46,44 @@ function RoutedTools(): JSX.Element {
   );
 }
 
+/** One Review button: a candidate's number, or the remesh. */
+function ReviewButton({ id, candidate, live }: { id: string; candidate: number | null; live: GenexLive }): JSX.Element {
+  return (
+    <Button
+      disabled={live.running !== null}
+      onClick={() => void live.act(GenexAction.Approve, { id, ...(candidate ? { candidate } : {}) })}
+    >
+      {GENEX_WORDS.review.button(candidate)}
+    </Button>
+  );
+}
+
+/** A preview candidate: its picture above its Review button, so the person chooses by looking. */
+function CandidateReview({
+  row,
+  candidate,
+  live,
+}: {
+  row: GenexJobRow;
+  candidate: number;
+  live: GenexLive;
+}): JSX.Element {
+  const picture = row.pictures[candidate];
+  return (
+    <div className="genex-candidate" data-genex-candidate={candidate}>
+      {picture && (
+        <img
+          className="genex-candidate-picture"
+          src={picture}
+          alt={GENEX_WORDS.review.picture(candidate)}
+          draggable={false}
+        />
+      )}
+      <ReviewButton id={row.id} candidate={candidate} live={live} />
+    </div>
+  );
+}
+
 /** One generation that waits for the person: what it is, and a Review button per candidate. */
 function ReviewRow({ row, live }: { row: GenexJobRow; live: GenexLive }): JSX.Element {
   return (
@@ -60,15 +98,13 @@ function ReviewRow({ row, live }: { row: GenexJobRow; live: GenexLive }): JSX.El
         {GENEX_WORDS.state[row.state]}
       </span>
       <div className="genex-job-actions">
-        {row.candidates.map((candidate) => (
-          <Button
-            key={candidate ?? "remesh"}
-            disabled={live.running !== null}
-            onClick={() => void live.act(GenexAction.Approve, { id: row.id, ...(candidate ? { candidate } : {}) })}
-          >
-            {GENEX_WORDS.review.button(candidate)}
-          </Button>
-        ))}
+        {row.candidates.map((candidate) =>
+          candidate === null ? (
+            <ReviewButton key="remesh" id={row.id} candidate={null} live={live} />
+          ) : (
+            <CandidateReview key={candidate} row={row} candidate={candidate} live={live} />
+          ),
+        )}
       </div>
     </li>
   );

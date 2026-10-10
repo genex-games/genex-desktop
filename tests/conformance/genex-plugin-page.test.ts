@@ -10,9 +10,12 @@ import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" }
 import { accountPanel, hasOwnPage } from "../../src/renderer/panels/plugins/labels.ts";
 import {
   CreditsKind,
+  GENEX_ACTIVE_POLL_MS,
+  GENEX_IDLE_POLL_MS,
   GenexAccountKind,
   genexAccountView,
   genexJobRows,
+  genexPollMs,
   isGenexStatus,
   JobState,
 } from "../../src/renderer/panels/plugins/genex/genex-view.ts";
@@ -182,12 +185,64 @@ describe("Genex generations", () => {
     assert.deepEqual(done?.candidates, []);
   });
 
+  it("shows each candidate's picture beside its number, so the choice is made by looking", () => {
+    const picture = (n: number) => `data:image/png;base64,${btoa(`candidate ${n}`)}`;
+    const images = [1, 2, 3].map((n) => ({ label: String(n), dataUrl: picture(n) }));
+    const [preview] = genexJobRows([
+      job({ operation: "character.preview", status: "approval_required", approval: { sourceId: "concept", images } }),
+    ]);
+    assert.deepEqual(preview?.pictures, { 1: picture(1), 2: picture(2), 3: picture(3) });
+    const views = ["front", "back", "left", "right"].map((label) => ({ label, dataUrl: picture(1) }));
+    const [remesh] = genexJobRows([
+      job({
+        operation: "character.finalize",
+        status: "approval_required",
+        approval: { sourceId: "preview", images: views },
+      }),
+    ]);
+    assert.deepEqual(remesh?.pictures, {}, "a remesh keeps its views for the review");
+  });
+
+  it("never shows a candidate picture the review itself would refuse", () => {
+    const images = [
+      { label: "1", dataUrl: "https://assets.example.invalid/1.png" },
+      { label: "2", dataUrl: "data:image/svg+xml;base64,PHN2Zy8+" },
+      { label: "3", dataUrl: "data:image/webp;base64,UklGRg==" },
+    ];
+    const [preview] = genexJobRows([
+      job({ operation: "character.preview", status: "approval_required", approval: { sourceId: "concept", images } }),
+    ]);
+    assert.deepEqual(preview?.pictures, { 3: "data:image/webp;base64,UklGRg==" });
+  });
+
   it("keeps unknown operations and statuses readable", () => {
     const [row] = genexJobRows([job({ operation: "hologram", status: "queued-remotely" })]);
     assert.equal(row?.label, "Asset");
     assert.equal(row?.state, JobState.Working);
     const [unsure] = genexJobRows([job({ status: "unresolved" })]);
     assert.equal(unsure?.state, JobState.Unsure);
+  });
+});
+
+describe("Genex status cadence", () => {
+  const withJobs = (...statuses: string[]) =>
+    status({ jobs: statuses.map((s, i) => job({ id: `job-${i}`, status: s })) });
+
+  it("looks again soon while Genex is still working on something or a sign-in waits", () => {
+    for (const moving of ["requested", "submitting", "accepted", "generating"])
+      assert.equal(genexPollMs(withJobs("downloaded", moving)), GENEX_ACTIVE_POLL_MS, moving);
+    const signingIn = status({ authorization: { userCode: "ABCD", verifyUrl: "https://x", expiresAt: 1 } });
+    assert.equal(genexPollMs(signingIn), GENEX_ACTIVE_POLL_MS);
+  });
+
+  it("settles to the idle read once nothing is moving on Genex's side", () => {
+    // An approved review continues as a new job, and a generation Genex finished waits for a
+    // wait or a download: neither changes by itself, so neither keeps the page reading every 5 s.
+    const settled = withJobs("approved", "generated", "downloaded", "failed", "approval_required", "stopped");
+    assert.equal(genexPollMs(settled), GENEX_IDLE_POLL_MS);
+    assert.equal(genexPollMs(withJobs()), GENEX_IDLE_POLL_MS);
+    assert.equal(genexPollMs(null), GENEX_IDLE_POLL_MS, "no answer yet");
+    assert.ok(GENEX_IDLE_POLL_MS > GENEX_ACTIVE_POLL_MS);
   });
 });
 

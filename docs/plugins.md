@@ -454,8 +454,12 @@ Available services are capability checked and scoped to the calling plugin:
 The host never retries a failed tool invocation. Persist remote references before returning and
 reconcile uncertain submissions instead of creating again. Cancellation stops local waiting;
 it does not promise remote cancellation or refunds. Genex keeps its CLI admission ledger as the
-single billing authority. Plugin process failures are shown in Plugins and reported as a
-`failed` change.
+single billing authority. Every client of a Genex account shares one per-account request limit,
+and a paid request refused by it fails: a status read asks Genex again only about generations it
+has not seen settle (`completed`, `failed`, `canceled`; remembered by the backend until sign-out),
+and the Genex page re-reads every 5 s only while a job is requested, submitting, accepted or
+generating or a sign-in waits, otherwise once a minute (`genexPollMs`). Plugin process failures
+are shown in Plugins and reported as a `failed` change.
 
 ## Panels and trusted approval
 
@@ -476,7 +480,9 @@ which lists the action's arguments under its question (nothing when there are no
 Optional backend `review` returns a message and labeled image data URLs. Studio requires all
 images to load before continuing. Approval tickets are short-lived, single-use and bound to
 plugin/action/arguments/project. A panel never supplies its own approval ticket. Genex uses this
-for candidate/remesh review, allowance changes and credential operations. Account connection
+for candidate/remesh review, allowance changes and credential operations; a preview's review
+carries only the candidate its arguments name, captioned as the one being approved, and a
+remesh's carries every view. Account connection
 URLs must be HTTPS and open only after an approved connection action.
 
 ## Marketplace

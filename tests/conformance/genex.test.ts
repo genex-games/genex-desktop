@@ -1,10 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import http from "node:http";
 import { GenexTools, validateGenexRequest, parseGenexJson } from "../../src/plugins/genex/adapter.ts";
+import { createGenexPlugin } from "../../src/plugins/genex/backend.ts";
 
 const credentials = new Map<
   string,
@@ -440,12 +441,13 @@ it("reconciling an accepted job names only completed, processing and pending rem
     await mkdir(game);
     const accepted = (await tools.execute("game", game, { operation: "image", prompt: "fixture" })) as any;
     assert.equal(accepted.status, "accepted");
+    // `completed` is Genex's last word on a generation, so it comes last: later reads remember it.
     const expected: [string, string][] = [
-      ["completed", "generated"],
       ["processing", "generating"],
       ["pending", "accepted"],
       ["queued", "queued"],
       ["running", "running"],
+      ["completed", "generated"],
     ];
     for (const [remoteStatus, jobStatus] of expected) {
       remote = remoteStatus;
@@ -456,6 +458,184 @@ it("reconciling an accepted job names only completed, processing and pending rem
   } finally {
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+/** A Genex API that answers a status read and counts every request it is sent, by route. */
+async function countingGenex(
+  generation: (id: string) => string | undefined,
+  request: (id: string) => string | undefined,
+) {
+  const hits = new Map<string, number>();
+  const server = http.createServer(async (req, res) => {
+    for await (const _ of req) {
+    }
+    const url = req.url ?? "";
+    hits.set(url, (hits.get(url) ?? 0) + 1);
+    const send = (value: unknown, status = 200) => {
+      res.statusCode = status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(value));
+    };
+    if (url === "/api/auth/get-session") return send({ user: { email: "fixture@example.test" } });
+    if (url === "/api/legal/status") return send({ accepted: true });
+    if (url === "/api/credits/me")
+      return send({
+        balance: 100,
+        spendable: 100,
+        reserved: 0,
+        unlimited: false,
+        prices: { image: 3 },
+        budget: { cap: 100 },
+      });
+    if (url === "/api/generations/lanes") return send({ lanes: [] });
+    const found = /^\/api\/generations\/requests\/([\w-]+)$/.exec(url);
+    const foundId = found?.[1] ? request(found[1]) : undefined;
+    if (foundId) return send({ id: foundId, status: generation(foundId), creditsQuoted: 3 });
+    const id = /^\/api\/generations\/([\w-]+)$/.exec(url)?.[1];
+    const remote = id ? generation(id) : undefined;
+    if (id && remote) return send({ generation: { id, kind: "image", status: remote, files: [] } });
+    send({}, 404);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const api = `http://127.0.0.1:${(server.address() as any).port}`;
+  /** The requests made while `read` ran, by route. */
+  const during = async (read: () => Promise<unknown>) => {
+    hits.clear();
+    await read();
+    return new Map(hits);
+  };
+  const close = async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  };
+  return { api, during, close };
+}
+
+const total = (hits: Map<string, number>) => [...hits.values()].reduce((a, b) => a + b, 0);
+/** A job id for the n-th record: a UUID, as Studio's job folders are. */
+const jobId = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+
+it("a status read asks Genex only about generations it has not seen settle, however many finished jobs the game has", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-genex-settled-"));
+  const FINISHED = 60;
+  const GENERIC = 2;
+  const remote = (id: string) => {
+    const n = Number(/^done-(\d+)$/.exec(id)?.[1]);
+    if (Number.isInteger(n)) return n % 4 ? "completed" : "failed";
+    return /^found-\d+$/.test(id) ? "completed" : undefined;
+  };
+  const genex = await countingGenex(remote, (requestId) => requestId.replace("req-", "found-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    const tools = fixtureTools(path.join(temp, "host"), genex.api);
+    await fixtureCredentials(tools.root).set("fixture-token");
+    const cwd = path.join(tools.root, "projects", "game");
+    const record = async (n: number, job: Record<string, unknown>) => {
+      const id = jobId(n);
+      await mkdir(path.join(cwd, "jobs", id), { recursive: true });
+      const createdAt = new Date(Date.UTC(2026, 9, 9, 0, 0, n)).toISOString();
+      await writeFile(
+        path.join(cwd, "jobs", id, "job.json"),
+        JSON.stringify({ id, project: "game", files: [], createdAt, ...job }),
+      );
+    };
+    for (let n = 1; n <= FINISHED; n++)
+      await record(n, { operation: "image", status: "accepted", generationId: `done-${n}` });
+    // A create whose answer was lost: only the CLI's generic reservation names it.
+    const ledger: string[] = [];
+    for (let g = 1; g <= GENERIC; g++) {
+      const n = FINISHED + g;
+      await record(n, { operation: "model", status: "unresolved" });
+      ledger.push(
+        JSON.stringify({
+          t: "reserve",
+          id: `req-${g}`,
+          out: path.join(cwd, "jobs", jobId(n), "output"),
+          credits: 3,
+          generic: true,
+        }),
+      );
+    }
+    await mkdir(path.join(cwd, ".genex"), { recursive: true });
+    await writeFile(path.join(cwd, ".genex/generations.ndjson"), `${ledger.join("\n")}\n`);
+    // The incident's shape: an approved character review stays `approved` once its run moved on.
+    await record(FINISHED + GENERIC + 1, {
+      operation: "character.finalize",
+      status: "approved",
+      approval: { sourceId: "preview-1", images: [{ label: "front", dataUrl: "data:image/png;base64,AA==" }] },
+    });
+
+    let first: Awaited<ReturnType<GenexTools["status"]>> | undefined;
+    const firstHits = await genex.during(async () => {
+      first = await tools.status("game");
+    });
+    for (let n = 1; n <= FINISHED; n++) assert.equal(firstHits.get(`/api/generations/done-${n}`), 1, `done-${n}`);
+    assert.equal(firstHits.get("/api/generations/requests/req-1"), 1);
+    assert.equal(firstHits.get("/api/generations/found-1"), 1);
+
+    let second: Awaited<ReturnType<GenexTools["status"]>> | undefined;
+    const secondHits = await genex.during(async () => {
+      second = await tools.status("game");
+    });
+    const baseline = await genex.during(() => tools.status("empty"));
+    assert.equal(second?.error, undefined, "the account read itself succeeded");
+    const asked = [...secondHits.keys()].filter(
+      (url) => url.startsWith("/api/generations/") && url !== "/api/generations/lanes",
+    );
+    assert.deepEqual(asked, [], "no settled generation or found reservation is asked about again");
+    assert.equal(total(secondHits), total(baseline), "a read costs what a game with no jobs costs");
+    assert.deepEqual(second?.jobs, first?.jobs, "a remembered answer shows the jobs exactly as a fresh one did");
+    assert.equal(second?.jobs.find((job) => job.generationId === "done-4")?.status, "failed");
+    assert.equal(second?.jobs.find((job) => job.generationId === "done-5")?.status, "generated");
+    assert.equal(second?.jobs.find((job) => job.generationId === "found-1")?.status, "generated");
+
+    // Signing out forgets them: the next account asks Genex afresh.
+    await tools.disconnect();
+    await fixtureCredentials(tools.root).set("fixture-token");
+    const afterSignIn = await genex.during(() => tools.status("game"));
+    assert.equal(afterSignIn.get("/api/generations/done-1"), 1);
+  } finally {
+    await genex.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+it("a generation Genex is still working on is asked about on every read until it settles", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-genex-moving-"));
+  let remote = "pending";
+  const genex = await countingGenex(
+    (id) => (id === "moving" ? remote : undefined),
+    () => undefined,
+  );
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    const tools = fixtureTools(path.join(temp, "host"), genex.api);
+    await fixtureCredentials(tools.root).set("fixture-token");
+    const dir = path.join(tools.root, "projects", "game", "jobs", jobId(1));
+    await mkdir(dir, { recursive: true });
+    const createdAt = new Date().toISOString();
+    const job = { id: jobId(1), project: "game", operation: "image", status: "accepted", generationId: "moving" };
+    await writeFile(path.join(dir, "job.json"), JSON.stringify({ ...job, files: [], createdAt }));
+    const reads: [string, string, number][] = [
+      ["pending", "accepted", 1],
+      ["processing", "generating", 1],
+      ["processing", "generating", 1],
+      ["completed", "generated", 1],
+      ["completed", "generated", 0],
+    ];
+    for (const [answer, shown, asked] of reads) {
+      remote = answer;
+      let status: Awaited<ReturnType<GenexTools["status"]>> | undefined;
+      const hits = await genex.during(async () => {
+        status = await tools.status("game");
+      });
+      assert.equal(hits.get("/api/generations/moving") ?? 0, asked, `remote ${answer}`);
+      assert.equal(status?.jobs[0]?.status, shown, `remote ${answer}`);
+    }
+  } finally {
+    await genex.close();
     await rm(temp, { recursive: true, force: true });
   }
 });
@@ -677,4 +857,91 @@ it("names the local copy when a worker-delivered job is inspected from another w
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/**
+ * Studio's review before a character approval: the person must see that the picture in front of
+ * them is the one being approved. A paying user who opened "Review candidate 2" to look, liked 3
+ * and continued, approved 2: the review showed all three candidates alike and named the choice
+ * only inside its text.
+ */
+describe("character approval review", () => {
+  const PROJECT = "game";
+  const picture = (label: string) => `data:image/png;base64,${Buffer.from(`picture ${label}`).toString("base64")}`;
+
+  /** The plugin's review of one job waiting on the person, saved as Studio saves it. */
+  async function pendingApproval(operation: string, labels: string[]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "studio-genex-review-"));
+    const id = "33333333-3333-4333-8333-333333333333";
+    const dir = path.join(root, "projects", PROJECT, "jobs", id);
+    await mkdir(dir, { recursive: true });
+    const job = {
+      id,
+      project: PROJECT,
+      operation,
+      status: "approval_required",
+      files: [],
+      createdAt: new Date().toISOString(),
+      approval: { sourceId: "concept", images: labels.map((label) => ({ label, dataUrl: picture(label) })) },
+    };
+    await writeFile(path.join(dir, "job.json"), JSON.stringify(job));
+    const plugin = await createGenexPlugin("http://127.0.0.1:9");
+    const ctx = {
+      project: PROJECT,
+      host: async (method: string) => {
+        if (method === "storage.root") return root;
+        if (method === "credentials.session") return null;
+        throw new Error(`unexpected host call ${method}`);
+      },
+    };
+    const review = (args: Record<string, unknown>) =>
+      plugin.review("approve", { id, ...args }, ctx) as Promise<{
+        message: string;
+        images: Array<{ label: string; dataUrl: string }>;
+      }>;
+    return { review, cleanup: () => rm(root, { recursive: true, force: true }) };
+  }
+
+  for (const candidate of [1, 2, 3]) {
+    it(`shows candidate ${candidate} alone, captioned as the one being approved, and names it`, async () => {
+      const fx = await pendingApproval("character.preview", ["1", "2", "3"]);
+      try {
+        const shown = await fx.review({ candidate });
+        assert.deepEqual(
+          shown.images.map((image) => image.dataUrl),
+          [picture(String(candidate))],
+          "the review shows the chosen candidate's picture, and no other",
+        );
+        assert.match(shown.images[0]?.label ?? "", new RegExp(`^approving candidate ${candidate}$`, "i"));
+        assert.match(shown.message, new RegExp(`\\bcandidate ${candidate}\\b`, "i"));
+      } finally {
+        await fx.cleanup();
+      }
+    });
+  }
+
+  it("refuses to review a preview without a candidate it can show", async () => {
+    const fx = await pendingApproval("character.preview", ["1", "2", "3"]);
+    try {
+      for (const candidate of [undefined, 0, 4, "3", 2.5])
+        await assert.rejects(fx.review({ candidate }), /Choose candidate/, String(candidate));
+    } finally {
+      await fx.cleanup();
+    }
+  });
+
+  it("keeps the remesh review: every view, and the rigging copy it approves", async () => {
+    const views = ["front", "back", "left", "right"];
+    const fx = await pendingApproval("character.finalize", views);
+    try {
+      const shown = await fx.review({});
+      assert.deepEqual(
+        shown.images,
+        views.map((label) => ({ label, dataUrl: picture(label) })),
+      );
+      assert.match(shown.message, /10,000-face rigging copy/);
+    } finally {
+      await fx.cleanup();
+    }
+  });
 });

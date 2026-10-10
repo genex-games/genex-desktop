@@ -337,6 +337,23 @@
   gap: 8px;
   padding-block: 6px 2px;
 }
+/* A preview candidate: its picture above its Review button, as wide as the button. */
+.genex-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min-content;
+}
+.genex-candidate-picture {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--soft);
+  outline: 1px solid var(--image-outline);
+  outline-offset: -1px;
+  user-select: none;
+}
 .genex-advanced {
   margin-block-start: 36px;
   padding-block-end: 4px;

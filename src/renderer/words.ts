@@ -2654,6 +2654,8 @@ export const GENEX_WORDS = {
   review: {
     title: "Waiting for your review",
     button: (candidate: number | null) => (candidate === null ? "Review remesh" : `Review candidate ${candidate}`),
+    /** A candidate's picture above its Review button. */
+    picture: (candidate: number) => `Candidate ${candidate}`,
   },
   /** A generation's state, by `JobState`. */
   state: {

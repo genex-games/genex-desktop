@@ -93,6 +93,8 @@ import {
   validateGenexRequest,
 } from "./request.ts";
 import {
+  applyFoundGeneration,
+  applyGenerationView,
   approvalImageUrl,
   approvalLabels,
   deliveredElsewhereMessage,
@@ -100,13 +102,15 @@ import {
   fetchApprovalImage,
   fetchDesktopVariant,
   filesPresent,
+  type FoundGeneration,
+  generationView,
+  type GenerationView,
   hasDownloadableResult,
   isRemoteFailure,
+  isSettledView,
   isUncertainSubmit,
   JOB_ID,
   jobStatusFromRemote,
-  reconciledJobStatus,
-  manifestFromView,
   readLedger,
   RECONCILE_BATCH,
   settledFailureStatus,
@@ -166,6 +170,15 @@ const MIN_POLL_INTERVAL_S = 5;
 /** The workspace folder name: letters, digits, `_` and `-` only, so it can never be a path. */
 const PROJECT_NAME = /^[a-zA-Z0-9_-]+$/;
 const DEVICE_LABEL = "AI Game Studio";
+
+/**
+ * How a reconcile reads Genex: not at all, afresh, or afresh only about generations this process
+ * has not yet seen settle. Status reads are the last kind: the page, the usage panel and the
+ * agent read status often, and a game's finished generations would otherwise each be asked about
+ * again on every read, against the one per-account request budget every client shares.
+ */
+const RemoteRead = { None: "none", Fresh: "fresh", Remembered: "remembered" } as const;
+type RemoteRead = (typeof RemoteRead)[keyof typeof RemoteRead];
 
 /** Where Genex's device sign-in stands, as its poll answers. */
 const DeviceStatus = { Approved: "approved", Denied: "denied", Expired: "expired" } as const;
@@ -322,6 +335,10 @@ export class GenexTools {
   #coverSteps = new Map<string, CoverStep>();
   /** The last write to a game's kept shot, or a send's read of it: each waits for the one before. */
   #coverWrites = new Map<string, Promise<unknown>>();
+  /** Genex's last word on each generation seen settled, by generation id: status reads apply it without asking again. */
+  #settledGenerations = new Map<string, GenerationView>();
+  /** Which generation each generic reservation became, by reservation id, as Genex named it. */
+  #foundGenerations = new Map<string, FoundGeneration>();
   /** How long a publish's new draft has to pass its test before the publish gives up on going public. */
   readonly #draftTestMs: number;
   readonly #coverTimeouts: CoverTimeouts;
@@ -425,6 +442,9 @@ export class GenexTools {
     this.#disconnecting = true;
     this.#auth = null;
     this.#sessionIdentity = undefined;
+    // What Genex said under this sign-in is not carried over to the next one.
+    this.#settledGenerations.clear();
+    this.#foundGenerations.clear();
     for (const c of this.#controllers.keys()) c.abort();
     await this.#account(async () => {
       await (await this.#store()).clear();
@@ -1304,37 +1324,44 @@ export class GenexTools {
     return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...options });
   }
   /** Read Genex's durable admission evidence; never change its credit ledger. */
-  async #reconcileJob(cwd: string, job: GenexJob, remote = false, signal?: AbortSignal) {
+  async #reconcileJob(cwd: string, job: GenexJob, read: RemoteRead = RemoteRead.None, signal?: AbortSignal) {
     const reservation = await readLedger(cwd, job);
-    if (remote && !job.generationId) await this.#findGeneration(job, reservation, signal);
-    if (remote && job.generationId) await this.#refreshGeneration(job, job.generationId, signal);
+    const remote = read !== RemoteRead.None;
+    if (remote && !job.generationId) await this.#findGeneration(job, reservation, read, signal);
+    if (remote && job.generationId) await this.#refreshGeneration(job, job.generationId, read, signal);
     if (job.generationId && isUncertainSubmit(job)) job.status = GenexJobStatus.Accepted;
   }
-  /** Ask Genex which generation a generic reservation became. */
-  async #findGeneration(job: GenexJob, reservation: LedgerRow | undefined, signal?: AbortSignal) {
+  /** Ask Genex which generation a generic reservation became, unless it named one that has since settled. */
+  async #findGeneration(job: GenexJob, reservation: LedgerRow | undefined, read: RemoteRead, signal?: AbortSignal) {
     if (reservation?.generic !== true || typeof reservation.id !== "string") return;
+    const known = read === RemoteRead.Remembered ? this.#foundGenerations.get(reservation.id) : undefined;
+    if (known && this.#settledGenerations.has(known.id)) {
+      applyFoundGeneration(job, known);
+      return;
+    }
     try {
       const found = await this.#fetch(GenexRoute.generationRequest(reservation.id), withSignal(signal));
-      if (typeof found.id === "string") {
-        job.generationId = found.id;
-        job.remoteStatus = found.status;
-        if (Number.isSafeInteger(found.creditsQuoted)) job.creditsQuoted = found.creditsQuoted;
-      }
+      if (typeof found.id !== "string") return;
+      const answer: FoundGeneration = { id: found.id, status: found.status, creditsQuoted: found.creditsQuoted };
+      applyFoundGeneration(job, answer);
+      this.#foundGenerations.set(reservation.id, answer);
     } catch {} // A failed lookup cannot authorize a replacement or release a reservation.
   }
-  /** Copy Genex's view of a generation onto the job: status, files and credits. */
-  async #refreshGeneration(job: GenexJob, generationId: string, signal?: AbortSignal) {
+  /**
+   * Copy Genex's view of a generation onto the job: status, files and credits. A remembered read
+   * applies Genex's last word on a settled generation without asking again; any read that asks
+   * remembers the answer once it is settled.
+   */
+  async #refreshGeneration(job: GenexJob, generationId: string, read: RemoteRead, signal?: AbortSignal) {
+    const known = read === RemoteRead.Remembered ? this.#settledGenerations.get(generationId) : undefined;
+    if (known) {
+      applyGenerationView(job, known);
+      return;
+    }
     try {
-      const response = await this.#fetch(GenexRoute.generation(generationId), withSignal(signal));
-      const view = response.generation ?? response;
-      if (typeof view.status === "string") {
-        job.remoteStatus = view.status;
-        const awaitingFiles = !job.files.length && job.status !== GenexJobStatus.ApprovalRequired;
-        if (awaitingFiles) job.status = reconciledJobStatus(view.status);
-      }
-      if (Array.isArray(view.files)) job.manifest = manifestFromView(view.files);
-      if (typeof view.creditsCharged === "number") job.creditsCharged = view.creditsCharged;
-      if (typeof view.creditsRefunded === "number") job.creditsRefunded = view.creditsRefunded;
+      const view = generationView(await this.#fetch(GenexRoute.generation(generationId), withSignal(signal)));
+      applyGenerationView(job, view);
+      if (isSettledView(view)) this.#settledGenerations.set(generationId, view);
     } catch {} // Preserve last known state; absence is not completion or refund evidence.
   }
   /** Poll a pending device sign-in when its interval is due, and save an approved token. */
@@ -1386,10 +1413,11 @@ export class GenexTools {
       if (job) jobs.push(job);
     }
     jobs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const read = connected ? RemoteRead.Remembered : RemoteRead.None;
     for (let offset = 0; offset < jobs.length; offset += RECONCILE_BATCH) {
       signal?.throwIfAborted();
       const batch = jobs.slice(offset, offset + RECONCILE_BATCH);
-      await Promise.all(batch.map((job) => this.#reconcileJob(cwd, job, connected, signal)));
+      await Promise.all(batch.map((job) => this.#reconcileJob(cwd, job, read, signal)));
     }
     return jobs;
   }
@@ -1579,7 +1607,7 @@ export class GenexTools {
   }
   /** Reconcile with Genex, fetch the desktop variant, then deliver the output into the game. */
   async #deliverResult(cwd: string, job: GenexJob, root: string, output: string, signal: AbortSignal) {
-    await this.#reconcileJob(cwd, job, true, signal);
+    await this.#reconcileJob(cwd, job, RemoteRead.Fresh, signal);
     await fetchDesktopVariant(job, output, signal);
     job.files = await this.#deliver(output, root, job.id);
     if (job.preferredFile) job.preferredFile = job.files.find((file) => path.basename(file) === job.preferredFile);
