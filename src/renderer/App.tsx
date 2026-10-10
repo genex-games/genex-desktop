@@ -90,6 +90,7 @@ export function App(): JSX.Element {
             setupPlugin={chrome.setupPlugin}
             project={project}
             onPluginsRefresh={app.plugins.refresh}
+            onIndexRefresh={app.plugins.refreshIndex}
             onBack={() => chrome.setPluginsOpen(false)}
             sidebarHidden={chrome.sidebarHidden}
             onToggleSidebar={chrome.toggleSidebar}

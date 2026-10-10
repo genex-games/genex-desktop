@@ -345,7 +345,8 @@ notifications are refused), sandbox-setup (the window opens on "Set up the prote
 for a Linux machine missing bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]`
 opens the studio), update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex
 0.2.0; the restart is refused as native) and plugin-updates (Genex and Blender installed one
-version back: their pages offer `Update to <version>`, refused as native).
+version back: their rows and pages offer `Update to <version>` and the sidebar
+`[data-plugins-update]`, each refused as native).
 Use `--reuse` for a stopped profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,

@@ -2,6 +2,7 @@
 import type { JSX, ReactNode } from "react";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
+import { installPluginUpdate } from "../../state/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon, type IconName } from "../../ui/icons.tsx";
 import { PluginIcon, type PluginIconSize } from "../../ui/PluginIcon.tsx";
@@ -200,17 +201,15 @@ function PluginRow({
   plugin,
   page,
   credits,
-  update,
 }: {
   plugin: PluginInfo;
   page: PluginsPage;
   credits?: CreditsView | null;
-  /** A newer catalog release this plugin can update to. */
-  update?: string | undefined;
 }): JSX.Element {
   const { manifest } = plugin;
   const name = shownName(plugin);
   const description = shownDescription(plugin);
+  const update = page.updates.get(manifest.id);
   return (
     <article className="extension-row" data-plugin-row={manifest.id}>
       <button
@@ -236,9 +235,9 @@ function PluginRow({
         <Button
           disabled={page.busy}
           aria-label={`Update ${name}`}
-          onClick={() => void page.act(() => window.studio.pluginUpdate(manifest.id))}
+          onClick={() => void page.act(() => installPluginUpdate(window.studio, update))}
         >
-          Update to {update}
+          Update to {update.version}
         </Button>
       )}
       {isOffList(plugin) ? (
@@ -254,17 +253,15 @@ function PluginRow({
 export const pluginMatches = (page: PluginsPage, p: PluginInfo): boolean =>
   page.matches(shownName(p), shownDescription(p), p.manifest.name, p.manifest.description, p.manifest.publisher);
 
-/** The rows of the plugins that match the search; `credits` is Genex's balance, `updates` newer catalog releases by id. */
+/** The rows of the plugins that match the search; `credits` is Genex's balance. */
 export function PluginRows({
   list,
   page,
   credits,
-  updates,
 }: {
   list: PluginInfo[];
   page: PluginsPage;
   credits?: CreditsView | null;
-  updates?: ReadonlyMap<string, string>;
 }): JSX.Element {
   return (
     <>
@@ -276,7 +273,6 @@ export function PluginRows({
             plugin={p}
             page={page}
             credits={p.manifest.id === GENEX_PLUGIN_ID ? credits : undefined}
-            update={updates?.get(p.manifest.id)}
           />
         ))}
     </>

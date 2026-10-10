@@ -66,7 +66,7 @@ import {
   stagedCounted,
   type LibraryStore,
 } from "./library.ts";
-import { createPluginsStore, type PluginsStore } from "./plugins.ts";
+import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
 import {
   bootstrapFailed,
   bootstrapReady,
@@ -323,6 +323,7 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
       const developer = boot.developer;
       session.setState((state) => bootstrapReady(state, { welcome, developer }), true);
       void plugins.refresh();
+      void plugins.refreshIndex();
       // An update downloaded before this window opened, or before a reload, still waits.
       const ready = await api.readyUpdate().catch(() => null);
       if (superseded()) return;
@@ -396,7 +397,11 @@ function refreshAfter(stores: Stores, event: UiEvent): void {
   if (reads.games) void stores.library.refreshGames();
   if (reads.staged) void stores.library.refreshStaged();
   if (reads.engines) void stores.engines.refresh();
-  if (reads.plugins) void stores.plugins.refresh();
+  if (reads.plugins) {
+    void stores.plugins.refresh();
+    // A plugin that was just updated is no longer one the index has a newer release for.
+    void stores.plugins.refreshIndex();
+  }
   if (reads.assets) stores.library.refreshAssets(reads.assets.project);
 }
 
@@ -521,6 +526,10 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     if (!ctx.visibility.hidden()) void stores.eventLog.refresh();
   };
   const poll = timers.setInterval(refresh, EVENT_POLL_MS);
+  // A release published while the studio runs is offered without a restart.
+  const indexPoll = timers.setInterval(() => {
+    if (!ctx.visibility.hidden()) void stores.plugins.refreshIndex();
+  }, PLUGIN_INDEX_POLL_MS);
   const unwatchVisibility = ctx.visibility.subscribe(refresh);
   void bootstrap();
   return () => {
@@ -529,6 +538,7 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     unfollow();
     unwatchVisibility();
     timers.clearInterval(poll);
+    timers.clearInterval(indexPoll);
   };
 }
 

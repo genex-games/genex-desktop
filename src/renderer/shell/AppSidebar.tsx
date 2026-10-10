@@ -4,13 +4,16 @@ import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { feedbackAbout } from "../feedback-about.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { Sidebar } from "../panels/Sidebar.tsx";
-import { useLaunch, useSidebarLibrary, useThreadsView, useUpdate } from "../state/hooks.ts";
+import { shownRelease } from "../panels/plugins/labels.ts";
+import { useLaunch, usePlugins, useShallow, useSidebarLibrary, useThreadsView, useUpdate } from "../state/hooks.ts";
 import { launchInSidebar } from "../state/launch.ts";
+import { pluginUpdates } from "../state/plugins.ts";
 import type { Studio } from "../state/studio.ts";
 import { busyThreadIds, Room } from "../state/threads.ts";
-import { notifyProblem } from "../state/toasts.ts";
+import { notifyProblem, ToastTone } from "../state/toasts.ts";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import type { Notifications } from "../use-notifications.ts";
+import { problemWords } from "../words.ts";
 import type { Navigation } from "./use-navigation.ts";
 import type { ShellChrome } from "./use-shell-chrome.ts";
 
@@ -42,6 +45,9 @@ export function AppSidebar({
     [launch, games],
   );
   const update = useUpdate((s) => s.ready);
+  // Strings, compared one by one: the sidebar re-renders when a release comes or goes, not on every plugin read.
+  const pluginReleases = usePlugins(useShallow((s) => pluginUpdates(s.list, s.index).map(shownRelease)));
+  const updatingPlugins = usePlugins((s) => s.updating);
   const busyThreads = useMemo(() => busyThreadIds(threadStatus), [threadStatus]);
   const { pluginsOpen } = chrome;
   const hidden = !chrome.sidebarVisible || welcoming;
@@ -53,6 +59,12 @@ export function AppSidebar({
     });
   const downloadUpdate = (): void => {
     void app.api.openUpdateDownload().catch(notifyFailure);
+  };
+  const updatePlugins = (): void => {
+    // One cause (no connection) refuses every update alike: it is said once.
+    void app.plugins.updateAll().then((failures) => {
+      for (const words of new Set(failures.map(problemWords))) app.notify(words, ToastTone.Error);
+    });
   };
   return (
     <aside className="studio-sidebar" inert={hidden} aria-hidden={hidden}>
@@ -106,6 +118,9 @@ export function AppSidebar({
           update={update}
           onRestartToUpdate={restartToUpdate}
           onDownloadUpdate={downloadUpdate}
+          pluginUpdates={pluginReleases}
+          updatingPlugins={updatingPlugins}
+          onUpdatePlugins={updatePlugins}
         />
       </BootstrapGate>
     </aside>

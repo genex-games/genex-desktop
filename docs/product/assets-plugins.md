@@ -21,11 +21,11 @@ The prompt bar's Add menu holds reference attachments, plugin and MCP switches, 
 Manage. Enabled, connected, signed in and permitted are different states.
 
 Plugins opens a page with Plugins/Skills, search, rows and details. Plugins and MCP
-servers show their own pictures ([Icons](../plugins.md#icons)) or an initial. The
-list shows installed plugins (Genex routes game dev tools), your servers, the
+servers show their pictures ([Icons](../plugins.md#icons)) or an initial. It
+lists installed plugins (Genex routes game dev tools), your servers, the
 Marketplace (Coming soon until the catalog has something new) and the plugin guide. Install from GitHub pins a pasted link's latest release
 (else the default branch's newest commit). Games build, preview and export without plugins.
-The host draws Genex's app-wide page (shared balance, the tools it routes) and Local Blender's
+The host draws Genex's app-wide page (shared balance, routed tools) and Local Blender's
 runtime card. Connect, unapproved, reuses a saved account or
 opens browser sign-in; setup survives restart and reinstall. Game spend is in the usage panel.
 Enabled Genex suggests assets in planning; workers use it once the account is ready. User
@@ -43,8 +43,8 @@ Plugin MCPs connect on first use; the composer shows only actionable failures.
 
 The curated catalog is served anonymously from `plugins.genex.games`; reviewed release records
 live in `genex-games/genex-plugins`. Genex and Local Blender are official entries.
-Catalog installation requires native-code trust; updates preserve data and require a newer
-compatible release. See the [release procedure](../STUDIO-MARKETPLACE-RELEASE.md).
+Catalog installation requires native-code trust
+([release procedure](../STUDIO-MARKETPLACE-RELEASE.md)).
 
 ## Permissions and lifecycle
 
@@ -59,9 +59,10 @@ cannot grant authority. Plugin upload staging lists every included/excluded file
 for a second approval. Revocation prevents future calls; remote side effects remain.
 
 Removal preserves data, credentials and jobs; another source reusing a plugin's id needs
-**Replace and erase data**, and bundled ids cannot be taken. Reinstall is explicit, even for bundled plugins;
-local reinstall reviews a fresh snapshot. Host-managed
-secrets never enter composer text.
+**Replace and erase data**; bundled ids cannot be taken. Reinstall is explicit, even for bundled plugins;
+local reinstall reviews a fresh snapshot. Updates (a newer compatible release) preserve data;
+rows offer **Update to x**, the sidebar **Update plugins** (all, each approved).
+Host-managed secrets never enter composer text.
 
 Skills lists Studio’s own (local chat, planner, director), this game’s, each provider’s global
 and plugin skills. Codex says whether workers load its catalog; Claude’s global entries stay
