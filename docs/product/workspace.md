@@ -25,8 +25,8 @@ Start building opens home; a typed idea waits in its composer.
 
 Then a bottom-right Genex Tools card offers **Connect Genex plugin** once.
 
-If the process sandbox cannot start, the window shows **Set up the protected workspace**: what
-is missing, commands to copy, Retry.
+A sandbox that cannot start opens **Set up the protected workspace**: what is missing or
+blocked, commands to copy, Retry.
 
 ## Main actions
 

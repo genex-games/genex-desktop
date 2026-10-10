@@ -166,13 +166,14 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   `data-platform` on the root, and the phase. When `ProcessSandbox` raises
   `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
   unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code), main holds the boot gate
+  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
+  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
   ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
-  instead of exiting; `studio:boot.retry` creates the core again and, once it starts, replaces
+  instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces
   that window with the studio. On Windows, `studio:boot.setup` (native) first installs the sandbox
   with the unpacked srt-win
   ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and then retries; a dismissed prompt changes nothing. Every other startup failure keeps the error dialog and exit; smoke
+  UAC prompt) and retries; a dismissed prompt changes nothing. Other startup failures keep the error dialog and exit; smoke
   and developer launches fail as before (the `sandbox-setup` fixture shows the screen over a ready
   core). The window's title bar comes from
   [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS

@@ -97,6 +97,7 @@ import { DEFAULT_POOL_MAX } from "../substrate/preview-pool.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
+import { checkLinuxIsolation } from "../substrate/linux-isolation.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { TurnFactory } from "../substrate/turns.ts";
 import type { EventData, EventEnvelope } from "../substrate/types.ts";
@@ -591,6 +592,12 @@ export class StudioCore {
       this.#createSandbox(listed).finally(() => mark("sandbox")),
       this.#wirePluginServices().finally(() => mark("plugins")),
     ]);
+    // Linux: a sandbox that cannot start a process (AppArmor's user-namespace restriction) is a
+    // setup problem the window shows, not a harness that never boots.
+    await checkLinuxIsolation(sandbox).catch(async (error: unknown) => {
+      await sandbox.dispose();
+      throw error;
+    });
     this.sandbox = sandbox;
     await this.#wireMcp();
     this.builds = this.#createBuilds();
