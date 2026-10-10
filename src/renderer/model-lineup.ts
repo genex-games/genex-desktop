@@ -8,8 +8,8 @@
  * time, then the rest in the order the provider lists them. Settings choices (`state/model-picker.ts`) override the rule per model; the provider's
  * default always shows.
  */
-import { EngineStatusCode } from "../shared/engine-descriptor.ts";
-import { EngineId } from "../shared/providers.ts";
+import { EngineStatusCode, LoginSource } from "../shared/engine-descriptor.ts";
+import { EngineId, isMetered } from "../shared/providers.ts";
 
 /** A catalog row as the lineup reads it. */
 export interface LineupModel {
@@ -191,10 +191,20 @@ export function shownModels(
   models: readonly LineupModel[],
   choices: Readonly<Record<string, boolean>> = {},
   runnable: ReadonlySet<string> = NOBODY,
+  lineup = true,
 ): Set<string> {
-  const latest = latestModels(engine, models, runnable);
+  const latest = lineup ? latestModels(engine, models, runnable) : NOBODY;
   const shown = (model: LineupModel) => model.providerDefault === true || (choices[model.id] ?? latest.has(model.id));
   return new Set(models.filter((model) => model.id !== DEFAULT_MODEL && shown(model)).map((model) => model.id));
+}
+
+/**
+ * Does an engine's catalog offer its default lineup? Not a paid one with no account behind it:
+ * OpenCode with no provider signed in lists only its own free models, which wait in Settings until
+ * the person switches one on.
+ */
+export function offersLineup(engine: { id: string; account?: { source: string } | null }): boolean {
+  return !(isMetered(engine.id) && engine.account?.source === LoginSource.None);
 }
 
 /**
