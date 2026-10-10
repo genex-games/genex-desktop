@@ -1,6 +1,6 @@
 /**
  * What the studio reads from the `opencode` CLI outside a session: the models it can run, as
- * `opencode models --verbose` lists them, and the settings every session is started with.
+ * `opencode api get /api/model` lists them, and the settings every session is started with.
  *
  * OpenCode keeps its own sign-ins (`opencode auth login`) and lists exactly the models those
  * sign-ins (and its free OpenCode Zen models) can run, so the list is also how the studio knows
@@ -13,11 +13,9 @@ import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
 /** A model whose context the listing does not give is assumed to have this much. */
-const DEFAULT_CONTEXT_TOKENS = 32_768;
+const DEFAULT_CONTEXT_TOKENS = 200_000;
 /** A reply may use this many tokens when the listing gives no output limit. */
-const DEFAULT_REPLY_TOKENS = 8_192;
-/** A model's line in `opencode models --verbose`: `provider/model`, alone on its line. */
-const MODEL_LINE = /^([\w.@-]+)\/(\S+)$/;
+const DEFAULT_REPLY_TOKENS = 32_000;
 /** The model status OpenCode marks a retired model with. */
 const DEPRECATED = "deprecated";
 /** OpenCode's own provider (OpenCode Zen): it lists its free models to anyone, signed in or not. */
@@ -52,22 +50,18 @@ const MESSAGE = {
   Malformed: "OpenCode's model list could not be read.",
 } as const;
 
-/** One model as `opencode models --verbose` prints it: the fields the studio reads. */
-interface ListedModel {
-  id?: unknown;
+/** One model in `api get /api/model`: the fields the studio reads. */
+interface ApiModel {
+  modelID?: unknown;
   providerID?: unknown;
   name?: unknown;
   status?: unknown;
-  api?: { url?: unknown };
-  cost?: { input?: unknown; output?: unknown };
+  enabled?: unknown;
+  settings?: { baseURL?: unknown };
+  cost?: Array<{ input?: unknown; output?: unknown }>;
   limit?: { context?: unknown; output?: unknown };
-  capabilities?: {
-    reasoning?: unknown;
-    toolcall?: unknown;
-    input?: { image?: unknown };
-    output?: Record<string, unknown>;
-  };
-  variants?: unknown;
+  capabilities?: { tools?: unknown; input?: unknown; output?: unknown };
+  variants?: Array<{ id?: unknown }>;
 }
 
 /** A model OpenCode can run, and the host its provider answers on (for the sandbox's network). */
@@ -103,41 +97,47 @@ function apiHost(value: unknown): string | null {
 }
 
 /**
- * Can the studio's builds run on it: it calls tools, is not retired, and answers with text alone
- * (an image or audio generator is no coding model, though it may call tools).
+ * Can the studio's builds run on it: it calls tools, is not disabled or retired, and answers with
+ * text alone (an image generator is no coding model, though it calls tools). A listing that names
+ * no output keeps the documented fallback assumption of text.
  */
-function runsBuilds(listed: ListedModel): boolean {
-  if (listed.capabilities?.toolcall !== true || listed.status === DEPRECATED) return false;
-  const output = Object.entries(listed.capabilities.output ?? {});
-  return output.every(([modality, on]) => modality === "text" || on !== true);
+function runsBuilds(listed: ApiModel): boolean {
+  if (listed.capabilities?.tools !== true || listed.enabled === false || listed.status === DEPRECATED) return false;
+  const output = listed.capabilities?.output;
+  return !Array.isArray(output) || output.every((modality) => modality === "text");
 }
 
-/** The hosts a provider answers on: the address its listing names, and its built-in hosts. */
-function providerHosts(provider: string, url: unknown): string[] {
-  const listed = apiHost(url);
+/** The hosts a provider answers on: the address its settings name, and its built-in hosts. */
+function providerHosts(provider: string, baseURL: unknown): string[] {
+  const listed = typeof baseURL === "string" ? apiHost(baseURL) : null;
   return [...new Set([...(listed ? [listed] : []), ...(PROVIDER_HOSTS[provider] ?? [])])];
 }
 
-/** The reasoning variants a model offers (`--variant`), in the order OpenCode lists them. */
-function variants(value: unknown): string[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  return Object.keys(value);
+/** A reasoning variant that disables thinking: the absence of a dial, not an effort. */
+const NO_REASONING_VARIANT = "none";
+
+/** The reasoning efforts a model offers (`--model provider/model#effort`), in the order listed. */
+function variantIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((variant) => (variant && typeof variant === "object" ? (variant as { id?: unknown }).id : undefined))
+    .filter((id): id is string => typeof id === "string" && id !== NO_REASONING_VARIANT);
 }
 
 /**
  * One listed model as a picker row, or null for a model that cannot call tools (OpenCode's agent
- * needs them) or that OpenCode marks deprecated. Its id is `provider/model`, what `--model` takes.
+ * needs them) or that OpenCode disables or marks deprecated. Its id is `provider/model`, what
+ * `--model` takes.
  */
-export function openCodeModel(listed: ListedModel): OpenCodeModel | null {
+export function openCodeApiModel(listed: ApiModel): OpenCodeModel | null {
   const provider = typeof listed.providerID === "string" ? listed.providerID : "";
-  const model = typeof listed.id === "string" ? listed.id : "";
+  const model = typeof listed.modelID === "string" ? listed.modelID : "";
   if (!provider || !model) return null;
   if (!runsBuilds(listed)) return null;
   const contextWindow = positive(listed.limit?.context) ?? DEFAULT_CONTEXT_TOKENS;
-  const efforts = variants(listed.variants);
-  const thinking = listed.capabilities?.reasoning === true;
-  const input = price(listed.cost?.input);
-  const output = price(listed.cost?.output);
+  const efforts = variantIds(listed.variants);
+  const input = price(listed.cost?.[0]?.input);
+  const output = price(listed.cost?.[0]?.output);
   const row: EngineModel = {
     id: `${provider}/${model}`,
     label: typeof listed.name === "string" && listed.name ? listed.name : model,
@@ -145,46 +145,42 @@ export function openCodeModel(listed: ListedModel): OpenCodeModel | null {
     contextSource: positive(listed.limit?.context) ? ModelContextSource.Catalog : ModelContextSource.Unknown,
     maxTokens: positive(listed.limit?.output) ?? DEFAULT_REPLY_TOKENS,
     supportsTools: true,
-    supportsVision: listed.capabilities?.input?.image === true,
-    supportsThinking: thinking,
+    supportsVision: Array.isArray(listed.capabilities?.input) && listed.capabilities.input.includes("image"),
+    supportsThinking: efforts.length > 0,
     ...(efforts.length
       ? { efforts, defaultEffort: efforts.includes(ReasoningEffort.Low) ? ReasoningEffort.Low : efforts[0] }
       : {}),
     note: priceNote(provider, input, output),
   };
   const anonymous = provider === OWN_PROVIDER && input === 0 && output === 0;
-  return { row, hosts: providerHosts(provider, listed.api?.url), anonymous };
+  return { row, hosts: providerHosts(provider, listed.settings?.baseURL), anonymous };
 }
 
 /**
- * `opencode models --verbose`: each model's `provider/model` line, then its JSON object, the
- * object's closing brace alone at the start of a line. A listing that holds no readable model at
- * all is refused rather than read as "nothing installed".
+ * `api get /api/model`, as `{ location, data }` or a bare array. Non-object entries are skipped;
+ * a value with no model array at all is refused rather than read as "nothing installed". An empty
+ * listing is nothing signed in, not an error.
  */
-export function parseOpenCodeModels(stdout: string): OpenCodeModel[] {
-  const lines = stdout.split(/\r?\n/);
+export function parseOpenCodeApiModels(value: unknown): OpenCodeModel[] {
+  const data = value && typeof value === "object" && !Array.isArray(value) ? (value as { data?: unknown }).data : value;
+  if (!Array.isArray(data)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
   const models: OpenCodeModel[] = [];
-  let found = 0;
-  for (let index = 0; index < lines.length; index++) {
-    if (!MODEL_LINE.test(lines[index]?.trim() ?? "") || lines[index + 1] !== "{") continue;
-    const end = lines.indexOf("}", index + 1);
-    if (end < 0) break;
-    found++;
-    const parsed = parseObject(lines.slice(index + 1, end + 1).join("\n"));
-    const model = parsed ? openCodeModel(parsed) : null;
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const model = openCodeApiModel(entry as ApiModel);
     if (model) models.push(model);
-    index = end;
   }
-  if (!found && stdout.trim()) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
   return models;
 }
 
-function parseObject(text: string): ListedModel | null {
+/** `opencode api get /api/model` stdout as models: unparsable output is refused as malformed. */
+export function parseOpenCodeListing(stdout: string): OpenCodeModel[] {
+  if (!stdout.trim()) return [];
   try {
-    const value = JSON.parse(text) as unknown;
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as ListedModel) : null;
-  } catch {
-    return null;
+    return parseOpenCodeApiModels(JSON.parse(stdout) as unknown);
+  } catch (error) {
+    if (error instanceof CatalogError) throw error;
+    throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
   }
 }
 
@@ -199,14 +195,25 @@ export const OpenCodeAccess = {
 } as const;
 export type OpenCodeAccess = (typeof OpenCodeAccess)[keyof typeof OpenCodeAccess];
 
-/** The studio bridge's command, as OpenCode's bash permission matches it. */
+/** One V2 permission rule: the last matching rule wins. */
+interface PermissionRule {
+  action: string;
+  resource: string;
+  effect: "allow" | "deny";
+}
+
+/** The studio bridge's command, as OpenCode's shell permission matches it. */
 const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
 
-/** The bash rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
-function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<string, string> {
-  if (access === OpenCodeAccess.Build) return "allow";
-  if (access === OpenCodeAccess.ReadOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
-  return "deny";
+/** The shell rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
+function shellRules(access: OpenCodeAccess, bridge: boolean): PermissionRule[] {
+  if (access === OpenCodeAccess.Build) return [{ action: "shell", resource: "*", effect: "allow" }];
+  if (access === OpenCodeAccess.ReadOnly && bridge)
+    return [
+      { action: "shell", resource: "*", effect: "deny" },
+      { action: "shell", resource: BRIDGE_PATTERN, effect: "allow" },
+    ];
+  return [{ action: "shell", resource: "*", effect: "deny" }];
 }
 
 /**
@@ -214,22 +221,32 @@ function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<str
  * question is ever asked (`run` cannot ask), no web fetch, no sharing and no self-update. A build
  * reaches nothing outside its workspace through OpenCode's own tools; a read-only session, which
  * runs from a scratch folder, may read the game it looks at by its full path, and changes nothing.
- * The studio's sandbox is the boundary either way; these rules keep the model from even trying.
+ * Game-shipped plugins are switched off (`plugins: []`); the studio's sandbox is the boundary
+ * either way, and the leading wildcard denies any action with no rule below it, so a future tool the
+ * rules never heard of is denied rather than asked about.
  */
 export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string {
   const looking = access !== OpenCodeAccess.Answer;
-  const look = looking ? "allow" : "deny";
-  const permission = {
-    edit: access === OpenCodeAccess.Build ? "allow" : "deny",
-    bash: bashRules(access, bridge),
-    read: look,
-    glob: look,
-    grep: look,
-    list: look,
-    webfetch: "deny",
-    websearch: "deny",
-    external_directory: access === OpenCodeAccess.ReadOnly ? "allow" : "deny",
-    doom_loop: "deny",
-  };
-  return JSON.stringify({ permission, autoupdate: false, share: "disabled" });
+  const look: PermissionRule["effect"] = looking ? "allow" : "deny";
+  const edit: PermissionRule["effect"] = access === OpenCodeAccess.Build ? "allow" : "deny";
+  const permissions: PermissionRule[] = [
+    // Closed world first: broad defaults precede exceptions, so an action with no rule below is
+    // denied, never asked.
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "edit", resource: "*", effect: edit },
+    ...shellRules(access, bridge),
+    { action: "read", resource: "*", effect: look },
+    { action: "glob", resource: "*", effect: look },
+    { action: "grep", resource: "*", effect: look },
+    { action: "list", resource: "*", effect: look },
+    { action: "webfetch", resource: "*", effect: "deny" },
+    { action: "websearch", resource: "*", effect: "deny" },
+    { action: "skill", resource: "*", effect: "deny" },
+    // A spawned subagent resolves its own permissions, not this policy's: never let one start.
+    // A question has nobody to answer it in a non-interactive session: never ask one.
+    { action: "subagent", resource: "*", effect: "deny" },
+    { action: "question", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: "*", effect: access === OpenCodeAccess.ReadOnly ? "allow" : "deny" },
+  ];
+  return JSON.stringify({ permissions, plugins: [], share: "manual", update: "disable" });
 }

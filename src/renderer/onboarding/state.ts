@@ -22,10 +22,10 @@ export function shouldWelcome(allowed: boolean | undefined, games: number, stora
   return allowed === true && games === 0 && storage.getItem(WELCOMED_KEY) !== "1";
 }
 
-/** A subscription first launch offers to connect: Claude Code or Codex. */
-export type Subscription = SubscriptionId;
+/** A first launch offers to connect: Claude Code, Codex, or OpenCode through its own terminal sign-in. */
+export type Subscription = SubscriptionId | typeof EngineId.OpenCode;
 /** The subscriptions, in the order their buttons stand. */
-export const SUBSCRIPTIONS: readonly Subscription[] = [EngineId.ClaudeCode, EngineId.Codex];
+export const SUBSCRIPTIONS: readonly Subscription[] = [EngineId.ClaudeCode, EngineId.Codex, EngineId.OpenCode];
 
 type Words = Record<"connect" | "install" | "installing" | "update" | "updating" | "recheck" | "on", string>;
 
@@ -47,6 +47,15 @@ const WORDS: Record<Subscription, Words> = {
     updating: "Updating Codex…",
     recheck: "Check Codex again",
     on: "ChatGPT connected",
+  },
+  [EngineId.OpenCode]: {
+    connect: "Connect OpenCode",
+    install: "Set up OpenCode",
+    installing: "Setting up OpenCode…",
+    update: "Update OpenCode",
+    updating: "Updating OpenCode…",
+    recheck: "Check OpenCode again",
+    on: "OpenCode connected",
   },
 };
 
@@ -81,6 +90,8 @@ export interface ConnectInput {
   claude?: ClaudeLoginState["phase"];
   codexActive?: boolean;
   codex?: CodexLoginState["phase"];
+  /** OpenCode's terminal sign-in is open. */
+  openCodeSigningIn?: boolean;
   /** A recheck the user started, or the one on returning to the window. */
   checking?: boolean;
   /** The app is installing or updating the CLI for the person. */
@@ -116,6 +127,9 @@ function claudeSignInView(phase: ConnectInput["claude"], pastingCode: boolean): 
 export function connectView(id: Subscription, input: ConnectInput): ConnectView {
   const words = WORDS[id];
   if (input.engine?.status.code === EngineStatusCode.Ready) return { kind: ConnectViewKind.On, label: words.on };
+  // OpenCode signs in through its own terminal; while it is open the button waits and can cancel.
+  if (id === EngineId.OpenCode && input.openCodeSigningIn)
+    return { kind: ConnectViewKind.Busy, label: "Signing in…", cancel: true };
   const signingIn = id === EngineId.ClaudeCode ? claudeSignInView(input.claude, input.pastingCode === true) : undefined;
   if (signingIn) return signingIn;
   // Codex signs in in the browser; while it checks the sign-in there is nothing left to cancel.

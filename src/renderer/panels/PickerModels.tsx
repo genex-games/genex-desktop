@@ -1,15 +1,17 @@
 /**
  * Settings → Model Providers: which of a provider's models the model picker lists. The newest
  * models are on by default (model-lineup.ts); older ones wait, switched off, under Older models.
- * The provider's default model is always listed.
+ * OpenCode instead lists everything it can run, grouped Zen, Go, then any other vendor, with no
+ * Older models. The provider's default model is always listed.
  */
 import { type JSX, useId, useState } from "react";
-import { latestModels, modelName, runnableModels, shownModels } from "../model-lineup.ts";
+import { latestModels, modelName, openCodeGroups, runnableModels, shownModels } from "../model-lineup.ts";
 import { matchingModels, offersSearch } from "./picker-search.ts";
 import { useEngines, useModelPicker } from "../state/hooks.ts";
 import { pickerModelSet, pickerModelsReset } from "../state/model-picker.ts";
 import { studio } from "../state/studio.ts";
 import type { EngineDescriptor } from "../types.ts";
+import { EngineId } from "../../shared/providers.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Switch } from "../ui/switch.tsx";
@@ -122,6 +124,15 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
   const olderShown = older.filter((row) => row.shown).length;
   const searchable = offersSearch(older.length);
   const found = searchable ? matchingModels(older, query) : older;
+  // OpenCode lists everything it can run, grouped Zen, Go, then any other vendor: no Older models.
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const groups =
+    engine.id === EngineId.OpenCode
+      ? openCodeGroups(rows).map((group) => ({
+          ...group,
+          rows: group.ids.map((id) => byId.get(id)).filter((row) => row !== undefined),
+        }))
+      : null;
   return (
     <div
       role="group"
@@ -141,10 +152,17 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
           </Button>
         )}
       </div>
-      {latest.map((row) => (
-        <ModelSwitch key={row.id} row={row} onChange={change(row)} />
-      ))}
-      {older.length > 0 && (
+      {groups
+        ? groups.map((group) => (
+            <div key={group.key} data-vendor-group={group.key}>
+              <div className="px-2.5 pt-2 text-body-sm font-medium text-ink">{group.label}</div>
+              {group.rows.map((row) => (
+                <ModelSwitch key={row.id} row={row} onChange={change(row)} />
+              ))}
+            </div>
+          ))
+        : latest.map((row) => <ModelSwitch key={row.id} row={row} onChange={change(row)} />)}
+      {!groups && older.length > 0 && (
         <>
           <div role="separator" className="mx-2.5 my-1.5 h-px bg-line" />
           <button

@@ -420,8 +420,8 @@ test("metered engines sit in groups of their own, never among local models, and 
   );
   assert.equal(
     openCode.filter((choice) => !choice.hidden).length,
-    3,
-    "OpenCode's first three models, until Settings says more",
+    30,
+    "OpenCode lists everything, with no Older models",
   );
 
   const signedOut = toChoices([{ ...metered[0]!, status: { code: "needs_login", detail: "no key" }, models: [] }]);

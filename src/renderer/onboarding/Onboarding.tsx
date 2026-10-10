@@ -34,6 +34,8 @@ import { LoaderGrid } from "../ui/LoadingState.tsx";
 import { CODE_FALLBACK_LABEL, useCodeFallback } from "../ui/SignInCard.tsx";
 import { useClaudeLogin, useSubscriptionAuth } from "../subscription-auth.ts";
 import { useCliInstall } from "../cli-install.ts";
+import { useSignInTerminal } from "../panels/use-sign-in-terminal.ts";
+import { TerminalKind } from "../../shared/terminal.ts";
 import { problemWords } from "../words.ts";
 import { SHOW_TERMINAL_EVENT } from "../panels/terminal-events.ts";
 import { prefersReducedMotion, REDUCED_MOTION_QUERY } from "../ui/media-queries.ts";
@@ -105,8 +107,8 @@ const SENT_BEAT_MS = 600;
 /** The fade out of the whole welcome when it finishes. */
 const LEAVE_MS = 260;
 
-/** Each subscription's mark on the connect art. */
-const MARK_OF: Record<Subscription, Provider> = {
+/** Each subscription's mark on the connect art. OpenCode joins the choices with no mark. */
+const MARK_OF: Partial<Record<Subscription, Provider>> = {
   [EngineId.ClaudeCode]: Provider.Claude,
   [EngineId.Codex]: Provider.Codex,
 };
@@ -870,6 +872,9 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
   const codeFallback = useCodeFallback(claudeLogin?.phase);
   const claudeInstall = useCliInstall(EngineId.ClaudeCode);
   const codexInstall = useCliInstall(EngineId.Codex);
+  const openCodeInstall = useCliInstall(EngineId.OpenCode);
+  const openCodeEngine = engines.find((candidate) => candidate.id === EngineId.OpenCode);
+  const openCodeTerminal = useSignInTerminal(TerminalKind.OpenCodeLogin);
   const [checking, setChecking] = useState<Partial<Record<Subscription, boolean>>>({});
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -888,22 +893,39 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
       checking: checking[EngineId.Codex],
       installing: codexInstall.installing,
     }),
+    [EngineId.OpenCode]: connectView(EngineId.OpenCode, {
+      engine: openCodeEngine,
+      openCodeSigningIn: openCodeTerminal !== undefined,
+      checking: checking[EngineId.OpenCode],
+      installing: openCodeInstall.installing,
+    }),
   };
   const auth = (id: Subscription) => (id === EngineId.Codex ? codexAuth : claudeAuth);
-  const installer = (id: Subscription) => (id === EngineId.Codex ? codexInstall : claudeInstall);
+  const installer = (id: Subscription) => {
+    if (id === EngineId.Codex) return codexInstall;
+    if (id === EngineId.OpenCode) return openCodeInstall;
+    return claudeInstall;
+  };
   const recheck = async (id: Subscription) => {
     setChecking((current) => ({ ...current, [id]: true }));
     try {
-      await auth(id).refresh();
+      if (id === EngineId.OpenCode) await window.studio.recheckEngines(EngineId.OpenCode).catch(() => {});
+      else await auth(id).refresh();
     } finally {
       setChecking((current) => ({ ...current, [id]: false }));
     }
   };
   const step = (id: Subscription, view: Extract<ConnectView, { kind: typeof ConnectViewKind.Action }>) => {
+    if (id === EngineId.OpenCode && view.action === ConnectAction.Connect) return openCodeSignIn();
     if (view.action === ConnectAction.Connect) return auth(id).signIn();
     if (installsCli(view)) return installer(id).install();
     if (view.action === ConnectAction.Recheck) return recheck(id);
     return Promise.resolve(onTerminal());
+  };
+  /** OpenCode signs in through its own terminal window, opened by the host. */
+  const openCodeSignIn = async (): Promise<void> => {
+    const started = await window.studio.openCodeSignIn();
+    if (!started.started) await recheck(EngineId.OpenCode);
   };
   const act = (id: Subscription, view: ConnectView) => {
     if (view.kind !== ConnectViewKind.Action) return;
@@ -911,6 +933,10 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
     void Promise.resolve(step(id, view)).catch((err) => setProblem(problemWords(err)));
   };
   const cancel = (id: Subscription) => {
+    if (id === EngineId.OpenCode && openCodeTerminal) {
+      void window.studio.terminalStop(openCodeTerminal.id).catch((err) => setProblem(problemWords(err)));
+      return;
+    }
     const cancelled = id === EngineId.Codex ? window.studio.codexLoginCancel() : window.studio.claudeLoginCancel();
     void cancelled.catch((err) => setProblem(problemWords(err)));
   };
@@ -918,11 +944,12 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
     if (views[id].kind === ConnectViewKind.On) return null;
     const installProblem = installer(id).problem;
     if (installProblem) return installProblem;
+    if (id === EngineId.OpenCode) return null;
     if (id === EngineId.ClaudeCode)
       return (claudeLogin?.phase === "failed" ? claudeLogin.error : null) ?? claudeAuth.error;
     return (codexLogin?.phase === "failed" ? codexLogin.error : null) ?? codexAuth.error;
   };
-  const shown = problem ?? trouble(EngineId.ClaudeCode) ?? trouble(EngineId.Codex);
+  const shown = problem ?? trouble(EngineId.ClaudeCode) ?? trouble(EngineId.Codex) ?? trouble(EngineId.OpenCode);
   return { views, recheck, act, cancel, shown, claudeAuth, codexAuth, claudeLogin, codexLogin, codeFallback };
 }
 
@@ -1074,6 +1101,7 @@ function Connect({
   const heading = useHeadingFocus();
   useRecheckOnReturn(subscriptions);
   const { area, slots, markX, placed } = useMarkPlaces();
+  const openCodeSlot = useRef<HTMLDivElement>(null);
   const { marks, drawArt } = useMarksArt(views, markX);
 
   return (
@@ -1084,7 +1112,9 @@ function Connect({
       <h1 ref={heading} tabIndex={-1} className="onboarding-title">
         Bring your AI subscription
       </h1>
-      <p className="onboarding-lede">Genex builds with the Claude or ChatGPT plan you already pay for.</p>
+      <p className="onboarding-lede">
+        Genex builds with the Claude or ChatGPT plan you already pay for, or with OpenCode on any provider.
+      </p>
       <div ref={area} className="onboarding-marks">
         <ArtCanvas
           width={MARKS.width}
@@ -1098,7 +1128,7 @@ function Connect({
               key={id}
               id={id}
               view={views[id]}
-              slot={slots[MARK_OF[id]]}
+              slot={MARK_OF[id] ? slots[MARK_OF[id]] : openCodeSlot}
               onAct={act}
               onCancel={cancel}
               onPasteCode={codeFallback.pasteCode}
@@ -1326,7 +1356,7 @@ export function Onboarding({
   const local = useLocalModel(engines, onEnginesRefresh);
   const { closing, leaving, finish } = useWelcomeExit(idea, onReady, onFinish);
   const ready = (id: string) => engines.find((engine) => engine.id === id)?.status.code === EngineStatusCode.Ready;
-  const anyOn = ready(EngineId.ClaudeCode) || ready(EngineId.Codex) || local.installed;
+  const anyOn = ready(EngineId.ClaudeCode) || ready(EngineId.Codex) || ready(EngineId.OpenCode) || local.installed;
 
   useEffect(() => {
     root.current?.focus({ preventScroll: true });

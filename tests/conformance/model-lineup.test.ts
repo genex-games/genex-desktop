@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { latestModels, modelName, runnableModels, shownModels } from "../../src/renderer/model-lineup.ts";
+import {
+  latestModels,
+  modelName,
+  openCodeGroups,
+  runnableModels,
+  shownModels,
+} from "../../src/renderer/model-lineup.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 
 const row = (id: string, label: string, resolvedModel?: string, providerDefault?: boolean) => ({
@@ -96,12 +102,38 @@ test("the metered catalogs start with their first three models", () => {
     [...latestModels(EngineId.OpenRouter, listed)],
     listed.slice(0, 3).map((model) => model.id),
   );
-  assert.deepEqual(
-    [...latestModels(EngineId.OpenCode, [row("default", "Default"), ...listed])],
-    listed.slice(0, 3).map((model) => model.id),
-  );
   assert.equal(shownModels(EngineId.OpenRouter, listed, { "vendor/m15": true }).has("vendor/m15"), true);
   assert.equal(shownModels(EngineId.OpenRouter, listed, { "vendor/m0": false }).has("vendor/m0"), false);
+});
+
+test("OpenCode lists every model: Zen, Go, then any other vendor, no Older models", () => {
+  const listed = [
+    row("openai/gpt-6-luna", "GPT-6 Luna"),
+    row("opencode/exo-free", "Exo Free"),
+    row("opencode-go/space-bunny", "Space Bunny"),
+    row("opencode/ling-3.1-flash-free", "Ling 3.1 Flash Free"),
+    row("anthropic/claude-x", "Claude X"),
+  ];
+  assert.deepEqual(
+    [...latestModels(EngineId.OpenCode, listed)],
+    [
+      "openai/gpt-6-luna",
+      "opencode/exo-free",
+      "opencode-go/space-bunny",
+      "opencode/ling-3.1-flash-free",
+      "anthropic/claude-x",
+    ],
+    "no first-three cut: everything shows",
+  );
+  assert.deepEqual(
+    openCodeGroups(listed).map((group) => [group.label, group.ids]),
+    [
+      ["Zen", ["opencode/exo-free", "opencode/ling-3.1-flash-free"]],
+      ["Go", ["opencode-go/space-bunny"]],
+      ["openai", ["openai/gpt-6-luna"]],
+      ["anthropic", ["anthropic/claude-x"]],
+    ],
+  );
 });
 
 test("a metered catalog starts with the newest GPT and Claude, a vendor at a time, before the rest", () => {
@@ -117,8 +149,17 @@ test("a metered catalog starts with the newest GPT and Claude, a vendor at a tim
   ];
   assert.deepEqual(
     [...latestModels(EngineId.OpenCode, listed)],
-    ["openai/gpt-6.1-sol", "anthropic/claude-opus-5-5", "openai/gpt-6-astra"],
-    "each vendor's newest in turn, never a fast variant",
+    [
+      "openai/gpt-6.1-sol",
+      "anthropic/claude-opus-5-5",
+      "openai/gpt-6-astra",
+      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5.4",
+      "openai/gpt-5.3-codex-spark",
+      "openai/gpt-6.1-sol-fast",
+      "opencode/big-pickle",
+    ],
+    "each vendor's newest in turn, then the rest in catalog order: no first-three cut",
   );
   assert.deepEqual(
     [...latestModels(EngineId.OpenRouter, listed)],
@@ -160,8 +201,8 @@ test("OpenCode on a ChatGPT plan starts with the GPT models the plan runs, as Co
   );
   assert.deepEqual(
     [...latestModels(EngineId.OpenCode, listed)],
-    ["openai/gpt-6.1-sol", "openai/gpt-6-luna", "openai/gpt-5.3-codex-spark"],
-    "with no word from Codex, the newest",
+    ["openai/gpt-6.1-sol", "openai/gpt-6-luna", "openai/gpt-5.3-codex-spark", "opencode/big-pickle"],
+    "with no word from Codex, everything in rank order",
   );
 });
 
