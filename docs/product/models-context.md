@@ -8,7 +8,7 @@ opens setup. Blocked plans keep the request and offer settings or retry. Fast mo
 Claude Code and Codex discover models without generating. The list names each family's newest
 model of the newest generation; older ones switch on in Settings; a model in use stays listed.
 An unset pick runs the CLI's named default, else a default row. Aliases follow the CLI;
-versions stay pinned. OpenRouter and OpenCode show three, no default (signed-out OpenCode: Free ones).
+versions stay pinned. OpenRouter and OpenCode show three, no default.
 
 Settings shows CLI versions; connected rows list picker models; Account rechecks
 or updates CLIs. Failed refreshes offer Try again, keeping names stale. Unavailable picks block sends; without models, Connect AI model replaces the
@@ -20,7 +20,7 @@ Workers and Reviewers run only in Loop and survive a main-agent change. Each Oll
 own model; Reviewers must see images.
 
 Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenCode and OpenRouter show once set up,
-never auto-chosen unless Free, alone ([details](../connections-and-context.md#openrouter-and-opencode)).
+never auto-chosen unless Free and alone ([details](../connections-and-context.md#openrouter-and-opencode)).
 
 ## What the model knows
 
