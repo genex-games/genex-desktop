@@ -7,7 +7,7 @@ in the form coding agents read, and the two must agree. Report security problems
 
 ## Before you start
 
-- Tip: look at the [roadmap](https://github.com/genex-games/genex-desktop/issues?q=is%3Aissue%20is%3Aopen%20label%3Aroadmap)
+- Tip: look at the [roadmap board](https://github.com/orgs/genex-games/projects/1)
   first to see what is already in progress, so you don't duplicate work. An assigned issue is
   being worked on; issues labelled `help wanted` or `good first issue` are a good place to start.
 - Open an issue (bug or feature template) before a large change, so the approach can be agreed.
