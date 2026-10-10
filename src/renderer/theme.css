@@ -1863,13 +1863,17 @@ button.chat-header-title:hover {
 .game-sidebar[data-scrolled="true"] .sidebar-fade {
   opacity: 1;
 }
-/* Relaunch to update floats over the foot of the game list while a downloaded version waits. The
- * list scrolls under it and fades out above it, as it does under the chrome at the top; its last
- * game and its scrollbar stop clear of the button. */
+/* What waits to be installed floats over the foot of the game list: Update plugins while plugin
+ * releases wait, Relaunch to update while a downloaded version does. The list scrolls under it and
+ * fades out above it, as it does under the chrome at the top; its last game and its scrollbar stop
+ * clear of the buttons. */
 .sidebar-footer {
   position: absolute;
   inset-inline: 0;
   bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 4px 8px 8px;
   background: var(--sidebar);
 }
@@ -1887,6 +1891,13 @@ button.chat-header-title:hover {
 }
 .sidebar-list:has(.sidebar-footer) .sidebar-scroll::-webkit-scrollbar-track {
   margin-block-end: 48px;
+}
+/* Both wait: the list stops one button and its gap higher. */
+.sidebar-list:has(.sidebar-update + .sidebar-update) .sidebar-scroll {
+  padding-block-end: 112px;
+}
+.sidebar-list:has(.sidebar-update + .sidebar-update) .sidebar-scroll::-webkit-scrollbar-track {
+  margin-block-end: 88px;
 }
 /* A secondary button in the field colour: the light palette's own secondary fill is one step from the
  * sidebar and would vanish here. The label and the reload glyph share the ink, never the accent. */

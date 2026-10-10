@@ -20,23 +20,12 @@ import { PluginRows, pluginMatches, Section } from "./rows.tsx";
 
 const WORDS = PLUGINS_WORDS;
 
-function Installed({
-  installed,
-  page,
-  query,
-  index,
-}: {
-  installed: PluginInfo[];
-  page: PluginsPage;
-  query: string;
-  index: PluginIndexView | null;
-}) {
+function Installed({ installed, page, query }: { installed: PluginInfo[]; page: PluginsPage; query: string }) {
   const nothingShown = installed.filter((p) => pluginMatches(page, p)).length === 0;
   const credits = useGenexCredits(installed, pluginAccount(page.connections, GENEX_PLUGIN_ID), page.connections);
-  const updates = new Map((index?.updates ?? []).map((u) => [u.id, u.version]));
   return (
     <Section title="Installed" count={installed.length}>
-      <PluginRows list={installed} page={page} credits={credits} updates={updates} />
+      <PluginRows list={installed} page={page} credits={credits} />
       {nothingShown && (
         <p className="extensions-empty">
           {query ? "No installed plugins match your search." : "No plugins installed yet. Add one from the Add menu."}
@@ -177,7 +166,7 @@ export function PluginsBrowse({
   const unlisted = plugins.filter((p) => p.unlisted);
   return (
     <>
-      <Installed installed={installed} page={page} query={query} index={index} />
+      <Installed installed={installed} page={page} query={query} />
       <ConnectorsCard
         ref={connectorActions}
         project={page.project}

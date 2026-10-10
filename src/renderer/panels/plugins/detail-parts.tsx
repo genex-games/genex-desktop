@@ -2,6 +2,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { PluginSourceKind, type PluginInfo, type PluginManifest } from "../../../shared/plugins.ts";
+import { installPluginUpdate } from "../../state/plugins.ts";
 import { Button } from "../../ui/Button.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../ui/dropdown-menu.tsx";
 import { Icon } from "../../ui/icons.tsx";
@@ -222,12 +223,13 @@ export function PluginNotes({ detail }: { detail: PluginInfo }): JSX.Element {
   );
 }
 
-/** Update to the catalog's newer release, when there is one and none is already waiting. */
+/** Update to the plugin's newer version, when there is one and none is already waiting. */
 export function UpdateButton({ detail, page }: { detail: PluginInfo; page: PluginsPage }): JSX.Element | null {
-  if (!detail.availableVersion || detail.pendingVersion) return null;
+  const update = page.updates.get(detail.manifest.id);
+  if (!update) return null;
   return (
-    <Button disabled={page.busy} onClick={() => void page.act(() => window.studio.pluginInstall(detail.manifest.id))}>
-      Update to {detail.availableVersion}
+    <Button disabled={page.busy} onClick={() => void page.act(() => installPluginUpdate(window.studio, update))}>
+      Update to {update.version}
     </Button>
   );
 }

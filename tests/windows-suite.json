@@ -165,6 +165,7 @@
   "tests/conformance/plugin-scan.test.ts",
   "tests/conformance/plugin-sdk-types.test.ts",
   "tests/conformance/plugin-toolbar.test.ts",
+  "tests/conformance/plugin-updates.test.ts",
   "tests/conformance/plugins.test.ts",
   "tests/conformance/preview-animation-gate.test.ts",
   "tests/conformance/preview-checkpoint.test.ts",
