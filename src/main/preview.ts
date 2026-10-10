@@ -1,5 +1,11 @@
 import { previewVisibility } from "./preview-visibility.ts";
-import { CaptureSurface, type PreviewGone, PreviewConsoleSource, previewGone } from "../shared/preview-contract.ts";
+import {
+  CaptureSource,
+  CaptureSurface,
+  type PreviewGone,
+  PreviewConsoleSource,
+  previewGone,
+} from "../shared/preview-contract.ts";
 import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
 /**
  * Game preview.
@@ -51,7 +57,7 @@ import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
 import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeToJpeg } from "./preview-images.ts";
-import { DEFAULT_SHOT_QUALITY } from "./core/capture.ts";
+import { DEFAULT_SHOT_QUALITY, encodeStill, stillFit } from "./core/capture.ts";
 import {
   ATTACH_PROBE,
   GL_PROBE,
@@ -64,9 +70,22 @@ import {
   studioStateExpression,
 } from "./preview-page-scripts.ts";
 import { StateShape } from "../shared/studio-state-shape.ts";
-import { computePixelStats, isEffectivelyBlack, type PixelDiff, type PixelStats } from "../substrate/pixel-stats.ts";
+import {
+  computePixelStats,
+  exposureStats,
+  isEffectivelyBlack,
+  type PixelDiff,
+  type PixelStats,
+} from "../substrate/pixel-stats.ts";
 import { chooseCapture, probePageUi, resolveSurface, type PageUi } from "../substrate/page-ui.ts";
-import type { CropRect, PageAttachReport, ShimOptions } from "../substrate/preview-port.ts";
+import type {
+  CropRect,
+  PageAttachReport,
+  PreviewStillAnswer,
+  PreviewStillRequest,
+  ShimOptions,
+} from "../substrate/preview-port.ts";
+import { SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -83,6 +102,7 @@ const MESSAGE = {
     `screenshot found no compositor frame; retrying once without changing window visibility (${reason})`,
   notMethodName: (method: string) => `not a studio method name: ${method}`,
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
+  closed: "this game window was closed",
 } as const;
 
 export type { PageCaptureInfo };
@@ -144,6 +164,15 @@ const COMPOSITOR_RETRY_MS = 250;
 const FRAME_WAIT_MS = 400;
 /** The longest the Live stage's readiness probe waits for the page to answer. */
 const LIVE_PROBE_MS = 500;
+/**
+ * The longest a still waits for the page's own read of its canvas before it photographs the
+ * compositor instead: a full-size PNG takes the page longer to encode than a look's frame.
+ */
+const STILL_PAGE_CAPTURE_TIMEOUT_MS = 5 * SECOND_MS;
+/** The long side of the downscale a still's exposure is measured on. */
+const STILL_STATS_MAX_PX = 160;
+/** JPEG quality of the small preview that comes with a still. */
+const STILL_PREVIEW_QUALITY = 80;
 
 /**
  * Loopback ports for games served as `http://localhost:<port>/` — module-wide, because every
@@ -181,6 +210,12 @@ export class GamePreview {
     if (this.#view && !this.#view.webContents.isDestroyed()) this.#view.setVisible(visible);
   });
   #session: Session | null = null;
+  /**
+   * Closed for good (`destroy`): a pooled window's lease ended. Anything still waiting on its page
+   * when it closed is refused rather than given a new view, which would leak a renderer and leave
+   * this window's handlers serving the next window opened on the same partition.
+   */
+  #closed = false;
   #observed = false;
   #renderingVisible = true;
   /** Whether the speakers are off: from the start for an agent's window, as `setAudioMuted` says for Live. */
@@ -275,6 +310,7 @@ export class GamePreview {
 
   /** Create the view and install the protocol handler on its partition. */
   create(): WebContentsView {
+    if (this.#closed) throw new Error(MESSAGE.closed);
     if (this.#view) return this.#view;
     const partition = this.options.partition ?? "game-preview";
     const gameSession = session.fromPartition(partition);
@@ -805,7 +841,7 @@ export class GamePreview {
       },
       // What was PHOTOGRAPHED, not how it was read: a compositor frame is the whole page, and
       // the page's own end-of-frame read is the canvas.
-      surface: source === "compositor" ? "page" : "canvas",
+      surface: source === CaptureSource.Compositor ? CaptureSurface.Page : CaptureSurface.Canvas,
     };
   }
 
@@ -867,6 +903,39 @@ export class GamePreview {
   }
 
   /**
+   * A plugin's still: the canvas as the page draws it now, never larger than asked, as a PNG or
+   * the best JPEG that fits `maxBytes` (`encodeStill`), with its exposure measured on a small
+   * downscale and a JPEG preview. The page's own read gets a longer budget than a look's, and the
+   * compositor is the fallback exactly as for any canvas capture.
+   */
+  async still(request: PreviewStillRequest): Promise<PreviewStillAnswer> {
+    await this.#profiler.invalidate("still during sample");
+    const shot = await this.#captureCanvas(STILL_PAGE_CAPTURE_TIMEOUT_MS);
+    const taken = shot.image.getSize();
+    const size = stillFit(taken, request);
+    // A compositor frame on a Retina display holds more pixels than its size says; resizing it to
+    // the size it reports is what makes the encoded image that size.
+    const resize =
+      shot.source === CaptureSource.Compositor || size.width !== taken.width || size.height !== taken.height;
+    const image = resize ? shot.image.resize({ ...size, quality: "best" }) : shot.image;
+    const encoded = encodeStill(
+      { png: () => image.toPNG(), jpeg: (quality) => image.toJPEG(quality) },
+      request.maxBytes,
+    );
+    if ("tooLarge" in encoded) return encoded;
+    return {
+      still: {
+        image: encoded.data,
+        mimeType: encoded.mimeType,
+        ...size,
+        source: shot.source,
+        stats: stillExposure(image, size),
+        preview: scaledTo(image, size, request.previewMaxPx).toJPEG(STILL_PREVIEW_QUALITY),
+      },
+    };
+  }
+
+  /**
    * The whole surface question in one place (M4.5a). `canvas` is what the game draws, `page` is
    * the compositor frame with every DOM element on it — the menu, the loader, the HTML HUD —
    * and `auto` asks the page what it looks like before it decides. Only `auto` costs a probe,
@@ -875,7 +944,7 @@ export class GamePreview {
   async #capture(
     opts: { page?: boolean; surface?: CaptureSurface } = {},
     maxSamples?: number,
-  ): Promise<{ image: NativeImage; source: "page" | "compositor"; info: PageCaptureInfo | null; stats?: PixelStats }> {
+  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null; stats?: PixelStats }> {
     const asked = resolveSurface(opts);
     const chosen = await chooseCapture(asked, {
       pageUi: () => this.pageUi(),
@@ -915,7 +984,7 @@ export class GamePreview {
    */
   async #capturePageSurface(): Promise<{
     image: NativeImage;
-    source: "page" | "compositor";
+    source: CaptureSource;
     info: PageCaptureInfo | null;
   }> {
     const view = this.create();
@@ -927,7 +996,7 @@ export class GamePreview {
     let failure: unknown = null;
     try {
       const first = await compositor();
-      if (first) return { image: first, source: "compositor", info: null };
+      if (first) return { image: first, source: CaptureSource.Compositor, info: null };
     } catch (err) {
       failure = err;
     }
@@ -941,7 +1010,7 @@ export class GamePreview {
       }
       await sleep(COMPOSITOR_RETRY_MS);
       const second = await compositor();
-      if (second) return { image: second, source: "compositor", info: null };
+      if (second) return { image: second, source: CaptureSource.Compositor, info: null };
     } catch (err) {
       failure = err;
     }
@@ -954,7 +1023,7 @@ export class GamePreview {
         message: MESSAGE.pageSurfaceFallback(failure ? errorMessage(failure) : null),
       });
     }
-    if (fallback) return { image: fallback.image, source: "page", info: fallback.info };
+    if (fallback) return { image: fallback.image, source: CaptureSource.Page, info: fallback.info };
     throw failure ?? new Error(MESSAGE.noFrame);
   }
 
@@ -963,18 +1032,20 @@ export class GamePreview {
    * paced retry without restoring, showing or focusing its host. If both capture paths fail,
    * report unavailable evidence rather than exposing a hidden window for a screenshot.
    */
-  async #captureCanvas(): Promise<{ image: NativeImage; source: "page" | "compositor"; info: PageCaptureInfo | null }> {
+  async #captureCanvas(
+    pageTimeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
+  ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null }> {
     const view = this.create();
     // First choice: ask the page itself. `__studio.capture()` re-renders and reads the WebGL
     // canvas in one JS turn, so the pixels never touch the compositor — a window that is
     // covered, on another Space, or on a sleeping display photographs exactly the same. One
     // occluded run lost every first-iteration build to "display surface not available".
-    const pageShot = await this.#capturePageSide();
-    if (pageShot) return { image: pageShot.image, source: "page", info: pageShot.info };
+    const pageShot = await this.#capturePageSide(pageTimeoutMs);
+    if (pageShot) return { image: pageShot.image, source: CaptureSource.Page, info: pageShot.info };
     const declined = this.#pageCaptureInfo;
     await this.#awaitPresent();
     try {
-      return { image: await view.webContents.capturePage(), source: "compositor", info: declined };
+      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
     } catch (err) {
       // Occluded windows can lose their compositor surface too. The failed request can wake
       // the compositor, so allow one paced retry without changing the user's window state.
@@ -991,7 +1062,7 @@ export class GamePreview {
       }
       await sleep(COMPOSITOR_RETRY_MS);
       await this.#awaitPresent();
-      return { image: await view.webContents.capturePage(), source: "compositor", info: declined };
+      return { image: await view.webContents.capturePage(), source: CaptureSource.Compositor, info: declined };
     }
   }
 
@@ -1001,7 +1072,9 @@ export class GamePreview {
    * The studio prefers it because it works on a covered window, and it is raced against a
    * main-side timeout: a wedged page must degrade to the compositor, never block every caller.
    */
-  async #capturePageSide(): Promise<{ image: NativeImage; info: PageCaptureInfo | null } | null> {
+  async #capturePageSide(
+    timeoutMs = PAGE_CAPTURE_TIMEOUT_MS,
+  ): Promise<{ image: NativeImage; info: PageCaptureInfo | null } | null> {
     const view = this.#view;
     if (!view) return null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1010,7 +1083,7 @@ export class GamePreview {
       const payload = await Promise.race([
         view.webContents.executeJavaScript(PAGE_CAPTURE, true),
         new Promise<typeof timedOut>((resolve) => {
-          timer = setTimeout(() => resolve(timedOut), PAGE_CAPTURE_TIMEOUT_MS);
+          timer = setTimeout(() => resolve(timedOut), timeoutMs);
         }),
       ]);
       if (payload === timedOut) {
@@ -1349,6 +1422,7 @@ export class GamePreview {
 
   async destroy(): Promise<void> {
     void this.#profiler.invalidate("preview disposed");
+    this.#closed = true;
     this.#view?.webContents.close();
     this.#view = null;
     const retired = this.#session;
@@ -1379,6 +1453,24 @@ export class GamePreview {
   get sessionRef(): Session | null {
     return this.#session;
   }
+}
+
+/** `image` (of `size`) scaled down so its long side is at most `maxPx`; never scaled up. */
+function scaledTo(image: NativeImage, size: { width: number; height: number }, maxPx: number): NativeImage {
+  const scale = Math.min(1, maxPx / Math.max(size.width, size.height));
+  if (scale >= 1) return image;
+  return image.resize({
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
+    quality: "good",
+  });
+}
+
+/** A still's exposure, measured on a downscale of it (`exposureStats`). */
+function stillExposure(image: NativeImage, size: { width: number; height: number }) {
+  const small = scaledTo(image, size, STILL_STATS_MAX_PX);
+  const measured = small.getSize();
+  return exposureStats(small.toBitmap(), measured.width, measured.height);
 }
 
 /** Wait `ms`; a negative wait is none. */

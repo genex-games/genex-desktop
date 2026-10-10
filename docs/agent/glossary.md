@@ -38,6 +38,11 @@ is product copy, not this glossary.
 - **Host tool**: a bundled Genex tool whose manifest `host` makes Studio run it instead of the
   backend: `genex__cli`, `genex__cli-paid`, `genex__package` (`PluginHostTool`,
   `src/main/core/genex-cli.ts`).
+- **Game cover / Genex cover**: two different pictures. The game cover is Studio's own sidebar
+  look for a game (a cover sphere from a recipe the builder names with `set_game_cover`, or an
+  uploaded image) and never leaves this Mac (`shared/cover-recipe.ts`, `renderer/ui/GameAvatar.tsx`).
+  The Genex cover is the one real 16:9 frame genex.games shows for a hosted game, staged by the game
+  as its `genex-cover` demo and sent by the Genex plugin (`src/plugins/genex/cover.ts`).
 - **Colour tweaker**: the developer panel for tuning colour presets live, hidden in code between
   tuning sessions (`COLOR_TWEAKER_ON` in `src/renderer/appearance/tweaker/ColorTweakerHost.tsx`;
   how to use it in [design](design.md)).

@@ -1,6 +1,7 @@
 /**
  * The chat panel's hooks, wired in order: the open thread, its composer, its work, following the
- * newest entry, replies about a build, sending and Rewind. `ChatPanel` draws what this returns.
+ * newest entry, replies about a build, words left for the composer, sending and Rewind.
+ * `ChatPanel` draws what this returns.
  */
 import { useCallback, useRef, useState } from "react";
 import type { PromptBarHandle } from "../ui/PromptBar.tsx";
@@ -13,6 +14,7 @@ import { type ChatWorkView, useChatWork } from "./use-chat-work.ts";
 import { type FollowScroll, useFollowScroll } from "./use-follow-scroll.ts";
 import { type ReplyingAbout, useReplyAbout } from "./use-reply-about.ts";
 import { useCommandResults } from "./use-command-results.ts";
+import { useComposeInChat } from "./use-compose-in-chat.ts";
 import { useLaunchHandover } from "./use-launch-handover.ts";
 import { type Send, useReport, useSubmit } from "./use-submit.ts";
 
@@ -56,6 +58,7 @@ export function useChatPanel(props: ChatPanelProps) {
   });
   const focusComposer = useCallback((): void => composerRef.current?.focus(), [composerRef]);
   const reply = useReplyAbout(chat.threadId, focusComposer);
+  useComposeInChat(chat.threadId, chat.project, composer.drafts, composerRef);
   const submit = useSubmit(props, chat, composer, work, follow, reply);
   const report = useReport(props, chat, composer);
   useLaunchHandover(chat.threadId, loading, submit, composerRef);

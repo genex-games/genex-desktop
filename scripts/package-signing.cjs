@@ -9,9 +9,10 @@
  * - `APPLE_API_KEY` (path to the .p8), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`: notarytool with an
  *   App Store Connect API key; the packager staples the ticket.
  *
- * Windows signing is the same kind of switch, and stays off until a certificate exists
- * (docs/release-readiness.md): with none of the `WINDOWS_SIGN_*` values below, the packager and the
- * Squirrel maker get no `windowsSign` and the build is unsigned. `@electron/windows-sign` then
+ * Windows signing is the same kind of switch for a local build; release builds are signed by
+ * SignPath after packaging instead (.github/actions/windows-signpath). With none of the
+ * `WINDOWS_SIGN_*` values below, the packager and the Squirrel maker get no `windowsSign` and the
+ * build is unsigned. `@electron/windows-sign` then
  * signs the app's executables and Setup.exe with signtool, from one of:
  * - `WINDOWS_SIGN_CERTIFICATE_FILE` (a .pfx), with `WINDOWS_SIGN_CERTIFICATE_PASSWORD`;
  * - `WINDOWS_SIGN_PARAMS`: signtool parameters of their own, such as Azure Artifact Signing's

@@ -11,7 +11,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
   `cli_update_required`), tell the user Studio needs an update; there is nothing to run.
 - The out-of-credits and email-verification rows still apply as the card says.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-updates/SKILL.md v1.35.0 sha256 abebfaa0d8d27ce76e24b8455873ec775a43fbb9098c99b465bdb404de292d89 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-updates/SKILL.md v1.36.2 sha256 abebfaa0d8d27ce76e24b8455873ec775a43fbb9098c99b465bdb404de292d89 -->
 ---
 name: genex-updates
 description: Apply Genex platform updates safely. Use when a genex command prints an update nudge ("⬆ Genex … available — run: …"), a skills-refresh line ("🔄 Genex skills updated"), or an update-required refusal (HTTP 426, cli_update_required), or when the user asks about updating Genex packages.

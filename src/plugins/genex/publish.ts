@@ -121,16 +121,13 @@ const CLI_ARGS_FOR_PHASE: Partial<Record<GenexPublishPhase, string[]>> = {
 };
 
 /**
- * The CLI arguments that carry out an upload phase. Listing names the game; a game listed before
- * under another name (or none Studio sent) also has its cover redrawn, since Genex paints the name on it.
+ * The CLI arguments that carry out an upload phase. Listing names the game. Its cover is a real
+ * frame of the game with no name in it (`cover.ts`), so a new name never asks for a new picture.
  */
-export function publishArgs(
-  phase: GenexPublishPhase,
-  listing: { title?: string; redrawCover?: boolean } = {},
-): string[] {
+export function publishArgs(phase: GenexPublishPhase, listing: { title?: string } = {}): string[] {
   const args = [...(CLI_ARGS_FOR_PHASE[phase] ?? [])];
   if (phase !== GenexPublishPhase.Listing || !listing.title) return args;
-  return [...args, "--title", listing.title, ...(listing.redrawCover ? ["--regenerate-cover"] : [])];
+  return [...args, "--title", listing.title];
 }
 
 /**
@@ -270,11 +267,14 @@ export function dashboardFor(meta: HostedMeta | null | undefined): string {
   return isGenexLink(origin) ? String(origin).replace(/\/+$/, "") : DEFAULT_DASHBOARD;
 }
 
-/** Both pages of a hosted game. The CLI prints the same forms; a printed link wins when it is one of ours. */
+/**
+ * Both pages of a hosted game, in the forms genex.games serves and the CLI prints: the public page
+ * at the dashboard root (the old `world/` address only redirects there), the draft under `draft/`.
+ */
 export function publishUrls(meta: HostedMeta | null | undefined): { draftUrl?: string; galleryUrl?: string } {
   if (!hasSlug(meta)) return {};
   const dashboard = dashboardFor(meta);
-  return { draftUrl: `${dashboard}/draft/${meta.slug}`, galleryUrl: `${dashboard}/world/${meta.slug}` };
+  return { draftUrl: `${dashboard}/draft/${meta.slug}`, galleryUrl: `${dashboard}/${meta.slug}` };
 }
 
 /** Copy what the hosted project says about itself into Studio's publish record. */

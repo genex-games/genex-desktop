@@ -151,7 +151,7 @@ test("draft upload validates artifacts before remote writes and never replaces p
   let existing = { isDraft: false, targetCommitish: "source" };
   const run = (args: string[]) => {
     calls.push(args);
-    if (args[0] === "api") return JSON.stringify({ sha: "source" });
+    if (args[0] === "api") return "source\n";
     if (args[1] === "list") return JSON.stringify(releases);
     if (args[1] === "view") return JSON.stringify(existing);
     return "";
@@ -206,7 +206,7 @@ test("draft upload refuses unsigned macOS before any remote call and proceeds wi
   const calls: string[][] = [];
   const run = (args: string[]) => {
     calls.push(args);
-    if (args[0] === "api") return JSON.stringify({ sha: "source" });
+    if (args[0] === "api") return "source\n";
     return "[]";
   };
   const candidate = { version: "0.1.0-rc.3", repo: "fixture/repo", source: "source", directory, run };
@@ -226,7 +226,7 @@ test("draft creation refuses a missing or mismatched remote tag before writing",
   const candidate = { version: "0.1.0", repo: "fixture/repo", source: "source", macos: true, windows: true, directory };
   const run = (args: string[]) => {
     calls.push(args);
-    if (args[0] === "api") return JSON.stringify({ sha: "another-source" });
+    if (args[0] === "api") return "another-source\n";
     return "[]";
   };
   await assert.rejects(uploadRelease({ ...candidate, run }), /tag.*source/);
@@ -244,6 +244,40 @@ test("draft creation refuses a missing or mismatched remote tag before writing",
   assert.deepEqual(
     calls.map((args) => args[0]),
     ["api"],
+  );
+});
+
+/** Node's default output buffer for execFileSync, which the upload's `gh` calls run under. */
+const EXEC_FILE_MAX_BUFFER = 1024 * 1024;
+
+test("a tag on a commit whose diff runs to megabytes still resolves to its source", async () => {
+  const directory = await tmpDir();
+  await writeFeedAssets(directory);
+  const calls: string[][] = [];
+  // gh api answers a commit with every file's patch; a release merge's patches overflow the buffer
+  // unless the call asks for the sha alone.
+  const run = (args: string[]) => {
+    calls.push(args);
+    if (args[0] !== "api") return "[]";
+    const filter = args.indexOf("--jq");
+    if (filter !== -1 && args[filter + 1] === ".sha") return "source\n";
+    const reply = JSON.stringify({ sha: "source", files: [{ patch: "+".repeat(2 * EXEC_FILE_MAX_BUFFER) }] });
+    if (reply.length > EXEC_FILE_MAX_BUFFER)
+      throw Object.assign(new Error("spawnSync gh ENOBUFS"), { code: "ENOBUFS" });
+    return reply;
+  };
+  await uploadRelease({
+    version: "0.1.5",
+    repo: "fixture/repo",
+    source: "source",
+    macos: true,
+    windows: false,
+    directory,
+    run,
+  });
+  assert.deepEqual(
+    calls.map((args) => (args[0] === "api" ? "api" : args[1])),
+    ["api", "list", "create", "upload"],
   );
 });
 
@@ -320,7 +354,7 @@ test("the version-free copies reach the draft through provenance, verification a
   const calls: string[][] = [];
   const run = (args: string[]) => {
     calls.push(args);
-    return args[0] === "api" ? JSON.stringify({ sha: expected.source }) : "[]";
+    return args[0] === "api" ? `${expected.source}\n` : "[]";
   };
   const candidate = { version: "0.2.0", repo: "fixture/repo", source: expected.source, directory: upload, run };
   await uploadRelease({ ...candidate, macos: true, windows: false });

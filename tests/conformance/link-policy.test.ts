@@ -40,6 +40,16 @@ describe("studio link policy", () => {
     assert.equal((await routeStudioLink("http://example.com/x", { projectDirs })).action, "refuse");
   });
 
+  it("opens a genex.games page tagged s=desktop, and a published game or the API as it came", async () => {
+    const projectDirs: string[] = [];
+    assert.deepEqual(await routeStudioLink("https://genex.games/world/derby#play", { projectDirs }), {
+      action: "external",
+      url: "https://genex.games/world/derby?s=desktop#play",
+    });
+    for (const url of ["https://derby.genex.technology/", "https://api.genex.games/api/credits/me"])
+      assert.deepEqual(await routeStudioLink(url, { projectDirs }), { action: "external", url }, url);
+  });
+
   it("hands a document inside a game folder to its own app, never to the window", async () => {
     const { game, spaced, projectDirs } = await folders();
     touch(path.join(game, "NOTES.base-builder.md"));

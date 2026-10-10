@@ -26,8 +26,10 @@ export async function uploadRelease({ version, repo, source, macos, windows, dir
   const files = entries.map((entry) => path.join(directory, entry.name)).sort();
   const tag = `v${version}`;
   // Resolve annotated and lightweight tags to the commit. Missing tags and API failures both refuse writes.
-  const tagged = JSON.parse(run(["api", `repos/${repo}/commits/${encodeURIComponent(tag)}`]));
-  if (tagged.sha !== source) throw new Error("Release tag does not identify the candidate source");
+  // Only the sha: the commit object carries every file's patch, and a release merge's run to
+  // megabytes, past execFileSync's output buffer.
+  const taggedSha = run(["api", `repos/${repo}/commits/${encodeURIComponent(tag)}`, "--jq", ".sha"]).trim();
+  if (taggedSha !== source) throw new Error("Release tag does not identify the candidate source");
   // An API error is not evidence that a release is absent. List successfully before deciding to create.
   const releases = JSON.parse(run(["release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName"]));
   if (releases.some((release) => release.tagName === tag)) {

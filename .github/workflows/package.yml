@@ -3,7 +3,9 @@ name: Package
 # dev skip this billed matrix): the same makers the release uses (dmg and zip on macOS; deb, rpm
 # and zip on Linux; the Squirrel installer on Windows), then the packaged smoke and the packaged
 # terminal against the result. No secrets: the macOS build is ad-hoc signed and the Windows build
-# unsigned. Signed builds come from release.yml. A dispatch with `only` builds one platform.
+# unsigned. Signed builds come from release.yml. A dispatch with `only` builds one platform; one
+# with `test_sign` has SignPath sign the Windows build with its self-signed test certificate
+# (.github/actions/windows-signpath), the only use of a secret here.
 on:
   pull_request:
     branches: [main]
@@ -15,6 +17,10 @@ on:
         description: One platform to package (darwin, linux or win32); empty for all three
         required: false
         default: ""
+      test_sign:
+        description: Sign the Windows build through SignPath with its test certificate
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -35,6 +41,10 @@ jobs:
           ) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # actions: read lets SignPath fetch the workflow artifacts it signs (a `test_sign` dispatch).
+    permissions:
+      contents: read
+      actions: read
     defaults:
       run:
         shell: bash
@@ -65,11 +75,18 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run runtime:check
       - name: Make (unsigned)
+        if: ${{ !(runner.os == 'Windows' && inputs.test_sign) }}
         run: |
           # nuget and Squirrel stage the app in temp folders (TEMP, SQUIRREL_TEMP) and refuse paths over
           # 260 characters; short ones keep the Genex CLI payload's deepest files under the limit.
           if [ "$RUNNER_OS" = Windows ]; then mkdir -p /d/t && export TMP='D:\t' TEMP='D:\t' SQUIRREL_TEMP='D:\t'; fi
           npm run make -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+      - name: Make, test-signed by SignPath
+        if: ${{ runner.os == 'Windows' && inputs.test_sign }}
+        uses: ./.github/actions/windows-signpath
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: test-signing
       # A real per-user install of Genex-Setup.exe, its shortcuts, path lengths and uninstall.
       - name: Squirrel install and uninstall
         if: runner.os == 'Windows'

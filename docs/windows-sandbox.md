@@ -23,7 +23,7 @@ screen on `git-missing`). What differs from macOS:
   records.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
-  command as it reads it. The harness hears the host over a loopback inbox
+  command as it reads it. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
   ([`src/substrate/harness-inbox.ts`](../src/substrate/harness-inbox.ts)) whose first line must
   be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout.
 - Deny paths are session-wide (a per-command deny binds every command anyway); a path denied both

@@ -646,6 +646,19 @@
   border-radius: 999px;
   background: var(--green);
 }
+/* No Genex cover to send yet: one quiet line, its press at the trailing edge. */
+.genex-publish-cover-ask {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.genex-publish-cover-ask p {
+  min-width: 0;
+}
 /* The running attempt: what it does now, its clock, and its steps as one bar with their names. */
 .genex-publish-progress {
   display: grid;

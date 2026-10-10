@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 7, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 9, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -36,6 +36,8 @@ builds and builds you package yourself under another name do not check.
 
 The catalog downloads listings and pinned plugin packages anonymously from its configured
 hosts and GitHub. Asset generation and publishing contact Genex using the connected account.
+Links to genex.games that Studio opens in your browser carry `s=desktop`, so the site can tell
+the visit came from the app; the tag is the same for everyone and adds nothing else.
 Connector tools contact their configured service. Each connector call asks for consent unless
 the user saved an exact tool grant in Settings. Revocation blocks subsequent calls; it cannot
 undo a remote action or recall data already sent.

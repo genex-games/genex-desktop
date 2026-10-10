@@ -948,7 +948,7 @@ describe("steer through the host and the harness process", () => {
         {
           type: "custom",
           event_type: "coordinator_message_queued",
-          payload: { messageId: "night", action: action("night", "Make it night") },
+          payload: { messageId: "night", action: action("night", "Make it run") },
         },
         { type: "custom", event_type: "coordinator_message_steering", payload: { messageId: "night", into: "pond" } },
       ],

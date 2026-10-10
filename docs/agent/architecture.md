@@ -166,13 +166,14 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   `data-platform` on the root, and the phase. When `ProcessSandbox` raises
   `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
   unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code), main holds the boot gate
+  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
+  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
   ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
-  instead of exiting; `studio:boot.retry` creates the core again and, once it starts, replaces
+  instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces
   that window with the studio. On Windows, `studio:boot.setup` (native) first installs the sandbox
   with the unpacked srt-win
   ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and then retries; a dismissed prompt changes nothing. Every other startup failure keeps the error dialog and exit; smoke
+  UAC prompt) and retries; a dismissed prompt changes nothing. Other startup failures keep the error dialog and exit; smoke
   and developer launches fail as before (the `sandbox-setup` fixture shows the screen over a ready
   core). The window's title bar comes from
   [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS
@@ -918,58 +919,62 @@ and stored `secret:` values as `secrets`, so the connection redacts them from wh
 ([`src/plugins/genex/`](../../src/plugins/genex/)) runs the restricted asset adapter (`adapter.ts`)
 in its backend; the pinned CLI owns quotes, locking, reservations and the credit ledger. Job state
 lives under `engine-homes/genex/projects/<project>`. Arguments are arrays; operations, inputs and
-destinations are validated; hosted initialization, domains and billing administration are not
-exposed. The CLI environment is built from scratch (`genexCliEnv`, telemetry off by default). The
-creator MCP (`creator-mcp.ts`) connects only to `https://mcp.genex.games/mcp`; `genex blender mcp` is
-the `genex-blender` connector with `blender_export_glb` denied. Credentials use the Keychain-backed
-SecretStore, start locked, and are read only by the trusted `unlock` action; the token reaches the
-CLI through an anonymous descriptor read by `resources/plugins/genex/preload.mjs`, never arguments,
+destinations are validated; hosted initialization, domains and billing administration stay hidden.
+The CLI environment starts from scratch (`genexCliEnv`, telemetry off). The creator MCP
+(`creator-mcp.ts`) connects only to `https://mcp.genex.games/mcp`; `genex blender mcp` is the
+`genex-blender` connector with `blender_export_glb` denied. Credentials use the Keychain-backed
+SecretStore, start locked and are read only by the trusted `unlock` action; the token reaches the
+CLI on an anonymous descriptor `resources/plugins/genex/preload.mjs` reads, never arguments,
 environment or game folders. Remember intent is recorded only after a credential exists and
-revoked before deletion. `genex__asset` is offered only while Genex is enabled; agent input cannot
-raise allowances or approve characters; a local Stop does not cancel or refund a remote job;
-reconciliation reuses request and generation ids. A public export (the Export button, the
-harness `game.export` and the Genex publish stage) refuses a file holding any value
-`knownSecretValues()` returns, naming the file and never the value. `inspect_use` and `verify_use`
+revoked before deletion. `genex__asset` exists only while Genex is enabled; agent input cannot
+raise allowances or approve characters; a local Stop neither cancels nor refunds a remote job;
+reconciliation reuses request and generation ids. A public export (Export, the harness
+`game.export`, the Genex publish stage) refuses a file holding any `knownSecretValues()` value,
+naming the file, never the value. `inspect_use` and `verify_use`
 (`genex-outcomes.ts`, `audio-observation.ts`) record observed use of a captured version, not proof.
 Publishing verifies the upload against the hosted staging revision; an unresolved upload is never
-retried automatically and is settled by **Check again** or `publish-allow-upload`. Readiness or a
-successful upload never certifies gameplay.
+retried automatically, only settled by **Check again** or `publish-allow-upload`. Neither readiness nor an
+upload certifies gameplay.
 
-Genex account rules: `status` returns the operation catalog for every provider path; the CLI's
-`allowance.enforced` is authoritative, Studio uses the pinned CLI's no-project-allowance mode and the
-Genex service still enforces credit admission, which never widens a live test's spending
-authorization. Deleting the credential blocks new submissions before the disk operation finishes;
-HTTP 401 reports disconnected; approval claims are serialized before a paid preview or finalize;
-positional generation ids cannot start with a hyphen. Inspection frames cross the Codex bridge as
-temporary files (`imageFiles`) removed at delegation cleanup. Retrieval uses the remote
-`generationId`; `inspect_use` and `verify_use` use the delivered Studio job `id`, and a job whose
-files are not in the caller's workspace is refused before observation.
+Genex account rules: `status` returns the operation catalog for every provider path; Studio uses
+the pinned CLI's no-project-allowance mode (its `allowance.enforced` is authoritative) and Genex
+still enforces credit admission, never widening a live test's spending authorization. Deleting the
+credential blocks new submissions before the disk removal ends; HTTP 401 means
+disconnected; approval claims are serialized before a paid preview or finalize; positional
+generation ids never start with a hyphen. Inspection frames cross the Codex bridge as temporary
+files (`imageFiles`), removed at cleanup. Retrieval uses the remote `generationId`;
+`inspect_use` and `verify_use` take the delivered Studio job `id`, refusing one whose files are
+not in the caller's workspace.
+
+**Genex cover** (`cover.ts`): the game's `genex-cover` demo, shot with `observe`'s `still` into the
+plugin's `covers/<project>/`, sent by `genex cover --json` after a recorded publish (the next one
+aborts it) or by `genex__cover-set`.
 
 **Plugin skills.** A manifest skill is inline text or (API 3) a package `.md` file with a summary
 (`PluginSkill`, `shared/plugins.ts`). `PluginRegistry.snapshot()` reads tools, guidance and the
 applied plugin/skill set from one live view, so a brief's tools and skill lines agree; a file skill
 contributes an index line (`skill-prompts.ts`) and the host-answered `<id>__skill` tool, which reads
 only declared files through a checked handle, pages at 24,000 characters and writes nothing.
-Skills are served from the installed package and never written into games. Once a session
-answers, delegation records its applied set on `tool_registry_applied` by session id; resuming it
+Skills are served from the installed package, never written into games. Once a session
+answers, delegation records its applied set on `tool_registry_applied` by session id; a resume
 folds that back (`ConnectionService.lastApplied`) and prepends `withdrawnNotice` for withdrawals. Updates and hot reloads
 diff skills (`lastSkillChange`, scan `skillDigests`) for the trust dialog and plugin page.
 
 **Genex host tools.** A manifest tool with `host` (bundled `genex`, API 3 only) runs through the
-registry's `hostTool` hook, set to `genexHostTool` in `#wirePluginServices` and gated in `index.ts`
-by the native steps `studio:plugins.host-cli` / `host-package`; consent cards show
+registry's `hostTool` hook (`genexHostTool`, set in `#wirePluginServices`), gated in `index.ts` by
+the native steps `studio:plugins.host-cli` / `host-package`; consent cards show
 `genexHostConsent`'s summary of the validated call. `GenexCliService`
 (`main/core/genex-cli.ts`, allow-list in `genex-cli-policy.ts`) runs the plugin payload's pinned
-CLI (`resources/plugins/genex/node_modules/@genex-ai/cli-demo`) in ProcessSandbox, in a fresh `<userData>/genex-cli/<id>` that is also `HOME` and is
-removed afterwards; never a game folder, where the CLI's skill sync and contract healing would
+CLI (`resources/plugins/genex/node_modules/@genex-ai/cli-demo`) in ProcessSandbox, in a fresh `<userData>/genex-cli/<id>` (its `HOME`,
+removed afterwards), never a game folder, where the CLI's skill sync and contract healing would
 write `.claude`, `AGENTS.md` and ancestor contracts. Only `api.genex.games` is reachable, the
 games root and every game are write-denied, the token goes on stdin, and project commands see
 only `{id, slug}`. `GenexPackageService` (`genex-package.ts`) checks the name against
 `GENEX_GAME_PACKAGES` and the binding folder by realpath (the game, or a registered git worktree of
-it under scratch), then calls `GameBuilds.addPackages` with the toolchain's `add` command.
+it under scratch), then runs the toolchain's `add` through `GameBuilds.addPackages`.
 
-**Blender.** The Local Blender plugin supplies `blender__model` through the ordinary API 3 registry
-with a managed local runtime; core has no special Blender tool.
+**Blender.** Local Blender supplies `blender__model` through the ordinary API 3 registry with a
+managed local runtime; core has no Blender tool of its own.
 
 ## Assets
 
@@ -1136,8 +1141,8 @@ with a managed local runtime; core has no special Blender tool.
   identity signs with the hardened runtime and `build/entitlements.mac.plist` (`allow-jit` only, no
   library-validation exemption, so third-party native addons do not load); the `APPLE_API_*` key
   notarizes. A signed build refuses a `local.` bundle id. Windows makes a per-user Squirrel
-  `Genex-Setup.exe`, unsigned until a `WINDOWS_SIGN_*` certificate, signtool parameters or hook
-  turns on `@electron/windows-sign`; Squirrel's `--squirrel-*` launches only create or remove the
+  `Genex-Setup.exe`, signed in releases by
+  [SignPath](../../.github/actions/windows-signpath/action.yml) (locally by `WINDOWS_SIGN_*`); Squirrel's `--squirrel-*` launches only create or remove the
   shortcuts and exit ([`src/main/windows-install.ts`](../../src/main/windows-install.ts)). Fuses (`FusesPlugin`) keep run-as-node and
   file:// privileges, turn off `NODE_OPTIONS` and `--inspect`, and require the integrity-checked
   `app.asar`. [`src/main/auto-update.ts`](../../src/main/auto-update.ts) wires `update-electron-app`

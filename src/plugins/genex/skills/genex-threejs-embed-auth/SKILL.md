@@ -41,7 +41,7 @@ export const GENEX = {
 does not apply: Studio pins its Genex packages. Other commands map onto Studio tools as the
 `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.35.0 sha256 14abda1a29978b7e0505d67a5f35cfe57cf4e6a8698ffa37ca0ce4e3f7bc9dbb -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.2 sha256 14abda1a29978b7e0505d67a5f35cfe57cf4e6a8698ffa37ca0ce4e3f7bc9dbb -->
 ---
 name: genex-threejs-embed-auth
 description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way.

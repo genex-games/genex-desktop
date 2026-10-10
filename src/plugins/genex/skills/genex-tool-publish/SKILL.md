@@ -15,11 +15,24 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - Studio exports and uploads the game itself. Glue step 3 (the CLI as a dev dependency) and
   `init --convert` do not apply, and `npx genex pull` is not available. Glue steps 1 and 2 still
   apply; for step 2 read `genex__skill {"name":"genex-threejs-embed-auth"}`.
-- The preflight lines arrive in `genex__publish-status` as warnings. Treat them as the card says.
+- Studio does not pass on the CLI's preflight lines. `warnings` in `genex__publish-status` carries
+  lines about the game's Genex cover instead (no shot sent, a frame refused or not sent, a frame too
+  small or not 16:9): after the link, relay each one as the card says to relay the preflight.
+- The card's opening ("The user built this game themselves", "as it is") describes only a game
+  whose code its owner keeps untouched, such as a folder they brought and asked only to publish.
+  Publishing a game Studio built starts no rework either, but its cover demo is not a rework: see
+  the next point.
+- The card's "The cover": in Studio the frame is the game's demo named `genex-cover`, game code the
+  game keeps, and Publish shoots and sends it; read `genex__skill {"name":"genex-cover"}`. Before
+  any publish of a game Studio built, the first or an update, check `genex__cover
+  {"operation":"status"}`: with no kept shot it gets its `genex-cover` demo, shot and checked,
+  first. After a publish whose own cover outcome is `none` (`cover.last.jobId` is its `jobId`),
+  offer once to make one, and not again in this chat once the user says no. Only a game whose
+  owner keeps its code untouched gets none: Publish then sends no cover and Genex keeps its own.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.35.0 sha256 43d20ca0a4722f954efa386be1966fe23d66df7ba15b7761f0dbb20195bb4bae -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.2 sha256 5fb8097f9cd1285227d25f09498d3e87d52ba5e3af8d5b5083e715bf91e3c9fc -->
 ---
 name: genex-tool-publish
 description: Put the game in this folder on the web with Genex — the draft page, `npx genex preview`, then `promote` / `publish`; the link you hand the user, the size limits, and what to do with the preflight lines. Installed once the folder is connected to a hosted Genex game (`npx genex init --convert`). Load it before the first preview.
@@ -80,6 +93,14 @@ asked for. So: **ship first**, hand over the link, then relay each line to
 the user in one plain sentence with an offer ("phones will struggle with the
 textures — want me to shrink them?"). Fix one only on the user's yes. Never
 turn the report into a milestone before the link.
+
+## The cover
+
+The game's cover is one real frame of it — what its gallery card, its page and
+every shared link show — and `preview` ends with a line while it has none.
+Once the first preview is up, `$genex-cover` says how to choose, frame and send that
+frame. The game stays as it is: take the frame from play and add no code for
+it, and never set up a browser just for this.
 
 ## Draft and public version
 

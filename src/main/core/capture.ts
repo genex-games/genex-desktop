@@ -3,7 +3,7 @@
  * took, in the words the model was given.
  */
 import type { PreviewPixelStats, PreviewPort } from "../../substrate/preview-port.ts";
-import { CaptureSurface } from "../../shared/preview-contract.ts";
+import { CaptureSurface, StillMimeType } from "../../shared/preview-contract.ts";
 
 /** JPEG quality of a look at the game, when the caller names none. */
 export const DEFAULT_SHOT_QUALITY = 80;
@@ -15,6 +15,8 @@ export const DEFAULT_PAIR_HEIGHT = 360;
 export const PAIR_QUALITY = 80;
 /** How long a camera switch settles before the page's state is read or the picture taken. */
 export const CAMERA_SETTLE_MS = 60;
+/** The JPEG qualities a still steps down through, in order, when its PNG is over its byte limit. */
+export const STILL_JPEG_QUALITIES = [95, 90, 85] as const;
 
 /**
  * A studio that cannot see outside the canvas answers this, never null: one shape to read.
@@ -86,4 +88,47 @@ export function surfaceWord(surface: CaptureSurface | null): string | null {
 export function requestedSurface(request: { surface?: "screen" | "canvas" }): CaptureSurface {
   if (!request.surface || !Object.hasOwn(REQUESTED_SURFACES, request.surface)) return CaptureSurface.Auto;
   return REQUESTED_SURFACES[request.surface];
+}
+
+/** How a still's frame can be encoded: lossless, or as a JPEG of a given quality. */
+export interface StillEncoders {
+  png(): Buffer;
+  jpeg(quality: number): Buffer;
+}
+
+/** A still's encoded image, or the size of the smallest encoding that was still over the limit. */
+export type EncodedStill = { data: Buffer; mimeType: StillMimeType } | { tooLarge: { smallestBytes: number } };
+
+/**
+ * A still at most `maxBytes` long: the PNG when it fits, else the first JPEG of
+ * {@link STILL_JPEG_QUALITIES} that does. Each encoding is made only when the one before it was
+ * over the limit, and nothing below the last quality is ever tried: a blurrier frame is not a
+ * better answer than saying none fit.
+ */
+export function encodeStill(encoders: StillEncoders, maxBytes: number): EncodedStill {
+  const png = encoders.png();
+  if (png.length <= maxBytes) return { data: png, mimeType: StillMimeType.Png };
+  let smallestBytes = png.length;
+  for (const quality of STILL_JPEG_QUALITIES) {
+    const jpeg = encoders.jpeg(quality);
+    if (jpeg.length <= maxBytes) return { data: jpeg, mimeType: StillMimeType.Jpeg };
+    smallestBytes = Math.min(smallestBytes, jpeg.length);
+  }
+  return { tooLarge: { smallestBytes } };
+}
+
+/**
+ * The size a taken frame is scaled to so it is never larger than `asked` on either side: its own
+ * shape kept, never scaled up, at least one pixel a side. A Retina window's canvas reads at twice
+ * the size the window was given; this is what brings it back.
+ */
+export function stillFit(
+  taken: { width: number; height: number },
+  asked: { width: number; height: number },
+): { width: number; height: number } {
+  const scale = Math.min(1, asked.width / taken.width, asked.height / taken.height);
+  return {
+    width: Math.max(1, Math.min(asked.width, Math.round(taken.width * scale))),
+    height: Math.max(1, Math.min(asked.height, Math.round(taken.height * scale))),
+  };
 }

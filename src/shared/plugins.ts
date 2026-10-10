@@ -1,4 +1,5 @@
 import type { RuntimeInstallPhase } from "./model-install.ts";
+import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
 
 /** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
@@ -637,6 +638,65 @@ export const PluginService = {
   RuntimeCancelInstall: "runtime.cancelInstall",
 } as const;
 export type PluginService = (typeof PluginService)[keyof typeof PluginService];
+
+/** A still's view name: a `config.demos` or `config.cameras` key, or a built-in `eye:*` camera. */
+export const PLUGIN_STILL_VIEW_NAME = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$/;
+/** The least, the most and the default size of a still's encoded image. */
+export const PLUGIN_STILL_MIN_BYTES = 64 * 1024;
+export const PLUGIN_STILL_MAX_BYTES = 16 * 1024 * 1024;
+export const PLUGIN_STILL_DEFAULT_BYTES = 8 * 1024 * 1024;
+/** The most view names a `view_unknown` answer lists. */
+export const PLUGIN_STILL_AVAILABLE_MAX = 32;
+
+/** Which view a still photographs: a demo run to its end state, or a camera placed. Exactly one. */
+export type PluginStillView = { demo: string; camera?: undefined } | { camera: string; demo?: undefined };
+/**
+ * `observe` with a `still` (API 3, additive): one named view of the bound game on a hidden window
+ * of its own at `width`×`height` (each within a pooled window's least and most size), encoded in at
+ * most `maxBytes`. Mirrors `PluginStillRequest` in `src/plugin-sdk/index.d.ts`.
+ */
+export type PluginStillRequest = PluginStillView & { width: number; height: number; maxBytes?: number };
+/** A still request as the host checked it: one view, whole-pixel sides, the byte limit filled in. */
+export type PluginStillOrder = PluginStillView & { width: number; height: number; maxBytes: number };
+
+/** Why `observe` took no still. Published to plugins: never rename a value. */
+export const PluginStillProblemCode = {
+  /**
+   * This host cannot take a still: it has no hidden window (a still never borrows the person's
+   * own), or the window could not be opened, sized or asked for one.
+   */
+  Unavailable: "unavailable",
+  LoadFailed: "load_failed",
+  /** The game has no demo or camera by that name; `available` lists the ones it has. */
+  ViewUnknown: "view_unknown",
+  ViewFailed: "view_failed",
+  CaptureFailed: "capture_failed",
+  /** Not even the lowest-quality JPEG fits `maxBytes`. */
+  TooLarge: "too_large",
+  Timeout: "timeout",
+} as const;
+export type PluginStillProblemCode = (typeof PluginStillProblemCode)[keyof typeof PluginStillProblemCode];
+
+/** A still: the encoded image, its size, which path read it, the view, its exposure and a small JPEG preview. */
+export interface PluginStill {
+  image: Uint8Array;
+  mimeType: StillMimeType;
+  width: number;
+  height: number;
+  /** `page` is the page's own read of its canvas; `compositor` is the window's frame. */
+  source: CaptureSource;
+  view: PluginStillView;
+  stats: StillExposure;
+  /** JPEG, at most 1280 px on its long side. */
+  preview: Uint8Array;
+}
+export interface PluginStillProblem {
+  code: PluginStillProblemCode;
+  reason?: string;
+  available?: string[];
+}
+/** What `observe` with a `still` answers. A host older than the option answers an ordinary observation instead. */
+export type PluginStillAnswer = { still: PluginStill } | { stillProblem: PluginStillProblem };
 
 /** Whether a plugin's own saved account is usable right now (`PluginRegistry.accountState`). */
 export const PluginAccountState = {

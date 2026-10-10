@@ -15,8 +15,10 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { sniffImage } from "../substrate/image-sniff.ts";
 import { assertRelativePath, isBelow } from "../substrate/paths.ts";
-import { isJsonObject } from "../substrate/fsx.ts";
+import { isJsonObject, readRegularFile } from "../substrate/fsx.ts";
 import { isPluginId } from "../shared/plugin-id.ts";
+import { GENEX_COVER_MAX_BYTES, GENEX_COVER_SHOT_FILE, GENEX_COVERS_DIR } from "../shared/genex.ts";
+import type { StillMimeType } from "../shared/preview-contract.ts";
 import { genexRef } from "../shared/genex-ref.ts";
 import { isImageFile } from "../substrate/game-workspace.ts";
 import {
@@ -37,6 +39,8 @@ const ASSET_ROOTS = ["assets", "public/assets"] as const;
 /** Blender scripts live in `assets/src`; they are inputs, not assets. */
 const EXCLUDED_PREFIX = "assets/src/";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A game's name as the Genex plugin keys its storage by it: one plain path segment. */
+const GENEX_PROJECT = /^[a-zA-Z0-9_-]+$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const JOB_JSON_MAX = 2_000_000;
 const JOB_CACHE_MAX = 512;
@@ -160,7 +164,7 @@ export interface AssetJobRecord {
 
 /** Where the Genex plugin keeps one project's jobs. */
 export function genexJobsRoot(engineHomes: string, project: string): string | null {
-  return /^[a-zA-Z0-9_-]+$/.test(project) ? path.join(engineHomes, "genex", "projects", project, "jobs") : null;
+  return GENEX_PROJECT.test(project) ? path.join(engineHomes, "genex", "projects", project, "jobs") : null;
 }
 
 /** Where a Genex job keeps its record and its inspection frames. */
@@ -172,6 +176,47 @@ export function genexJobDir(engineHomes: string, project: string, jobId: string)
 /** The one inspection frame a job may expose: `inspection-<uuid>.jpg`, nothing else in that folder. */
 export function isGenexInspectionFile(file: string): boolean {
   return /^inspection-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/i.test(file);
+}
+
+/** Where the Genex plugin keeps one game's cover (`covers/<project>/`), or null for a name no game has. */
+export function genexCoverDir(engineHomes: string, project: string): string | null {
+  return GENEX_PROJECT.test(project) ? path.join(engineHomes, "genex", GENEX_COVERS_DIR, project) : null;
+}
+
+/** The kept shot's image when the folder holds it as a plain file: its name, type and time. */
+async function shotCandidate(
+  dir: string,
+  [mimeType, name]: [StillMimeType, string],
+): Promise<{ file: string; mimeType: StillMimeType; mtimeMs: number } | null> {
+  const st = await lstat(path.join(dir, name)).catch(() => null);
+  return st?.isFile() ? { file: path.join(dir, name), mimeType, mtimeMs: st.mtimeMs } : null;
+}
+
+/**
+ * The game's kept Genex cover shot, as bytes the renderer can show, or null. Its place is built
+ * here from the game's name, never taken from anyone: the cover folder must be exactly that folder
+ * by its real path (a link anywhere on the way from engine homes refuses it), and only `shot.png`
+ * or `shot.jpg` is read: a regular file opened without following a link, at most Genex's upload
+ * limit, whose bytes are the type its name says. While a shot of the other type replaces the last
+ * one both are there for a moment, and the newer is the shot.
+ */
+export async function readGenexCoverShot(
+  engineHomes: string,
+  project: string,
+  { resize }: { resize?: (data: Buffer) => Promise<Buffer> } = {},
+): Promise<{ mimeType: string; data: string } | null> {
+  const homes = typeof project === "string" ? await realpath(engineHomes).catch(() => null) : null;
+  const dir = homes && genexCoverDir(homes, project);
+  if (!dir || (await realpath(dir).catch(() => null)) !== dir) return null;
+  const files = Object.entries(GENEX_COVER_SHOT_FILE) as Array<[StillMimeType, string]>;
+  const found = (await Promise.all(files.map((entry) => shotCandidate(dir, entry)))).filter((shot) => shot !== null);
+  const shot = found.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!shot) return null;
+  const data = await readRegularFile(shot.file, GENEX_COVER_MAX_BYTES).catch(() => null);
+  if (!data || sniffImage(data)?.mimeType !== shot.mimeType) return null;
+  const smaller = resize ? await resize(data).catch(() => null) : null;
+  if (smaller) return { mimeType: "image/jpeg", data: smaller.toString("base64") };
+  return { mimeType: shot.mimeType, data: data.toString("base64") };
 }
 
 /** A value that is a plain object (not an array), as a record; otherwise null. */

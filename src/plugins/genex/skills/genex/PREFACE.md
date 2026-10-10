@@ -28,6 +28,11 @@ Where it disagrees with this preface, this preface wins.
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
   with `genex__publish-status` for the job and the links.
+- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: the game's demo named
+  `genex-cover`, checked with `genex__cover {"operation":"shoot"}`. Publish (`genex__publish`)
+  shoots it again and sends it, and `genex__cover-set` sends it now; `genex__cover
+  {"operation":"status"}` is `npx genex cover` with no file. Read `genex__skill
+  {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
   the version and the user approves the install.

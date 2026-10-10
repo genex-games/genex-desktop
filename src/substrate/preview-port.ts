@@ -7,14 +7,40 @@ import type { PageUi, PageUiAnswer } from "./page-ui.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PixelDiff, PixelStats } from "./pixel-stats.ts";
 import type {
+  CaptureSource,
   CaptureSurface,
   CropRect,
   PreviewConsoleEntry,
   PreviewPixelStats,
   PreviewPortStatus,
+  StillExposure,
+  StillMimeType,
 } from "../shared/preview-contract.ts";
 
 export type { CaptureSurface, CropRect, PreviewConsoleEntry, PreviewPixelStats, PreviewPortStatus };
+
+/** What a still is asked for: its largest size, its image's byte limit and its preview's long side. */
+export interface PreviewStillRequest {
+  width: number;
+  height: number;
+  maxBytes: number;
+  previewMaxPx: number;
+}
+
+/** One still as a port took it: never larger than asked, with its exposure and a small JPEG preview. */
+export interface PreviewStill {
+  image: Buffer;
+  mimeType: StillMimeType;
+  width: number;
+  height: number;
+  /** Which path read the frame: the page's own canvas read, or the window's compositor. */
+  source: CaptureSource;
+  stats: StillExposure;
+  preview: Buffer;
+}
+
+/** A still, or the size of the smallest encoding that was still over the byte limit. */
+export type PreviewStillAnswer = { still: PreviewStill } | { tooLarge: { smallestBytes: number } };
 
 /**
  * What the studio's page shim is told when it is served onto a game's page (M4.1). The values
@@ -146,6 +172,11 @@ export interface PreviewPort {
   trustedInput?(): boolean | null;
   /** Optional: what the studio's instrumentation got hold of on the page it just served (M4.2a). The page's own account of itself — read field by field, never spread onto an answer. */
   attachReport?(): Promise<PageAttachReport | null>;
+  /**
+   * Optional: the canvas as the page draws it now, for a plugin's still. FakePreview and older
+   * ports compile without it; a caller that finds none takes no still.
+   */
+  still?(request: PreviewStillRequest): Promise<PreviewStillAnswer>;
   /** Optional: a fresh capture cropped to `region` (pixels) and scaled up — the computer tool's zoom. */
   zoom?(
     region: [number, number, number, number],

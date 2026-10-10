@@ -19,7 +19,7 @@ import type { LoopRunReview } from "./run-review.ts";
 import type { StagedTarget } from "./self-change-files.ts";
 import type { CodexLoginState } from "./codex-login.ts";
 import type { ClaudeLoginState } from "./claude-login.ts";
-import type { ProjectAsset, ProjectAssets } from "./game-assets.ts";
+import type { ProjectAsset, ProjectAssetRead, ProjectAssets } from "./game-assets.ts";
 import type { ModelRig } from "./model-rig.ts";
 import type { UiEvent } from "./ui-events.ts";
 import type { GameFile } from "./game-file.ts";
@@ -402,15 +402,10 @@ export interface StudioApi {
   projectAssets(project: string): Promise<ProjectAssets>;
   /**
    * One image from inside the game, contained and byte-sniffed. `maxPx` asks for a thumbnail;
-   * `scope: "genex-inspection"` reads the one saved frame of the named job instead.
+   * `scope: "genex-inspection"` reads the one saved frame of the named job instead, and
+   * `scope: "genex-cover"` the game's kept Genex cover shot (no file: the host knows where it is).
    */
-  readProjectAsset(p: {
-    project: string;
-    file: string;
-    maxPx?: number;
-    scope?: "game" | "genex-inspection";
-    jobId?: string;
-  }): Promise<{ mimeType: string; data: string } | null>;
+  readProjectAsset(p: ProjectAssetRead): Promise<{ mimeType: string; data: string } | null>;
   runFeedback(p: {
     threadId: string;
     runId?: string;

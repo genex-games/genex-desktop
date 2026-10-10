@@ -434,3 +434,149 @@ it("a sign-in failure and its adjacent harness reply render one notice", () => {
   const rendered = rows.flatMap((row) => ("text" in row ? [row.text] : []));
   assert.equal(rendered.filter((text) => /Codex/.test(String(text))).length, 1);
 });
+
+/** The builder's line. */
+const coverReply = (n: number, content: string) =>
+  event(n, { type: "messages", messages: [{ role: "assistant", content }] } as EventData);
+/** One Genex plugin call as the host records it, started then finished: a kept cover shot unless told otherwise. */
+const coverCall = (
+  n: number,
+  callId: string,
+  over: Record<string, unknown> = {},
+  finished: Record<string, unknown> = {},
+) => {
+  const started = {
+    callId,
+    pluginId: "genex",
+    pluginName: "Genex Tools",
+    tool: "cover",
+    toolName: "genex__cover",
+    args: "operation=shoot",
+    project: "harbor-run",
+    engine: "claude-code",
+    role: "chat",
+    ...over,
+  };
+  return [
+    custom(n, "plugin_tool_started", started),
+    custom(n + 1, "plugin_tool", { ...started, ok: true, result: "{}", images: 1, durationMs: 900, ...finished }),
+  ];
+};
+/** A turn's edge as the substrate writes it: started, or ended with its status. */
+const turnEdge = (n: number, turnId: string, ended?: "ok" | "cancelled"): EventEnvelope => ({
+  ...event(n, (ended ? { type: "turn_ended", status: ended } : { type: "turn_started" }) as EventData),
+  turn_id: turnId,
+});
+const coverCards = (list: ConversationEntry[]) =>
+  list.flatMap((e) => (e.kind === "genex-cover" ? [{ callId: e.callId, project: e.project }] : []));
+const entryKinds = (list: ConversationEntry[]) => list.map((e) => e.kind);
+const workSizes = (list: ConversationEntry[]) => list.flatMap((e) => (e.kind === "work" ? [e.items.length] : []));
+
+describe("transcriptEntries: when the Genex cover card goes up", () => {
+  it("shows one card, for the latest shot the thread kept, once the turn that took it has ended", () => {
+    const threadEvents = [
+      turnEdge(0, "t1"),
+      user(1, "Make this game's Genex cover."),
+      ...coverCall(2, "first"),
+      ...coverCall(4, "status", { args: "operation=status" }, { images: 0 }),
+      ...coverCall(6, "second"),
+      coverReply(8, "The harbour at sunset."),
+      turnEdge(9, "t1", "ok"),
+      turnEdge(10, "t2"),
+      user(11, "A bit brighter."),
+      ...coverCall(12, "kept"),
+      ...coverCall(14, "asset", { tool: "asset", toolName: "genex__asset", args: "operation=image prompt=boat" }),
+      coverReply(16, "Brighter now."),
+      turnEdge(17, "t2", "ok"),
+    ];
+    const list = entries({ threadEvents });
+    assert.deepEqual(coverCards(list), [{ callId: "kept", project: "harbor-run" }]);
+    assert.deepEqual(entryKinds(list), ["user", "work", "assistant", "user", "work", "assistant", "genex-cover"]);
+    assert.equal(toolChips(list).filter((chip) => chip === "cover").length, 4, "every shot stays a row of the work");
+  });
+
+  it("shows no card while the turn that kept a shot still runs, and takes down the earlier turn's", () => {
+    const first = [
+      turnEdge(0, "t1"),
+      user(1, "Make the cover."),
+      ...coverCall(2, "first"),
+      coverReply(4, "Done."),
+      turnEdge(5, "t1", "ok"),
+    ];
+    assert.deepEqual(coverCards(entries({ threadEvents: first })), [{ callId: "first", project: "harbor-run" }]);
+    // A candidate kept while the builder still chooses: no Publish beside a cover not chosen yet,
+    // and the earlier card no longer holds the kept shot.
+    const choosing = [
+      ...first,
+      turnEdge(6, "t2"),
+      user(7, "A bit brighter."),
+      ...coverCall(8, "candidate"),
+      ...coverCall(10, "next"),
+    ];
+    const running = entries({ threadEvents: choosing.slice(0, -1) });
+    assert.deepEqual(coverCards(running), []);
+    assert.deepEqual(entryKinds(running), ["user", "work", "assistant", "user", "work"]);
+    const ended = entries({
+      threadEvents: [...choosing, coverReply(12, "Brighter."), turnEdge(13, "t2", "cancelled")],
+    });
+    assert.deepEqual(
+      coverCards(ended),
+      [{ callId: "next", project: "harbor-run" }],
+      "a stopped turn still kept its shot",
+    );
+  });
+
+  it("keeps the turn's work in one group when tools follow the winning shot", () => {
+    const threadEvents = [
+      turnEdge(0, "t1"),
+      user(1, "Make the cover, then publish."),
+      ...coverCall(2, "kept"),
+      ...coverCall(4, "publish", { tool: "publish", toolName: "genex__publish", args: "kind=gallery" }, { images: 0 }),
+      ...coverCall(6, "check", { args: "operation=status" }, { images: 0 }),
+      coverReply(8, "It is live."),
+      turnEdge(9, "t1", "ok"),
+    ];
+    const list = entries({ threadEvents });
+    assert.deepEqual(entryKinds(list), ["user", "work", "assistant", "genex-cover"]);
+    assert.deepEqual(workSizes(list), [3]);
+  });
+
+  it("waits for a build's result card when the build's own builder kept the shot", () => {
+    const shot = coverCall(1, "kept", { runId: "r1", facetId: "f1", role: "builder" });
+    assert.deepEqual(coverCards(entries({ threadEvents: shot })), [], "the build is still going");
+    const finished = entries({
+      threadEvents: [...shot, custom(3, "run_finished", { runId: "r1", project: "harbor-run" })],
+    });
+    assert.deepEqual(entryKinds(finished).slice(-2), ["morning", "genex-cover"]);
+  });
+});
+
+describe("transcriptEntries: which Genex cover shot gets the card", () => {
+  it("keeps the last kept shot's card when a later shot failed or kept nothing", () => {
+    const failed = [
+      ...coverCall(1, "kept"),
+      ...coverCall(3, "broken", {}, { ok: false, error: "The game did not load" }),
+    ];
+    assert.deepEqual(coverCards(entries({ threadEvents: failed })), [{ callId: "kept", project: "harbor-run" }]);
+    // A shot the host could not take answers its problem and no picture: the last shot stays kept.
+    const problem = [...coverCall(1, "kept"), ...coverCall(3, "no-demo", {}, { images: 0, result: '{"problem":{}}' })];
+    assert.deepEqual(coverCards(entries({ threadEvents: problem })), [{ callId: "kept", project: "harbor-run" }]);
+  });
+
+  it("reads the call by its plugin, tool and operation, whichever side named the tool", () => {
+    const older = coverCall(1, "older", { tool: undefined, toolName: "mcp__studio__genex__cover" });
+    assert.deepEqual(coverCards(entries({ threadEvents: older })), [{ callId: "older", project: "harbor-run" }]);
+    const prefixed = coverCall(1, "prefixed", { tool: "mcp__studio__genex__cover" });
+    assert.deepEqual(coverCards(entries({ threadEvents: prefixed })), [{ callId: "prefixed", project: "harbor-run" }]);
+    const others: Array<[string, Record<string, unknown>]> = [
+      ["a status check", { args: "operation=status" }],
+      ["no operation", { args: "" }],
+      ["an operation that only starts like shoot", { args: "operation=shooter" }],
+      ["another plugin's cover tool", { pluginId: "lens", toolName: "lens__cover" }],
+      ["another Genex tool", { tool: "cover-set", toolName: "genex__cover-set" }],
+    ];
+    for (const [name, over] of others)
+      assert.deepEqual(coverCards(entries({ threadEvents: coverCall(1, "c", over) })), [], name);
+    assert.deepEqual(coverCards(entries({ threadEvents: coverCall(1, "c").slice(0, 1) })), [], "a shot still running");
+  });
+});

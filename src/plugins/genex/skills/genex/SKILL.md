@@ -28,6 +28,11 @@ Where it disagrees with this preface, this preface wins.
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
   with `genex__publish-status` for the job and the links.
+- `cover`, and the frame `preview` picks up from `.genex/scratch/cover.png`: the game's demo named
+  `genex-cover`, checked with `genex__cover {"operation":"shoot"}`. Publish (`genex__publish`)
+  shoots it again and sends it, and `genex__cover-set` sends it now; `genex__cover
+  {"operation":"status"}` is `npx genex cover` with no file. Read `genex__skill
+  {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
   the version and the user approves the install.
@@ -36,10 +41,10 @@ Where it disagrees with this preface, this preface wins.
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.35.0 sha256 e2d648f87ab7046ef430467122de83ec23a713ad03a6932ceb4f137ccf6d637a -->
+<!-- upstream https://genex.games/SKILL.md v1.36.2 sha256 68977a37e486412655ec2d289084e8b1fcd2e0d93c0d16432eced4d6cffc0f7b -->
 ---
 name: genex
-version: 1.35.0
+version: 1.36.2
 description: >-
   Game-dev asset generation for your agent. Proactively check Genex before
   shipping placeholder assets, hand-rolling programmer art, or telling the user
@@ -84,7 +89,7 @@ The game's folder is the workspace: setup marks the folder you run it in, and ev
 4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
 5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
 
-This file tracks CLI `1.35.0` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
+This file tracks CLI `1.36.2` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
 
 ## Never delete or overwrite anything in this folder
 

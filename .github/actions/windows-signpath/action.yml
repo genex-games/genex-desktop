@@ -1,0 +1,87 @@
+name: Windows build signed by SignPath
+# SignPath signs only what GitHub holds as a workflow artifact, so signing is two rounds around the
+# Squirrel maker: the packaged app's executables first (Setup.exe carries the app inside it), then
+# the installer made from them. The SignPath project's artifact configurations `app` and
+# `installer` name the files each round signs; the job needs `actions: read` so SignPath can fetch
+# the artifact.
+description: Package the Windows app, have SignPath sign it and its installer, and check both signatures.
+inputs:
+  api-token:
+    description: The SignPath CI user's API token (secrets.SIGNPATH_API_TOKEN)
+    required: true
+  signing-policy:
+    description: test-signing (SignPath's self-signed test certificate) or release-signing
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Package (unsigned)
+      shell: bash
+      run: |
+        # The packager, nuget and Squirrel stage the app in temp folders and refuse paths over 260
+        # characters; a short one keeps the Genex CLI payload's deepest files under the limit.
+        mkdir -p /d/t && export TMP='D:\t' TEMP='D:\t'
+        npm run package -- --platform win32 --arch x64
+    - name: Upload the app's executables for signing
+      id: app
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: signpath-windows-app
+        path: |
+          out/Genex-win32-x64/genex.exe
+          out/Genex-win32-x64/resources/**/*.node
+        retention-days: 1
+        if-no-files-found: error
+    - name: Sign the app's executables
+      uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: c538d9ee-f1e0-45c8-b7e9-c820934c4d34
+        project-slug: genex-desktop
+        signing-policy-slug: ${{ inputs.signing-policy }}
+        artifact-configuration-slug: app
+        github-artifact-id: ${{ steps.app.outputs.artifact-id }}
+        output-artifact-directory: ${{ runner.temp }}/signed-app
+    - name: Put the signed executables back
+      shell: bash
+      run: cp -R "$RUNNER_TEMP/signed-app/." out/Genex-win32-x64/
+    - name: Make the Squirrel installer from the signed app
+      shell: bash
+      run: |
+        mkdir -p /d/t && export TMP='D:\t' TEMP='D:\t' SQUIRREL_TEMP='D:\t'
+        npx electron-forge make --from-package --platform win32 --arch x64
+    - name: Upload the installer for signing
+      id: installer
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: signpath-windows-installer
+        path: out/make/squirrel.windows/x64/Genex-Setup.exe
+        retention-days: 1
+        if-no-files-found: error
+    - name: Sign the installer
+      uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: c538d9ee-f1e0-45c8-b7e9-c820934c4d34
+        project-slug: genex-desktop
+        signing-policy-slug: ${{ inputs.signing-policy }}
+        artifact-configuration-slug: installer
+        github-artifact-id: ${{ steps.installer.outputs.artifact-id }}
+        output-artifact-directory: ${{ runner.temp }}/signed-installer
+    - name: Put the signed installer back
+      shell: bash
+      run: cp "$RUNNER_TEMP/signed-installer/Genex-Setup.exe" out/make/squirrel.windows/x64/Genex-Setup.exe
+    # The test certificate is self-signed, so only release-signing must chain to a trusted root.
+    - name: Verify the signatures
+      shell: pwsh
+      env:
+        SIGNING_POLICY: ${{ inputs.signing-policy }}
+      run: |
+        foreach ($file in @("out/Genex-win32-x64/genex.exe", "out/make/squirrel.windows/x64/Genex-Setup.exe")) {
+          $signature = Get-AuthenticodeSignature $file
+          if ($null -eq $signature.SignerCertificate) { throw "$file is not signed" }
+          if ($env:SIGNING_POLICY -eq "release-signing" -and $signature.Status -ne "Valid") {
+            throw "$file is not validly signed: $($signature.StatusMessage)"
+          }
+          Write-Output "$file signed by $($signature.SignerCertificate.Subject) ($($signature.Status))"
+        }

@@ -5,7 +5,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { request } from "../../scripts/studio-dev/client.ts";
+import { request, requestWhenReachable } from "../../scripts/studio-dev/client.ts";
 import { sourceIdentity, maintained, hash, writeJson } from "../../scripts/studio-dev/files.mjs";
 const root = fs.realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
 const runId = `accept-${Date.now()}`,
@@ -62,6 +62,9 @@ async function check(name, surface, expected, fn) {
       artifacts: [],
     });
     console.error(`FAIL ${name}: ${e.message}`);
+    // A dialog or menu a failed check leaves open covers the chat for every later check on that
+    // window: close it, so the failure is reported once rather than as theirs too.
+    for (const i of active) await closeLeftLayers(i).catch(() => {});
   }
   report.checks.at(-1).artifacts = report.artifacts.slice(artifactStart).map((a) => a.file);
   save();
@@ -123,6 +126,15 @@ async function start(checkout, profile, fixture, reuse = false) {
 const op = async (i, method, params = {}) => {
   try {
     return await request(i.descriptor, { method, params });
+  } catch (e) {
+    e.message = `${method} ${JSON.stringify(params)}: ${e.message}`;
+    throw e;
+  }
+};
+/** Like `op`, for an input whose target may not take pointer input yet (a dialog or menu still opening). */
+const reach = async (i, method, params) => {
+  try {
+    return await requestWhenReachable(i.descriptor, { method, params });
   } catch (e) {
     e.message = `${method} ${JSON.stringify(params)}: ${e.message}`;
     throw e;
@@ -203,6 +215,15 @@ async function closeModelPicker(i) {
     await sleep(250);
   }
 }
+/** Is this control the search dialog, or a picker or menu trigger whose layer is still open? */
+const leftOpen = (c) =>
+  c.label === "Close search" || (c.expanded === "true" && ["Model settings", "Chat actions"].includes(c.label));
+async function closeLeftLayers(i) {
+  for (let n = 0; n < 3 && (await snapshot(i)).controls.some(leftOpen); n++) {
+    await op(i, "key", { surface: "desktop", key: "Escape", code: "Escape", modifiers: [] });
+    await sleep(250);
+  }
+}
 async function stop(i) {
   const result = await cli(i.checkout, ["stop", "--profile", i.profile]);
   active.splice(active.indexOf(i), 1);
@@ -279,7 +300,11 @@ try {
       await op(b, "key", { surface: "desktop", key: "1", code: "Digit1", modifiers: ["Meta"] });
       await until(async () => (await snapshot(b)).state.room === "build", "Build keyboard shortcut");
       await op(b, "key", { surface: "desktop", key: "k", code: "KeyK", modifiers: ["Meta"] });
-      await op(b, "type", { selector: 'input[aria-label="Search games"]', text: "no matching project", replace: true });
+      await reach(b, "type", {
+        selector: 'input[aria-label="Search games"]',
+        text: "no matching project",
+        replace: true,
+      });
       await until(async () => (await snapshot(b)).text.includes("No games for"), "no results");
       await op(b, "type", { selector: 'input[aria-label="Search games"]', text: "Fixture", replace: true });
       await until(
@@ -338,14 +363,7 @@ try {
       }, "earlier history graph");
       // The selected run changes before its complete host summary has arrived. Wait for the
       // actual pointer target to become visible; chat text alone can belong to the earlier render.
-      await until(async () => {
-        try {
-          return await op(a, "click", { selector: '[data-graph-node="start"]' });
-        } catch (error) {
-          if (/target-not-visible/.test(error.message)) return false;
-          throw error;
-        }
-      }, "earlier-run start pointer target");
+      await reach(a, "click", { selector: '[data-graph-node="start"]' });
       await until(
         async () => (await snapshot(a)).text.includes("Fixture base: camera views were identical"),
         "base health",
@@ -484,7 +502,7 @@ try {
         .filter(Boolean);
       assert.equal(new Set(strip).size, strip.length, `duplicate stage-strip control label: ${strip.join(", ")}`);
       await op(b, "click", { selector: '[data-chat-header] button[aria-label="Chat actions"]' });
-      await op(b, "click", { selector: '[data-chat-action="export"]' });
+      await reach(b, "click", { selector: '[data-chat-action="export"]' });
       // The toast sentence-cases what the studio throws (renderer words.ts problemWords), so match the reason, not its casing.
       await until(
         async () => (await snapshot(b)).text.toLowerCase().includes("unsupported-in-fixture"),

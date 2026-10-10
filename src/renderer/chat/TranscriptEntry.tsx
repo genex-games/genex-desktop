@@ -16,6 +16,7 @@ import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { AssetResults } from "./AssetResults.tsx";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
+import { GenexCoverCard } from "./GenexCoverCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { PermissionOutcome } from "./PermissionRequest.tsx";
 import { StudioLearningLine } from "./LearningSummary.tsx";
@@ -71,6 +72,8 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <WorkLog items={entry.items} />;
     case EntryKind.Assets:
       return <AssetResults deliveries={deliveries} onOpenAssets={context.onShowAssets} />;
+    case EntryKind.GenexCover:
+      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.User:
       return <UserEntry key={entry.id} entry={entry} context={context} />;
     case EntryKind.Assistant:

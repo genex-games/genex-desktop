@@ -5,6 +5,7 @@ import { dialog, shell } from "electron";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
+import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { isGithubVersion, PluginCapability, type PluginSource, PluginSourceKind } from "../../shared/plugins.ts";
 import type { PluginMarketplace } from "../../substrate/plugins/marketplace.ts";
 import { scanPackage } from "../../substrate/plugins/scan.ts";
@@ -192,7 +193,8 @@ async function openVerifyUrl(ctx: PluginsContext, verifyUrl: string): Promise<vo
   assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:open-url");
   const url = new URL(verifyUrl);
   if (url.protocol !== "https:") throw new Error(MESSAGE.invalidAuthUrl);
-  await shell.openExternal(url.href);
+  // Genex's sign-in, terms and game pages go tagged `s=desktop`; the code in the link is kept.
+  await shell.openExternal(tagGenexLink(url.href));
 }
 
 function requireMarketplace(ctx: PluginsContext): PluginMarketplace {

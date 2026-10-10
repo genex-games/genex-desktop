@@ -25,6 +25,13 @@ export const CaptureSurface = {
 } as const;
 export type CaptureSurface = (typeof CaptureSurface)[keyof typeof CaptureSurface];
 
+/**
+ * Which path took a picture: `page` is the page's own end-of-frame read of its canvas, which works
+ * on a covered window; `compositor` is the window's frame (Electron's `capturePage`).
+ */
+export const CaptureSource = { Page: "page", Compositor: "compositor" } as const;
+export type CaptureSource = (typeof CaptureSource)[keyof typeof CaptureSource];
+
 /** What a capture proved about the frame, plus whether the page even has a canvas to light. */
 export interface PreviewPixelStats extends PixelStats {
   canvas: boolean;
@@ -258,6 +265,36 @@ export interface PreviewSetup {
 /** The `__studio` verb that takes a game past its title, menu and countdown into play (`config.begin`). */
 export const GameFront = { Begin: "begin" } as const;
 export type GameFront = (typeof GameFront)[keyof typeof GameFront];
+
+/**
+ * The `__studio` verbs that put a named view on screen (`src/game-template/src/studio.js`): the
+ * game's demo names, one demo run to its end state, the game's camera names and its built-in eye
+ * cameras, and one camera placed.
+ */
+export const GameView = {
+  Demos: "demos",
+  Demo: "demo",
+  Cameras: "cameras",
+  Eyes: "eyes",
+  DebugCamera: "debugCamera",
+} as const;
+export type GameView = (typeof GameView)[keyof typeof GameView];
+
+/** How a still is encoded: lossless PNG, or a high-quality JPEG when the PNG is over its byte limit. */
+export const StillMimeType = { Png: "image/png", Jpeg: "image/jpeg" } as const;
+export type StillMimeType = (typeof StillMimeType)[keyof typeof StillMimeType];
+
+/**
+ * A still's exposure, measured on a small downscale of it. Every number is 0–1: Rec.709 luma of
+ * the sRGB bytes as they are (no linearisation), its mean and standard deviation, the share of
+ * samples below a luma of 0.10, and the share above the preview's unlit threshold (8 of 255).
+ */
+export interface StillExposure {
+  lumaMean: number;
+  lumaStdDev: number;
+  nearBlackFraction: number;
+  litFraction: number;
+}
 
 /** Which signal answered: the studio's own page shim, the game's own contract, or nothing. Wire values. */
 export const ReadyVia = {

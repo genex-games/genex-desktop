@@ -151,8 +151,13 @@ Asset grids omit per-file metadata and job headers. The viewer is the file on th
 (88%, blurred), with only Reveal in Finder and Close in the top corner and no title; a click on a
 picture shows it at full size around the point clicked; a model opens playing its first clip, with
 play, the clips and speed in one floating bar and "Drag to turn · Scroll to zoom · Double-click to
-reset" above it. Chat build outcomes show
-the finished build card: capture, delivery status and Play; the card itself opens Builds.
+reset" above it. A kept Genex cover is one card once its turn ends, after the reply (never
+mid-turn), the build card's composer-coloured 16px-radius surface with an 8px inset and a 1px line:
+the shot at 16:9 (10px radius, object-cover, at most 26rem wide, the preview tile's hover; a click
+opens it whole beside the chat), and under it a 15px ink caption, "Genex cover", 8px in, with
+Publish on the right, the result button's size and type (as Play) in the accent fill, globe glyph.
+Chat build outcomes show the finished build card: capture, delivery status and Play; the card itself
+opens Builds.
 Only current-revision captures are selected from checks. Failures stay explicit; detailed checks
 and evidence limits remain in Builds/Studio. Learning counts link to Studio and omit zeros.
 What appears in the chat opens in place over 250ms: its height grows from nothing while it fades in,
@@ -264,7 +269,10 @@ what is missing, one line and one press (an accent-tinted line "Publishing goes 
 plugin, a blue chip with ↗ that closes the dialog and opens the plugin's page, and Install Genex plugin or
 Turn on Genex plugin in the footer; Connect Genex with the
 browser code), then shows the Game page row (a Test version row only while a draft is online and
-the game is not public), a stepped progress bar, and the accent Publish (Publish update once public). While it asks to set up (under the tinted line) or to publish, "Native app export for Mac,
+the game is not public), a stepped progress bar, and the accent Publish (Publish update once public). While the plugin
+reports no Genex cover shot to send and the owner chose none, one 13px ink-3 line under the game row ("No cover yet.
+Genex shows a real frame of your game.") carries a quiet sm Ask for a cover at its trailing edge; it closes the dialog
+and leaves the ask in that game's composer, cursor at the end, never sent. Hidden while publishing. While it asks to set up (under the tinted line) or to publish, "Native app export for Mac,
 Windows and Mobile coming soon" sits just above the buttons, in the description's type. More (⋯) and the switch sit beside every
 plugin's title. Back to workspace and sidebar navigation restore the preserved conversation. Export is the first item of the game
 chat header's ⋯ menu and uses that chat's bound game; it is disabled on drafts and absent from Harness. Preserve the mounted

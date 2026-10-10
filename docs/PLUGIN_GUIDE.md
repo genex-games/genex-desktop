@@ -97,7 +97,7 @@ undeclared method is a compile error.
 | `assets.deliver` | `project.write` | Copies your output into a unique asset directory in the game; delivered files reach the host ledger |
 | `jobs.read` / `jobs.write` | `jobs` | Durable provider references. Not a credit ledger |
 | `events.emit` | `jobs` | Sanitized progress, attributed to the bound project/thread. `{kind:'toolbar', …}` updates a toolbar badge |
-| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree |
+| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each |
 | `export.stage` | `export` | Studio writes the public export of the bound game under `storage.root/publish/<project>/dist` and returns the result |
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |

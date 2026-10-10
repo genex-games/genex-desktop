@@ -1,11 +1,22 @@
 import net from "node:net";
 import { randomUUID } from "node:crypto";
-import { operationSchema, type Operation, type DevResponse, MAX_REQUEST_BYTES } from "../../src/main/dev/protocol.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  DevErrorCode,
+  operationSchema,
+  type Operation,
+  type DevResponse,
+  MAX_REQUEST_BYTES,
+} from "../../src/main/dev/protocol.ts";
 
 /** How long the controller may take to answer one request. */
 const CONTROLLER_TIMEOUT_MS = 35_000;
 /** The largest response the client reads before giving up on it. */
 const MAX_RESPONSE_CHARS = 4 * 1024 * 1024;
+/** How long an input waits for its target to take pointer input. */
+const REACHABLE_TIMEOUT_MS = 15_000;
+/** How soon an input whose target is not reachable yet is tried again. */
+const REACHABLE_RETRY_MS = 150;
 
 type Descriptor = { instanceId: string; socket: string; capability: string };
 
@@ -65,4 +76,27 @@ export async function request(descriptor: Descriptor, operation: Operation): Pro
   })}\n`;
   if (Buffer.byteLength(payload) > MAX_REQUEST_BYTES) throw new Error("request exceeds 64 KiB");
   return exchange(descriptor.socket, payload, requestId);
+}
+
+/**
+ * One input operation, sent again while the control cannot reach its target yet: refused as
+ * target-not-visible, nothing was dispatched. A modal dialog or menu, for one, turns pointer events
+ * off outside itself as it opens and turns its own on one render later. Any other refusal, and
+ * that one past `timeoutMs`, is final.
+ */
+export async function requestWhenReachable(
+  descriptor: Descriptor,
+  operation: Operation,
+  timeoutMs = REACHABLE_TIMEOUT_MS,
+): ReturnType<typeof request> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await request(descriptor, operation);
+    } catch (e) {
+      const covered = (e as { code?: string }).code === DevErrorCode.TargetNotVisible;
+      if (!covered || Date.now() >= deadline) throw e;
+    }
+    await sleep(REACHABLE_RETRY_MS);
+  }
 }

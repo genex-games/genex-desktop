@@ -382,7 +382,11 @@ game view trailed its slot right after each change and before the next ([perform
 `fixture.graph` takes `other-project-frames` or `append-round`
 only in `large-build-graph`. Traces accept `toplevel` for renderer task durations.
 No arbitrary eval, PID, webContents ID or output path is accepted.
-Scoped DOM inspection resolves one visible enabled non-occluded target. CDP dispatches actual
+Scoped DOM inspection resolves one visible enabled non-occluded target. A modal dialog or menu
+that has just opened takes pointer input one render later, so an input sent at once can be
+refused `target-not-visible` with nothing dispatched: send it with `requestWhenReachable`
+(`scripts/studio-dev/client.ts`), which tries again until the target is reachable, rather
+than sleeping. CDP dispatches actual
 pointer-down/up, keyboard and Unicode insertText to the desktop without system focus/pointer
 movement. The native macOS select did not accept background keys on pinned Electron. The select
 operation reports unsupported-surface if keys do not apply. Open an earlier build with its chat
@@ -493,6 +497,17 @@ navigation; component fixtures do not prove account access or native game layeri
 Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's own account card
 and checks that a failed connect keeps its reason after the status is read again. It does not
 establish real browser/Keychain authorization.
+`run-publish-cover-ask-ui.mjs` renders the production Publish dialog beside the production
+ChatPanel of the same game with a fake `window.studio`: the cover ask shows only while the plugin
+reports no shot to send and no owner's cover, and its press closes the dialog and leaves the ask
+in that game's composer once however often it is pressed, focused and unsent (screenshots in `.studio-dev/evidence/`). A fixture
+profile cannot show this dialog's body, since its Genex account is never connected.
+`run-chat-cover-card-ui.mjs` renders the production ChatPanel beside the production stage strip:
+the thread's latest kept `genex__cover` shot is one Genex cover card once its turn has ended (none
+mid-turn, the turn's work one group), read through the `genex-cover` scope, whose Publish opens
+the Publish dialog through the strip; Publish is gone while a publish runs, with Genex off or once
+Genex took the frame, the card is gone with its shot, light and dark are captured (screenshots in
+`.studio-dev/evidence/`).
 `planning-capabilities.test.ts` and the host cases in
 `promptbar-redesign.test.ts` check current planning context and the tool-free boundary.
 

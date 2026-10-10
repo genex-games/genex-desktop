@@ -319,7 +319,7 @@ it("a build after the message leaves the chat with it: files come back when it l
     [
       custom("run_started", { runId: "paused", project, engine: "claude-code", goal: "A village" }),
       { type: "messages", messages: [{ role: "assistant", content: "The run paused." }] },
-      custom("autopilot_paused", { runId: "run" }),
+      custom("autopilot_paused", { runId: "paused" }),
     ],
     thread,
   );

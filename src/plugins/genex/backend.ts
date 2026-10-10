@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GenexTools } from "./adapter.ts";
+import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import {
   GenexAction,
@@ -24,8 +25,13 @@ type Service = (method: string, args?: unknown) => Promise<unknown>;
 /** The publish phase announced before a publish job exists, or when none started. */
 const PublishAnnouncement = { Requested: "requested", Idle: "idle" } as const;
 
-/** The agent tools this plugin declares in plugin.json. */
-const GenexToolName = { PublishStatus: "publish-status", Publish: "publish" } as const;
+/** The agent tools this plugin declares in plugin.json (the rest are asset tools). */
+const GenexToolName = {
+  PublishStatus: "publish-status",
+  Publish: "publish",
+  Cover: "cover",
+  CoverSet: "cover-set",
+} as const;
 
 const MESSAGE = {
   ApprovalGone: "Character approval no longer available",
@@ -65,13 +71,40 @@ export function publishButtonStatus(state: GenexPublishState): PluginToolbarStat
 function publishStatusFor(genex: GenexTools, project: string, args: Args) {
   return args.operation === GenexPublishStatusOperation.Wait
     ? genex.publishWait(project, args.jobId)
-    : genex.publishStatus(project, args.operation === GenexPublishStatusOperation.Check);
+    : genex.publishView(project, args.operation === GenexPublishStatusOperation.Check);
+}
+
+/**
+ * The host's camera on the bound game for this invocation, begun at `invokedAt`: a still of its
+ * genex-cover demo through `observe`, which answers only while the invocation lasts. None unbound.
+ */
+function coverCamera(ctx: Invocation, service: Service, invokedAt: number): CoverCamera | undefined {
+  const { project, directory } = ctx;
+  if (!project || !directory) return undefined;
+  return {
+    invokedAt,
+    shoot: () => service(PluginService.Observe, { project, root: directory, files: [], still: { ...COVER_STILL } }),
+  };
+}
+
+/** The agent's cover tool: shoot the genex-cover demo, or report the cover. Asks nothing, uploads nothing. */
+function coverTool(genex: GenexTools, project: string, args: Args, camera: CoverCamera | undefined) {
+  if (args.operation === CoverOperation.Shoot && camera) return genex.coverShoot(project, camera);
+  if (args.operation === CoverOperation.Status) return genex.coverStatus(project);
+  throw new Error(COVER_MESSAGE.BadOperation);
 }
 
 const isPublishKind = (value: unknown) => value === GenexPublishKind.Draft || value === GenexPublishKind.Gallery;
 
-/** The agent's publish tool: announce, run the export and upload start, then report the phase. */
-async function publishTool(genex: GenexTools, project: string, args: Args, ctx: Invocation, service: Service) {
+/** The agent's publish tool: announce, run the export, the cover shot and the upload start, then report the phase. */
+async function publishTool(
+  genex: GenexTools,
+  project: string,
+  args: Args,
+  ctx: Invocation,
+  service: Service,
+  camera: CoverCamera | undefined,
+) {
   if (!isPublishKind(args.operation)) throw new Error(MESSAGE.BadPublishOperation);
   await ctx.host(PluginService.EventsEmit, {
     kind: "publish",
@@ -83,8 +116,8 @@ async function publishTool(genex: GenexTools, project: string, args: Args, ctx: 
   const exportStage = () => service(PluginService.ExportStage, {});
   const state =
     args.operation === GenexPublishKind.Draft
-      ? await genex.publishDraft(project, exportStage)
-      : await genex.publishGallery(project, exportStage);
+      ? await genex.publishDraft(project, exportStage, camera)
+      : await genex.publishGallery(project, exportStage, undefined, camera);
   await ctx
     .host(PluginService.EventsEmit, {
       kind: "publish",
@@ -132,6 +165,23 @@ async function assetTool(genex: GenexTools, project: string, directory: string, 
   }
 }
 
+/** One agent tool call on a bound game; any name the plugin declares that is not here is an asset tool. */
+function runTool(
+  genex: GenexTools,
+  name: string,
+  args: Args,
+  ctx: Invocation & { project: string; directory: string },
+  service: Service,
+  invokedAt: number,
+) {
+  const camera = coverCamera(ctx, service, invokedAt);
+  if (name === GenexToolName.PublishStatus) return publishStatusFor(genex, ctx.project, args);
+  if (name === GenexToolName.Publish) return publishTool(genex, ctx.project, args, ctx, service, camera);
+  if (name === GenexToolName.Cover) return coverTool(genex, ctx.project, args, camera);
+  if (name === GenexToolName.CoverSet) return genex.coverSet(ctx.project);
+  return assetTool(genex, ctx.project, ctx.directory, args, ctx);
+}
+
 /** The approval dialog's evidence: every candidate or view image, and what approving does. */
 async function approvalReview(genex: GenexTools, args: Args, ctx: Invocation) {
   const status = await genex.status(ctx.project);
@@ -147,14 +197,23 @@ async function approvalReview(genex: GenexTools, args: Args, ctx: Invocation) {
   };
 }
 
-type Action = (genex: GenexTools, args: Args, ctx: Invocation, service: Service) => Promise<unknown> | unknown;
+/** One user action; `invokedAt` is when its invocation began, which a publish's cover shot is measured from. */
+type Action = (
+  genex: GenexTools,
+  args: Args,
+  ctx: Invocation,
+  service: Service,
+  invokedAt: number,
+) => Promise<unknown> | unknown;
 
-/** Wrap an action that needs a bound game. */
+/** Wrap an action that needs a bound game; `camera` photographs it while the invocation lasts. */
 const withProject =
-  (run: (genex: GenexTools, project: string, args: Args, service: Service) => Promise<unknown>): Action =>
-  (genex, args, ctx, service) => {
+  (
+    run: (genex: GenexTools, project: string, args: Args, service: Service, camera?: CoverCamera) => Promise<unknown>,
+  ): Action =>
+  (genex, args, ctx, service, invokedAt) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject);
-    return run(genex, ctx.project, args, service);
+    return run(genex, ctx.project, args, service, coverCamera(ctx, service, invokedAt));
   };
 
 /** The user actions the panels, the Plugins dialog and the toolbar may invoke. */
@@ -178,11 +237,11 @@ const ACTIONS: Record<string, Action> = {
   },
   [GenexAction.Approve]: withProject((genex, project, args) => genex.approve(project, args.id, args.candidate)),
   [GenexAction.PublishStatus]: withProject((genex, project, args) => publishStatusFor(genex, project, args)),
-  [GenexAction.PublishDraft]: withProject((genex, project, _args, service) =>
-    genex.publishDraft(project, () => service(PluginService.ExportStage, {})),
+  [GenexAction.PublishDraft]: withProject((genex, project, _args, service, camera) =>
+    genex.publishDraft(project, () => service(PluginService.ExportStage, {}), camera),
   ),
-  [GenexAction.PublishGallery]: withProject((genex, project, args, service) =>
-    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title),
+  [GenexAction.PublishGallery]: withProject((genex, project, args, service, camera) =>
+    genex.publishGallery(project, () => service(PluginService.ExportStage, {}), args.title, camera),
   ),
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),
@@ -255,18 +314,20 @@ export async function createGenexPlugin(api?: string) {
       }),
     tool: (name: string, args: Args, ctx: Invocation) =>
       scoped(ctx, async () => {
+        // The host's ceiling for this call runs from here; a publish's cover shot must fit inside it.
+        const invokedAt = Date.now();
         const g = await ready(initial);
-        if (!ctx.project || !ctx.directory) throw new Error(MESSAGE.ProjectRequired);
-        if (name === GenexToolName.PublishStatus) return publishStatusFor(g, ctx.project, args);
-        if (name === GenexToolName.Publish) return publishTool(g, ctx.project, args, ctx, service);
-        return assetTool(g, ctx.project, ctx.directory, args, ctx);
+        const { project, directory } = ctx;
+        if (!project || !directory) throw new Error(MESSAGE.ProjectRequired);
+        return runTool(g, name, args, { ...ctx, project, directory }, service, invokedAt);
       }),
     action: (name: string, args: Args, ctx: Invocation) =>
       scoped(ctx, async () => {
+        const invokedAt = Date.now();
         const g = await ready(initial);
         const run = Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined;
         if (!run) throw new Error(MESSAGE.UnknownAction);
-        return run(g, args, ctx, service);
+        return run(g, args, ctx, service, invokedAt);
       }),
   };
 }

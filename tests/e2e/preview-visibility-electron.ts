@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, session } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
@@ -163,6 +163,7 @@ async function main() {
     );
     await checkStandIn();
     await checkMutedAgentWindow();
+    await checkClosedStaysClosed();
     await checkRendererGone();
   } catch (error) {
     mark("error", { error: String(error) });
@@ -311,6 +312,54 @@ async function checkMutedAgentWindow(): Promise<void> {
  * A game window whose renderer dies says why (`preview.status` `gone`, beside `crashed`), from
  * Electron's own `render-process-gone` reason, and says nothing once its page is back.
  */
+/**
+ * A pooled window is closed (`destroy`) the moment its lease ends, even while something its session
+ * started is still waiting on the page. Nothing asked of it afterwards may build it a new view:
+ * that view would leak a renderer, and its handlers would serve the next window opened on the same
+ * partition, which then skips registering its own.
+ */
+async function checkClosedStaysClosed(): Promise<void> {
+  const partition = "visibility-closed";
+  const win = new BrowserWindow({
+    width: 320,
+    height: 240,
+    show: false,
+    focusable: false,
+    skipTaskbar: true,
+    webPreferences: { offscreen: true },
+  });
+  const port = new GamePreview({
+    gamesRoot: root,
+    vendorDir: path.join(process.cwd(), "dist/resources/vendor"),
+    partition,
+    offscreen: true,
+    muted: true,
+  });
+  try {
+    port.attachTo(win, { x: 0, y: 0, width: 320, height: 200 });
+    await port.load("fixture");
+    await port.destroy();
+    const late = await Promise.allSettled([
+      port.evaluate("1"),
+      port.studioCall("demos"),
+      port.still({ width: 320, height: 240, maxBytes: 1024 * 1024, previewMaxPx: 320 }),
+      port.load("fixture"),
+    ]);
+    mark("closed-port", { outcomes: late.map((outcome) => outcome.status) });
+    check(
+      "closed: every call after close is refused",
+      late.every((outcome) => outcome.status === "rejected"),
+    );
+    check("closed: no new view is built", port.view === null);
+    check(
+      "closed: its partition keeps no handler of the closed window",
+      !session.fromPartition(partition).protocol.isProtocolHandled("game"),
+    );
+  } finally {
+    win.destroy();
+  }
+}
+
 async function checkRendererGone(): Promise<void> {
   const win = new BrowserWindow({
     width: 320,

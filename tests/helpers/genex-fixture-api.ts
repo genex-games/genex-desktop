@@ -15,10 +15,14 @@ const repo = path.resolve(import.meta.dirname, "../..");
 export interface GenexRequest {
   method: string;
   url: string;
-  /** The raw request body ('' when there is none). */
+  /** The request body as text ('' when there is none). */
   body: string;
+  /** The request body's bytes, for an upload whose bytes matter (a cover image). */
+  bytes: Buffer;
   /** The `Authorization` header as sent ('' when there is none). */
   authorization: string;
+  /** Settles when the connection closes: for a request left unanswered, when its client went away. */
+  closed: Promise<void>;
 }
 
 export interface GenexReply {
@@ -37,8 +41,11 @@ export interface GenexFixtureApi {
 
 export async function startGenexFixtureApi(handler: GenexHandler = () => {}): Promise<GenexFixtureApi> {
   const server = http.createServer(async (req, res) => {
-    let body = "";
-    for await (const chunk of req) body += chunk;
+    const closed = new Promise<void>((resolve) => res.once("close", () => resolve()));
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const bytes = Buffer.concat(chunks);
+    const body = bytes.toString("utf8");
     res.setHeader("content-type", "application/json");
     const reply: GenexReply = {
       json(value, status = 200) {
@@ -52,7 +59,7 @@ export async function startGenexFixtureApi(handler: GenexHandler = () => {}): Pr
     };
     const url = req.url ?? "";
     const authorization = req.headers.authorization ?? "";
-    await handler({ method: req.method ?? "GET", url, body, authorization }, reply);
+    await handler({ method: req.method ?? "GET", url, body, bytes, authorization, closed }, reply);
     if (res.writableEnded) return;
     if (url === "/api/auth/get-session") return reply.json({ user: { email: "fixture@example.invalid" } });
     if (url.includes("legal")) return reply.json({ accepted: true, required: "1", acceptedVersion: "1" });

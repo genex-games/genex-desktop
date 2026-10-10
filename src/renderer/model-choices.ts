@@ -8,7 +8,7 @@ import { ReasoningEffort } from "../shared/model-preferences.ts";
 import { crossesTo, resolveRoles } from "../shared/model-roles.ts";
 import { EngineId, isMetered } from "../shared/providers.ts";
 import { modelKey, parseModelKey } from "./model-key.ts";
-import { modelBase, modelName, runnableModels, shownModels } from "./model-lineup.ts";
+import { modelBase, modelName, offersLineup, runnableModels, shownModels } from "./model-lineup.ts";
 import type { EngineDescriptor } from "./types.ts";
 import type { ModelChoice, RoleKey, RoleRecord } from "./ui/ModelMenu.tsx";
 import { MODEL_PICKER_WORDS } from "./words.ts";
@@ -62,6 +62,9 @@ function engineChoices(
 ): ModelChoice[] {
   const ready = isEngineReady(engine);
   if (isLocalModelEngine(engine)) return ready ? engine.models.map((model) => localChoice(engine, model)) : [];
+  // A paid provider is set up in Settings, never from the picker: until it is ready its models
+  // (OpenRouter's catalog is public) are hidden rows, so a pick saved on one still resolves.
+  if (isMetered(engine.id) && !ready) return engine.models.map((model) => subscriptionChoice(engine, model, false));
   const models =
     engine.kind === EngineKind.Direct
       ? apiModelChoices(engine, picker)
@@ -105,7 +108,7 @@ function subscriptionModelChoices(
 ): ModelChoice[] {
   const concrete = engine.models.filter((model) => model.id !== DEFAULT_MODEL);
   const listed = concrete.some((model) => model.providerDefault) ? concrete : [defaultRow(engine), ...concrete];
-  const shown = shownModels(engine.id, concrete, picker, runnable);
+  const shown = shownModels(engine.id, concrete, picker, runnable, offersLineup(engine));
   const offersDefault = !UNOFFERED_DEFAULT.has(engine.id);
   const listedNow = (model: EngineModel) => (model.id === DEFAULT_MODEL ? offersDefault : shown.has(model.id));
   return listed.map((model) => subscriptionChoice(engine, model, listedNow(model)));
@@ -116,7 +119,7 @@ function subscriptionModelChoices(
  * row — an API picks no model on the person's behalf.
  */
 function apiModelChoices(engine: EngineDescriptor, picker: PickerChoices[string] | undefined): ModelChoice[] {
-  const shown = shownModels(engine.id, engine.models, picker);
+  const shown = shownModels(engine.id, engine.models, picker, undefined, offersLineup(engine));
   return engine.models.map((model) => subscriptionChoice(engine, model, shown.has(model.id)));
 }
 
@@ -254,7 +257,16 @@ export function resolveChoice(choices: ModelChoice[], key: string | null | undef
     const requested = parseModelKey(key);
     return { key, name: requested.model || requested.engine, disabled: true, title: MODEL_PICKER_WORDS.unavailable };
   }
-  return choices.find((choice) => !choice.disabled);
+  return autoChoice(choices);
+}
+
+/**
+ * The row a pick falls back to when none was made: the first usable row the picker lists, on a
+ * provider the studio may choose by itself. Never a paid one (OpenRouter, OpenCode): the person
+ * picks those.
+ */
+export function autoChoice(choices: readonly ModelChoice[]): ModelChoice | undefined {
+  return choices.find((choice) => !choice.disabled && !choice.hidden && !isMetered(parseModelKey(choice.key).engine));
 }
 
 export function effectiveEffort(model: ModelChoice | undefined, value?: string | null): string | undefined {
