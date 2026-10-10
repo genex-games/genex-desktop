@@ -7,6 +7,7 @@
  * succeeds, forbidden work fails.
  */
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -150,6 +151,28 @@ describe("sandboxed spawn", () => {
     } finally {
       delete process.env.STUDIO_SANDBOX_PROBE_TOKEN;
     }
+  });
+
+  it("never runs the user's shell rc file, even while the command's stdin stays open", async () => {
+    // The fake home's rc file stands in for one that fails on this machine: what it prints would
+    // otherwise lead a build's stderr, which is the problem the stage shows.
+    const home = await tmpDir("studio-sandbox-home-");
+    await writeFile(path.join(home, ".bashrc"), "echo rc-file-ran >&2\n");
+    const command = "echo command-ran >&2";
+
+    // A long-lived child keeps its stdin socket open, as the harness runtime's does.
+    const { child } = await sandbox.spawnLongLived({ command, cwd: workspace, env: { HOME: home } });
+    let longLived = "";
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      longLived += chunk;
+    });
+    await once(child, "close");
+    child.stdin?.destroy();
+    assert.equal(longLived.trim(), "command-ran");
+
+    const run = await sandbox.run({ command, cwd: workspace, env: { HOME: home } });
+    assert.equal(run.code, 0);
+    assert.equal(run.stderr.trim(), "command-ran");
   });
 
   // macOS only: on Linux srt runs a command in its own network namespace, so the host's loopback

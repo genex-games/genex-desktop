@@ -202,6 +202,13 @@ const DEFAULT_MAX_OUTPUT_CHARS = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The shell srt runs a wrapped command under on macOS. */
 const SANDBOX_SHELL = "/bin/bash";
+/**
+ * Marks srt's outer `bash -c` as a nested shell. A top-level `bash -c` (SHLVL unset) whose stdin
+ * is a socket, as node's stdio pipes are, takes itself for an rshd login and reads ~/.bashrc:
+ * that shell runs outside the sandbox, so the user's rc file would run before every command and
+ * whatever it printed would lead the command's output.
+ */
+const NESTED_SHELL_ENV = { SHLVL: "1" } as const;
 /** The shell a command runs under when the sandbox is off (tests of the fallback path only). */
 const UNSANDBOXED_SHELL = "/bin/sh";
 
@@ -689,7 +696,8 @@ export class ProcessSandbox {
     );
     const [file, ...args] = wrapped.argv;
     if (!file) throw new Error(MESSAGE.EmptyArgv);
-    return { file, args, env: await this.#env(wrapped.env, request.env), sandboxed: true, cwd: request.cwd };
+    const env = { ...(await this.#env(wrapped.env, request.env)), ...NESTED_SHELL_ENV };
+    return { file, args, env, sandboxed: true, cwd: request.cwd };
   }
 
   /**
