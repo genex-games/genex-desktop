@@ -129,8 +129,8 @@ authorization is separate. Disable removes agent tools/skills, panel and toolbar
 Remove persists across restarts, retaining files, credentials and accounting; **Reinstall**
 re-acquires the package from its recorded origin (bundled seed, its local folder, its catalog
 release or, for a `github`/`index` origin, the pinned commit re-fetched and re-checked through the
-marketplace). Bundled plugins behind their seed offer **Update to x** on their page
-(`plugin-updates` fixture). Local loading uses a directory picker and the trust
+marketplace). Bundled plugins behind their seed offer **Update to x** and the sidebar's
+`[data-plugins-update]` (`plugin-updates` fixture). Local loading uses a directory picker and the trust
 dialog (publisher, capabilities, static scan verdict; the backend runs as trusted native code in a
 crash-isolated child process, not an OS sandbox).
 Code dropped under the packages folder without a record is listed under **Not enabled** and runs
