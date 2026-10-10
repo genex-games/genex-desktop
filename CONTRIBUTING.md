@@ -7,6 +7,12 @@ in the form coding agents read, and the two must agree. Report security problems
 
 ## Before you start
 
+- Check the [roadmap](https://github.com/genex-games/genex-desktop/issues?q=is%3Aissue%20is%3Aopen%20label%3Aroadmap)
+  first. Work on an issue only when it is labelled `help wanted` or `good first issue` and
+  nobody is assigned. Comment that you'd like to take it and wait for a maintainer to assign
+  you; an assigned issue is taken. Everything else, including every roadmap item, is being
+  built by the team, so a pull request for it will likely be closed. If an assigned issue shows
+  no activity for 14 days, ask in the issue and it may be reassigned.
 - Open an issue (bug or feature template) before a large change, so the approach can be agreed.
 - Contributor terms are not settled yet: see [Contributor terms](#contributor-terms) below.
   Until they are, a pull request may be held before merge.
@@ -91,6 +97,14 @@ ran (a focused pass is not a full run), red-first evidence for fixes, flipped as
 docs you updated or why they are still accurate. Docs describe the current app: replace outdated
 statements in the same pull request instead of appending history. Keep one change per pull
 request, and keep raw logs and screenshots out of Git.
+
+## When the team takes over a contribution
+
+Sometimes your pull request lands on work the team already owns. We then build on your code in
+our own pull request and credit you: we keep your commits where we can, so you appear in the
+repository's contributors; where we rewrite, our commits carry a
+`Co-authored-by: Your Name <your GitHub email>` trailer; and we thank you by handle in the
+release notes. Your pull request is then closed with a link to ours.
 
 ## Contributor terms
 
