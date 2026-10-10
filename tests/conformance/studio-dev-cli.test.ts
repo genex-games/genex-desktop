@@ -5,16 +5,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseStudioDevArgs, parseOperation } from "../../scripts/studio-dev/args.ts";
-import { FIXTURE_NAMES } from "../../src/main/dev/fixtures.ts";
+import { FIXTURE_NAMES, installOlderPlugins } from "../../src/main/dev/fixtures.ts";
+import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { devBuildArgs, launchEnv, main } from "../../scripts/studio-dev.ts";
 import { gamesRootWarnings, liveEnvStripped, StudioDevWarning } from "../../scripts/studio-dev/live-env.ts";
 import { fixtureElectronEnv } from "../../scripts/electron-runtime.mjs";
 import { freshMachineEnv } from "../../scripts/studio-dev/fresh-machine.ts";
 import { strippedEnv } from "../../scripts/evals/lanes/common.ts";
+import { makeResources } from "../helpers/resources.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  assert.equal(FIXTURE_NAMES.length, 16);
-  for (const added of ["first-launch", "notifications", "build-graph", "sandbox-setup", "update-ready"])
+  // Flipped (plugin-updates): seventeen named fixtures.
+  assert.equal(FIXTURE_NAMES.length, 17);
+  for (const added of [
+    "first-launch",
+    "notifications",
+    "build-graph",
+    "sandbox-setup",
+    "update-ready",
+    "plugin-updates",
+  ])
     assert.ok((FIXTURE_NAMES as readonly string[]).includes(added), added);
   assert.deepEqual(await main(["fixtures"]), { fixtures: [...FIXTURE_NAMES] });
   // An unknown fixture is refused before any profile is allocated or build started.
@@ -22,6 +33,67 @@ test("fixtures lists the one exported fixture list without a profile or app", as
     main(["start", "--profile", "cli-test-never-created", "--fixture", "nope"]),
     /unknown named fixture; one of app-basics/,
   );
+});
+
+test("the plugin-updates fixture leaves every bundled plugin one version behind this build's, in its own profile", async () => {
+  const resources = await makeResources({ tsc: false });
+  const seeds = path.join(resources, "plugins");
+  const engineHomes = path.join(await tmpDir("plugin-updates-"), "core", "engine-homes");
+  const shippedManifests = () =>
+    fs.readdirSync(seeds).map((name) => fs.readFileSync(path.join(seeds, name, "plugin.json"), "utf8"));
+  const shipped = shippedManifests();
+  const versions = new Map(shipped.map((text) => [JSON.parse(text).id as string, JSON.parse(text).version as string]));
+  assert.deepEqual([...versions.keys()].sort(), ["blender", "genex"]);
+  /** What the app's own registry says of the profile's plugins, as the core starts it. */
+  const installed = async () => {
+    const registry = new PluginRegistry(
+      path.join(engineHomes, "plugins"),
+      seeds,
+      path.join(resources, "plugin-sdk/backend.mjs"),
+      async () => null,
+    );
+    try {
+      await registry.init();
+      return registry.list().map((p) => ({
+        id: p.manifest.id,
+        version: p.manifest.version,
+        availableVersion: p.availableVersion,
+        enabled: p.enabled,
+        error: p.error,
+      }));
+    } finally {
+      registry.cancel();
+    }
+  };
+
+  await installOlderPlugins(engineHomes, resources);
+  // Only the profile's plugin store is left behind, and the build's own seeds are as shipped.
+  assert.deepEqual(fs.readdirSync(path.dirname(engineHomes)), ["engine-homes"]);
+  assert.deepEqual(fs.readdirSync(engineHomes), ["plugins"]);
+  assert.deepEqual(shippedManifests(), shipped);
+  /** The installed copies of each plugin, by folder name. */
+  const copies = () =>
+    [...versions.keys()].map((id) => fs.readdirSync(path.join(engineHomes, "plugins", "packages", id)));
+  const copyVersion = (id: string, copy: string): string =>
+    JSON.parse(fs.readFileSync(path.join(engineHomes, "plugins", "packages", id, copy, "plugin.json"), "utf8")).version;
+  const first = await installed();
+  assert.equal(first.length, versions.size);
+  for (const plugin of first) {
+    const seed = versions.get(plugin.id);
+    assert.equal(plugin.availableVersion, seed, `${plugin.id} is offered this build's version`);
+    assert.notEqual(plugin.version, seed, `${plugin.id} is installed below it`);
+    assert.equal(plugin.enabled, true, plugin.id);
+    assert.equal(plugin.error, undefined, plugin.id);
+    const [copy, ...others] = fs.readdirSync(path.join(engineHomes, "plugins", "packages", plugin.id));
+    assert.deepEqual(others, [], `${plugin.id} has one installed copy`);
+    assert.equal(copyVersion(plugin.id, copy ?? ""), plugin.version, `${plugin.id}'s copy says its record's version`);
+  }
+  // A reused profile keeps the plugins it has: the same copies, still one version behind.
+  const kept = copies();
+  await installOlderPlugins(engineHomes, resources);
+  assert.deepEqual(copies(), kept);
+  assert.deepEqual(fs.readdirSync(engineHomes), ["plugins"]);
+  assert.deepEqual(await installed(), first);
 });
 
 test("lifecycle commands keep their flags; missing profile and unknown commands fail before any work", () => {
