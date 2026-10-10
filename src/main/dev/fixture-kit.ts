@@ -44,6 +44,7 @@ export const FixtureName = {
   LargeBuildGraph: "large-build-graph",
   SandboxSetup: "sandbox-setup",
   UpdateReady: "update-ready",
+  PluginUpdates: "plugin-updates",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

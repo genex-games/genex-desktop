@@ -268,6 +268,7 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     pluginSkillText: () => "",
     pluginsList: empty,
     pluginsCatalog: empty,
+    pluginsIndex: () => ({ url: "", studioVersion: "0.1.0", fetchedAt: null, stale: true, entries: [], updates: [] }),
     mcpList: empty,
     mcpTools: empty,
     terminalList: empty,

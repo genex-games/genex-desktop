@@ -1606,6 +1606,21 @@ export const UPDATE_WORDS = {
   downloadHint: "Opens the release page",
 } as const;
 
+/** How many waiting releases the Update plugins tooltip names before it counts them instead. */
+const PLUGIN_RELEASES_NAMED = 3;
+const RELEASE_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
+
+/** The sidebar's Update plugins, while installed plugins have newer versions waiting (`state/plugins.ts`). */
+export const PLUGIN_UPDATE_WORDS = {
+  update: (count: number) => (count === 1 ? "Update plugin" : `Update ${count} plugins`),
+  updating: "Updating plugins…",
+  /** The button's tooltip: the releases it installs ("Local Blender 1.2.0"), each after its own approval. */
+  hint: (releases: readonly string[]) =>
+    releases.length > PLUGIN_RELEASES_NAMED
+      ? `Installs ${releases.length} plugin updates`
+      : `Installs ${RELEASE_LIST.format(releases)}`,
+} as const;
+
 /** Send feedback, from the bug button at the top of the sidebar (`panels/FeedbackDialog.tsx`). */
 export const FEEDBACK_WORDS = {
   title: "Send feedback",

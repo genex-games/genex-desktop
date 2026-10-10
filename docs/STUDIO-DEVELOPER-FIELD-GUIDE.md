@@ -338,15 +338,16 @@ transport credentials from reports. No permanent monitor or performance threshol
 into `.studio-dev/builds/<build-id>`, creates fresh owned fixture state and returns actual
 readiness/identity JSON. `npm run studio:dev -- fixtures` lists the named fixtures. Among them:
 build-graph (two sword-in-ice runs: folded tries, an undone step, a lead-merged unjudged round),
-first-launch (an empty library and the welcome; Claude Code needs a sign-in, Codex is not
-installed, and sign-in, links and downloads are refused as in every fixture) and notifications
-(six games; about four seconds after launch a question, a plan, a plugin permission, a sign-out
-and delivered, failed and stopped builds arrive as news; macOS notifications are refused) and
-sandbox-setup (the window opens on "Set up the protected workspace" for a Linux machine missing
-bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]` opens the studio) and
-update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex 0.2.0; the restart
-itself is refused as native).
-Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
+first-launch (an empty library and the welcome; Claude Code needs a sign-in, Codex is
+missing), notifications (six games; about four seconds after launch a question, a plan, a plugin
+permission, a sign-out and delivered, failed and stopped builds arrive as news; macOS
+notifications are refused), sandbox-setup (the window opens on "Set up the protected workspace"
+for a Linux machine missing bubblewrap and socat, `[data-sandbox-setup]`; `[data-sandbox-retry]`
+opens the studio), update-ready (the sidebar offers `[data-update-restart]` for a stand-in Genex
+0.2.0; the restart is refused as native) and plugin-updates (Genex and Blender installed one
+version back: their rows and pages offer `Update to <version>` and the sidebar
+`[data-plugins-update]`, each refused as native).
+Use `--reuse` for a stopped profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,
 event log, harness and ProcessSandbox. Native/external actions are refused in fixture sessions.

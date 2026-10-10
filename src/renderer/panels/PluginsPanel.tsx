@@ -5,9 +5,10 @@
  * page, the rows and buttons they share, and the page's state (`page.ts`).
  */
 import type { JSX, RefObject } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../shared/local-blender.ts";
-import type { PluginInfo } from "../../shared/plugins.ts";
+import type { PluginIndexView, PluginInfo } from "../../shared/plugins.ts";
+import { pluginUpdates } from "../state/plugins.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { IconButton } from "../ui/kit.tsx";
@@ -46,7 +47,12 @@ interface Props {
   project?: string | null;
   setupPlugin?: string;
   plugins: PluginInfo[];
+  /** The plugin index as the store last read it, or null before its first answer. */
+  index: PluginIndexView | null;
+  /** The sidebar's Update plugins is running: the page starts no action of its own meanwhile. */
+  updating: boolean;
   onPluginsRefresh: () => void;
+  onIndexRefresh: () => void;
   onBack: () => void;
   sidebarHidden: boolean;
   onToggleSidebar: () => void;
@@ -249,13 +255,22 @@ export function PluginsPanel({
   setupPlugin,
   project,
   plugins,
+  index,
+  updating,
   onPluginsRefresh,
+  onIndexRefresh,
   onBack,
   sidebarHidden,
   onToggleSidebar,
 }: Props): JSX.Element {
-  const { error, setError, busy, act } = useBusyAction(onPluginsRefresh);
-  const data = usePluginsPageData(project, onPluginsRefresh, setError);
+  const action = useBusyAction(onPluginsRefresh);
+  const { error, setError, act } = action;
+  const busy = action.busy || updating;
+  const data = usePluginsPageData(project, onPluginsRefresh, onIndexRefresh, setError);
+  const updates = useMemo(
+    () => new Map(pluginUpdates(plugins, index).map((update) => [update.plugin.manifest.id, update])),
+    [plugins, index],
+  );
   const nav = useNavigation(setError);
   const skills = useProviderSkills(nav.tab, project, setError);
   const [settings, setSettings] = useState<Record<string, SettingValues>>({});
@@ -274,6 +289,7 @@ export function PluginsPanel({
     project,
     connections: data.connections,
     setConnections: data.setConnections,
+    updates,
     openPlugin: nav.openPlugin,
     setSelected: nav.setSelected,
     matches: (...values: string[]) =>
@@ -312,6 +328,7 @@ export function PluginsPanel({
             settings={settings}
             onSettings={setSettings}
             data={data}
+            index={index}
             skills={skills}
             connectorActions={connectorActions}
           />
@@ -385,6 +402,7 @@ function PageBody({
   settings,
   onSettings,
   data,
+  index,
   skills,
   connectorActions,
 }: {
@@ -396,6 +414,7 @@ function PageBody({
   settings: Record<string, SettingValues>;
   onSettings: (update: (all: Record<string, SettingValues>) => Record<string, SettingValues>) => void;
   data: ReturnType<typeof usePluginsPageData>;
+  index: PluginIndexView | null;
   skills: ReturnType<typeof useProviderSkills>;
   connectorActions: RefObject<ConnectorActions | null>;
 }): JSX.Element {
@@ -432,7 +451,7 @@ function PageBody({
           page={page}
           query={nav.query}
           catalog={data.catalog}
-          index={data.index}
+          index={index}
           connectorActions={connectorActions}
         />
       ) : (

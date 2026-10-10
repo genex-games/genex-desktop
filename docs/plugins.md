@@ -117,7 +117,10 @@ the record was written installs rather than being refused with no way forward.
 
 Bundled seeds are inspected for explicit versioned updates. Existing profiles keep their pinned
 version until the user chooses Update; active leases defer activation, while disabling still
-blocks calls immediately. A removed preference suppresses the seed across Studio upgrades.
+blocks calls immediately. The renderer lists a seed's newer version and the index's newer release
+as one set (`pluginUpdates` in `renderer/state/plugins.ts`; none for a plugin whose update already
+waits for sessions): each plugin's row and page offer **Update to x**, and the sidebar's **Update
+plugins** runs them one after another, each through its own trust dialog. A removed preference suppresses the seed across Studio upgrades.
 Normal updates preserve settings, protected credentials and job state. The Genex plugin adopts
 `engine-homes/genex`, keeping existing allowances and unresolved jobs; remove/reinstall is not a
 required upgrade step.
