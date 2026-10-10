@@ -3,6 +3,7 @@
  * reported, and each generation of the open game in plain words. Pure: the page draws these and
  * never works them out again.
  */
+import { MINUTE_MS, SECOND_MS } from "../../../../shared/duration.ts";
 import {
   GenexJobStatus,
   GenexOperation,
@@ -12,6 +13,31 @@ import {
 } from "../../../../shared/genex.ts";
 import type { IconName } from "../../../ui/icons.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
+
+/** How often the page re-reads Genex while something is under way, and otherwise. */
+export const GENEX_ACTIVE_POLL_MS = 5 * SECOND_MS;
+export const GENEX_IDLE_POLL_MS = MINUTE_MS;
+
+/**
+ * Job states that are still moving on Genex's side. Not `approved`: an approved review's run goes
+ * on in a new job, and the review keeps that state for good. Not `generated`: Genex has finished,
+ * and the files wait for a wait or a download that nothing starts by itself. Either one kept the
+ * page reading every 5 s for as long as it was open, against the account's shared request budget.
+ */
+const MOVING_JOBS: ReadonlySet<string> = new Set([
+  GenexJobStatus.Requested,
+  GenexJobStatus.Submitting,
+  GenexJobStatus.Accepted,
+  GenexJobStatus.Generating,
+]);
+
+/** Whether a sign-in or a generation is under way, so the page should look again soon. */
+const underWay = (status: GenexStatus | null): boolean =>
+  Boolean(status?.authorization) || (status?.jobs ?? []).some((job) => MOVING_JOBS.has(job.status));
+
+/** How long the page waits before reading Genex's status again. */
+export const genexPollMs = (status: GenexStatus | null): number =>
+  underWay(status) ? GENEX_ACTIVE_POLL_MS : GENEX_IDLE_POLL_MS;
 
 /** Which of the account card's shapes the status calls for. */
 export const GenexAccountKind = {

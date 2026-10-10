@@ -10,9 +10,12 @@ import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" }
 import { accountPanel, hasOwnPage } from "../../src/renderer/panels/plugins/labels.ts";
 import {
   CreditsKind,
+  GENEX_ACTIVE_POLL_MS,
+  GENEX_IDLE_POLL_MS,
   GenexAccountKind,
   genexAccountView,
   genexJobRows,
+  genexPollMs,
   isGenexStatus,
   JobState,
 } from "../../src/renderer/panels/plugins/genex/genex-view.ts";
@@ -188,6 +191,28 @@ describe("Genex generations", () => {
     assert.equal(row?.state, JobState.Working);
     const [unsure] = genexJobRows([job({ status: "unresolved" })]);
     assert.equal(unsure?.state, JobState.Unsure);
+  });
+});
+
+describe("Genex status cadence", () => {
+  const withJobs = (...statuses: string[]) =>
+    status({ jobs: statuses.map((s, i) => job({ id: `job-${i}`, status: s })) });
+
+  it("looks again soon while Genex is still working on something or a sign-in waits", () => {
+    for (const moving of ["requested", "submitting", "accepted", "generating"])
+      assert.equal(genexPollMs(withJobs("downloaded", moving)), GENEX_ACTIVE_POLL_MS, moving);
+    const signingIn = status({ authorization: { userCode: "ABCD", verifyUrl: "https://x", expiresAt: 1 } });
+    assert.equal(genexPollMs(signingIn), GENEX_ACTIVE_POLL_MS);
+  });
+
+  it("settles to the idle read once nothing is moving on Genex's side", () => {
+    // An approved review continues as a new job, and a generation Genex finished waits for a
+    // wait or a download: neither changes by itself, so neither keeps the page reading every 5 s.
+    const settled = withJobs("approved", "generated", "downloaded", "failed", "approval_required", "stopped");
+    assert.equal(genexPollMs(settled), GENEX_IDLE_POLL_MS);
+    assert.equal(genexPollMs(withJobs()), GENEX_IDLE_POLL_MS);
+    assert.equal(genexPollMs(null), GENEX_IDLE_POLL_MS, "no answer yet");
+    assert.ok(GENEX_IDLE_POLL_MS > GENEX_ACTIVE_POLL_MS);
   });
 });
 

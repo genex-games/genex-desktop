@@ -39,6 +39,8 @@ const GenexRemoteStatus = {
   Queued: "queued",
   Running: "running",
   Processing: "processing",
+  Failed: "failed",
+  Canceled: "canceled",
 } as const;
 
 /** Genex's generation statuses that a CLI answer records under Studio's name; others are kept as they came. */
@@ -69,6 +71,68 @@ const RECONCILED_STATUS_FOR_REMOTE = new Map<string, GenexJobStatus>([
 /** The job status a reconcile records for Genex's remote status. */
 export function reconciledJobStatus(remote: string): string {
   return RECONCILED_STATUS_FOR_REMOTE.get(remote) ?? remote;
+}
+
+/** Genex's view of one generation: the fields a reconcile copies onto a job. */
+export interface GenerationView {
+  status?: unknown;
+  files?: unknown;
+  creditsCharged?: unknown;
+  creditsRefunded?: unknown;
+}
+
+/**
+ * Genex's generation statuses after which its view of that generation no longer changes. Its view
+ * carries no charge or refund, so an unknown refund is no reason to ask again.
+ */
+const SETTLED_REMOTE = new Set<string>([
+  GenexRemoteStatus.Completed,
+  GenexRemoteStatus.Failed,
+  GenexRemoteStatus.Canceled,
+]);
+
+/** Whether a view is Genex's last word on its generation. */
+export const isSettledView = (view: GenerationView): boolean =>
+  typeof view.status === "string" && SETTLED_REMOTE.has(view.status);
+
+/** The generation view in an answer from Genex's generation route, keeping only what a reconcile reads. */
+export function generationView(
+  response: ({ generation?: GenerationView } & GenerationView) | null | undefined,
+): GenerationView {
+  const view = response?.generation ?? response;
+  return {
+    status: view?.status,
+    files: view?.files,
+    creditsCharged: view?.creditsCharged,
+    creditsRefunded: view?.creditsRefunded,
+  };
+}
+
+/** Copy Genex's view of a generation onto the job: status, files and credits. */
+export function applyGenerationView(job: GenexJob, view: GenerationView): void {
+  if (typeof view.status === "string") {
+    job.remoteStatus = view.status;
+    const awaitingFiles = !job.files.length && job.status !== GenexJobStatus.ApprovalRequired;
+    if (awaitingFiles) job.status = reconciledJobStatus(view.status);
+  }
+  if (Array.isArray(view.files)) job.manifest = manifestFromView(view.files);
+  if (typeof view.creditsCharged === "number") job.creditsCharged = view.creditsCharged;
+  if (typeof view.creditsRefunded === "number") job.creditsRefunded = view.creditsRefunded;
+}
+
+/** Genex's answer naming the generation a generic reservation became. */
+export interface FoundGeneration {
+  id: string;
+  status?: string;
+  creditsQuoted?: unknown;
+}
+
+/** Record on the job which generation its reservation became, as Genex named it. */
+export function applyFoundGeneration(job: GenexJob, found: FoundGeneration): void {
+  job.generationId = found.id;
+  job.remoteStatus = found.status;
+  const quoted = found.creditsQuoted;
+  if (typeof quoted === "number" && Number.isSafeInteger(quoted)) job.creditsQuoted = quoted;
 }
 
 /** Statuses that say the submit may or may not have reached Genex. */
