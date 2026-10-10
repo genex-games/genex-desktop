@@ -187,6 +187,7 @@ function describedModel(m: EngineModel): EngineDescriptor["models"][number] {
     ...(m.stale ? { stale: true } : {}),
     ...(m.aliasOf ? { aliasOf: m.aliasOf } : {}),
     ...(m.note ? { note: m.note } : {}),
+    ...(m.free ? { free: true } : {}),
     ...(m.efforts !== undefined ? { efforts: m.efforts } : {}),
     ...(m.defaultEffort ? { defaultEffort: m.defaultEffort } : {}),
   };

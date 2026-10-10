@@ -49,6 +49,8 @@ export interface ModelChoice extends ModelCapabilities {
   providerDefault?: boolean;
   /** The provider's id for the model this row runs, so a pick saved under another id still finds it. */
   resolvedModel?: string;
+  /** Runs at no cost and with no account: the studio may pick it when there is nothing else. */
+  free?: boolean;
 }
 /** The composer's way to open the menu (a plan that failed on its model offers "Choose model"). */
 export interface ModelMenuHandle {

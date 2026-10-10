@@ -123,33 +123,58 @@ each request (compaction runs early rather than late); 401/403 is a sign-in fail
 limit, 429 a rate limit. Errors are redacted before they are logged.
 
 **OpenCode** ([opencode.ts](../src/substrate/engines/opencode.ts)) is a delegated engine that runs
-`opencode run --format json --pure` with the brief on stdin, resumed by `--session`. OpenCode keeps
-its own sign-ins (`opencode auth login`, which Sign in runs in a terminal inside its Settings row,
-never the dock, so Settings stays open; when it prints an https page, main keeps the address and the
-row offers Open sign-in page, `studio:terminal.open-link`) and the studio never reads them: it is Ready once `opencode models --verbose` lists a model. OpenCode lists its
-own free models to anyone, so while those are all it lists the account is `none` and the Settings
-row reads Free models only with Sign in first; the picker lists none of them until one is switched
-on in Settings (`offersLineup`), and a paid provider not yet set up shows no rows at all. It has no sandbox of
-its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder when read-only)
-plus OpenCode's state and cache are writable, its own data folder is exempt from the credential
-denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's provider hosts
-(the address OpenCode lists, or for a built-in provider listed with none, its known API and
-browser sign-in hosts) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are reachable.
-`OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web fetch and other folders to a build, and lets a read-only session run only the
-studio bridge (`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex.
-A provider's HTTP status in an `error` event decides the failure kind, as for OpenRouter; a 400 or
-404 for a picked model ends the build saying which model the provider refused and to pick another;
-a 403 for a picked model whose provider has no host Genex knows says the sandbox kept OpenCode from
-it, not to sign in again; and a failure on one of OpenCode's free models says so, keeping its kind.
-OpenCode lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, so while
-Codex is signed in the picker starts OpenCode's GPT models with the ones Codex lists
-(`runnableModels` in `renderer/model-lineup.ts`). Recorded streams:
-`tests/fixtures/transcripts/opencode-*` (OpenCode 1.18).
+`opencode run --format json` with the brief on stdin, resumed by `--session`. Two command lines are
+spoken, picked by the version `opencode --version` prints (`openCodeRelease` in
+[opencode-cli.ts](../src/substrate/engines/opencode-cli.ts)), never guessed: 1.18 (`--pure`,
+`--variant`, the `permission` map, `opencode models --verbose`) and 2.x from 2.0.20 (Homebrew ships
+2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.0.26 runs and
+its status says so; an older 2.x, 3.x or an unreadable version is refused, and discovery then tries
+the next OpenCode on the search path (a manual choice never yields). On 2.x every session passes
+`--standalone --agent build`: OpenCode's shared background server runs outside the sandbox with the
+settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. 2.x
+reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
+plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
+(2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
+`--model provider/model#variant`. Its model list is `GET /api/model` from a private `opencode serve`
+started on the host for the listing alone, read until two reads agree (its first answer can come
+before its catalog loads); the sign-in runs `opencode auth login --standalone`.
 
-Residual risk: the CLI must read its sign-ins and its bash tool shares its sandbox, so an OpenCode
+OpenCode keeps its own sign-ins (`opencode auth login`, which Sign in runs in a terminal inside its
+Settings row, never the dock, so Settings stays open; when it prints an https page, main keeps the
+address and the row offers Open sign-in page, `studio:terminal.open-link`) and the studio never
+reads them: it is Ready once it lists a model. OpenCode lists its own free models to anyone, so
+while those are all it lists the account is `none` and the Settings row reads Free models only with
+Sign in first; the picker then lists the first three, marked Free (`free` on the model, `offersLineup`),
+and picks one by itself only when no other model can run (`autoChoice`). OpenCode's own docs say a
+free model's prompts may be used to improve it. Once a provider is signed in, its models start the
+list and the free ones wait in Settings; a paid provider not yet set up shows no rows at all. It has
+no sandbox of its own, so each session runs in `ProcessSandbox`: the workspace (a scratch folder
+when read-only) plus OpenCode's state and cache are writable, its own data folder is exempt from the
+credential denies for that sandbox only (`SandboxOptions.ownHome`), and only the picked model's
+provider hosts (the address OpenCode lists, or for a built-in provider listed with none, its known
+API and browser sign-in hosts) and OpenCode's catalogs (`models.dev`, `models.opencode.ai`) are
+reachable. `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, never ask, denies web
+fetch, skills and other folders to a build, and lets a read-only session run only the studio bridge
+(`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex. On 2.x,
+which allows any tool it has no rule for, the rules open with a deny of everything and are repeated
+on the `build` agent so the person's own agent rules cannot widen them. Compact now is refused on
+both: OpenCode compacts its own sessions. A provider's HTTP status in an `error` event (1.18's
+`data.statusCode`, 2.x's `status`) decides the failure kind, as for OpenRouter; a 400 or 404 for a
+picked model ends the build saying which model the provider refused and to pick another; a 403 for
+a picked model whose provider has no host Genex knows says the sandbox kept OpenCode from it, not to
+sign in again; and a failure on one of OpenCode's free models says so, keeping its kind. OpenCode
+lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, so while Codex is
+signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
+`renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
+(OpenCode 1.18 and 2.0.20).
+
+Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
 session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session
 calls. OpenCode's permission rules keep its own tools inside the workspace, but that is not an OS
-boundary. Every other sandbox still denies the folder.
+boundary. Every other sandbox still denies the folder. Every sandbox allows localhost, where
+OpenCode 2.x's background server listens outside any sandbox; its password
+(`~/.config/opencode/service.json`) is in every sandbox's deny-read list (`baseDenyRead`), but a
+server the person runs without a password stays reachable.
 
 ## MCP setup
 

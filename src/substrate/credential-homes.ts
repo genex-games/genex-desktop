@@ -55,6 +55,20 @@ export function openCodeDataHome(
 }
 
 /**
+ * Where OpenCode 2.x keeps its background server's password: `service.json` in its config folder
+ * (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`). That server runs outside every sandbox,
+ * and a sandbox lets its processes onto localhost, so the password is what keeps them off it.
+ */
+export function openCodeServicePassword(
+  env: Record<string, string | undefined> = process.env,
+  home: string = os.homedir(),
+): string {
+  const config =
+    env.XDG_CONFIG_HOME && path.isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : path.join(home, ".config");
+  return path.join(config, "opencode", "service.json");
+}
+
+/**
  * The sign-in homes of the CLIs that run inside the studio's own sandbox (OpenCode, which has no
  * sandbox of its own): the only homes a sandbox may exempt for the CLI it runs (`SandboxOptions.ownHome`).
  */

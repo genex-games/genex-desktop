@@ -431,6 +431,43 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(await missing.openCodeLogin.start(), { started: false, missingCli: true });
   });
 
+  it("on OpenCode 2.x the sign-in runs on a server of its own, never the shared background one", async () => {
+    const v2: Array<{ args: string[] }> = [];
+    const { openCodeLogin: v2Login } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          v2.push(launch);
+          return { id: "t2", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          version: "opencode v2.0.20",
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    await v2Login.start();
+    assert.deepEqual(
+      v2[0]?.args,
+      ["auth", "login", "--standalone"],
+      "2.x signs in on a server of its own, never by starting the shared background one",
+    );
+  });
+
   it("an unknown engine is refused", async () => {
     const { invoke } = loginFixture({});
     assert.deepEqual(await invoke("studio:subscription.signin", { engine: "nope" }), {
