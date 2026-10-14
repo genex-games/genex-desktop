@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "flags": {
+    "compile": ["-ffp-contract=off"],
+    "cxx": ["-std=c++20"],
+    "refused": ["-ffast-math", "-Ofast", "-funsafe-math-optimizations"]
+  },
+  "nativeAudioRateHz": 48000,
+  "raylibConfig": {
+    "SUPPORT_MODULE_RSHAPES": true,
+    "SUPPORT_MODULE_RTEXTURES": true,
+    "SUPPORT_MODULE_RTEXT": true,
+    "SUPPORT_MODULE_RMODELS": true,
+    "SUPPORT_MODULE_RAUDIO": true,
+    "SUPPORT_TRACELOG": true,
+    "SUPPORT_CAMERA_SYSTEM": true,
+    "SUPPORT_GESTURES_SYSTEM": true,
+    "SUPPORT_RPRAND_GENERATOR": true,
+    "SUPPORT_MOUSE_GESTURES": true,
+    "SUPPORT_SSH_KEYBOARD_RPI": true,
+    "SUPPORT_WINMM_HIGHRES_TIMER": true,
+    "SUPPORT_BUSY_WAIT_LOOP": false,
+    "SUPPORT_PARTIALBUSY_WAIT_LOOP": true,
+    "SUPPORT_SCREEN_CAPTURE": false,
+    "SUPPORT_COMPRESSION_API": true,
+    "SUPPORT_AUTOMATION_EVENTS": true,
+    "SUPPORT_CUSTOM_FRAME_CONTROL": false,
+    "SUPPORT_CLIPBOARD_IMAGE": true,
+    "SUPPORT_QUADS_DRAW_MODE": true,
+    "SUPPORT_FILEFORMAT_PNG": true,
+    "SUPPORT_FILEFORMAT_BMP": true,
+    "SUPPORT_FILEFORMAT_TGA": false,
+    "SUPPORT_FILEFORMAT_JPG": true,
+    "SUPPORT_FILEFORMAT_GIF": true,
+    "SUPPORT_FILEFORMAT_QOI": true,
+    "SUPPORT_FILEFORMAT_PSD": false,
+    "SUPPORT_FILEFORMAT_DDS": true,
+    "SUPPORT_FILEFORMAT_HDR": false,
+    "SUPPORT_FILEFORMAT_PIC": false,
+    "SUPPORT_FILEFORMAT_PNM": false,
+    "SUPPORT_FILEFORMAT_KTX": false,
+    "SUPPORT_FILEFORMAT_ASTC": false,
+    "SUPPORT_FILEFORMAT_PKM": false,
+    "SUPPORT_FILEFORMAT_PVR": false,
+    "SUPPORT_IMAGE_EXPORT": true,
+    "SUPPORT_IMAGE_GENERATION": true,
+    "SUPPORT_FILEFORMAT_TTF": true,
+    "SUPPORT_FILEFORMAT_FNT": true,
+    "SUPPORT_FILEFORMAT_BDF": false,
+    "SUPPORT_FILEFORMAT_OBJ": true,
+    "SUPPORT_FILEFORMAT_MTL": true,
+    "SUPPORT_FILEFORMAT_IQM": true,
+    "SUPPORT_FILEFORMAT_GLTF": true,
+    "SUPPORT_FILEFORMAT_VOX": true,
+    "SUPPORT_FILEFORMAT_M3D": true,
+    "SUPPORT_MESH_GENERATION": true,
+    "SUPPORT_GPU_SKINNING": false,
+    "SUPPORT_FILEFORMAT_WAV": true,
+    "SUPPORT_FILEFORMAT_OGG": true,
+    "SUPPORT_FILEFORMAT_MP3": true,
+    "SUPPORT_FILEFORMAT_QOA": true,
+    "SUPPORT_FILEFORMAT_FLAC": false,
+    "SUPPORT_FILEFORMAT_XM": true,
+    "SUPPORT_FILEFORMAT_MOD": true
+  },
+  "raylib": {
+    "web-es3": {
+      "target": "web",
+      "cmake": {
+        "PLATFORM": "Web",
+        "OPENGL_VERSION": "ES 3.0",
+        "BUILD_EXAMPLES": "OFF",
+        "CUSTOMIZE_BUILD": "ON",
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "cDefinitions": []
+    },
+    "macos-es3-angle": {
+      "target": "macos",
+      "cmake": {
+        "PLATFORM": "Desktop",
+        "OPENGL_VERSION": "ES 3.0",
+        "BUILD_EXAMPLES": "OFF",
+        "CUSTOMIZE_BUILD": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "USE_EXTERNAL_GLFW": "OFF",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0"
+      },
+      "cDefinitions": [
+        "MA_NO_RUNTIME_LINKING",
+        "_GLFW_EGL_LIBRARY=\"@executable_path/../Frameworks/libEGL.dylib\"",
+        "_GLFW_GLESV2_LIBRARY=\"@executable_path/../Frameworks/libGLESv2.dylib\""
+      ],
+      "angle": true
+    },
+    "macos-es3-angle-headless": {
+      "target": "macos",
+      "cmake": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0"
+      },
+      "cDefinitions": ["MA_NO_RUNTIME_LINKING"],
+      "angle": true,
+      "headless": {
+        "definitions": ["PLATFORM_MEMORY", "GRAPHICS_API_OPENGL_ES3"],
+        "sources": ["rcore.c", "rshapes.c", "rtextures.c", "rtext.c", "rmodels.c", "raudio.c"],
+        "replaces": "platforms/rcore_memory.c"
+      }
+    }
+  },
+  "targets": {
+    "web": {
+      "raylib": "web-es3",
+      "definitions": ["PLATFORM_WEB", "GRAPHICS_API_OPENGL_ES3"],
+      "link": [
+        "-sUSE_GLFW=3",
+        "-sMIN_WEBGL_VERSION=2",
+        "-sMAX_WEBGL_VERSION=2",
+        "-sENVIRONMENT=web",
+        "-sEXPORTED_RUNTIME_METHODS=ccall,requestFullscreen",
+        "-sALLOW_MEMORY_GROWTH=1",
+        "-lidbfs.js"
+      ],
+      "frameworks": [],
+      "bundle": false,
+      "output": "index",
+      "suffix": ".html"
+    },
+    "macos": {
+      "raylib": "macos-es3-angle",
+      "definitions": ["PLATFORM_DESKTOP_GLFW", "GRAPHICS_API_OPENGL_ES3"],
+      "link": [],
+      "frameworks": ["Cocoa", "IOKit", "CoreFoundation", "CoreVideo", "CoreAudio", "AudioToolbox"],
+      "bundle": false,
+      "output": "game",
+      "suffix": "",
+      "cmake": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0"
+      },
+      "headless": {
+        "raylib": "macos-es3-angle-headless",
+        "definitions": ["PLATFORM_MEMORY", "GRAPHICS_API_OPENGL_ES3", "GENEX_HEADLESS"],
+        "frameworks": ["Foundation", "CoreFoundation", "Metal", "IOSurface", "CoreAudio", "AudioToolbox"],
+        "output": "game-headless"
+      }
+    }
+  }
+}

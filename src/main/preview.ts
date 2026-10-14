@@ -42,6 +42,7 @@ import {
   rewriteGameHtml,
   routeHttp,
   servableProject,
+  servedContentType,
   servedLocation,
   servedRelative,
   shouldRewrite,
@@ -64,7 +65,9 @@ import {
   PAGE_CAPTURE,
   PAGE_CAPTURE_TIMEOUT_MS,
   type PageCaptureInfo,
+  readStudioCall,
   STATE_MAX_CHARS,
+  studioCallScript,
   TRUSTED_PROBE,
   pageEvaluation,
   studioStateExpression,
@@ -88,6 +91,7 @@ import type {
 import { SECOND_MS } from "../shared/duration.ts";
 import type { PreviewPixelStats } from "./studio-core.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { CaptureError, CaptureRefusal } from "../shared/build-preview.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 /** What the preview's console tells the agent about the game view, and why a call is refused. */
@@ -102,8 +106,12 @@ const MESSAGE = {
     `screenshot found no compositor frame; retrying once without changing window visibility (${reason})`,
   notMethodName: (method: string) => `not a studio method name: ${method}`,
   consoleUnavailable: "Console observation unavailable; no console-clean claim is possible",
+  noPage: (problem: string) => `no page is loaded: the game's build failed (${problem})`,
   closed: "this game window was closed",
 } as const;
+
+/** The empty document a view is left on when a judged load built nothing. */
+const NO_PAGE_URL = "about:blank";
 
 export type { PageCaptureInfo };
 
@@ -125,6 +133,8 @@ export interface PreviewStatus {
   loadError: string | null;
   consoleErrors: number | null;
   consoleAvailable: boolean;
+  /** Why the view does not show the asked build (no page, or Live's last good one); null while it does. */
+  buildFailed: string | null;
 }
 
 /** The Live stage's readiness probe; `page` is null while a navigation is under way or the page did not answer. */
@@ -240,6 +250,10 @@ export class GamePreview {
   #gone: PreviewGone | null = null;
   #unresponsive = false;
   #loadError: string | null = null;
+  /** Why the view shows no page (a judged load whose build failed); null while a page is loaded. */
+  #noPage: string | null = null;
+  /** The build failure the loaded page stands under (Live's last good build); null while the page is the asked build. */
+  #staleBuild: string | null = null;
   #captureRecoveries = 0;
   /** What the page said about the last picture it took (or declined to take) — M4.9a. */
   #pageCaptureInfo: PageCaptureInfo | null = null;
@@ -269,6 +283,8 @@ export class GamePreview {
   #entryPath: string | null = null;
   /** This load's shim overrides (the boot budget is the one that changes per game). */
   #shimLoad: Partial<ShimOptions> | null = null;
+  /** Whether this load's page, when it has no import map, gets the studio's (false for a C++ game's page). */
+  #insertMap = true;
   /** Whether this build's vendor directory carries the shim bundle at all. */
   #shimPresent: boolean | null = null;
   /** Origins whose blocked request or navigation this load has already noted on the game's console. */
@@ -399,10 +415,12 @@ export class GamePreview {
     wc.on("responsive", () => {
       this.#unresponsive = false;
     });
-    wc.on("did-fail-load", (_event, code, description, url) => {
+    wc.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
       if (code === -3) return; // aborted, e.g. superseded navigation
-      this.#loadError = `${description} (${code}) for ${url}`;
-      this.#push({ at: Date.now(), level: "error", message: this.#loadError });
+      const message = `${description} (${code}) for ${url}`;
+      // A subframe that failed is a line on the console: the page itself loaded.
+      if (isMainFrame) this.#loadError = message;
+      this.#push({ at: Date.now(), level: "error", message });
     });
     // At commit the new document exists and its module scripts are still being fetched: the
     // probe installed here sees the renderer's own getContext. The load-end install is the
@@ -563,6 +581,10 @@ export class GamePreview {
       // and served it through every checkpoint and every Reload click.
       const headers = new Headers(response.headers);
       headers.set("Cache-Control", "no-store");
+      // A C++ game's `.wasm` compiles as it streams only as `application/wasm`, and its `.data`
+      // must never be sniffed: the file server names those types itself.
+      const type = servedContentType(target);
+      if (type) headers.set("content-type", type);
       const documentUrl = request?.url ?? `${SCHEME}://${project}/${relative}`;
       const rewritten = await this.#rewriteDocument(response, relative, target, documentUrl, request);
       if (rewritten !== null) {
@@ -606,7 +628,7 @@ export class GamePreview {
       return null;
     }
     const html = await response.text();
-    const result = rewriteGameHtml(html, { shim: this.#shimOptions(), documentUrl });
+    const result = rewriteGameHtml(html, { shim: this.#shimOptions(), documentUrl, insertMap: this.#insertMap });
     for (const note of result.notes) this.#push({ at: Date.now(), level: "warning", message: note });
     if (isEntry) this.#reach = { reach: result.reach, hooked: result.hooked };
     return result.injected ? result.html : html;
@@ -678,13 +700,16 @@ export class GamePreview {
     project: string,
     entry = "index.html",
     root?: string,
-    options: { loopback?: boolean; shim?: Partial<ShimOptions> } = {},
+    options: { loopback?: boolean; shim?: Partial<ShimOptions>; insertMap?: boolean } = {},
   ): Promise<string> {
+    this.#noPage = null;
+    this.#staleBuild = null;
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
     this.#stoppedUrl = null;
     this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
     this.#shimLoad = options.shim ?? null;
+    this.#insertMap = options.insertMap !== false;
     this.#reach = { reach: "none", hooked: {} };
     await this.#profiler.invalidate("source loaded");
     const view = this.create();
@@ -750,8 +775,11 @@ export class GamePreview {
   }
 
   async reload(): Promise<void> {
+    // No page: a reload would load the empty document again. The next `load` brings a page back.
+    if (this.#noPage !== null) return;
     // Reload on a stopped game plays it: reloading the blank page would show nothing.
     if (this.#stoppedUrl !== null) return this.resume();
+    this.#staleBuild = null;
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
     await this.#profiler.invalidate("preview reloaded");
@@ -774,6 +802,28 @@ export class GamePreview {
       wc.once("did-finish-load", done);
       wc.once("did-fail-load", done);
     });
+  }
+
+  /**
+   * A judged load built nothing: the view is left on an empty document, so the older build it
+   * showed is never photographed as this one. Every capture refuses `build-failed` until the next
+   * `load`, and the status keeps the build's problem as the load error the judges read.
+   */
+  async clearPage(problem: string): Promise<void> {
+    await this.#profiler.invalidate("page cleared");
+    this.#noPage = problem;
+    // A stopped game's address is the older build: Play must not bring it back over this failure.
+    this.#stoppedUrl = null;
+    this.#nativeDelivery = null;
+    this.#pageSurfaceNoted = false;
+    this.#navigating = true;
+    try {
+      await this.#view?.webContents.loadURL(NO_PAGE_URL).catch(() => {});
+    } finally {
+      this.#navigating = false;
+    }
+    // After the navigation: its own finish clears the load error.
+    this.#loadError = problem;
   }
 
   /** JPEG because these go straight into a vision model's context. */
@@ -945,6 +995,8 @@ export class GamePreview {
     opts: { page?: boolean; surface?: CaptureSurface } = {},
     maxSamples?: number,
   ): Promise<{ image: NativeImage; source: CaptureSource; info: PageCaptureInfo | null; stats?: PixelStats }> {
+    // No page: whatever the view still paints is not this build.
+    if (this.#noPage !== null) throw new CaptureError(CaptureRefusal.BuildFailed, MESSAGE.noPage(this.#noPage));
     const asked = resolveSurface(opts);
     const chosen = await chooseCapture(asked, {
       pageUi: () => this.pageUi(),
@@ -1236,9 +1288,7 @@ export class GamePreview {
     // The method name is interpolated into page JS: only a plain identifier may travel.
     if (!/^[A-Za-z_$][\w$]*$/.test(method)) throw new Error(MESSAGE.notMethodName(method));
     const argument = arg === undefined ? "" : JSON.stringify(arg);
-    return this.evaluate(
-      `(window.__studio && typeof window.__studio.${method} === "function") ? window.__studio.${method}(${argument}) : { __missing: true }`,
-    );
+    return readStudioCall(await this.evaluate(studioCallScript(method, argument)), method);
   }
 
   /**
@@ -1396,9 +1446,10 @@ export class GamePreview {
   }
 
   /** A line the studio itself puts on the game's console — a build that failed before the page could load. */
-  note(level: string, message: string, options: { loadError?: boolean } = {}): void {
+  note(level: string, message: string, options: { loadError?: boolean; buildFailed?: boolean } = {}): void {
     this.#push({ at: Date.now(), level, message });
     if (options.loadError) this.#loadError = message;
+    if (options.buildFailed) this.#staleBuild = message;
   }
 
   status(): PreviewStatus {
@@ -1411,6 +1462,7 @@ export class GamePreview {
       loadError: this.#loadError,
       consoleErrors: this.#consoleAvailable ? this.#console.filter((entry) => entry.level === "error").length : null,
       consoleAvailable: this.#consoleAvailable,
+      buildFailed: this.#noPage ?? this.#staleBuild,
     };
   }
 

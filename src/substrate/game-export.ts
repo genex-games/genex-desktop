@@ -1,12 +1,31 @@
 import { init, parse } from "es-module-lexer";
 import path from "node:path";
-import { mkdir, mkdtemp, readdir, readFile, writeFile, lstat, realpath, copyFile, rename, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  writeFile,
+  lstat,
+  open,
+  realpath,
+  copyFile,
+  rename,
+  rm,
+} from "node:fs/promises";
 import type { Stats } from "node:fs";
+import { ExportError, ExportRefusal } from "../shared/game-export-contract.ts";
 import type { ExportResult } from "../shared/game-project.ts";
 import { isBelow, isInside, toPosixRelative } from "./paths.ts";
 import { MIN_SECRET_LENGTH } from "../shared/redact.ts";
+import { realpathNearest } from "./fsx.ts";
 
-const excluded = (name: string) =>
+/**
+ * Whether a path segment is private, so an export never publishes it: a dotfile, a key, env or log
+ * file, notes and agent files, tests, docs and other working folders. One table: whatever packs a
+ * game's files for publishing (the C++ lane's `index.data`) should leave out the same names.
+ */
+export const excludedFromExport = (name: string): boolean =>
   name.startsWith(".") ||
   /^(node_modules|references|cache|__pycache__|coverage|tests?|docs|archive|research|evidence|captures|screenshots|logs)$/i.test(
     name,
@@ -24,17 +43,52 @@ export interface ExportOptions {
    * contains one stops the export: a token an agent wrote into a game must not be published.
    */
   secretValues?: Iterable<string>;
+  /**
+   * Where the export is staged before it is renamed into place: a folder only the host writes,
+   * on the target's volume (the studio passes `<userData>/${EXPORT_STAGING_DIR}`). The exports
+   * folder is a sandbox writable root, so an agent's process could plant a link in a staging
+   * folder there that the host's next write would follow. Absent, it is staged beside the target.
+   */
+  stagingRoot?: string;
 }
 
-/** Past this a file is an asset, not a place a token was pasted; it is not read whole to check. */
+/** Past this a file is an asset, not a place a token was pasted; it is not read to check. */
 const MAX_SCANNED_BYTES = 32 * 1024 * 1024;
+/**
+ * Emscripten's preload pack (a C++ game's `index.data`): every asset in one file, so a token pasted
+ * into any of them lands here. It is read for held credentials whatever its size.
+ */
+const PACKED_ASSETS = /\.data$/i;
+/** How much of a file the credential check reads at a time. */
+const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** The marker file an export writes, which is what lets a later export replace the folder. */
-const EXPORT_MANIFEST = ".studio-export.json";
+export const EXPORT_MANIFEST = ".studio-export.json";
 /** What the marker file holds when the folder is an app-managed export. */
 const EXPORT_MARK = '"studioExport":1';
-/** The staging folder's name prefix, beside the target. */
-const STAGING_PREFIX = ".studio-export-";
+/** The staging folder's name prefix. */
+export const STAGING_PREFIX = ".studio-export-";
+/** The host-only folder under the studio's user data that every export is staged in (`layout.exportStaging`). */
+export const EXPORT_STAGING_DIR = "export-staging";
+/** The host's note beside a web export whose page loads WebAssembly; never a public file of the game's. */
+export const EXPORT_README = "README.txt";
+/** A WebAssembly module at the export's root: Emscripten's `index.wasm`, the page loads it by name. */
+const ROOT_WASM = /^[^/]+\.wasm$/i;
+
+/** What a web export that loads WebAssembly says about serving it (`README.txt`). */
+export const WEB_SERVER_README = [
+  "This game runs in a web browser. Put this whole folder on a web server and open index.html there.",
+  "Opening index.html straight from the disk does not work: browsers do not load WebAssembly from file:// pages.",
+  "",
+  "The server must send each file with its type:",
+  "  .wasm  application/wasm",
+  "  .data  application/octet-stream",
+  "  .js    text/javascript",
+  "  .html  text/html",
+  "",
+  "Most hosts already do. If the game stays on a black screen, check the .wasm type first.",
+  "",
+].join("\n");
 /** Where the vendored library sits inside an export. */
 const VENDOR_DIR = "vendor";
 /** The Basis transcoder KTX2Loader loads at run time, which no import names. */
@@ -46,6 +100,7 @@ const MESSAGE = {
   ResolvesInsideGame: "Export destination must resolve outside the game",
   NotADirectory: "Export target must be an ordinary directory",
   NotAnExport: "Export target is not an app-managed export; choose an empty directory",
+  BackupOccupied: "The previous-export backup path already exists; nothing was replaced.",
   InvalidPublicPath: (rel: string) => `Invalid public path: ${rel}`,
   MissingPublicPath: (rel: string) => `Selected public path is missing or unreadable: ${rel}`,
   Symlink: (rel: string) => `Export refuses symlink: ${rel}`,
@@ -58,19 +113,54 @@ const MESSAGE = {
   MissingReference: (ref: string, from: string) => `Export is missing a referenced public file: ${ref} in ${from}`,
 } as const;
 
-/** The first staged file that contains a held credential, byte for byte (text or binary). */
-async function fileWithSecret(staging: string, files: string[], values: Iterable<string>): Promise<string | undefined> {
+/**
+ * Whether a file's bytes hold any of `needles`. It is read `chunk` at a time, each read searched
+ * together with the end of the one before, so a needle split across two reads is found.
+ */
+async function holdsAny(file: string, needles: Buffer[], chunk: Buffer): Promise<boolean> {
+  const overlap = Math.max(...needles.map((needle) => needle.length)) - 1;
+  const handle = await open(file, "r");
+  try {
+    let tail = Buffer.alloc(0);
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) return false;
+      const window = Buffer.concat([tail, chunk.subarray(0, bytesRead)]);
+      if (needles.some((needle) => window.includes(needle))) return true;
+      tail = window.subarray(Math.max(0, window.length - overlap));
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * The first staged file that contains a held credential, byte for byte (text or binary). A file
+ * over {@link MAX_SCANNED_BYTES} is not read, unless `alwaysRead` says it is read whatever its size
+ * (by default a preload pack, {@link PACKED_ASSETS}; a Mac app adds its executable).
+ */
+export async function fileWithSecret(
+  staging: string,
+  files: readonly string[],
+  values: Iterable<string>,
+  alwaysRead: (rel: string) => boolean = (rel) => PACKED_ASSETS.test(rel),
+): Promise<string | undefined> {
   const needles = [...new Set(values)]
     .filter((v) => typeof v === "string" && v.length >= MIN_SECRET_LENGTH)
     .map((v) => Buffer.from(v));
   if (!needles.length) return undefined;
+  const chunk = Buffer.alloc(SCAN_CHUNK_BYTES);
   for (const rel of files) {
     const file = path.join(staging, rel);
-    if ((await lstat(file)).size > MAX_SCANNED_BYTES) continue;
-    const bytes = await readFile(file);
-    if (needles.some((needle) => bytes.includes(needle))) return rel;
+    const unread = (await lstat(file)).size > MAX_SCANNED_BYTES && !alwaysRead(rel);
+    if (!unread && (await holdsAny(file, needles, chunk))) return rel;
   }
   return undefined;
+}
+
+/** The refusal an export gets for a file holding a held credential; the sentence never repeats the value. */
+export function secretFoundError(rel: string): ExportError {
+  return new ExportError(ExportRefusal.SecretFound, MESSAGE.SecretLeaked(rel));
 }
 
 /** Either folder holds the other. */
@@ -84,16 +174,24 @@ async function isReplaceableExport(target: string): Promise<boolean> {
   return (await readFile(path.join(target, EXPORT_MANIFEST), "utf8").catch(() => "")).includes(EXPORT_MARK);
 }
 
+/** Where an export goes, resolved: the folder, its real parent, and what is there now. */
+export interface ExportTarget {
+  target: string;
+  parent: string;
+  existing: Stats | null;
+}
+
 /**
  * Where the export goes, resolved by realpath through its parent, and what is there now. The
- * destination may never hold the game or sit inside it, before or after links are followed.
+ * destination may never hold the game or sit inside it, before or after links are followed, and
+ * a refused one has nothing made for it: its missing parents are made only once it is checked.
  */
-async function resolveExportTarget(
-  source: string,
-  requested: string,
-): Promise<{ target: string; parent: string; existing: Stats | null }> {
+export async function resolveExportTarget(source: string, requested: string): Promise<ExportTarget> {
   const lexical = path.resolve(requested);
   if (overlaps(source, lexical)) throw new Error(MESSAGE.InsideGame);
+  // A link that does not resolve is left to the checks below, which refuse it in their own words.
+  const nearest = await realpathNearest(lexical).catch(() => null);
+  if (nearest && overlaps(source, nearest)) throw new Error(MESSAGE.ResolvesInsideGame);
   await mkdir(path.dirname(lexical), { recursive: true });
   const parent = await realpath(path.dirname(lexical));
   const target = path.join(parent, path.basename(lexical));
@@ -101,7 +199,8 @@ async function resolveExportTarget(
   const existing = await lstat(target).catch(() => null);
   const plainDirectory = existing?.isDirectory() && !existing.isSymbolicLink();
   if (existing && !plainDirectory) throw new Error(MESSAGE.NotADirectory);
-  if (existing && !(await isReplaceableExport(target))) throw new Error(MESSAGE.NotAnExport);
+  if (existing && !(await isReplaceableExport(target)))
+    throw new ExportError(ExportRefusal.NotAnExportFolder, MESSAGE.NotAnExport);
   return { target, parent, existing };
 }
 
@@ -115,7 +214,7 @@ async function refuseSymlinkOnTheWay(base: string, parts: string[], rel: string)
 }
 
 /** Copy one approved public path (a file, or a folder walked recursively) into staging. */
-async function stagePath(
+export async function stagePath(
   staging: string,
   result: ExportResult,
   base: string,
@@ -124,7 +223,7 @@ async function stagePath(
 ): Promise<void> {
   const parts = rel.split(/[\\/]/);
   if (path.isAbsolute(rel) || parts.includes("..")) throw new Error(MESSAGE.InvalidPublicPath(rel));
-  if (parts.some(excluded)) {
+  if (parts.some(excludedFromExport)) {
     result.excluded.push(destRel);
     return;
   }
@@ -172,6 +271,86 @@ function importMapOf(html: string): Record<string, string> {
   return imports;
 }
 
+/** How a reference is read: a URL that must name a file, a URL that loads a module, or a module specifier. */
+const Reference = {
+  /** A page, style or classic-script URL: the file must be in the export; it is not read. */
+  Url: "url",
+  /** A module script's `src`: a URL (never looked up in the import map), read as a module. */
+  ModuleUrl: "module-url",
+  /** An import's specifier: a bare one goes through the import map; read as a module. */
+  Specifier: "specifier",
+} as const;
+type Reference = (typeof Reference)[keyof typeof Reference];
+
+/** How a script's import specifiers are followed. */
+const ScriptKind = {
+  /** A module: every specifier must resolve. */
+  Module: "module",
+  /**
+   * A classic script the entry page loads, such as Emscripten's glue: its relative, absolute and
+   * mapped specifiers are followed as a module's are. A bare one no import map answers is not: the
+   * browser could never load it, so it sits on a path the browser never takes (emcc's Node branch).
+   */
+  Classic: "classic",
+} as const;
+type ScriptKind = (typeof ScriptKind)[keyof typeof ScriptKind];
+
+/**
+ * A `<script>` start tag's attributes, quoted, single-quoted or bare (minifiers, emcc's among them,
+ * drop the quotes), with a quoted value free to hold `>`.
+ */
+const SCRIPT_TAG = /<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+const TAG_ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+/** The `type` a module script carries (HTML: trimmed, ASCII case-insensitive). */
+const MODULE_TYPE = "module";
+
+/** One `<script src>` of a page, and whether it loads a module. */
+interface ScriptSource {
+  src: string;
+  module: boolean;
+}
+
+/** The scripts a page loads by `src`; a repeated attribute keeps its first value, as browsers do. */
+function scriptSources(html: string): ScriptSource[] {
+  const scripts: ScriptSource[] = [];
+  for (const [, attributes = ""] of html.matchAll(SCRIPT_TAG)) {
+    const values = new Map<string, string>();
+    for (const [, name = "", double, single, bare] of attributes.matchAll(TAG_ATTRIBUTE)) {
+      const key = name.toLowerCase();
+      if (!values.has(key)) values.set(key, double ?? single ?? bare ?? "");
+    }
+    const src = values.get("src");
+    if (src !== undefined) scripts.push({ src, module: values.get("type")?.trim().toLowerCase() === MODULE_TYPE });
+  }
+  return scripts;
+}
+
+/** Whether a reference points off the machine or at the page itself: not the export's to check. */
+function isRemoteOrFragment(reference: string): boolean {
+  return /^(?:[a-z]+:|\/\/|#)/i.test(reference);
+}
+
+/** The staged file a URL names from `from`, or null for an empty path. */
+function stagedTarget(staging: string, from: string, ref: string): string | null {
+  const pathname = decodeURIComponent(ref.split(/[?#]/)[0] ?? "");
+  if (!pathname) return null;
+  return pathname.startsWith("/") ? path.resolve(staging, `.${pathname}`) : path.resolve(path.dirname(from), pathname);
+}
+
+/**
+ * The staged files the entry page loads as classic scripts (a `<script src>` without
+ * `type="module"`), such as Emscripten's glue: read as {@link ScriptKind.Classic}, not as modules.
+ */
+function classicScriptsOf(staging: string, entry: string, html: string): Set<string> {
+  const classic = new Set<string>();
+  for (const { src, module } of scriptSources(html)) {
+    if (module || isRemoteOrFragment(src)) continue;
+    const file = stagedTarget(staging, entry, src);
+    if (file) classic.add(file);
+  }
+  return classic;
+}
+
 /** What the reference check walks with: the staged page, its import map, and the modules still to read. */
 interface ReferenceCheck {
   staging: string;
@@ -181,16 +360,29 @@ interface ReferenceCheck {
   visited: Set<string>;
   /** Vendored files something in the export actually loads. */
   neededVendor: Set<string>;
+  /** Files the entry page loads as classic scripts: read as classic scripts, not as modules, for being staged. */
+  classic: Set<string>;
+}
+
+/** The import-map entry that answers a bare specifier (the longest key wins), or undefined. */
+function importMapEntry(imports: Record<string, string>, ref: string): [string, string] | undefined {
+  return Object.entries(imports)
+    .sort(([a], [b]) => b.length - a.length)
+    .find(([key]) => key === ref || (key.endsWith("/") && ref.startsWith(key)));
 }
 
 /** A bare module specifier through the import map: the longest key that answers it wins. */
 function mapBareSpecifier(imports: Record<string, string>, ref: string): string {
-  const match = Object.entries(imports)
-    .sort(([a], [b]) => b.length - a.length)
-    .find(([key]) => key === ref || (key.endsWith("/") && ref.startsWith(key)));
+  const match = importMapEntry(imports, ref);
   if (!match) throw new Error(MESSAGE.UnresolvedModule(ref));
   const [key, target] = match;
   return target + ref.slice(key.length);
+}
+
+/** Whether a specifier is bare (not a URL, nor `.`- or `/`-relative) and no import-map entry answers it. */
+function isUnansweredBare(imports: Record<string, string>, ref: string): boolean {
+  const bare = !isRemoteOrFragment(ref) && !ref.startsWith(".") && !ref.startsWith("/");
+  return bare && importMapEntry(imports, ref) === undefined;
 }
 
 /**
@@ -202,51 +394,71 @@ async function checkReference(
   check: ReferenceCheck,
   reference: string,
   referrer: string,
-  module = false,
+  kind: Reference = Reference.Url,
 ): Promise<void> {
-  if (/^(?:[a-z]+:|\/\/|#)/i.test(reference)) return;
+  if (isRemoteOrFragment(reference)) return;
   let ref = reference;
   let from = referrer;
-  const bareSpecifier = module && !ref.startsWith(".") && !ref.startsWith("/");
+  const bareSpecifier = kind === Reference.Specifier && !ref.startsWith(".") && !ref.startsWith("/");
   if (bareSpecifier) {
     ref = mapBareSpecifier(check.imports, ref);
     from = check.entry;
     if (/^(?:[a-z]+:|\/\/)/i.test(ref)) return;
   }
-  const pathname = decodeURIComponent(ref.split(/[?#]/)[0] ?? "");
-  if (!pathname) return;
   const { staging } = check;
-  const file = pathname.startsWith("/")
-    ? path.resolve(staging, `.${pathname}`)
-    : path.resolve(path.dirname(from), pathname);
+  const file = stagedTarget(staging, from, ref);
+  if (!file) return;
   const st = await lstat(file).catch(() => null);
   const publicFile = isInside(staging, file) && st?.isFile() === true;
   if (!publicFile) throw new Error(MESSAGE.MissingReference(ref, toPosixRelative(path.relative(staging, from))));
   if (isBelow(path.join(staging, VENDOR_DIR), file))
     check.neededVendor.add(toPosixRelative(path.relative(staging, file)));
-  if (module && /\.m?js$/i.test(file)) check.queue.push(file);
+  if (kind !== Reference.Url && /\.m?js$/i.test(file)) check.queue.push(file);
 }
 
-async function scanModule(check: ReferenceCheck, text: string, file: string): Promise<void> {
+/** A script's import specifiers, each checked (and a module one followed) as its kind says. */
+async function scanScript(
+  check: ReferenceCheck,
+  text: string,
+  file: string,
+  kind: ScriptKind = ScriptKind.Module,
+): Promise<void> {
   const [specifiers] = parse(text);
-  for (const specifier of specifiers)
-    if (specifier.n !== undefined) await checkReference(check, specifier.n, file, true);
+  for (const { n: name } of specifiers) {
+    if (name === undefined) continue;
+    if (kind === ScriptKind.Classic && isUnansweredBare(check.imports, name)) continue;
+    await checkReference(check, name, file, Reference.Specifier);
+  }
 }
 
+/**
+ * A page's references. A `<script src>` is a URL: a module script's file is read as a module, a
+ * classic script's has to be in the export (the entry's are read as classic scripts once staged).
+ * Other `src`/`href` values naming a `.js` file (a module preload) are read as modules, as before.
+ */
 async function scanHtml(check: ReferenceCheck, text: string, file: string): Promise<void> {
-  for (const [, ref = ""] of text.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/g))
-    await checkReference(check, ref, file, /\.m?js(?:[?#]|$)/i.test(ref));
+  for (const { src, module } of scriptSources(text))
+    await checkReference(check, src, file, module ? Reference.ModuleUrl : Reference.Url);
+  const withoutScriptTags = text.replace(SCRIPT_TAG, "");
+  for (const [, ref = ""] of withoutScriptTags.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/g))
+    await checkReference(check, ref, file, /\.m?js(?:[?#]|$)/i.test(ref) ? Reference.Specifier : Reference.Url);
   for (const [, body = ""] of text.matchAll(/<script\b[^>]*type=["']module["'][^>]*>([\s\S]*?)<\/script>/gi))
-    await scanModule(check, body, file);
+    await scanScript(check, body, file);
 }
 
-/** One staged game file: HTML and CSS references are checked, modules queued. */
+/**
+ * One staged game file: HTML and CSS references are checked, modules queued. Every staged script is
+ * read as a module (a worker or a chunk no page names still has to resolve), except the entry's
+ * classic scripts, read here as classic scripts; one a module imports is still read as a module.
+ */
 async function scanStagedFile(check: ReferenceCheck, rel: string): Promise<void> {
   if (!/\.(html|m?js|css)$/i.test(rel)) return;
   const file = path.join(check.staging, rel);
   const text = await readFile(file, "utf8");
+  const script = /\.m?js$/i.test(rel);
   if (/\.html$/i.test(rel)) await scanHtml(check, text, file);
-  if (/\.m?js$/i.test(rel)) check.queue.push(file);
+  if (script && check.classic.has(file)) await scanScript(check, text, file, ScriptKind.Classic);
+  else if (script) check.queue.push(file);
   if (/\.css$/i.test(rel))
     for (const [, url = ""] of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g))
       await checkReference(check, url.trim(), file);
@@ -271,9 +483,10 @@ async function checkReferences(
     queue: [],
     visited: new Set(),
     neededVendor: new Set(),
+    classic: classicScriptsOf(staging, page.entry, page.html),
   };
   for (const ref of Object.values(check.imports))
-    if (!ref.endsWith("/")) await checkReference(check, ref, page.entry, true);
+    if (!ref.endsWith("/")) await checkReference(check, ref, page.entry, Reference.Specifier);
   for (const rel of included) {
     if (isVendorFile(rel, vendor)) continue;
     await scanStagedFile(check, rel);
@@ -281,7 +494,7 @@ async function checkReferences(
   for (let file = check.queue.pop(); file !== undefined; file = check.queue.pop()) {
     if (check.visited.has(file)) continue;
     check.visited.add(file);
-    await scanModule(check, await readFile(file, "utf8"), file);
+    await scanScript(check, await readFile(file, "utf8"), file);
   }
   return check.neededVendor;
 }
@@ -299,10 +512,35 @@ async function pruneUnusedVendor(staging: string, result: ExportResult, neededVe
   result.included = result.included.filter((rel) => !removed.has(rel));
 }
 
-/** Put the staged export where the target was, keeping the previous one until the swap succeeded. */
-async function swapIntoPlace(staging: string, target: string, existing: Stats | null): Promise<void> {
-  const backup = `${target}.previous-${Date.now()}`;
-  if (existing) await rename(target, backup);
+/**
+ * A fresh staging folder for an export into `parent`: inside `stagingRoot`, the host's own folder,
+ * when one is given (then the swap renames it into place), else beside the target.
+ */
+export async function makeStaging(parent: string, stagingRoot: string | undefined): Promise<string> {
+  if (stagingRoot === undefined) return mkdtemp(path.join(parent, STAGING_PREFIX));
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  return mkdtemp(path.join(stagingRoot, STAGING_PREFIX));
+}
+
+/**
+ * Put the staged export where the target was, keeping the previous one until the swap succeeded.
+ * `now` names the previous export's folder while it is moved aside.
+ */
+export async function swapIntoPlace(
+  staging: string,
+  target: string,
+  existing: Stats | null,
+  now: () => number = Date.now,
+): Promise<void> {
+  const backup = `${target}.previous-${now()}`;
+  if (existing) {
+    const occupied = await lstat(backup).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (occupied) throw new ExportError(ExportRefusal.NotAnExportFolder, MESSAGE.BackupOccupied);
+    await rename(target, backup);
+  }
   try {
     await rename(staging, target);
   } catch (e) {
@@ -322,7 +560,7 @@ export async function exportPublicGame(
 ): Promise<ExportResult> {
   const source = await realpath(sourceDir);
   const { target, parent, existing } = await resolveExportTarget(source, targetDir);
-  const staging = await mkdtemp(path.join(parent, STAGING_PREFIX));
+  const staging = await makeStaging(parent, options.stagingRoot);
   const result: ExportResult = { dir: target, files: 0, included: [], excluded: [] };
   try {
     for (const root of roots) await stagePath(staging, result, source, root);
@@ -339,14 +577,18 @@ export async function exportPublicGame(
           options.secretValues,
         )
       : undefined;
-    if (leaked) throw new Error(MESSAGE.SecretLeaked(leaked));
+    if (leaked) throw secretFoundError(leaked);
     const page = await rewriteEntry(staging);
     const neededVendor = await checkReferences(staging, page, result.included, vendor);
     if (vendor) await pruneUnusedVendor(staging, result, neededVendor);
     result.files = result.included.length;
+    // `wx`: the host's own files are new; a name already there is refused, never written through.
+    if (result.included.some((rel) => ROOT_WASM.test(rel)))
+      await writeFile(path.join(staging, EXPORT_README), WEB_SERVER_README, { flag: "wx" });
     await writeFile(
       path.join(staging, EXPORT_MANIFEST),
       JSON.stringify({ studioExport: 1, included: result.included }),
+      { flag: "wx" },
     );
     await swapIntoPlace(staging, target, existing);
     return result;

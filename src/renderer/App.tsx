@@ -17,7 +17,7 @@ import type { JSX } from "react";
 import { useEffect, useRef } from "react";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
 import { Onboarding } from "./onboarding/Onboarding.tsx";
-import { AppDialogs } from "./panels/AppDialogs.tsx";
+import { AppDialogs, type DialogsState } from "./panels/AppDialogs.tsx";
 import { GenexPromo } from "./panels/GenexPromo.tsx";
 import { AppSidebar } from "./shell/AppSidebar.tsx";
 import { PluginsRoom, Toasts } from "./shell/store-leaves.tsx";
@@ -31,6 +31,12 @@ import { CodexLoginPanel } from "./ui/CodexLoginPanel.tsx";
 /** `data-room` while Plugins covers the workspace. */
 const PLUGINS_ROOM = "plugins";
 
+/** The promo waits until every workspace dialog is closed. */
+function hasDialog(state: DialogsState): boolean {
+  const open = [state.creating, state.searching, state.settingsOpen, state.game, state.picked, state.feedback];
+  return open.some(Boolean);
+}
+
 export function App(): JSX.Element {
   const shell = useRef<HTMLDivElement>(null);
   const { app, dialogs, welcoming, threads, chrome, navigation, views, notices, firstAsks, welcome, chat, handoff } =
@@ -38,6 +44,7 @@ export function App(): JSX.Element {
   const { activeThreadId, room, project } = threads;
   const engines = useEngines((s) => s.list);
   const updateReady = useUpdate((s) => s.ready !== null);
+  const overlayOpen = hasDialog(dialogs.state);
   useChatWidthVariable(shell, app);
   useEffect(() => {
     const refresh = () => {
@@ -113,7 +120,7 @@ export function App(): JSX.Element {
           onFinish={welcome.finishWelcome}
         />
       )}
-      <GenexPromo welcoming={welcoming} pluginsOpen={chrome.pluginsOpen} project={project} />
+      <GenexPromo welcoming={welcoming} pluginsOpen={chrome.pluginsOpen} project={project} overlayOpen={overlayOpen} />
       <Toasts />
       <CodexLoginPanel />
       <ColorTweakerHost />

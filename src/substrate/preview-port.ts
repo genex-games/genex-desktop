@@ -3,9 +3,11 @@
  * implementation is Electron's GamePreview; tests satisfy it with a plain object, which is the
  * proof the port carries no Electron dependency.
  */
+import type { CaptureProvenance } from "../shared/build-preview.ts";
 import type { PageUi, PageUiAnswer } from "./page-ui.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PixelDiff, PixelStats } from "./pixel-stats.ts";
+import type { ReadySnapshot } from "./preview-ready.ts";
 import type {
   CaptureSource,
   CaptureSurface,
@@ -107,20 +109,29 @@ export interface PageAttachReport {
 export interface PreviewPort {
   invalidateProfile?(reason: string): Promise<void>;
   profile?(request: import("./preview-profiler.ts").ProfileRequest): Promise<unknown>;
-  /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). */
+  /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). `insertMap: false` serves a page with no import map of its own without the studio's (a C++ game's Emscripten page has no `three` to reach). */
   load(
     project: string,
     entry?: string,
     root?: string,
-    options?: { loopback?: boolean; shim?: Partial<ShimOptions> },
+    options?: { loopback?: boolean; shim?: Partial<ShimOptions>; insertMap?: boolean },
   ): Promise<string>;
   reload(): Promise<void>;
+  /**
+   * Optional: leave the view on no page — a judged load whose build failed — so no older build is
+   * photographed or judged: every capture refuses `build-failed` (`CaptureError`) until the next `load`.
+   */
+  clearPage?(problem: string): Promise<void>;
   /** Optional: the person's Stop — the page is taken off the view until `resume`. */
   stop?(): Promise<void>;
   /** Optional: the person's Play on a stopped page — the same page again, from the top. */
   resume?(): Promise<void>;
-  /** Optional: a line the studio itself puts on the game's console — e.g. a build that failed before the page could load. */
-  note?(level: string, message: string, options?: { loadError?: boolean }): void;
+  /**
+   * Optional: a line the studio itself puts on the game's console — e.g. a build that failed
+   * before the page could load. `loadError` makes it the status's load error; `buildFailed` also
+   * says the window does not show the asked build (`status().buildFailed`) until the next load.
+   */
+  note?(level: string, message: string, options?: { loadError?: boolean; buildFailed?: boolean }): void;
   screenshot(quality?: number): Promise<Buffer>;
   /** A thumbnail capture with bounded statistics, never used as judged evidence. */
   screenshotCard?(quality: number, maxPx: number): Promise<Buffer | null>;
@@ -136,12 +147,13 @@ export interface PreviewPort {
    * accepted for ever as the alias of `surface: "page"`, because an installed harness workspace may
    * be an older seed. `surface` wins where both are given, and `surface: "auto"` lets the preview
    * decide from what the page looks like. The returned `surface` says what was PHOTOGRAPHED, never
-   * what was asked for.
+   * what was asked for. `provenance` is where the frame came from, when the port knows it (a
+   * native run's capture: its sequence number, digest, camera, run and build).
    */
   screenshotWithStats?(
     quality?: number,
     opts?: { page?: boolean; surface?: CaptureSurface },
-  ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface?: CaptureSurface }>;
+  ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface?: CaptureSurface; provenance?: CaptureProvenance }>;
   /**
    * Optional: what the page's own DOM paints over the game — the studio's second eye (M4.5a).
    * The payload is a {@link PageUi}, or null when the page could not be probed, which is not the
@@ -150,6 +162,11 @@ export interface PreviewPort {
    */
   pageUi?(): Promise<PageUiAnswer>;
   evaluate(expression: string): Promise<unknown>;
+  /**
+   * Optional: readiness the port knows itself, for a game with no page to probe (a native run's
+   * `ready` event). Preferred over the page probe when present; null reads as a page that answered nothing.
+   */
+  readySnapshot?(): Promise<ReadySnapshot | null>;
   /** `keep`: state paths a board reads, cut last when the state is over the studio's budget. */
   studioState(options?: { keep?: readonly string[] }): Promise<unknown>;
   /**

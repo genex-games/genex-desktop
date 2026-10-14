@@ -40,6 +40,7 @@ import {
   devRefusal,
   envelopeSchema,
   MAX_REQUEST_BYTES,
+  NativeCaptureFrame,
   type Operation,
   operationSchema,
 } from "./protocol.ts";
@@ -47,15 +48,25 @@ import type { LaunchContext } from "./launch-context.ts";
 import { DevProviders, FIXTURE_VERSION } from "./fixture-kit.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { GamePreview } from "../preview.ts";
+import type { NativeGamePort } from "../../substrate/native-game-port.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { secretRedactor } from "../../shared/redact.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { HarnessState } from "../../shared/protocol.ts";
+import { NativeOp } from "../../shared/native-contract.ts";
+import type { RenderSettingsChange } from "../../shared/render-quality.ts";
 
-/** Why the developer runtime cannot start. */
+/** Why the developer runtime cannot start, or cannot reach a native run. */
 const MESSAGE = {
   socketPathTooLong: "temporary IPC path too long",
+  nativeUnsupported: (method: string) => `${method} has no native counterpart: a native game has no web contents`,
+  noOpenGame: "open a C++ game in the studio first",
+  noNativeRun: "start the open game first (Play, or an agent's run)",
+  nativeViewHidden: "show the game's Native view in Live to capture what it shows",
+  frameNotNative: "--frame names a native capture's frame; use it with --surface native",
 } as const;
+/** JPEG quality of a native surface capture. */
+const NATIVE_CAPTURE_QUALITY = 90;
 
 /** The studio-dev record format (`ready.json`, `controller.json`, …); `readVersion` checks it. */
 const RECORD_VERSION = 1;
@@ -108,6 +119,8 @@ interface RuntimeParts {
 /** One running control: its parts, its socket and what it has seen. */
 interface Runtime extends RuntimeParts {
   sanitize: (value: unknown) => unknown;
+  /** The studio window's Native view as composited (a `--surface native --frame live` capture). */
+  liveNativeView(): Promise<LiveNativeView | null>;
   /** This instance's evidence folder. */
   root: string;
   /** The private folder the socket lives in. */
@@ -160,6 +173,7 @@ async function openRuntime(parts: RuntimeParts): Promise<Runtime> {
   return {
     ...parts,
     sanitize,
+    liveNativeView: () => liveNativeViewOf(parts.win),
     root,
     transport,
     socket,
@@ -193,6 +207,8 @@ async function publishIdentity(rt: Runtime): Promise<void> {
 
 /** The webContents a surface names: the studio window, or the game view once a game is loaded. */
 function surfaceContents(rt: Runtime, surface: DevSurface): WebContents {
+  if (surface === DevSurface.Native)
+    throw new DevError(DevErrorCode.UnsupportedSurface, MESSAGE.nativeUnsupported(surface));
   if (surface === DevSurface.Desktop) {
     if (rt.win.isDestroyed()) throw new DevError(DevErrorCode.UnsupportedSurface, "desktop window closed");
     return rt.win.webContents;
@@ -312,11 +328,148 @@ async function selection(rt: Runtime) {
   return { ...s.state, ...s.stage };
 }
 
+/** Whether an operation names the native surface: a C++ game's own run instead of a web contents. */
+export function asksNative(op: Operation): boolean {
+  const params: object = op.params;
+  return "surface" in params && params.surface === DevSurface.Native;
+}
+
+/** Native-surface operations: what each does to the run's port. */
+const NATIVE_METHODS: ReadonlySet<DevMethod> = new Set([
+  DevMethod.GameState,
+  DevMethod.GameRenderSettings,
+  DevMethod.GameInput,
+  DevMethod.Capture,
+  DevMethod.Logs,
+]);
+
+/** Refuses `UnsupportedSurface` for a native-surface operation with no native counterpart (a profile, a heap, keys, scrolls). */
+export function refuseNativeOperation(op: Operation): void {
+  if (asksNative(op) && !NATIVE_METHODS.has(op.method))
+    throw new DevError(DevErrorCode.UnsupportedSurface, MESSAGE.nativeUnsupported(op.method));
+}
+
+/** What a native operation does to a run's port. */
+export type NativeSurfacePort = Pick<
+  NativeGamePort,
+  "studioState" | "input" | "screenshotWithStats" | "consoleEntries"
+> & {
+  /** The run's `renderSettings` op (a read without `set`). */
+  call(op: typeof NativeOp.RenderSettings, arg: { set?: RenderSettingsChange }): Promise<unknown>;
+};
+
+/** What a `--surface native` operation reaches: the open game, the registry's ports, the evidence folder and the redactor. */
+export interface NativeSurfaceRuntime {
+  /** The studio window's Native view as composited (what the person sees), or null when it is not shown. */
+  liveNativeView(): Promise<LiveNativeView | null>;
+  preview: { status(): { project: string | null } };
+  core: {
+    runPreviewIdentity(): { project: string | null };
+    nativeRuns: { portOf(project: string): NativeSurfacePort | null };
+  };
+  diagnostics: { destination(name: string): Promise<string> };
+  sanitize(value: unknown): unknown;
+}
+
+/** The open game's native run: its Play window, else its newest agent run. */
+function nativePortOf(rt: NativeSurfaceRuntime): NativeSurfacePort {
+  const project = rt.preview.status().project ?? rt.core.runPreviewIdentity().project;
+  if (!project) throw new DevError(DevErrorCode.MissingPrerequisite, MESSAGE.noOpenGame);
+  const port = rt.core.nativeRuns.portOf(project);
+  if (!port) throw new DevError(DevErrorCode.MissingPrerequisite, MESSAGE.noNativeRun);
+  return port;
+}
+
+/** An operation on the native surface: the run's state, input, a capture or its console. */
+export async function performNative(rt: NativeSurfaceRuntime, op: Operation) {
+  refuseNativeOperation(op);
+  const port = nativePortOf(rt);
+  switch (op.method) {
+    case DevMethod.GameState:
+      return port.studioState();
+    case DevMethod.GameRenderSettings:
+      return port.call(NativeOp.RenderSettings, op.params.set ? { set: op.params.set } : {});
+    case DevMethod.GameInput:
+      return port.input(op.params.actions);
+    case DevMethod.Capture:
+      return captureNative(rt, port, op.params);
+    case DevMethod.Logs:
+      return nativeLogs(rt, port, op.params);
+    default:
+      throw new DevError(DevErrorCode.UnsupportedSurface, MESSAGE.nativeUnsupported(op.method));
+  }
+}
+
+/** The Native view's pixels as the studio window composited them. */
+export interface LiveNativeView {
+  png: Buffer;
+  dimensions: { width: number; height: number };
+}
+
+type NativeCaptureParams = Extract<Operation, { method: typeof DevMethod.Capture }>["params"];
+
+/**
+ * A capture of the native run, saved beside the other captures. `pinned` (the default) is the run's
+ * own capture op, a JPEG of the pinned capture profile; `live` is the studio window's Native view,
+ * the frame the person sees with their preset and panel applied (a PNG).
+ */
+async function captureNative(rt: NativeSurfaceRuntime, port: NativeSurfacePort, params: NativeCaptureParams) {
+  if (params.frame === NativeCaptureFrame.Live) return captureLiveNative(rt, params.name);
+  const shot = await port.screenshotWithStats(NATIVE_CAPTURE_QUALITY);
+  const file = await rt.diagnostics.destination(`${DevSurface.Native}-${params.name}.jpg`);
+  await fsp.writeFile(file, shot.jpeg, { flag: "wx", mode: 0o600 });
+  return {
+    file,
+    surface: DevSurface.Native,
+    frame: NativeCaptureFrame.Pinned,
+    dimensions: { width: shot.stats.width, height: shot.stats.height },
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+async function captureLiveNative(rt: NativeSurfaceRuntime, name: string) {
+  const view = await rt.liveNativeView();
+  if (!view) throw new DevError(DevErrorCode.MissingPrerequisite, MESSAGE.nativeViewHidden);
+  const file = await rt.diagnostics.destination(`${DevSurface.Native}-${name}.png`);
+  await fsp.writeFile(file, view.png, { flag: "wx", mode: 0o600 });
+  return {
+    file,
+    surface: DevSurface.Native,
+    frame: NativeCaptureFrame.Live,
+    dimensions: view.dimensions,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+/** The selector of Live's Native view canvas (`NativeLiveCanvas`), whose box a live capture crops to. */
+const NATIVE_CANVAS_SELECTOR = "[data-stage-native-canvas] canvas";
+
+/** The studio window cropped to the Native view's canvas, or null when no Native view is shown. */
+async function liveNativeViewOf(win: BrowserWindow): Promise<LiveNativeView | null> {
+  if (win.isDestroyed()) return null;
+  const box: unknown = await win.webContents.executeJavaScript(
+    `(() => { const r = document.querySelector(${JSON.stringify(NATIVE_CANVAS_SELECTOR)})?.getBoundingClientRect(); return r ? [r.x, r.y, r.width, r.height] : null; })()`,
+  );
+  if (!Array.isArray(box) || box.length !== 4 || !box.every((n) => typeof n === "number" && Number.isFinite(n)))
+    return null;
+  const [x, y, width, height] = box.map((n: number) => Math.round(n));
+  if (width <= 0 || height <= 0) return null;
+  const image = await win.webContents.capturePage({ x, y, width, height }, { stayHidden: true, stayAwake: true });
+  if (image.isEmpty()) return null;
+  return { png: image.toPNG(), dimensions: image.getSize() };
+}
+
+/** The native run's console (its stderr and fatal events), in the logs answer's shape and budget. */
+function nativeLogs(rt: NativeSurfaceRuntime, port: NativeSurfacePort, params: LogsParams) {
+  return { surface: DevSurface.Native, ...logPage(rt.sanitize, port.consoleEntries(), params) };
+}
+
 async function perform(rt: Runtime, op: Operation) {
   if (op.method === DevMethod.Status) return status(rt);
   if (op.method === DevMethod.Stop) return requestStop(rt);
   if (op.method === DevMethod.Runs) return listRuns(rt.core.store, { activeThread: await activeThread(rt) });
   assertActionable(rt, op);
+  if (asksNative(op)) return performNative(rt, op);
   const { diagnostics } = rt;
   switch (op.method) {
     case DevMethod.FixtureGraph:
@@ -324,6 +477,9 @@ async function perform(rt: Runtime, op: Operation) {
     case DevMethod.GameState:
       surfaceContents(rt, DevSurface.Game);
       return rt.preview.studioState();
+    case DevMethod.GameRenderSettings:
+      surfaceContents(rt, DevSurface.Game);
+      return rt.preview.studioCall(NativeOp.RenderSettings, op.params.set ? { set: op.params.set } : {});
     case DevMethod.GameInput:
       surfaceContents(rt, DevSurface.Game);
       return rt.preview.input(op.params.actions);
@@ -387,6 +543,7 @@ function requestStop(rt: Runtime) {
 type CaptureParams = Extract<Operation, { method: typeof DevMethod.Capture }>["params"];
 
 async function captureSurface(rt: Runtime, params: CaptureParams) {
+  if (params.frame !== undefined) throw new DevError(DevErrorCode.InvalidRequest, MESSAGE.frameNotNative);
   if (params.surface === DevSurface.Game && !gameViewShown(rt.preview))
     throw new DevError(DevErrorCode.MissingPrerequisite, "select Live to capture the current game surface");
   const target = surfaceContents(rt, params.surface);
@@ -432,12 +589,22 @@ async function readLogs(rt: Runtime, params: LogsParams) {
   if (params.surface === DevLogSurface.Stdout || params.surface === DevLogSurface.Stderr)
     return readLaunchStream(rt, params.surface);
   const all = await logEntries(rt, params.surface);
+  const page = logPage(rt.sanitize, all, params);
+  // A source read to its limit may have been cut where it was read.
+  return { surface: params.surface, ...page, truncated: page.truncated || all.length >= LOG_SOURCE_LIMIT };
+}
+
+/**
+ * One page of log entries from `cursor`, redacted, within `LOG_BUDGET_BYTES`: an entry past the
+ * budget is named (its size), not sent. `truncated` when entries follow or one was left out.
+ */
+function logPage(sanitize: (value: unknown) => unknown, all: readonly unknown[], params: LogsParams) {
   const end = params.cursor + params.limit;
   const entries: unknown[] = [];
   let bytes = 0;
-  let truncated = all.length >= LOG_SOURCE_LIMIT || all.length > end;
+  let truncated = all.length > end;
   for (const entry of all.slice(params.cursor, end)) {
-    const clean = rt.sanitize(entry);
+    const clean = sanitize(entry);
     const size = Buffer.byteLength(JSON.stringify(clean));
     if (bytes + size > LOG_BUDGET_BYTES) {
       entries.push({ omitted: true, bytes: size, reason: "bounded log budget" });
@@ -447,7 +614,7 @@ async function readLogs(rt: Runtime, params: LogsParams) {
     entries.push(clean);
     bytes += size;
   }
-  return { surface: params.surface, entries, nextCursor: Math.min(all.length, end), truncated };
+  return { entries, nextCursor: Math.min(all.length, end), truncated };
 }
 
 async function logEntries(rt: Runtime, surface: DevLogSurface): Promise<unknown[]> {

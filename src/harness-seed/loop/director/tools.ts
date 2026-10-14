@@ -14,6 +14,7 @@ import { FACET_POLICY } from "../facet-loop.ts";
 import { GIT, gitAt, headOf, shortSha } from "../git.ts";
 import { HostMethod } from "../host-methods.ts";
 import { askVisionBoard, blindCompare, Side, visionCheck } from "../judge.ts";
+import { failedObservationRule } from "../native-verdict.ts";
 import { EngineFailure, outageDelays, withProviderPatience } from "../outage.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { isCommit } from "../shell.ts";
@@ -622,7 +623,7 @@ function askedOnRecord(out: AnyRecord): { question: string | null; answer: boole
  * looked decides nothing (`kept: null`).
  */
 function judgeRule(evidence: Evidence, verdict: AnyRecord | undefined): VerdictRule {
-  if (!evidence.ok) return VerdictRule.DoesNotStart;
+  if (!evidence.ok) return failedObservationRule(evidence, VerdictRule.DoesNotStart);
   if (verdict?.firstBuild) return VerdictRule.FirstBuild;
   if (verdict?.pick === Side.Challenger) return VerdictRule.Preferred;
   if (verdict?.pick) return VerdictRule.NotPreferred;

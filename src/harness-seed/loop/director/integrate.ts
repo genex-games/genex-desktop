@@ -32,6 +32,8 @@ import {
   trimLedger,
 } from "../ledger.ts";
 import { unionMergeMain } from "../merge.ts";
+import { wiringFor } from "../native-loop.ts";
+import { failedObservationRule, NativeVerdict } from "../native-verdict.ts";
 import { skipOptimization } from "../optimization.ts";
 import { EventKind, ExecutionStatus, JournalPhase, RunEvent, writeRunArtifact } from "../run-events.ts";
 import { isCommit } from "../shell.ts";
@@ -85,6 +87,15 @@ import type { EventData } from "../../types/host-api.d.ts";
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
+
+/**
+ * A worker's merge union-merges a C++ · raylib entry's FACET WIRING block (`src/main.cpp`,
+ * native-loop.ts `wiringFor`). run-dispatch.ts and chat-dispatch.ts refuse a raylib night on a
+ * kept copy without this mark (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+/** A worker's merge union-merges a Rust · wgpu entry's FACET WIRING block (`src/main.rs`, native-loop.ts `wiringFor`). */
+export const SERVES_RUST = true;
 
 /** Which merge an `integration_merge` record is (the app's run graph reads it): never rename a value. */
 const MergeStage = { Director: "director" } as const;
@@ -351,8 +362,7 @@ async function mergeWorker(
           }),
         {
           message: `director ${run.runId}: integrate ${worker.id} (union on FACET WIRING)`,
-          main: shape.main,
-          wiring: !ownShape,
+          ...wiringFor(shape, ownShape),
         },
       ),
   });
@@ -498,7 +508,7 @@ async function recordHealth(
     // The same errors the look forgave: every merged worker's fork point's.
     consoleInherited: inheritedByAll(loopRun, workers),
     kept: health.ok === true,
-    rule: health.ok === true ? VerdictRule.Starts : VerdictRule.DoesNotStart,
+    rule: health.ok === true ? VerdictRule.Starts : failedObservationRule(health, VerdictRule.DoesNotStart),
   });
   await saveJournal();
   const ids = workers.map((worker) => worker.id).join(", ");
@@ -506,13 +516,18 @@ async function recordHealth(
   if (health.ok) return;
   await decision(
     `the integrated build ${shortSha(head)} did not pass its health pass: ${problems} — the director must fix it or judge it before it can land`,
-    unhealthyPlain(started, lost),
+    unhealthyPlain(health, started, lost),
   );
 }
 
-/** The user's sentence for a merge that failed its health pass: lost a registration, carries nothing, or does not start. */
-function unhealthyPlain(started: boolean, lost: readonly LostRegistration[]): string {
+/**
+ * The user's sentence for a merge that failed its health pass: lost a registration, failed its
+ * native checks (named apart from a build that did not start), carries nothing, or does not start.
+ */
+function unhealthyPlain(health: Evidence, started: boolean, lost: readonly LostRegistration[]): string {
   if (lost.length) return WAVE_WORDS.lostPlain;
+  if (failedObservationRule(health, VerdictRule.DoesNotStart) === NativeVerdict.Rule)
+    return "the merged build did not pass its native checks; the lead is fixing it before it can go live";
   return started
     ? "the merged build carries nothing from the folder inside your game that keeps its own history; what was built there cannot be made live"
     : "the merged build did not start when it was checked; the lead is fixing it before it can go live";
@@ -717,8 +732,8 @@ export async function integrate(loopRun: LoopRun, args: AnyRecord) {
 
 // ── the close ──
 
-/** Did a judge see `head` load? Such a judge passed it, whatever a later look races into. */
-function judgeSawItLoad(judged: LastJudge | null, head: string | null): boolean {
+/** Did a judge pass this head's evidence, including the native checks it owes? */
+function judgePassedChecks(judged: LastJudge | null, head: string | null): boolean {
   return Boolean(judged && judged.head === head && judged.ok);
 }
 
@@ -789,12 +804,22 @@ async function landWhatRuns(
   await judgeForTheClose(loopRun, head, bound);
   // A Stop pressed while the close looked or judged is obeyed: nothing is made live.
   if (ctx.cancelled) return notLanded(STOPPED_BY_USER, NotLandedReason.Stopped);
-  // A judge that saw this head load still speaks for it when the close's own judge raced the load.
-  if (judgeSawItLoad(before, head) && !judgeSawItLoad(state.lastJudge, head)) state.lastJudge = before;
+  // A judge that passed this head still speaks for it when the close's own judge raced the load.
+  if (judgePassedChecks(before, head) && !judgePassedChecks(state.lastJudge, head)) state.lastJudge = before;
   // The judge's look may carry the landing, but what the landing claims is the close's own look.
   state.healthByHead.set(head, health.ok === true);
-  const judged = judgeSawItLoad(state.lastJudge, head);
+  const judged = judgePassedChecks(state.lastJudge, head);
   if (health.ok === true || judged) return landIntegration(true);
+  if (failedObservationRule(health, VerdictRule.DoesNotStart) === NativeVerdict.Rule) {
+    await decision(
+      `the integration branch ${shortSha(head)} failed its final native checks (${(health.problems ?? []).join("; ")}) and no judge had passed it — kept unlanded on ${integrationRef}`,
+      "the final native checks did not pass, so this build was kept beside your game — you can still open it from Builds",
+    );
+    return notLanded(
+      "the final native checks did not pass and no judge had passed this build",
+      NativeVerdict.NotLanded,
+    );
+  }
   await decision(
     `the integration branch ${shortSha(head)} did not load at the close (${(health.problems ?? []).join("; ")}) and no judge had passed it — kept unlanded on ${integrationRef}`,
     "this build did not start when it was checked at the end, so it was not made live — you can still open and play it",
@@ -810,8 +835,9 @@ async function landWhatRuns(
  * harness's clock path — and they end the same way: stop the workers, wait for them, look at
  * the head the worktree actually stands on, and land under one rule.
  *
- * THE RULE: the branch moved beyond the starting point AND (it loaded just now OR a judge
- * passed it on this same sha). Before that rule is read the close judges the head itself
+ * THE RULE: the branch moved beyond the starting point AND (its evidence passed just now OR a
+ * judge passed it on this same sha). Evidence includes native checks for C++ desktop destinations.
+ * Before that rule is read the close judges the head itself
  * (tools.ts `judgeTheLanding`), so no build is made live that no judge looked at, however the run
  * ended; a Stop before or during the close lands nothing. `finish land=yes` used to skip the
  * fresh look entirely and land whatever HEAD happened to be — so a director could hand the user

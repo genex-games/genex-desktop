@@ -19,7 +19,8 @@ import { type Studio, studio } from "../state/studio.ts";
 import { notifyProblem, ToastTone } from "../state/toasts.ts";
 import type { FeedbackAbout } from "../feedback-about.ts";
 import { FEEDBACK_WORDS } from "../words.ts";
-import type { FolderInspection, GameProject } from "../types.ts";
+import type { FolderInspection, GameLocation, GameProject } from "../types.ts";
+import { CreateCppGameDialog } from "./CreateGameDialog.tsx";
 import { GameCoverDialog } from "./GameCoverDialog.tsx";
 import { FeedbackDialog } from "./FeedbackDialog.tsx";
 import { DeleteGameDialog, RenameGameDialog } from "./GameDialogs.tsx";
@@ -28,6 +29,8 @@ import { OpenGameSheet } from "./OpenGameSheet.tsx";
 import { SettingsDialog } from "./SettingsDialog.tsx";
 
 export interface DialogsState {
+  creating: boolean;
+  createLocation: GameLocation | null;
   searching: boolean;
   settingsOpen: boolean;
   /** The Settings section last shown; reopening Settings returns to it. */
@@ -42,7 +45,8 @@ export interface DialogsState {
 }
 
 export type DialogAction =
-  | { type: "search" | "close-search" | "close-settings" | "close-game" | "close-feedback" }
+  | { type: "create"; location?: GameLocation | null }
+  | { type: "search" | "close-create" | "close-search" | "close-settings" | "close-game" | "close-feedback" }
   | { type: "feedback"; about: FeedbackAbout }
   | { type: "settings"; section?: SettingsSection }
   | { type: "section"; section: SettingsSection }
@@ -53,6 +57,8 @@ export type DialogAction =
   | { type: "opened" };
 
 export const initialDialogs: DialogsState = {
+  creating: false,
+  createLocation: null,
   searching: false,
   settingsOpen: false,
   settingsSection: SettingsSection.Providers,
@@ -64,6 +70,10 @@ export const initialDialogs: DialogsState = {
 
 export function dialogsReducer(state: DialogsState, action: DialogAction): DialogsState {
   switch (action.type) {
+    case "create":
+      return { ...state, creating: true, createLocation: action.location ?? null };
+    case "close-create":
+      return { ...state, creating: false };
     case "search":
       return { ...state, searching: true };
     case "close-search":
@@ -161,7 +171,7 @@ export function AppDialogs({
   /** Delete a game; App moves the room when the stage held it. */
   onRemoveGame: (name: string) => Promise<void>;
   /** Open a game (and, for a game just made, put the cursor in its composer). */
-  onEnterProject: (name: string, focusComposer?: boolean) => void;
+  onEnterProject: (name: string, focusComposer?: boolean) => Promise<void>;
   onSelectThread: (threadId: string) => void;
   onSelectGame: (name: string) => void;
 }): JSX.Element {
@@ -176,6 +186,18 @@ export function AppDialogs({
   const dialogGame = state.game;
   return (
     <>
+      {state.creating && (
+        <CreateCppGameDialog
+          rootLabel={rootLabel}
+          initialLocation={state.createLocation}
+          onDismiss={() => dispatch({ type: "close-create" })}
+          onCreated={async (game) => {
+            app.addGame(game);
+            await onEnterProject(game.name, true);
+            dispatch({ type: "close-create" });
+          }}
+        />
+      )}
       {state.settingsOpen && (
         <SettingsDialog
           returnFocus={dialogs.settingsReturnFocus}

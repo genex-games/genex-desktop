@@ -66,6 +66,7 @@ import {
   withCraftChecks,
 } from "../../src/harness-seed/loop/library.ts";
 import { mechanicalReview, parseDiff } from "../../src/harness-seed/loop/review.ts";
+import { GameStack } from "../../src/harness-seed/loop/native-contract.ts";
 import { CheckLintCode, lintCheck } from "../../src/harness-seed/loop/check-lint.ts";
 import { appliesToBuild } from "../../src/harness-seed/loop/applies-to-build.ts";
 import { mineValidationTasks } from "../../src/harness-seed/loop/skillopt.ts";
@@ -1023,7 +1024,8 @@ describe("craft leaves the law", () => {
     assert.equal(retired.length, 41, "41 opinions left the board");
     for (const id of retired) assert.ok(!menu.includes(id), `the planner is not offered ${id} any more`);
 
-    const recipes = await loadRecipes(seedDir);
+    // The raylib pack (runtime raylib-cpp) ships beside them; the three.js library is the 44 it was.
+    const recipes = (await loadRecipes(seedDir)).filter((recipe) => recipe.runtime === GameStack.ThreeJs);
     assert.equal(recipes.length, 44);
     assert.equal(recipes.filter(isCraftRecipe).length, 41);
     const byCheck = new Map<string, typeof recipes>();
@@ -1176,6 +1178,87 @@ describe("craft leaves the law", () => {
       }).pass,
       null,
     );
+  });
+
+  it("Three.js recipes retrieved before and after the runtime field are the same set", async () => {
+    const shipped = await loadRecipes(seedDir);
+    // Before the field: the Three.js library as it was, with no `runtime` on any recipe.
+    const before = shipped
+      .filter((recipe) => recipe.runtime === GameStack.ThreeJs)
+      .map(({ runtime: _runtime, ...recipe }) => recipe);
+    assert.equal(before.length, 44, "the Three.js library is the 44 it always was");
+    // After: the shipped library, raylib pack included, plus a raylib twin of a Three.js craft recipe.
+    const organic = shipped.find((recipe) => recipe.id === "flora.organic-not-solid");
+    assert.ok(organic, "the shipped library has flora.organic-not-solid");
+    const twin = normalizeRecipe({
+      id: "raylib.organic-not-solid",
+      runtime: GameStack.RaylibCpp,
+      title: organic.title,
+      tags: organic.tags,
+      checkClass: organic.checkClass,
+      kind: "craft",
+      pack: "raylib",
+      intent: "In C++: build foliage from GenMeshSphere crowns over GenMeshCylinder trunks, never one solid block.",
+      check: { ...organic.check, id: "raylib-organic-not-solid" },
+    });
+    assert.ok(twin, "a raylib twin normalizes");
+    const after = [...shipped, twin];
+    const asked = [
+      ...before.flatMap((recipe) =>
+        recipe.check?.id ? [{ id: String(recipe.check.id), kind: String(recipe.check.kind) }] : [],
+      ),
+      ...checksFromDefects(["[blob] the reeds are grey faceted balls on sticks"]),
+      { id: "organic-not-solid", kind: "scene" },
+    ];
+    for (const check of asked) {
+      assert.deepEqual(
+        recipesForChecks(after, [check], 5).map((hit) => hit.recipe.id),
+        recipesForChecks(before, [check], 5).map((hit) => hit.recipe.id),
+        `the same Three.js recipes for ${check.id}`,
+      );
+    }
+    // A raylib game is offered raylib recipes only.
+    const forRaylib = recipesForChecks(after, [{ id: "organic-not-solid", kind: "scene" }], 5, {
+      stack: GameStack.RaylibCpp,
+    });
+    assert.deepEqual(
+      forRaylib.map((hit) => hit.recipe.id),
+      ["raylib.organic-not-solid"],
+    );
+    assert.equal(normalizeRecipe({ id: "plain" })?.runtime, GameStack.ThreeJs, "a recipe that names none is Three.js");
+    assert.equal(normalizeRecipe({ id: "odd", runtime: "cobol" })?.runtime, GameStack.ThreeJs);
+  });
+
+  it("the raylib pack ships C++ techniques that reach only a raylib game", async () => {
+    const shipped = await loadRecipes(seedDir);
+    const pack = shipped.filter((recipe) => recipe.runtime === GameStack.RaylibCpp);
+    assert.ok(pack.length >= 3, `the raylib pack is there: ${pack.map((r) => r.id).join(", ")}`);
+    for (const recipe of pack) {
+      assert.match(recipe.id, /^raylib\./, recipe.id);
+      assert.equal(recipe.kind, "technique", `${recipe.id} is how, not an opinion`);
+      assert.ok(recipe.intent.trim().length > 80, `${recipe.id} says HOW`);
+      assert.doesNotMatch(
+        `${recipe.intent}\n${recipe.sketch}`,
+        /\bGetTime\s*\(|\brand\s*\(|SetTargetFPS|#version/,
+        recipe.id,
+      );
+    }
+    const asked = [
+      { id: "player-moved", kind: "probe" },
+      { id: "drawcalls-ceiling", kind: "probe" },
+    ];
+    for (const check of asked) {
+      const forRaylib = recipesForChecks(shipped, [check], 3, { stack: GameStack.RaylibCpp });
+      assert.ok(forRaylib.length > 0, `a raylib game is offered a technique for ${check.id}`);
+      assert.ok(
+        forRaylib.every((hit) => hit.recipe.runtime === GameStack.RaylibCpp),
+        forRaylib.map((h) => h.recipe.id).join(", "),
+      );
+      assert.ok(
+        recipesForChecks(shipped, [check], 3).every((hit) => hit.recipe.runtime === GameStack.ThreeJs),
+        `a three.js game is never offered C++ for ${check.id}`,
+      );
+    }
   });
 
   it("retrieves a recipe from the judge's prose, and an exact failing check still wins", async () => {

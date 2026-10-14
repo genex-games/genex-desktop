@@ -50,3 +50,7 @@ out/
 *.certSigningRequest
 *.mobileprovision
 *.pfx
+
+# The lakeside showcase's fetched CC0 assets (`node scripts/showcase-assets.ts fetch --install`):
+# a local copy for a Studio run, never committed (assets-manifest.json pins them).
+/native/genex-rust/examples/showcase/game/assets/fetched/

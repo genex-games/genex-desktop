@@ -11,8 +11,12 @@ const ROUTED = ["AGENTS.md", "src/AGENTS.md", "tests/AGENTS.md", "docs/agent/glo
 const IMPORTS = ["CLAUDE.md", "src/CLAUDE.md", "tests/CLAUDE.md"];
 // scripts/build.mjs copies these trees into every user's workspace, where in-app engines read
 // any AGENTS.md/CLAUDE.md as their own instructions.
-const SHIPPED = ["src/harness-seed", "src/game-template"];
-const PAYLOAD = new Set(["src/game-template/CLAUDE.md"]);
+const SHIPPED = ["src/harness-seed", "src/game-template", "src/game-template-cpp", "src/game-template-rust"];
+const PAYLOAD = new Set([
+  "src/game-template/CLAUDE.md",
+  "src/game-template-cpp/CLAUDE.md",
+  "src/game-template-rust/CLAUDE.md",
+]);
 
 const unfenced = (text: string) => text.replace(/^\s*(```|~~~)[\s\S]*?^\s*\1.*$/gm, "");
 const prose = (text: string) => unfenced(text).replace(/`[^`\n]*`/g, "");
@@ -138,21 +142,27 @@ test("shipped-tree check finds nested and differently cased instruction files bu
     "src/game-template/CLAUDE.md": "payload",
     "src/game-template/CLAUDE.own.md": "payload",
     "src/game-template/src/AGENTS.md": "dev",
+    "src/game-template-cpp/CLAUDE.md": "payload",
+    "src/game-template-cpp/src/CLAUDE.md": "dev",
+    "src/game-template-rust/CLAUDE.md": "payload",
+    "src/game-template-rust/CLAUDE.own.md": "payload",
+    "src/game-template-rust/src/Agents.md": "dev",
     "src/harness-seed/loop/claude.md": "dev",
     "src/harness-seed/AGENTS.md": "dev",
     "src/main/AGENTS.md": "fine",
   });
   assert.deepEqual(shippedInstructions(dir).sort(), [
+    "src/game-template-cpp/src/CLAUDE.md",
+    "src/game-template-rust/src/Agents.md",
     "src/game-template/src/AGENTS.md",
     "src/harness-seed/AGENTS.md",
     "src/harness-seed/loop/claude.md",
   ]);
 });
 
-test("no developer AGENTS.md or CLAUDE.md ships inside harness-seed or game-template", () => {
-  assert.ok(
-    fs.existsSync(path.join(root, "src/game-template/CLAUDE.md")),
-    "the template payload moved; update PAYLOAD",
-  );
+test("no developer AGENTS.md or CLAUDE.md ships inside harness-seed or any game template", () => {
+  for (const payload of PAYLOAD) {
+    assert.ok(fs.existsSync(path.join(root, payload)), `${payload} moved; update PAYLOAD`);
+  }
   assert.deepEqual(shippedInstructions(root), []);
 });

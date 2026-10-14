@@ -391,6 +391,29 @@ describe("codex engine", () => {
     assert.ok(sandboxed(seen.at(-1)!.argv));
   });
 
+  /**
+   * A C++ web session's emcc writes its own Emscripten cache, which the host keeps in its scratch
+   * (`<scratch>/cpp-sessions/<game>/em-cache`), never in the game folder: a builder may write it
+   * beside its workspace; a session that only reads never gets it.
+   */
+  it("lets a C++ builder write its own Emscripten cache, and a read-only session never", async () => {
+    const { fn, seen } = fakeExec(successRun);
+    const { engine, root } = await signedInEngine(fn);
+    const game = path.join(root, "game-cpp");
+    const cache = path.join(root, "scratch", "cpp-sessions", "game-cpp", "em-cache");
+    await mkdir(game, { recursive: true });
+    const cpp = { store: path.join(root, "store"), path: [], env: { EM_CACHE: cache }, commandTimeoutMs: 1000 };
+    const writable = (argv: string[]) => {
+      const roots = argv.find((arg) => arg.startsWith("sandbox_workspace_write.writable_roots="));
+      return roots ? (JSON.parse(roots.slice(roots.indexOf("=") + 1)) as string[]) : null;
+    };
+    await engine.delegate({ prompt: "build pong", cwd: game, cpp });
+    assert.deepEqual(writable(seen.at(-1)!.argv), [game, cache], "the workspace and its own cache");
+    await engine.delegate({ prompt: "look at pong", cwd: game, readOnly: true, cpp });
+    const looked = seen.at(-1)!;
+    assert.deepEqual(writable(looked.argv), [looked.cwd], "a reader writes only its own folder");
+  });
+
   it("a Codex worker is always boxed: its roots writable, the network on only in a Bypass chat, never the bypass flag", async () => {
     // Codex has no hook Genex sets and its bypass flag drops every fence, so a worker is boxed in
     // every mode: the never-touch list holds for its writes at the OS boundary.
@@ -1246,6 +1269,22 @@ async function waitForFile(file: string, timeoutMs = 5_000): Promise<string> {
   }
   throw new Error(`${file} never appeared`);
 }
+
+describe("a C++ game's capture on codex", () => {
+  it("names the destination it builds only for a C++ game, and hands it to the studio", async () => {
+    const { bridgeTools } = await import("../../src/substrate/engines/codex.ts");
+    const onCapture = async () => "ok";
+    const cpp = { store: "/store", path: [], env: {}, commandTimeoutMs: 1000 };
+    const capture = (request: Parameters<typeof bridgeTools>[0]) =>
+      bridgeTools(request).find((tool) => tool.name === "capture")?.parameters.properties as Record<string, unknown>;
+    assert.deepEqual(Object.keys(capture({ prompt: "x", cwd: "/ws", onCapture, cpp })).sort(), ["cameras", "target"]);
+    assert.deepEqual(
+      Object.keys(capture({ prompt: "x", cwd: "/ws", onCapture })).sort(),
+      ["cameras", "page"],
+      "a Three.js game's capture names its cameras and page, never a destination",
+    );
+  });
+});
 
 describe("the modeller on codex (AG-930)", () => {
   it("offers blender through the shell bridge only when granted, and routes the call to the studio's handler", async () => {

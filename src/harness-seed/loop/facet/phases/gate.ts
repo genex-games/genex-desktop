@@ -11,6 +11,7 @@ import { StopCode, stopWith } from "../../outcomes.ts";
 import { RunEvent } from "../../run-events.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { CLIP_REASON } from "../../text.ts";
+import { stackOfShape, wiringFor } from "../../native-loop.ts";
 import type { Scoreboard } from "../../checks.ts";
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
@@ -26,6 +27,15 @@ import { admitRound } from "../admission.ts";
 import { judgedOnMotion } from "../../motion-intent.ts";
 import { ownsCameraWiring } from "../camera-wiring.ts";
 import type { Check } from "../../spec.ts";
+
+/**
+ * The round takes other facets' work by union merge into the shape's own entry (`src/main.cpp`
+ * for C++ · raylib) and re-scores the merged incumbent on its stack. run-dispatch.ts and
+ * chat-dispatch.ts refuse a raylib night on a kept copy without this mark (`servesNative`).
+ */
+export const SERVES_NATIVE = true;
+/** The round re-scores the merged incumbent on its stack (`stackOfShape`): a Rust · wgpu facet's merge goes into `src/main.rs`. */
+export const SERVES_RUST = true;
 
 /** The round's gate — a stop, the clock, a round that would not fit, fair share — and its opening: the status, the event, the user's steering. */
 export async function openRound(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
@@ -134,8 +144,7 @@ async function mergeIntegration(loop: FacetLoop, round: FacetRound, head: string
         {
           owned: ownedByFacet(loop),
           message: `facet ${facet.id}: take integration ${shortSha(head)} (resolved by ownership)`,
-          wiring: !ownShape,
-          ...(ownShape && shape?.main ? { main: shape.main } : {}),
+          ...wiringFor(shape, ownShape),
         },
       ),
   });
@@ -176,7 +185,8 @@ async function noteLeadChanges(
     before,
     after,
     owned: ownedByFacet(loop),
-    template: !ownShape,
+    // A compiled entry always carries the wiring block, as its merge above unions it.
+    template: wiringFor(shape, ownShape).wiring,
     main: shape?.main ?? null,
   }).catch(() => []);
   if (files.length) loop.integrationNote = leadChangesNote(files, head);
@@ -242,7 +252,7 @@ function mergedLookExtras(loop: FacetLoop): { motion: number; audio: boolean } {
 
 /** One evidence pass over the merged incumbent, and its measured checks laid over the board. */
 async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktree: string): Promise<void> {
-  const { appendRun, ctx, facet, facetSetup, handle, references, run, seed, spec } = loop;
+  const { appendRun, ctx, facet, facetSetup, handle, references, run, seed, shape, spec } = loop;
   const merged = await gatherEvidence(ctx, {
     run,
     iterationId: `${round.iterationId}m`,
@@ -260,7 +270,14 @@ async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktre
   });
   if (!merged.ok) return;
   loop.incumbentEvidence = merged;
-  const { results } = await runDeterministicChecks(ctx, { spec, evidence: merged, diffs: {}, handle, references });
+  const { results } = await runDeterministicChecks(ctx, {
+    spec,
+    evidence: merged,
+    diffs: {},
+    handle,
+    references,
+    stack: stackOfShape(shape),
+  });
   const rescored = Object.values(toScoreboard(results)).filter((entry) => isMeasured(entry));
   const changed = rescored
     .filter((entry) => isMeasured(loop.board[entry.id]) && loop.board[entry.id].pass !== entry.pass)

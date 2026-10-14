@@ -97,6 +97,10 @@ jobs:
     runs-on: macos-26
     environment: ${{ needs.validate.outputs.publish == 'true' && 'release' || 'candidate' }}
     timeout-minutes: 60
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds).
+    permissions:
+      contents: read
+      actions: read
     outputs:
       signed: ${{ steps.keychain.outputs.signed }}
     steps:
@@ -158,6 +162,14 @@ jobs:
             echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
             echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
           } >> "$GITHUB_ENV"
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
       - name: Make (sign, notarize and staple when signed)
         run: npm run make -- --platform darwin --arch arm64
       - name: Verify the signature, Gatekeeper and the staple
@@ -199,6 +211,10 @@ jobs:
     needs: [validate, regression]
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds).
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -216,8 +232,24 @@ jobs:
       - run: npm run rebuild:terminal
       - name: Check the Linux runtime after rebuilding the terminal
         run: npm run runtime:check
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
       - name: Make (deb, rpm, zip)
         run: npm run make -- --platform linux --arch x64
+      # The deb carries the pinned ANGLE builds, their SwiftShader split (the Rust runtime's software
+      # Vulkan) and the Linux sysroot: every byte is held to its pin before the package is uploaded.
+      - name: Pinned ANGLE builds, SwiftShader split and Linux sysroot in the deb
+        run: |
+          mapfile -t debs < <(find out/make/deb -type f -name '*.deb')
+          test "${#debs[@]}" -eq 1
+          dpkg-deb --extract "${debs[0]}" "$RUNNER_TEMP/deb"
+          node scripts/ci/rust-linux-host.ts --step bundle-pins --resources "$RUNNER_TEMP/deb/usr/lib/genex/resources/app.asar.unpacked/dist/resources" --evidence .studio-dev/evidence/rust-linux-host
       - name: Packaged smoke
         run: xvfb-run -a npm run test:packaged
       - name: Packaged terminal
@@ -243,7 +275,8 @@ jobs:
     runs-on: windows-latest
     environment: ${{ needs.validate.outputs.publish == 'true' && 'release' || 'candidate' }}
     timeout-minutes: 60
-    # actions: read lets SignPath fetch the workflow artifacts it signs.
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds) and
+    # SignPath fetch the workflow artifacts it signs.
     permissions:
       contents: read
       actions: read
@@ -278,6 +311,14 @@ jobs:
             exit 0
           fi
           echo "signed=true" >> "$GITHUB_OUTPUT"
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
       - name: Make, signed by SignPath
         if: steps.winsign.outputs.signed == 'true'
         uses: ./.github/actions/windows-signpath

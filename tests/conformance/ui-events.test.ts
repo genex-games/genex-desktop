@@ -12,6 +12,7 @@ import ts from "@typescript/typescript6";
 import {
   UI_EVENT_TYPES,
   harnessUiEvent,
+  isHostOnlyUiEvent,
   isUiEvent,
   isUiEventIn,
   isUiEventType,
@@ -126,6 +127,56 @@ test("a harness notification is forwarded as it came, a name outside the map inc
     { type: "harness.invented", payload: { note: 1 } },
     { type: "judge.panel", payload: null },
   ]);
+});
+
+test("a C++ build's progress and the toolchain install are the host's own: a harness-forwarded copy is dropped", async () => {
+  for (const name of ["build.progress", "toolchain.install"]) {
+    assert.equal(isUiEventType(name), true, name);
+    assert.equal(isHostOnlyUiEvent(name), true, name);
+  }
+  for (const name of ["preview.frame", "judge.verdict", "harness.invented"])
+    assert.equal(isHostOnlyUiEvent(name), false);
+  const heard: UiEvent[] = [];
+  const { api } = await coreLite({ init: false, onUiEvent: (event) => heard.push(event) });
+  const notify = api()["ui.notify"] as (p: { type: string; payload?: unknown }) => Promise<unknown>;
+  const progress = { project: "pong", target: "web", purpose: "live", phase: "done", at: 1 };
+  const job = { phase: "installed", entry: null, completed: 4, total: 4, startedAt: "2026-10-01T00:00:00.000Z" };
+  assert.equal(await notify({ type: "build.progress", payload: progress }), false);
+  assert.equal(await notify({ type: "toolchain.install", payload: job }), false);
+  assert.equal(await notify({ type: "run.settled", payload: { runId: "run-1" } }), true);
+  assert.deepEqual(heard, [{ type: "run.settled", payload: { runId: "run-1" } }]);
+});
+
+test("a native run's status and log are the host's own: a harness-forwarded copy is dropped", async () => {
+  for (const name of ["native.status", "native.log"]) {
+    assert.equal(isUiEventType(name), true, name);
+    assert.equal(isHostOnlyUiEvent(name), true, name);
+  }
+  const heard: UiEvent[] = [];
+  const { api } = await coreLite({ init: false, onUiEvent: (event) => heard.push(event) });
+  const notify = api()["ui.notify"] as (p: { type: string; payload?: unknown }) => Promise<unknown>;
+  const status = {
+    project: "pong",
+    runId: "nr-1",
+    target: "macos",
+    state: "ready",
+    mode: "window",
+    pid: 4242,
+    backend: "metal-angle",
+    refusal: null,
+    problem: null,
+    exit: null,
+    owner: null,
+    startedAt: "2026-10-01T00:00:00.000Z",
+    endedAt: null,
+  };
+  // A forged status would put a card on the stage; a forged log, lines no game printed.
+  assert.equal(await notify({ type: "native.status", payload: status }), false);
+  assert.equal(
+    await notify({ type: "native.log", payload: { project: "pong", runId: "nr-1", lines: ["x"], truncated: false } }),
+    false,
+  );
+  assert.deepEqual(heard, []);
 });
 
 test("the preload delivers every pushed event to onEvent unfiltered", () => {

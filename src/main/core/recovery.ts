@@ -42,6 +42,7 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { stopMoments } from "./moment-stops.ts";
 import { RetainedState } from "../../substrate/game-candidate.ts";
+import { assertWritableGame } from "../../substrate/game-workspace.ts";
 
 /** Words the recovery writes into the logs the user reads, and the errors it throws at them. */
 const MESSAGE = {
@@ -63,7 +64,7 @@ const MESSAGE = {
 } as const;
 
 /** The seed manifest's file name in userData. */
-const SEED_MANIFEST_FILE = "harness-seed-manifest.json";
+export const SEED_MANIFEST_FILE = "harness-seed-manifest.json";
 /** The longest layout note the agent's memory keeps. */
 const MEMORY_NOTE_MAX_CHARS = 400;
 /** How much of the migrated harness's own type check reaches the log. */
@@ -1037,6 +1038,8 @@ export class RecoveryService {
   ): Promise<SnapshotRecord> {
     if (project) {
       await this.#core.assertProjectAllowed(this.#core.games.dirFor(project));
+      // A snapshot writes the game's history into its folder: a newer Genex's game is read-only.
+      await assertWritableGame(this.#core.games.dirFor(project));
       this.#core.snapshots.register({ name: project, dir: this.#core.games.dirFor(project) });
       await this.#core.snapshots.init();
     }

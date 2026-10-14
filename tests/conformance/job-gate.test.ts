@@ -17,7 +17,7 @@ import { neverTouchFence } from "../../src/substrate/engines/claude-permissions.
 import { NeverTouchKind, type NeverTouchList } from "../../src/substrate/engines/never-touch.ts";
 import type { WorkerSeat } from "../../src/substrate/engines/types.ts";
 import { isInside } from "../../src/substrate/paths.ts";
-import { baseDenyRead } from "../../src/substrate/spawn.ts";
+import { baseDenyRead, phoneDenyRead } from "../../src/substrate/spawn.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -152,8 +152,9 @@ describe("a job's gate and box", () => {
     const policy = jobPolicy(JobGate.Wide, reachOf(f), await neverTouchFence(f.list));
     const worker = await bypassWorkerBox(f);
     // The engine's own protected list (the sign-in stores and its login homes) is the base sandbox's
-    // for every job; the never-touch list the host builds names the sign-in stores as well.
-    const engineOwn = new Set([...baseDenyRead(), path.join(f.root, "no-system-login")]);
+    // for every job, and so are the phone keys and device tools (`phoneDenyRead`); the never-touch
+    // list the host builds names the sign-in stores as well.
+    const engineOwn = new Set([...baseDenyRead(), ...phoneDenyRead(), path.join(f.root, "no-system-login")]);
     const own = (list: string[]) => list.filter((dir) => !engineOwn.has(dir));
     assert.deepEqual(policy.allowWrite, worker.allowWrite, "the same writable folders");
     assert.deepEqual(policy.denyWrite, own(worker.denyWrite), "the same write denies");

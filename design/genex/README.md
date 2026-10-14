@@ -409,7 +409,11 @@ in with the welcome's Planner (25% smaller, written once, then floating); the he
 working sidebar row say Naming… in ink-3 until the model's name arrives, the folder is made from
 it, and the game's own chat sends the message as home fades out over it. **New game**, Games
 **+**, and Command-N open home, as the wordmark does, with the cursor in its composer; there is no
-New game dialog. The chip's **Open a folder…** opens the Open a game folder sheet before any
+New game dialog for the normal Browser flow. On a supported C++ host, the secondary **C++ game…**
+action under the composer opens a dedicated chooser: name, **Saved to** with Change…, then
+**Where will people play?** (Browser checked; Mac, Windows, Linux). Every choice in this dialog
+uses C++ · raylib, including Browser alone; it checks missing tools when opened. Cancel/Escape
+return to Home and keep its draft. The welcome always ends at Home. The chip's **Open a folder…** opens the Open a game folder sheet before any
 writes: the folder's path under the title; one tinted summary (folder glyph and what the game is) or, when the folder holds more than one
 game, radio rows under "Which game should Genex open?"; an engine export's refusal; a collapsed
 **Details** (how it runs, packages, history, what a build still needs, every file Genex adds),
@@ -567,12 +571,13 @@ screen lists them under a small-caps **build with** as one radio group of 36px r
 on a surface with an accent dot), OpenCode default first and picked; a short window drops the mark
 for it. The marks are the vendors' own paths, unaltered (`ui/provider-marks.ts`). All art is canvas in the empty states' wireframe
 language, reads theme colours from CSS and holds a still frame under Reduce Motion. Skip for now
-and Start building fade into home, the welcome's idea waiting in its composer.
+and Start building fade into Home with the idea waiting in its composer. C++ creation remains
+the secondary C++ game… action there.
 
 After the welcome, the Genex promo is a 360px surface card floating 16px from a bottom corner
 (above the workspace, beneath dialogs and toasts) that moves nothing beneath it: bottom-left while
 home is up, clear of home's composer, and bottom-right over a game's stage, away from the chat's
-composer. It holds a 19:10 muted looping
+composer. It waits while a dialog is open. It holds a 19:10 muted looping
 film (`src/renderer/media`, rendered with Remotion from `design/genex-promo-video/`; its poster
 under Reduce Motion), a 28px translucent close over it, a 13px ink-3 eyebrow, a 17px title,
 three 18px-glyph rows (14px medium title, one 13px ink-3 line: models, sound and art, publishing
@@ -627,7 +632,7 @@ says what goes and what stays, Nothing to free up when there is none) above one 
 (Build copies, Build pictures, Rewind copies) with its size in mono or None. Freeing asks first and
 then says what it freed under the cards. The chat header offers the same per game as a labelled
 **Free N GB** header control once a game's space reaches 1 GB.
-Every tab (Games, Storage, Appearance, Model Providers, Local Models, Harness and Permissions) uses the same
+Every tab (Games, Storage, Appearance, Model Providers, Local Models, Toolchains, Harness and Permissions) uses the same
 viewport-capped 860px width and 720px content height; changing tabs
 must not resize or reposition the dialog.
 Escape/Close restores its entry point; arrow keys and Home/End navigate sections.

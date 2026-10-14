@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>__GAME_TITLE__</title>
+    <link rel="icon" href="data:," />
+    <!--
+      The web shell of a rust-wgpu game: the studio's page around the browser build, index.html
+      beside game.js and game_bg.wasm (the Rust lane's web branch, src/main/rust-build-web.ts,
+      writes it with the game's title).
+
+      WebGPU is the minimum; there is no fallback renderer. Before the game's module is fetched the
+      shell checks for navigator.gpu, an adapter, and adapter limits at WebGPU's defaults; then
+      studio_boot runs the renderer's own floor check. Any refusal shows the "needs WebGPU" page
+      (its copy is the MESSAGE object below) with the typed code gpu-unsupported, and the game never
+      starts. The refusal is reported where the host and the prober read a page: window.__studio is
+      bound with only state(), which answers {error: "gpu-unsupported", volatile: {gpu: {reason,
+      limit}}}, and window.GenexShell.status carries the same.
+
+      Assets: a browser cannot list a folder, so the build writes assets.json (the asset map) beside
+      the page. Before studio_boot the shell hands the map to studio_assets_plan, fetches each file
+      it planned from assets/ (never a URL outside that folder, never more bytes than planned) and
+      hands it to studio_assets_preload, which admits it only at the recorded length and digest.
+      Each step is bound only when the module exports it.
+
+      A boot that fails after that (the module, its wasm, the saves preload, an asset or
+      studio_boot throws) shows the "couldn't start" card with the typed code boot-failed, never an empty stage, and
+      binds window.__studio with only state(), which answers {error: "boot-failed", volatile:
+      {boot: {reason}}}.
+
+      Device hints: studio_boot gets the page's hints as JSON (maxTouchPoints, a coarse pointer, the
+      screen's short side in CSS pixels, and deviceMemory, hardwareConcurrency and
+      userAgentData.mobile where the browser exposes them). The renderer classifies the browser
+      from them (a desktop or a phone class, and its memory budget); a page that sends none is
+      read as a phone.
+
+      Saves: the game's synchronous save/load go to an in-memory mirror inside the module. Before
+      studio_boot starts the game (its first reset), the shell fills the mirror from the game's
+      IndexedDB database; files saved since are written back write-behind when the page is idle,
+      hidden or left (GenexShell.flushSaves() forces one). A write the browser refuses stays
+      pending, state().error says save-quota (or save-unavailable without IndexedDB) and the page
+      shows a notice.
+
+      Page contract: window.__studio (version 1) as the C++ web shell's. Every verb goes through the
+      one studio_call export (genex-studio's Studio::web(): the {id:null, ok, op, result} envelope
+      the C++ webCall answers, the shared ops only) and is bound with the C++ shell's VERBS table and
+      page shapes. renderSettings({set}) is the native renderSettings verb, and a change the game
+      refuses answers {__refused: code}, which the studio reads as the native refusal.
+      capture(camera) draws that view, awaits studio_capture (top-down BGRA from the world target,
+      never the canvas) and hands the PNG to the studio's capture shim
+      (window.__studioCapture), as the C++ shell does. Each is bound only when its export exists
+      (studio_call for the verbs, studio_capture for capture), as the C++ shell binds each verb. The
+      runtime's spike shell (native/genex-rust/web/shell.html) adds captureRaw() and selfTest(); a
+      game's page has neither. window.GenexShell.status = {state: "starting" | "running" |
+      "unsupported" | "failed", code, reason, limit, receipt}.
+
+      Frames: the canvas follows its displayed size from the moment it is shown (a resize, or the
+      Live view getting its size while studio_boot still runs). Each animation frame feeds the game
+      whole refreshes of the display (its rate measured from the frame intervals), not the frame's
+      jittery time, so the sim's 60 Hz ticks land on every second refresh of a 120 Hz display.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --page: #f4f1ea;
+        --card: #ffffff;
+        --ink: #1d1f24;
+        --muted: #5b606b;
+        --rule: #dcd6ca;
+        --accent: #2b6cb0;
+        --warn: #9a4b00;
+        --stage: #12141c;
+        --radius: 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --page: #12141c;
+          --card: #1c1f29;
+          --ink: #eceae4;
+          --muted: #a3a7b2;
+          --rule: #2e3240;
+          --accent: #7fb2ec;
+          --warn: #f0b46a;
+        }
+      }
+      :root[data-theme="dark"] {
+        --page: #12141c;
+        --card: #1c1f29;
+        --ink: #eceae4;
+        --muted: #a3a7b2;
+        --rule: #2e3240;
+        --accent: #7fb2ec;
+        --warn: #f0b46a;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--stage);
+        color: var(--ink);
+        font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #game {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+        touch-action: none;
+      }
+      #game[hidden] {
+        display: none;
+      }
+      body.unsupported {
+        background: var(--page);
+        overflow: auto;
+      }
+      #unsupported {
+        box-sizing: border-box;
+        max-width: 38rem;
+        margin: 0 auto;
+        padding: 12vh 16px 48px;
+      }
+      #unsupported[hidden] {
+        display: none;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius);
+        padding: 28px 28px 20px;
+      }
+      .card h1 {
+        margin: 0 0 8px;
+        font-size: 1.5rem;
+        line-height: 1.25;
+        text-wrap: balance;
+      }
+      .card h2 {
+        margin: 20px 0 6px;
+        font-size: 0.8rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .card p,
+      .card li {
+        color: var(--ink);
+      }
+      .card ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+      .card .excluded {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .card footer {
+        margin-top: 20px;
+        padding-top: 12px;
+        border-top: 1px solid var(--rule);
+        color: var(--muted);
+        font-size: 0.85rem;
+        overflow-wrap: anywhere;
+      }
+      .card code,
+      #save-notice code {
+        font: 0.85rem ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--accent);
+      }
+      #save-notice {
+        position: fixed;
+        left: 50%;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        box-sizing: border-box;
+        width: max-content;
+        max-width: calc(100vw - 32px);
+        padding: 10px 14px;
+        background: var(--card);
+        color: var(--ink);
+        border: 1px solid var(--rule);
+        border-left: 4px solid var(--warn);
+        border-radius: 10px;
+        font-size: 0.9rem;
+        line-height: 1.4;
+        box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+        pointer-events: none;
+      }
+      #save-notice[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" tabindex="0" aria-label="Game" hidden></canvas>
+    <main id="unsupported" hidden>
+      <section class="card" role="alert" aria-labelledby="unsupported-title"></section>
+    </main>
+    <div id="save-notice" role="status" aria-live="polite" hidden></div>
+    <script type="module">
+      /** Every word the shell shows. */
+      const MESSAGE = {
+        unsupported: {
+          title: "This game needs WebGPU",
+          body: "Your browser or graphics hardware does not offer WebGPU, which this game draws with. There is no fallback, so the game cannot start here.",
+          supportedHeading: "Supported browsers",
+          supported: [
+            "Chrome or Edge on Windows, macOS and ChromeOS",
+            "Chrome on Android, on supported GPUs",
+            "Safari 26 on macOS, iOS and iPadOS",
+            "Firefox 141 or later on Windows, Firefox 147 or later on macOS",
+          ],
+          excludedHeading: "Not supported",
+          excluded:
+            "Firefox on Linux and Android, Safari before 26, Chrome on Linux outside its WebGPU GPU list, and any browser with WebGPU turned off.",
+          codeLabel: "Code",
+        },
+        failed: {
+          title: "This game couldn’t start",
+          body: "Something went wrong while the game was loading, so it isn’t running. Reload to try again; if it keeps happening, the game’s build needs a fix.",
+          codeLabel: "Code",
+        },
+        saves: {
+          "save-quota": "Progress isn’t being saved: this browser’s storage for the game is full.",
+          "save-unavailable": "Progress isn’t being saved: this browser keeps no storage for the game.",
+        },
+      };
+      /** WebGPU's default limits (wgpu's Limits::defaults()): an adapter below any is below core. */
+      const CORE_MAXIMA = {
+        maxTextureDimension1D: 8192,
+        maxTextureDimension2D: 8192,
+        maxTextureDimension3D: 2048,
+        maxTextureArrayLayers: 256,
+        maxBindGroups: 4,
+        maxBindingsPerBindGroup: 1000,
+        maxDynamicUniformBuffersPerPipelineLayout: 8,
+        maxDynamicStorageBuffersPerPipelineLayout: 4,
+        maxSampledTexturesPerShaderStage: 16,
+        maxSamplersPerShaderStage: 16,
+        maxStorageBuffersPerShaderStage: 8,
+        maxStorageTexturesPerShaderStage: 4,
+        maxUniformBuffersPerShaderStage: 12,
+        maxUniformBufferBindingSize: 65536,
+        maxStorageBufferBindingSize: 134217728,
+        maxVertexBuffers: 8,
+        maxBufferSize: 268435456,
+        maxVertexAttributes: 16,
+        maxVertexBufferArrayStride: 2048,
+        maxColorAttachments: 8,
+        maxComputeWorkgroupStorageSize: 16384,
+        maxComputeInvocationsPerWorkgroup: 256,
+        maxComputeWorkgroupSizeX: 256,
+        maxComputeWorkgroupSizeY: 256,
+        maxComputeWorkgroupSizeZ: 64,
+        maxComputeWorkgroupsPerDimension: 65535,
+      };
+      /** Alignments, which an adapter may only lower. */
+      const CORE_ALIGNMENTS = { minUniformBufferOffsetAlignment: 256, minStorageBufferOffsetAlignment: 256 };
+      const GPU_UNSUPPORTED = "gpu-unsupported";
+      const BOOT_FAILED = "boot-failed";
+      const Reason = {
+        NoWebGpu: "no-webgpu",
+        NoAdapter: "no-adapter",
+        LimitBelowCore: "limit-below-core",
+      };
+      const State = { Starting: "starting", Running: "running", Unsupported: "unsupported", Failed: "failed" };
+      /** Why a flush of the saves mirror failed (genex-core's MirrorError wire codes). */
+      const SaveError = { Quota: "save-quota", Unavailable: "save-unavailable" };
+      /** One live frame feeds the simulation at most this long (the runtime caps it too). */
+      const MAX_FRAME_MS = 250;
+      /** The display refresh rates the shell recognises in its frame intervals, in Hz. */
+      const DISPLAY_RATES_HZ = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 180, 240];
+      /** A measured refresh within this share of a listed rate's interval is that rate (the nearest one). */
+      const DISPLAY_RATE_TOLERANCE = 0.08;
+      /** The rate in use is kept while the measured refresh stays within this share of it. */
+      const DISPLAY_RATE_KEEP = 0.15;
+      /** The refresh is the median of this many recent frame intervals. */
+      const REFRESH_SAMPLES = 31;
+      /** Only intervals shorter than this are refresh samples (a stall is not a refresh). */
+      const REFRESH_SAMPLE_MAX_MS = 100;
+      /** How fast the frames' phase against the refreshes is followed (a share per frame). */
+      const PHASE_FOLLOW = 1 / 32;
+      /** The IndexedDB object store a game's saves are kept in, keyed by save name. */
+      const SAVES_STORE = "files";
+      const SAVES_DB_VERSION = 1;
+      /** An idle flush waits at most this long for the browser to be idle. */
+      const SAVE_IDLE_TIMEOUT_MS = 2000;
+      /** After a refused flush, the next idle one waits this long (a hidden or left page flushes at once). */
+      const SAVE_RETRY_MS = 5000;
+      /** The build's asset map, and the folder the files it names are fetched from. */
+      const ASSET_MAP = "assets.json";
+      const ASSETS_DIR = "assets/";
+      /** How many asset files are fetched at once. */
+      const ASSET_FETCHES = 6;
+      /** Why an asset stopped the boot (the module's own refusals keep their codes). Wire values. */
+      const AssetFailure = {
+        FetchFailed: "asset-fetch-failed",
+        TooLarge: "asset-too-large",
+        Outside: "asset-outside",
+      };
+
+      const canvas = document.getElementById("game");
+      const notice = document.getElementById("save-notice");
+      const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
+      const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
+      const shell = { status, module: null, world: null, flushSaves: async () => {} };
+      window.GenexShell = shell;
+
+      function firstLimitBelowCore(limits) {
+        for (const [name, least] of Object.entries(CORE_MAXIMA)) {
+          if (!(Number(limits?.[name]) >= least)) return name;
+        }
+        for (const [name, most] of Object.entries(CORE_ALIGNMENTS)) {
+          if (!(Number(limits?.[name]) <= most)) return name;
+        }
+        return null;
+      }
+
+      /** The refusal before anything is fetched, or null when the browser looks like WebGPU core. */
+      async function preflight() {
+        if (!("gpu" in navigator) || !navigator.gpu) return { reason: Reason.NoWebGpu };
+        let adapter = null;
+        try {
+          adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+        } catch {
+          adapter = null;
+        }
+        if (!adapter) return { reason: Reason.NoAdapter };
+        const limit = firstLimitBelowCore(adapter.limits);
+        return limit ? { reason: Reason.LimitBelowCore, limit } : null;
+      }
+
+      /** One element with its text (never markup) and attributes. */
+      function element(tag, text, attributes = {}) {
+        const made = document.createElement(tag);
+        if (text) made.textContent = text;
+        for (const [name, value] of Object.entries(attributes)) made.setAttribute(name, value);
+        return made;
+      }
+
+      /** The card's footer: the status's typed code and its reason. */
+      function codeFooter(label) {
+        const detail = [status.reason, status.limit].filter(Boolean).join(": ");
+        const footer = element("footer");
+        footer.append(
+          `${label} `,
+          element("code", status.code, { "data-genex-code": "" }),
+          element("span", detail ? ` (${detail})` : "", { "data-genex-reason": "" }),
+        );
+        return footer;
+      }
+
+      /** Shows the card page in place of the canvas, marked with which card it is. */
+      function showCard(kind, children) {
+        canvas.hidden = true;
+        document.body.classList.add("unsupported");
+        const card = document.querySelector("#unsupported .card");
+        card.setAttribute("data-genex-card", kind);
+        card.replaceChildren(...children);
+        document.getElementById("unsupported").hidden = false;
+      }
+
+      /** The unsupported page's card, its words from MESSAGE and the refusal's code and reason. */
+      function renderUnsupportedCard() {
+        const words = MESSAGE.unsupported;
+        const supported = element("ul");
+        supported.append(...words.supported.map((line) => element("li", line)));
+        const footer = codeFooter(words.codeLabel);
+        showCard(State.Unsupported, [
+          element("h1", words.title, { id: "unsupported-title" }),
+          element("p", words.body),
+          element("h2", words.supportedHeading),
+          supported,
+          element("h2", words.excludedHeading),
+          element("p", words.excluded, { class: "excluded" }),
+          footer,
+        ]);
+      }
+
+      /** The page contract of a game that never started: state() answers the typed refusal, nothing else is bound. */
+      function reportUnsupported() {
+        const refusal = { reason: status.reason, limit: status.limit };
+        window.__studio = {
+          version: 1,
+          state: () => ({ version: 1, error: status.code, volatile: { gpu: { ...refusal } } }),
+        };
+        console.error(`genex: ${status.code} (${[status.reason, status.limit].filter(Boolean).join(": ")})`);
+      }
+
+      function showUnsupported(refusal) {
+        Object.assign(status, {
+          state: State.Unsupported,
+          code: refusal.code ?? GPU_UNSUPPORTED,
+          reason: refusal.reason ?? null,
+          limit: refusal.limit ?? null,
+        });
+        renderUnsupportedCard();
+        reportUnsupported();
+      }
+
+      /**
+       * A boot that threw: the "couldn't start" card with the typed code, never an empty stage. The
+       * page contract answers the code from state() unless the game's verbs were bound already.
+       */
+      function showFailed(error) {
+        Object.assign(status, { state: State.Failed, code: BOOT_FAILED, reason: String(error?.message ?? error) });
+        const words = MESSAGE.failed;
+        showCard(State.Failed, [
+          element("h1", words.title, { id: "unsupported-title" }),
+          element("p", words.body),
+          codeFooter(words.codeLabel),
+        ]);
+        window.__studio ??= {
+          version: 1,
+          state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+        };
+        console.error(error);
+      }
+
+      /** The device hints studio_boot classifies the browser by, as JSON (a member the browser hides is left out). */
+      function deviceHints() {
+        const screen = window.screen ?? { width: 0, height: 0 };
+        const hints = {
+          maxTouchPoints: navigator.maxTouchPoints ?? 0,
+          coarsePointer: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+          shortSideCssPx: Math.round(Math.min(screen.width, screen.height)),
+        };
+        if (typeof navigator.deviceMemory === "number") hints.deviceMemoryGb = navigator.deviceMemory;
+        if (typeof navigator.hardwareConcurrency === "number") hints.hardwareConcurrency = navigator.hardwareConcurrency;
+        if (typeof navigator.userAgentData?.mobile === "boolean") hints.uaMobile = navigator.userAgentData.mobile;
+        return JSON.stringify(hints);
+      }
+
+      /** The canvas's drawing buffer at its displayed size in device pixels (left alone when already there). */
+      function fitCanvas() {
+        const ratio = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+        const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+      }
+
+      /**
+       * Keep the canvas at its displayed size from the moment it is shown. The studio's Live view
+       * can get its size while studio_boot still runs (it keeps a loading page at no size), so a
+       * listener added after the boot missed it and the game drew into a 1×1 canvas: black.
+       */
+      function followCanvasSize() {
+        fitCanvas();
+        window.addEventListener("resize", fitCanvas);
+        if (typeof ResizeObserver === "function") new ResizeObserver(fitCanvas).observe(canvas);
+      }
+
+      function hex(bytes) {
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+
+      // ── saves: the IndexedDB side of the module's in-memory mirror ──
+
+      /** An IndexedDB request as a promise. */
+      function settled(request) {
+        return new Promise((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      /** The game's saves database, or null when this browser keeps none. */
+      async function openSavesDb(name) {
+        if (!("indexedDB" in window) || !window.indexedDB) return null;
+        const request = indexedDB.open(name, SAVES_DB_VERSION);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains(SAVES_STORE)) request.result.createObjectStore(SAVES_STORE);
+        };
+        return settled(request);
+      }
+
+      /** Every saved file, [[name, Uint8Array], …]. */
+      async function readAllSaves(db) {
+        const store = db.transaction(SAVES_STORE, "readonly").objectStore(SAVES_STORE);
+        const [names, values] = await Promise.all([settled(store.getAllKeys()), settled(store.getAll())]);
+        return names.map((name, i) => [String(name), new Uint8Array(values[i])]);
+      }
+
+      /** The mirror filled before the first reset; without IndexedDB the game saves for this page only. */
+      async function preloadSaves(game) {
+        try {
+          saves.db = await openSavesDb(game.studio_saves_database());
+          game.studio_saves_preload(saves.db ? await readAllSaves(saves.db) : []);
+          if (!saves.db) game.studio_saves_unavailable();
+        } catch (error) {
+          console.warn(`genex: saves: ${error?.name ?? error}`);
+          saves.db = null;
+          game.studio_saves_preload([]);
+          game.studio_saves_unavailable();
+        }
+        showSaveNotice(game);
+      }
+
+      /** The typed code of a storage failure. */
+      function saveErrorOf(error) {
+        return error?.name === "QuotaExceededError" ? SaveError.Quota : SaveError.Unavailable;
+      }
+
+      /** Write the files the mirror took in one transaction; resolves with null or the typed code. */
+      async function writeSaves(entries) {
+        if (!saves.db) return SaveError.Unavailable;
+        try {
+          const transaction = saves.db.transaction(SAVES_STORE, "readwrite");
+          const done = new Promise((resolve) => {
+            transaction.oncomplete = () => resolve(null);
+            transaction.onerror = () => resolve(saveErrorOf(transaction.error));
+            transaction.onabort = () => resolve(saveErrorOf(transaction.error));
+          });
+          const store = transaction.objectStore(SAVES_STORE);
+          for (const [name, bytes] of entries) store.put(bytes, name);
+          return await done;
+        } catch (error) {
+          return saveErrorOf(error);
+        }
+      }
+
+      /** The page's notice of a save error (state().error carries the same code). */
+      function showSaveNotice(game) {
+        const code = JSON.parse(game.studio_saves_status()).error;
+        notice.hidden = !code;
+        notice.textContent = code ? MESSAGE.saves[code] : "";
+        if (code) notice.dataset.genexCode = code;
+        else delete notice.dataset.genexCode;
+      }
+
+      /** One flush: take the mirror's dirty files, write them, answer how it went. */
+      async function flushOnce(game) {
+        const entries = game.studio_saves_take();
+        if (entries.length === 0) return;
+        const error = await writeSaves(entries);
+        game.studio_saves_flushed(
+          error,
+          entries.map(([name]) => name),
+        );
+        if (error) saves.retryAt = performance.now() + SAVE_RETRY_MS;
+        showSaveNotice(game);
+      }
+
+      /** Flushes run one after another; this one starts when the last has answered. */
+      function flushSaves(game) {
+        saves.flushing = saves.flushing.then(() => flushOnce(game)).catch((error) => console.warn(error));
+        return saves.flushing;
+      }
+
+      /** After a frame: a flush when the browser is next idle, if anything is pending and no retry is waiting. */
+      function scheduleIdleFlush(game) {
+        if (saves.scheduled || performance.now() < saves.retryAt || game.studio_saves_pending() === 0) return;
+        saves.scheduled = true;
+        const run = () => {
+          saves.scheduled = false;
+          flushSaves(game);
+        };
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(run, { timeout: SAVE_IDLE_TIMEOUT_MS });
+        } else {
+          setTimeout(run, 0);
+        }
+      }
+
+      function listenForSaves(game) {
+        shell.flushSaves = () => flushSaves(game);
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") flushSaves(game);
+        });
+        window.addEventListener("pagehide", () => flushSaves(game));
+      }
+
+      // ── assets: the files the build staged, fetched before the first frame ──
+
+      /** A response's body, refused once it passes `limit` bytes (read no further). */
+      async function boundedBytes(response, name, limit) {
+        const tooLarge = () => new Error(`${AssetFailure.TooLarge}: ${name} is over ${limit} bytes`);
+        if (Number(response.headers.get("content-length")) > limit) throw tooLarge();
+        if (!response.body) return new Uint8Array(0);
+        const reader = response.body.getReader();
+        const bytes = new Uint8Array(limit);
+        let length = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return bytes.subarray(0, length);
+          if (length + value.length > limit) {
+            await reader.cancel();
+            throw tooLarge();
+          }
+          bytes.set(value, length);
+          length += value.length;
+        }
+      }
+
+      /** One planned file: fetched from inside assets/ only, at most its planned size, then handed to the module. */
+      async function fetchAsset(game, base, [name, size]) {
+        const url = new URL(String(name).split("/").map(encodeURIComponent).join("/"), base);
+        if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
+          throw new Error(`${AssetFailure.Outside}: ${name}`);
+        }
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
+        game.studio_assets_preload(name, await boundedBytes(response, name, size));
+      }
+
+      /** The staged assets in the module before studio_boot: the map planned, then each file fetched and admitted. */
+      async function preloadAssets(game) {
+        if (typeof game.studio_assets_plan !== "function") return;
+        const response = await fetch(ASSET_MAP, { cache: "no-store" });
+        if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${ASSET_MAP} answered ${response.status}`);
+        const planned = Array.from(game.studio_assets_plan(await response.text()));
+        const base = new URL(ASSETS_DIR, location.href);
+        const fetchNext = async () => {
+          for (let next = planned.shift(); next; next = planned.shift()) await fetchAsset(game, base, next);
+        };
+        await Promise.all(Array.from({ length: ASSET_FETCHES }, fetchNext));
+      }
+
+      // ── the page contract ──
+
+      /** A PNG of a capture for the page contract (the digest stays the BGRA bytes'). */
+      function pngOf(capture) {
+        const rgba = new Uint8ClampedArray(capture.bgra.length);
+        for (let i = 0; i < rgba.length; i += 4) {
+          rgba[i] = capture.bgra[i + 2];
+          rgba[i + 1] = capture.bgra[i + 1];
+          rgba[i + 2] = capture.bgra[i];
+          rgba[i + 3] = capture.bgra[i + 3];
+        }
+        const board = document.createElement("canvas");
+        board.width = capture.width;
+        board.height = capture.height;
+        board.getContext("2d").putImageData(new ImageData(rgba, capture.width, capture.height), 0, 0);
+        return board.toDataURL("image/png");
+      }
+
+      /** [verb, op, the argument built from the verb's parameter, the answer read from the result] (the C++ shell's table). */
+      const VERBS = [
+        ["seed", "seed", (n) => ({ seed: n }), (r) => r.seed],
+        ["start", "start", () => ({}), () => true],
+        ["pause", "pause", () => ({}), () => true],
+        ["step", "step", (ms) => ({ ms }), (r) => r],
+        ["state", "state", () => ({}), (r) => r],
+        ["input", "input", (arg) => arg ?? {}, (r) => r],
+        ["debugCamera", "debugCamera", (name) => ({ camera: name ?? null }), (r) => r],
+        ["cameras", "cameras", () => ({}), (r) => r.cameras],
+        ["eyes", "eyes", () => ({}), (r) => r.eyes],
+        ["demos", "demos", () => ({}), (r) => r.demos],
+        ["demo", "demo", (name) => ({ name }), (r) => r],
+      ];
+      /** What a verb the game refused answers on the page: its code, which the studio reads as a native game's refusal. */
+      const REFUSED = "__refused";
+
+      /** One op through studio_call: the argument goes in as JSON and the envelope comes back as JSON. */
+      function call(game, op, arg) {
+        const reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        if (reply?.ok === true) return reply.result;
+        console.warn(`${op}: ${reply?.error}`);
+        return undefined;
+      }
+
+      /** Hand a picture to the capture shim; an older shim only notes it, and without one it is returned as taken. */
+      async function throughCaptureShim(url, record) {
+        const shim = window.__studioCapture;
+        if (typeof shim?.paint === "function") {
+          const painted = await Promise.resolve()
+            .then(() => shim.paint(url, record))
+            .catch(() => null);
+          return painted || url;
+        }
+        try {
+          shim?.note?.({ ...record, composited: false });
+        } catch {
+          /* an older shim has no note to take */
+        }
+        return url;
+      }
+
+      /** The verbs whose page-contract shape differs from the op's (the C++ shell's bindPageShapes). */
+      function bindPageShapes(game, api) {
+        api.injectInput = (input) => {
+          const look = { x: input?.look?.dx || 0, y: input?.look?.dy || 0 };
+          const wheel = { x: input?.wheel?.dx || 0, y: input?.wheel?.dy || 0 };
+          const result = call(game, "input", { down: input?.down ?? [], up: input?.up ?? [], look, wheel });
+          return { keys: result?.held ?? [], look, wheel };
+        };
+        api.eye = (name) => api.debugCamera(name);
+        /** The renderer's quality, read (`{}`) or changed (`{set}`), as the native op; a refusal answers `{__refused: code}`. */
+        api.renderSettings = (arg) => {
+          const reply = JSON.parse(game.studio_call("renderSettings", JSON.stringify(arg ?? {})));
+          return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
+        };
+        api.player = () => api.state()?.player ?? null;
+        /** `audio({muted})` mutes; `audio()` is the level probe, which the web build does not measure. */
+        api.audio = (arg) => {
+          if (typeof arg?.muted !== "boolean") return { available: false, rms: 0, centroid: 0 };
+          return call(game, "audio", { muted: arg.muted });
+        };
+        // Bound only when the module exports its capture, as the C++ shell binds each verb.
+        if (typeof game.studio_capture !== "function") return;
+        /** Draws the view, awaits the world-target readback and goes through the capture shim; never the canvas. */
+        api.capture = async (camera) => {
+          const result = call(game, "capture", camera ? { camera } : {});
+          if (result === undefined) return null;
+          const pixels = await game.studio_capture();
+          const url = pngOf(pixels);
+          // The world target's digest and size travel with the picture: capture provenance and the
+          // web-versus-native parity row compare them.
+          const record = {
+            reason: url ? null : "the game's own capture produced no image",
+            drawCalls: result.drawCalls ?? null,
+            ladder: ["render"],
+            digest: pixels.digest,
+            width: pixels.width,
+            height: pixels.height,
+          };
+          return throughCaptureShim(url, record);
+        };
+      }
+
+      function bindStudio(game) {
+        const api = { version: 1 };
+        // Every verb goes through studio_call: a module without it gets no verbs (the C++ shell's rule).
+        if (typeof game.studio_call === "function") {
+          for (const [verb, op, argument, answer] of VERBS) {
+            api[verb] = (value) => {
+              const result = call(game, op, argument(value));
+              return result === undefined ? undefined : answer(result);
+            };
+          }
+          bindPageShapes(game, api);
+        }
+        window.__studio = api;
+        shell.hex = hex;
+      }
+
+      /**
+       * The display's refresh interval in ms from recent frame intervals: the rate in use while
+       * their median stays near it, else the nearest listed rate, else null (unknown).
+       */
+      function displayRefresh(samples, current) {
+        if (samples.length < REFRESH_SAMPLES) return current;
+        const sorted = [...samples].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const off = (interval) => Math.abs(median - interval) / interval;
+        if (current !== null && off(current) <= DISPLAY_RATE_KEEP) return current;
+        const intervals = DISPLAY_RATES_HZ.map((hz) => 1000 / hz).filter((interval) => off(interval) <= DISPLAY_RATE_TOLERANCE);
+        intervals.sort((a, b) => off(a) - off(b));
+        return intervals[0] ?? null;
+      }
+
+      /**
+       * What one animation frame feeds the game: whole display refreshes, never the frame's own
+       * time. A browser stamps frames with its main thread's jitter (±2 ms on a busy page), and the
+       * sim turns frame times into fixed 1000/60 ms ticks: near a tick's boundary, whether two
+       * 120 Hz refreshes made a tick was a coin toss, so frames were drawn 8 and 25 ms apart. The
+       * time not fed yet is carried (`owed`), so none is lost, and it is rounded to refreshes
+       * around its own running mean (`phase`), so the jitter stays clear of a half refresh. On a
+       * display the shell does not recognise (yet) the frame's own time is fed.
+       */
+      function pacedFrameMs(pacer, ms) {
+        if (ms > 0 && ms < REFRESH_SAMPLE_MAX_MS) {
+          pacer.samples.push(ms);
+          if (pacer.samples.length > REFRESH_SAMPLES) pacer.samples.shift();
+        }
+        pacer.refresh = displayRefresh(pacer.samples, pacer.refresh);
+        const refresh = pacer.refresh;
+        if (refresh === null) {
+          const fed = pacer.owed + ms;
+          Object.assign(pacer, { owed: 0, phase: 0 });
+          return fed;
+        }
+        pacer.owed += ms;
+        const fed = Math.max(0, Math.round((pacer.owed - pacer.phase) / refresh)) * refresh;
+        pacer.owed -= fed;
+        pacer.phase += (pacer.owed - pacer.phase) * PHASE_FOLLOW;
+        return fed;
+      }
+
+      function run(game) {
+        let last = performance.now();
+        const pacer = { samples: [], refresh: null, owed: 0, phase: 0 };
+        const frame = (now) => {
+          const ms = pacedFrameMs(pacer, Math.min(MAX_FRAME_MS, Math.max(0, now - last)));
+          last = now;
+          try {
+            game.studio_frame(ms);
+            scheduleIdleFlush(game);
+          } catch (error) {
+            Object.assign(status, { state: State.Failed, code: "frame-failed", reason: String(error?.message ?? error) });
+            return;
+          }
+          requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }
+
+      /**
+       * Where the presenter draws the world inside a canvas of `width` × `height` pixels: the largest
+       * aspect-preserving fit, centred, in whole pixels (genex-render's `letterbox`, the same arithmetic).
+       */
+      function letterbox(width, height, [worldWidth, worldHeight]) {
+        const widthLimited = width * worldHeight <= height * worldWidth;
+        const fitWidth = widthLimited ? width : Math.floor((height * worldWidth) / worldHeight);
+        const fitHeight = widthLimited ? Math.floor((width * worldHeight) / worldWidth) : height;
+        const x = Math.floor((width - fitWidth) / 2);
+        const y = Math.floor((height - fitHeight) / 2);
+        return { x, y, width: fitWidth, height: fitHeight };
+      }
+
+      /**
+       * A page pointer event as the `input` verb's pointer, a fraction of the world picture, or null
+       * on a letterbox bar. The canvas's own size when the boot named no world.
+       */
+      function worldPointer(event) {
+        const box = canvas.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) return null;
+        const world = shell.world ?? [canvas.width, canvas.height];
+        const view = letterbox(canvas.width, canvas.height, world);
+        const x = ((event.clientX - box.left) / box.width) * canvas.width - view.x;
+        const y = ((event.clientY - box.top) / box.height) * canvas.height - view.y;
+        const inside = x >= 0 && y >= 0 && x < view.width && y < view.height;
+        return inside ? { x: x / view.width, y: y / view.height } : null;
+      }
+
+      function listen(game) {
+        const keyEvent = (field) => (event) => {
+          if (event.repeat) return;
+          call(game, "input", { [field]: [event.code] });
+          event.preventDefault();
+        };
+        canvas.addEventListener("keydown", keyEvent("down"));
+        canvas.addEventListener("keyup", keyEvent("up"));
+        canvas.addEventListener("pointerdown", (event) => {
+          canvas.focus();
+          const pointer = worldPointer(event);
+          // A click on a letterbox bar is on no part of the game.
+          if (pointer) call(game, "input", { pointer, tap: ["Mouse1"] });
+        });
+      }
+
+      async function boot() {
+        const refusal = await preflight();
+        if (refusal) return showUnsupported(refusal);
+        const params = new URLSearchParams(location.search);
+        const game = await import("./game.js");
+        await game.default();
+        shell.module = game;
+        // The saves and the assets first: studio_boot starts the game, and its first reset reads them.
+        await preloadSaves(game);
+        await preloadAssets(game);
+        canvas.hidden = false;
+        followCanvasSize();
+        const answer = JSON.parse(await game.studio_boot(canvas, deviceHints()));
+        if (!answer.ok) {
+          canvas.hidden = true;
+          return showUnsupported(answer);
+        }
+        Object.assign(status, { state: State.Running, receipt: answer.receipt });
+        const [worldWidth, worldHeight] = Array.isArray(answer.world) ? answer.world : [];
+        if (worldWidth > 0 && worldHeight > 0) shell.world = [worldWidth, worldHeight];
+        bindStudio(game);
+        listen(game);
+        listenForSaves(game);
+        if (!params.has("paused")) window.__studio.start();
+        run(game);
+      }
+
+      boot().catch(showFailed);
+    </script>
+  </body>
+</html>

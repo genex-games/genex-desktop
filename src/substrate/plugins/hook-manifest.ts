@@ -50,7 +50,7 @@ const nameOf = (entry: unknown, key: string, index: number): string => {
 
 /** The section's list, refusing anything but a list of at most `max` on API 3. */
 function sectionList(m: Pick<PluginManifest, "apiVersion">, section: string, raw: unknown, max: number): unknown[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3(section));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3(section));
   if (!Array.isArray(raw) || raw.length > max) throw new Error(MESSAGE.NotList(section, max));
   return raw;
 }
@@ -115,7 +115,7 @@ function needsList(
   m: PluginManifest,
   locks: ReadonlySet<string>,
 ): string[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3(`${where}.needs`));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3(`${where}.needs`));
   const needs = distinctList(value, LIMIT.Needs, (id) => typeof id === "string" && locks.has(id));
   if (!needs) throw new Error(MESSAGE.InvalidNeeds(where, JSON.stringify(name)));
   return needs;
@@ -174,7 +174,7 @@ function validateReady(m: PluginManifest, tools: PluginManifestTool[]): void {
   m.tools.forEach((raw, index) => {
     const tool = tools[index];
     if (raw.ready === undefined || !tool) return;
-    if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3("tools[].ready"));
+    if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3("tools[].ready"));
     const makes = isAgentTool(tool) && tool.makes !== undefined;
     if (!makes || !quietHarnessTool(tools, raw.ready)) throw new Error(MESSAGE.InvalidReady(JSON.stringify(raw.name)));
     tool.ready = raw.ready;

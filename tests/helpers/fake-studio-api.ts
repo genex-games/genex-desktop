@@ -4,9 +4,11 @@
  * listener calls (`onEvent`, `onTerminal`, …) return a real unsubscribe and have `emit*`
  * counterparts, so a component under test hears pushes exactly as it would from the preload.
  */
+import type { NativeFrameMeta } from "../../src/shared/native-contract.ts";
 import type { StudioApi } from "../../src/shared/studio-api.ts";
 import { ShaderFailure } from "../../src/shared/backdrop-shader.ts";
 import { CliInstallPhase } from "../../src/shared/cli-install.ts";
+import { ToolchainHost } from "../../src/shared/toolchain.ts";
 
 export type StudioMethod = keyof StudioApi;
 export interface StudioCall<M extends StudioMethod = StudioMethod> {
@@ -182,11 +184,36 @@ const METHODS = [
   "acceptProposal",
   "discardProposal",
   "exportGame",
+  "exportSigningReference",
   "modelInstallStatus",
   "cliInstall",
   "cliUpdate",
   "refreshModels",
   "cliInstallStatus",
+  "toolchainStatus",
+  "toolchainInstall",
+  "toolchainCancel",
+  "toolchainPrune",
+  "toolchainInstallClt",
+  "toolchainInstallMobile",
+  "toolchainAcceptAndroidLicence",
+  "nativeRun",
+  "nativeStop",
+  "nativeState",
+  "nativeFront",
+  "nativeEmbed",
+  "nativeUnembed",
+  "nativeInput",
+  "nativeResize",
+  "nativeFrames",
+  "nativeLaunchDevice",
+  "retakeSeedModule",
+  "cratesList",
+  "cratesDecide",
+  "engineEject",
+  "engineUneject",
+  "engineSetTrust",
+  "engineState",
   "pullModel",
   "lookupModel",
   "cancelModelDownload",
@@ -220,6 +247,7 @@ type TerminalEvent = Parameters<Parameters<StudioApi["onTerminal"]>[0]>[0];
 type ClaudeLogin = Parameters<Parameters<StudioApi["onClaudeLogin"]>[0]>[0];
 type CodexLogin = Parameters<Parameters<StudioApi["onCodexLogin"]>[0]>[0];
 type RunSummary = Parameters<Parameters<StudioApi["onRunSummary"]>[2]>[0];
+type FrameListener = Parameters<StudioApi["nativeFrames"]>[0];
 
 export interface FakeStudioApi {
   /** The object to hand to the code under test (or install as `window.studio`). */
@@ -234,8 +262,12 @@ export interface FakeStudioApi {
   emitClaudeLogin(state: ClaudeLogin): void;
   emitCodexLogin(state: CodexLogin): void;
   emitRunSummary(project: string, runId: string, summary: RunSummary): void;
+  /** Hands one frame to the `nativeFrames` subscriber, as the preload does, and waits until it drew. */
+  emitNativeFrame(frame: unknown, meta: NativeFrameMeta): Promise<void>;
   /** Subscribed listeners per `on*` call — 0 after a component unmounts proves it unsubscribed. */
-  listeners(method: "onEvent" | "onTerminal" | "onClaudeLogin" | "onCodexLogin" | "onRunSummary"): number;
+  listeners(
+    method: "onEvent" | "onTerminal" | "onClaudeLogin" | "onCodexLogin" | "onRunSummary" | "nativeFrames",
+  ): number;
 }
 
 export interface FakeStudioOptions {
@@ -301,6 +333,25 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
       startedAt: new Date(0).toISOString(),
     }),
     cliInstallStatus: empty,
+    // An empty toolchain store on an Apple silicon Mac with the Command Line Tools.
+    toolchainStatus: () => ({
+      host: ToolchainHost.MacArm64,
+      clt: { present: true, version: null },
+      installed: [],
+      lock: null,
+      job: null,
+      storeBytes: 0,
+    }),
+    // No game window runs.
+    nativeState: () => null,
+    nativeStop: () => false,
+    nativeFront: () => false,
+    // Live shows no game inside it: nothing is embedded, and no frame arrives.
+    nativeUnembed: () => false,
+    nativeInput: () => false,
+    nativeResize: () => false,
+    // No agent asked for a crate.
+    cratesList: empty,
     cliUpdate: () => ({ provider: "codex", phase: "installed", startedAt: "" }),
     refreshModels: () => true,
     previewState: () => null,
@@ -324,6 +375,7 @@ export function fakeStudioApi(overrides: Partial<StudioApi> = {}, options: FakeS
     onClaudeLogin: new Set<(state: ClaudeLogin) => void>(),
     onCodexLogin: new Set<(state: CodexLogin) => void>(),
     onRunSummary: new Set<{ project: string; runId: string; listener: (summary: RunSummary) => void }>(),
+    nativeFrames: new Set<FrameListener>(),
   };
   const subscribe = <T>(set: Set<T>, entry: T) => {
     set.add(entry);
@@ -336,6 +388,11 @@ export function fakeStudioApi(overrides: Partial<StudioApi> = {}, options: FakeS
     onCodexLogin: ((listener: (state: CodexLogin) => void) => subscribe(sets.onCodexLogin, listener)) as never,
     onRunSummary: ((project: string, runId: string, listener: (summary: RunSummary) => void) =>
       subscribe(sets.onRunSummary, { project, runId, listener })) as never,
+    // One subscriber, as the preload keeps it: a second replaces the first.
+    nativeFrames: ((listener: FrameListener) => {
+      sets.nativeFrames.clear();
+      return subscribe(sets.nativeFrames, listener);
+    }) as never,
   };
   const api = {} as Record<StudioMethod, (...args: unknown[]) => unknown>;
   for (const method of METHODS) {
@@ -368,6 +425,9 @@ export function fakeStudioApi(overrides: Partial<StudioApi> = {}, options: FakeS
     emitRunSummary: (project, runId, summary) => {
       for (const entry of [...sets.onRunSummary])
         if (entry.project === project && entry.runId === runId) entry.listener(summary);
+    },
+    emitNativeFrame: async (frame, meta) => {
+      for (const listener of [...sets.nativeFrames]) await listener(frame, meta);
     },
     listeners: (method) => sets[method].size,
   };

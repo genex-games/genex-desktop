@@ -6,7 +6,10 @@
  * caller's: it rejects and leaves the setup state as it was.
  *
  * On Windows the missing piece is a one-time install behind an administrator prompt, which Set up
- * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing.
+ * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing. On
+ * Linux under Ubuntu's user-namespace restriction Set up installs Genex's AppArmor profile (one
+ * password prompt); AppArmor attaches a profile only when a program starts, so an install there
+ * restarts the app instead of retrying in this process.
  */
 import {
   BootPhase,
@@ -21,11 +24,15 @@ import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 /** What installing the sandbox answered: `cancelled` when the administrator prompt was dismissed. */
 export interface SandboxInstall {
   cancelled: boolean;
+  /** The install takes effect only in a new process (Linux: AppArmor attaches a profile at exec). */
+  restart?: boolean;
 }
 
 export interface BootGateOptions {
-  /** Install the Windows sandbox (one administrator prompt); throws when the install fails. */
+  /** Install what the held problem is missing (one administrator prompt); throws when the install fails. */
   installSandbox?: () => Promise<SandboxInstall>;
+  /** Start the app again, for an install that asks for it; main relaunches and quits. */
+  restart?: () => void;
 }
 
 /** The boot state main answers `studio:boot` with, and the Retry behind `studio:boot.retry`. */
@@ -35,7 +42,7 @@ export interface BootGate {
   hold(problem: SandboxProblem, attempt: () => Promise<void>): void;
   /** Run the held attempt; the state after it. */
   retry(): Promise<BootState>;
-  /** Install the sandbox, then retry; throws when there is nothing to set up or the install fails. */
+  /** Install the sandbox, then retry (or restart the app); throws when there is nothing to set up or the install fails. */
   setUp(): Promise<SandboxSetupResult>;
 }
 
@@ -43,9 +50,15 @@ const MESSAGE = {
   nothingToSetUp: "There is nothing to set up: the protected workspace is not waiting on an install.",
 } as const;
 
-/** Held on the problem Set up fixes: a sandbox that has not been provisioned yet. */
+/**
+ * Held on a problem Set up fixes: a Windows sandbox that has not been provisioned yet, or Ubuntu's
+ * restriction with a profile that can name this copy of Genex.
+ */
 function waitsOnInstall(state: BootState): boolean {
-  return state.phase === BootPhase.SandboxSetup && state.sandbox?.code === SandboxProblemCode.NotProvisioned;
+  if (state.phase !== BootPhase.SandboxSetup || !state.sandbox) return false;
+  const { code, apparmor } = state.sandbox;
+  const installsProfile = code === SandboxProblemCode.UsernsRestricted && apparmor !== undefined;
+  return code === SandboxProblemCode.NotProvisioned || installsProfile;
 }
 
 /** A gate for this launch's `platform`, starting Ready. */
@@ -76,8 +89,12 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
   };
 
   const install = async (run: () => Promise<SandboxInstall>): Promise<SandboxSetupResult> => {
-    const { cancelled } = await run();
+    const { cancelled, restart } = await run();
     if (cancelled) return { outcome: SandboxSetupOutcome.Cancelled, state };
+    if (restart && options.restart) {
+      options.restart();
+      return { outcome: SandboxSetupOutcome.Restarting, state };
+    }
     return { outcome: SandboxSetupOutcome.Installed, state: await retry() };
   };
 

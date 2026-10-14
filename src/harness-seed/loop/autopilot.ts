@@ -62,7 +62,6 @@ import { diedEarly, OptimizationOutcome, StopCode, stopWith } from "./outcomes.t
 import { baseBrief, contractWiringAsk } from "./prompts-build.ts";
 import { integratorBrief } from "./autopilot-prompts.ts";
 import { HostMethod } from "./host-methods.ts";
-import { ProjectStarter } from "./folder-facts.ts";
 import {
   appendRun as appendRunEvent,
   EventKind,
@@ -77,6 +76,10 @@ import { readJournal, writeJournal } from "./run-journal.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isPlainRecord } from "./json.ts";
+import { acquireFor, GameStack } from "./native-contract.ts";
+import { nightStack, templateShapeFor, wiringFor } from "./native-loop.ts";
+import { runScaffoldAsk } from "./run-scaffold.ts";
+import { stackPlannerLines } from "./rust-briefs.ts";
 import { noteHudUpgrade } from "./held-hud.ts";
 import { keptContractWords } from "./contract-kept.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
@@ -369,6 +372,21 @@ const V2_SCHEMA_FALLBACK = [
  */
 const PROBE_GRAMMAR = ["PROBES:", renderCheckGrammar({ kinds: [CheckKind.Probe], helpers: true })].join("\n");
 
+/**
+ * A pipeline night knows an existing C++ · raylib game: it plans with its stack (no one-screen
+ * checks, raylib recipes only), union-merges `src/main.cpp` and leases windows that name their
+ * judging target; it never scaffolds a new one (raylib creation is retired). run-dispatch.ts and
+ * chat-dispatch.ts refuse a raylib night on a kept copy without this mark (`servesNative`,
+ * native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+/**
+ * A pipeline night scaffolds the Rust · wgpu template for a desktop or phone intake, and on a Rust
+ * game plans with its stack (`nightStack`, `stackPlannerLines`), takes Rust recipes only and
+ * union-merges `src/main.rs`.
+ */
+export const SERVES_RUST = true;
+
 const PLAN_SHAPE = `Output JSON only: {"genres":["<genre>"],${GAME_DECLARATION},"craft":[],"facets":[{"id","title","intent","owns":[],"identity":[],"cameras":[],"checks":[{"id","kind","weight","hard",…}],"milestones":[{"id","what","check":{…}|null}],"budgetShare"}],"mainOwner":"<facet id>","base":{"notes":"","files":[{"path","purpose"}]},"integrationNotes":"","assumptions":[]}`;
 
 /**
@@ -385,15 +403,26 @@ export async function decompose(
     scout = null,
     storedGame = null,
     ownShape = false,
-  }: { run: Run; profile: AnyRecord; scout?: AnyRecord | null; storedGame?: AnyRecord | null; ownShape?: boolean },
+    stack = GameStack.ThreeJs,
+  }: {
+    run: Run;
+    profile: AnyRecord;
+    scout?: AnyRecord | null;
+    storedGame?: AnyRecord | null;
+    ownShape?: boolean;
+    stack?: GameStack;
+  },
 ): Promise<AnyRecord> {
   const known = knownGameOf(scout, storedGame);
   const skill = await readPlannerSkill(ctx);
   const catalogue = await loadCatalogue(ctx.workspace);
-  const catalogueText = renderCatalogueForPlanner(catalogue, { game: known.game, screen: !ownShape });
+  const catalogueText = renderCatalogueForPlanner(catalogue, { game: known.game, screen: !ownShape, stack });
   // The craft recipes as a menu (M4.7): technique, not law — the planner picks the packs this
-  // game needs. An install whose library predates them simply gets nothing.
-  const craftRecipes = await library.loadRecipes(ctx.workspace).catch(() => []);
+  // game needs. An install whose library predates them simply gets nothing. A recipe is written
+  // for one stack (`runtime`; a library from before runtimes wrote only three.js ones).
+  const craftRecipes = (await library.loadRecipes(ctx.workspace).catch(() => [])).filter(
+    (recipe) => (recipe.runtime ?? GameStack.ThreeJs) === stack,
+  );
   const backlog = await previousSteering(ctx, run);
   const single = singleFacetPlan(run, known);
   const activePlugins = await ctx
@@ -407,6 +436,7 @@ export async function decompose(
     guidance: activePlugins.guidance,
     catalogueText,
     craftText: craftMenu(craftRecipes),
+    stack,
   });
   try {
     const { raw, facets, validation } = await askForFacets(plannerCall(ctx, run, skill), ask, craftRecipes);
@@ -502,7 +532,7 @@ function singleFacetPlan(run: Run, known: KnownGame): AnyRecord {
   };
 }
 
-/** The planner's ask: the backlog, the goal and its references, the scout, the menus and the shape. */
+/** The planner's ask: the backlog, the goal and its references, the scout, the menus, C++ rules and the shape. */
 function plannerAsk({
   run,
   profile,
@@ -511,6 +541,7 @@ function plannerAsk({
   guidance,
   catalogueText,
   craftText,
+  stack,
 }: {
   run: Run;
   profile: AnyRecord;
@@ -519,6 +550,7 @@ function plannerAsk({
   guidance: string | undefined;
   catalogueText: string;
   craftText: string;
+  stack: GameStack;
 }): string {
   return [
     backlog.length
@@ -534,6 +566,9 @@ function plannerAsk({
     `Attached reference stills: ${run.reference?.frames?.length ?? 0}`,
     catalogueText,
     craftText,
+    // The planner's skill is the workspace's copy, which may predate C++ games (SkillOpt edits
+    // it, an upgrade keeps the edit): a compiled night's rules ride in the ask, as the grammar does.
+    stackPlannerLines(stack).join("\n"),
     "",
     PROBE_GRAMMAR,
     PLAN_SHAPE,
@@ -821,7 +856,7 @@ function identityChecksOf(
 function integrationSpec(
   plan: AnyRecord,
   facetResults: Record<string, AnyRecord | undefined>,
-  { screen = true }: { screen?: boolean } = {},
+  { screen = true, stack = GameStack.ThreeJs }: { screen?: boolean; stack?: GameStack } = {},
 ) {
   const { checks, cameras } = identityChecksOf(plan, facetResults);
   checks.push({
@@ -845,7 +880,7 @@ function integrationSpec(
       checks: checks as Check[],
       budgetShare: 0,
     },
-    { role: INTEGRATION_FACET, game: plan.game, screen },
+    { role: INTEGRATION_FACET, game: plan.game, screen, stack },
   );
 }
 
@@ -918,7 +953,10 @@ async function openPipeline(pipeline: Pipeline): Promise<PipelineEnd> {
   const projectDescriptor = games.find((g: AnyRecord) => g.name === run.project) ?? null;
   pipeline.projectDescriptor = projectDescriptor;
   pipeline.ownShape = projectDescriptor?.built === true;
-  pipeline.shape = projectDescriptor?.shape ?? { entry: "index.html", main: "src/main.js", build: null };
+  // A folder the intake has yet to scaffold for desktop or phone destinations is the Rust template.
+  pipeline.stack = nightStack(projectDescriptor, run.targets);
+  pipeline.shape = projectDescriptor?.shape ??
+    templateShapeFor(run.targets) ?? { entry: "index.html", main: "src/main.js", build: null };
 }
 
 /** The look before the plan, the plan and its boards; a saved finalization resumes here, and a one-facet plan is the single path. */
@@ -927,7 +965,7 @@ async function planFacets(pipeline: Pipeline): Promise<PipelineEnd> {
   pipeline.storedGame = null;
   const plan = priorJournal?.plan ?? (await newPlan(pipeline));
   pipeline.plan = plan;
-  stampRunFromPlan(run, plan, ownShape);
+  stampRunFromPlan(run, plan, ownShape, pipeline.stack);
   // A kind the plan itself declared is written back into the user's studio.json once, so the
   // next run on this game starts knowing it. A scout's guess is never written.
   const planDeclaredGame = !priorJournal?.plan && plan.gameFrom === GameSource.Plan && plan.game;
@@ -959,7 +997,14 @@ async function newPlan(pipeline: Pipeline): Promise<AnyRecord> {
   // own declaration is written back into once a run.
   const storedGame = await readDeclaredGame(ctx, run.project).catch(() => null);
   pipeline.storedGame = storedGame;
-  const plan = await decompose(ctx, { run, profile: pipeline.profile, scout, storedGame, ownShape });
+  const plan = await decompose(ctx, {
+    run,
+    profile: pipeline.profile,
+    scout,
+    storedGame,
+    ownShape,
+    stack: pipeline.stack,
+  });
   plan.scout = scout;
   plan.setup = scout?.setup ?? null;
   const cards = scoutCards(plan, scout, scouted?.skipped ?? null, pipeline.profile.delegated);
@@ -1022,10 +1067,12 @@ function setupReach(setup: AnyRecord | null | undefined): string {
  * brief and the artefact-class filter read it from here, and nothing threads it through a judge
  * signature. `ownShape` and `genres` ride with it for the same reason.
  */
-function stampRunFromPlan(run: Run, plan: AnyRecord, ownShape: boolean): void {
+function stampRunFromPlan(run: Run, plan: AnyRecord, ownShape: boolean, stack: GameStack): void {
   run.setup = plan.setup ?? null;
   run.game = plan.game ?? null;
   run.ownShape = ownShape;
+  // Every evidence pass copies it, so a C++ · raylib game is scored on what its page can measure.
+  run.stack = stack;
   run.genres = plan.genres ?? [];
 }
 
@@ -1044,6 +1091,7 @@ function addHarnessBoards(pipeline: Pipeline, plan: AnyRecord): void {
           ownsMain: !plan.mainOwner || plan.mainOwner === f.id,
           game: plan.game,
           screen: !ownShape,
+          stack: pipeline.stack,
         })
       : f,
   );
@@ -1356,7 +1404,14 @@ function autopilotStartedPayload(pipeline: Pipeline): AnyRecord {
 /** The game folder made ready: scaffolded, its contract current, loaded in the preview; the catalogue read. */
 async function prepareFolder(pipeline: Pipeline): Promise<void> {
   const { ctx, run, threadId } = pipeline;
-  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project, kind: ProjectStarter.Web });
+  // A game the library already lists keeps its own folder and stack (a raylib run resumed after the
+  // update); a new one is the compiled template its destinations ask for, else the web starter.
+  const listed = await ctx.call(HostMethod.GameList, {}).catch(() => []);
+  await ctx.call(HostMethod.GameScaffold, {
+    name: run.project,
+    title: run.project,
+    ...runScaffoldAsk(listed, run.project, run.targets),
+  });
   // A game scaffolded before the v2 contract gets the current studio.js (its old copy kept
   // beside it), so scene checks and eye cameras exist from the first iteration.
   const upgraded = await ctx.call(HostMethod.GameUpgradeContract, { project: run.project }).catch(() => null);
@@ -1390,7 +1445,10 @@ async function prepareFolder(pipeline: Pipeline): Promise<void> {
   pipeline.startingConsole = await inheritedConsoleAfterLoad(ctx);
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
   pipeline.games = games;
-  pipeline.projectDir = games.find((g: AnyRecord) => g.name === run.project)?.dir ?? null;
+  const scaffolded = games.find((g: AnyRecord) => g.name === run.project) ?? null;
+  pipeline.projectDir = scaffolded?.dir ?? null;
+  // A folder this run made just now: its destinations decide what its windows judge.
+  pipeline.projectDescriptor = pipeline.projectDescriptor ?? scaffolded;
   pipeline.worktreeMode = pipeline.profile.maxParallel > 1;
   pipeline.catalogue = await loadCatalogue(ctx.workspace);
 }
@@ -1748,8 +1806,7 @@ async function integrateAccepted(
             }),
           {
             message: `autopilot ${run.runId}: integrate ${facetId} iteration ${iteration} (union on FACET WIRING)`,
-            main: shape.main,
-            wiring: !ownShape,
+            ...wiringFor(shape, ownShape),
           },
         ),
     });
@@ -1913,11 +1970,16 @@ function closeYieldedFacets(pipeline: Pipeline): void {
   }
 }
 
-/** A pooled preview port for a worktree build; null when there is none (the live view is shared). */
+/**
+ * A pooled preview port for a worktree build; null when there is none (the live view is shared).
+ * The lease names the game's judging target (native-contract.ts `acquireFor`).
+ */
 async function acquirePreview(pipeline: Pipeline, label: string): Promise<string | null> {
   if (!pipeline.worktreeMode) return null;
+  const { capacity, ctx, projectDescriptor } = pipeline;
+  const call = (method: typeof HostMethod.PreviewAcquire, params: AnyRecord) => ctx.call(method, params);
   try {
-    return (await pipeline.ctx.call(HostMethod.PreviewAcquire, { label })).handle;
+    return (await acquireFor(call, projectDescriptor ?? {}, capacity ?? {}, { label })).handle;
   } catch {
     return null;
   }
@@ -2121,8 +2183,7 @@ async function mergeFinishedFacet(pipeline: Pipeline, facet: AnyRecord): Promise
           }),
         {
           message: `autopilot ${run.runId}: merge facet ${facet.id} (union on FACET WIRING)`,
-          main: shape.main,
-          wiring: !ownShape,
+          ...wiringFor(shape, ownShape),
         },
       ),
   });
@@ -2192,7 +2253,7 @@ async function judgeIntegration(pipeline: Pipeline): Promise<PipelineEnd> {
   // ── the ledger comes before integration: the merged build is judged first, and its defect
   // list is the integration facet's brief. Produced after the run, the same ledger was a
   // wasted judge call nobody could act on. ──
-  const integrationFacet = integrationSpec(plan, journal.facets, { screen: !ownShape });
+  const integrationFacet = integrationSpec(plan, journal.facets, { screen: !ownShape, stack: pipeline.stack });
   pipeline.integrationFacet = integrationFacet;
   pipeline.integrationRoot = worktreeMode ? pipeline.integrationWorktree : projectDir;
   pipeline.ledger = null;

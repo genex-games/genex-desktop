@@ -1384,3 +1384,94 @@ describe("a plugin's permission request", () => {
     assert.equal(consentAskWords({ prompt: "Make it red" }), "A plugin asks to run a tool — Make it red");
   });
 });
+
+describe("a C++ game's own run and its tools, in words", () => {
+  it("names every native run state and every refusal, the shared refusals in the destination's own words", async () => {
+    const { NATIVE_WORDS, DESTINATION_WORDS } = await import("../../src/renderer/words.ts");
+    const { NativeRefusal, NativeRunState } = await import("../../src/shared/native-contract.ts");
+    const { TargetRefusal } = await import("../../src/shared/game-targets.ts");
+    for (const state of Object.values(NativeRunState)) assert.ok(NATIVE_WORDS.state[state].trim(), state);
+    for (const refusal of Object.values(NativeRefusal)) assert.ok(NATIVE_WORDS.refusal[refusal].trim(), refusal);
+    assert.equal(NATIVE_WORDS.refusal[NativeRefusal.NoGameBox], DESTINATION_WORDS.refusal[TargetRefusal.NoGameBox]);
+    assert.equal(NATIVE_WORDS.front, "Bring to front");
+    assert.equal(NATIVE_WORDS.crashed(null, "SIGSEGV"), "It ended on SIGSEGV.");
+    assert.equal(NATIVE_WORDS.crashed(3, null), "It ended with code 3.");
+  });
+
+  it("says why a pinned tool has no download, and what a stale or missing preparation needs", async () => {
+    const { TOOLCHAIN_WORDS } = await import("../../src/renderer/words.ts");
+    const { PrewarmState, ToolchainProblem, ToolchainUnhosted } = await import("../../src/shared/toolchain.ts");
+    assert.equal(TOOLCHAIN_WORDS.unhosted[ToolchainUnhosted.NotPublished], "Genex hasn’t published this download yet");
+    assert.ok(TOOLCHAIN_WORDS.problem[ToolchainProblem.NotHosted].trim());
+    for (const state of [PrewarmState.Stale, PrewarmState.Missing])
+      assert.match(TOOLCHAIN_WORDS.prewarm[state], /set it up/, state);
+    assert.equal(TOOLCHAIN_WORDS.setUpAgain, "Set up again");
+  });
+
+  it("says installed-but-unprepared tools in the build problem's words, with Set up", async () => {
+    const { BUILD_PROBLEM_WORDS, TOOLCHAIN_WORDS } = await import("../../src/renderer/words.ts");
+    const { BuildProblemCode } = await import("../../src/shared/build-problem.ts");
+    for (const code of Object.values(BuildProblemCode)) assert.ok(BUILD_PROBLEM_WORDS[code].trim(), code);
+    assert.equal(
+      BUILD_PROBLEM_WORDS[BuildProblemCode.ToolchainUnprepared],
+      "The C++ tools are installed but not set up yet. Set them up to finish.",
+    );
+    assert.equal(TOOLCHAIN_WORDS.setUp, "Set up");
+  });
+
+  it("names Live's embedded play and Pop out, and why a Mac build can't be shown inside Live", async () => {
+    const { NATIVE_WORDS } = await import("../../src/renderer/words.ts");
+    assert.deepEqual(
+      [NATIVE_WORDS.embed.web, NATIVE_WORDS.embed.native, NATIVE_WORDS.embed.popOut, NATIVE_WORDS.embed.clickToPlay],
+      ["Web", "Native", "Pop out", "Click to play"],
+    );
+    // Where Live can show the game but this run failed, Pop out is on the strip; where Live can never
+    // embed here, the toggle goes away with Pop out and Play on Mac is the way on.
+    for (const words of [NATIVE_WORDS.embed.predates, NATIVE_WORDS.embed.stalled])
+      assert.match(words, /Pop out\.$/, words);
+    for (const words of [NATIVE_WORDS.embed.unsupported, NATIVE_WORDS.embed.electronUntested])
+      assert.match(words, /Play on Mac opens it in its own window\.$/, words);
+  });
+
+  it("words the export menu, the Mac notice and every export refusal", async () => {
+    const { DESTINATION_WORDS, EXPORT_WORDS } = await import("../../src/renderer/words.ts");
+    const { ExportRefusal } = await import("../../src/shared/game-export-contract.ts");
+    const { TargetRefusal } = await import("../../src/shared/game-targets.ts");
+    for (const refusal of Object.values(ExportRefusal)) assert.ok(EXPORT_WORDS.refusal[refusal].trim(), refusal);
+    assert.equal(
+      EXPORT_WORDS.refusal[ExportRefusal.MacBuildsNeedAMac],
+      DESTINATION_WORDS.refusal[TargetRefusal.MacBuildsNeedAMac],
+    );
+    assert.deepEqual(
+      [EXPORT_WORDS.menuLabel, EXPORT_WORDS.browser, EXPORT_WORDS.mac],
+      ["Export for", "Browser (web folder)", "Mac app"],
+    );
+    assert.equal(
+      EXPORT_WORDS.exportedMac("Pong"),
+      "Exported Pong.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.",
+    );
+  });
+
+  it("words the Windows and Linux exports, each saying it never ran there", async () => {
+    const { EXPORT_WORDS } = await import("../../src/renderer/words.ts");
+    assert.deepEqual([EXPORT_WORDS.windows, EXPORT_WORDS.linux], ["Windows (.zip)", "Linux (.tar.gz)"]);
+    assert.equal(
+      EXPORT_WORDS.exportedWindows("Pong-windows-x64.zip"),
+      "Exported Pong-windows-x64.zip. Genex built it on this Mac but hasn’t run it on Windows.",
+    );
+    assert.equal(
+      EXPORT_WORDS.exportedLinux("pong-linux-x64.tar.gz"),
+      "Exported pong-linux-x64.tar.gz. Genex built it on this Mac but hasn’t run it on Linux.",
+    );
+  });
+
+  it("names an ended window for each desktop destination, the Mac's as before", async () => {
+    const { NATIVE_WORDS } = await import("../../src/renderer/words.ts");
+    const { BuildTarget } = await import("../../src/shared/game-project.ts");
+    assert.deepEqual(
+      [BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux].map((target) => NATIVE_WORDS.windowTitle[target]),
+      ["Mac window", "Windows window", "Linux window"],
+    );
+    assert.equal(NATIVE_WORDS.windowTitle[BuildTarget.Mac], NATIVE_WORDS.ended);
+  });
+});

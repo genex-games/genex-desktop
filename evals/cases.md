@@ -475,6 +475,35 @@ starts the Loop after a first turn made it, or from a Godot start folder once lo
 have one. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
 this draft has no raw counterpart until the owner decides one.
 
+## C19 · `touch-physics` — a touch-first physics game *(draft: owner pins before first baseline)*
+
+**Exposure:** none
+
+> A game for my phone where I flick a marble across a wooden table to knock over a tower of
+> blocks. The blocks should tumble and pile up the way real ones would, and I get a few marbles
+> per round. Show how many blocks I toppled, and tell me my score when the marbles run out.
+
+**Acceptance:**
+
+```
+[ ] you flick the marble with a finger, no keyboard needed    <- "flick a marble"
+[ ] the marble's speed and direction follow the flick
+[ ] a tower of blocks stands until something hits it          <- "a tower of blocks"
+[ ] blocks tumble, collide and settle under physics           <- "tumble and pile up"
+[ ] the number of marbles left is shown and goes down         <- "a few marbles per round"
+[ ] the count of toppled blocks is shown and goes up          <- "how many blocks I toppled"
+[ ] the round ends when the marbles run out, and says so      <- "when the marbles run out"
+[ ] you can play another round
+[ ] KEY: the game is playable on a phone-sized screen, with tap targets a thumb can hit  <- "A game for my phone"
+```
+
+**Control:** the marbles are live hedgehogs that roll themselves back to the start
+
+The case written for the Rust · wgpu stack's strengths, and phrased so a user would never name the
+stack: touch is the only input, Rapier-style rigid bodies are the gameplay, and the HUD is two
+numbers. It is probed through the web build in the same prober every case uses, so the
+measurable parts are the touch injection, a probe per mechanic and the digest of a fixed seed.
+
 ---
 
 # Rotation and holdouts
@@ -512,3 +541,4 @@ cases of the suite this one was ported from and are not ported; their numbers ar
 | C16 loop-finish-check | draft | — | — |
 | C17 timed-wrap-up | draft | — | — |
 | C18 godot-loop | draft | — | — |
+| C19 touch-physics | draft | — | — |

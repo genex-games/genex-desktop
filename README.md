@@ -37,8 +37,8 @@ Genex is early: expect rough edges, and tell us about them in
 → Make 3D assets locally with the Blender plugin\
 → Meshy, Tripo, ElevenLabs and more through the Genex tools router\
 → Export anywhere, or publish to the web\
-→ Unity and Unreal plugins soon\
-→ Native C++ games soon
+→ Three.js or Rust · wgpu games for the browser, desktop and phones\
+→ Unity and Unreal plugins soon
 
 > [!TIP]
 > Have a tool your games need? [Build a plugin](#build-a-plugin) and put it in the Genex

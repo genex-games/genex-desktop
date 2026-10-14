@@ -1,0 +1,113 @@
+{
+  "$comment": "Genex's pinned ANGLE builds (plan D9 = A, D17 = B). One ANGLE commit for every destination: the angle_revision in the DEPS of the Chromium that Electron 43.7.6 ships. build_angle.py reads this file locally and in .github/workflows/angle.yml; change the pin here and nowhere else. Built in this public repository from the same pin; bundle-lock.json names that run.",
+  "angle": {
+    "repo": "https://chromium.googlesource.com/angle/angle.git",
+    "commit": "c5bf49e78850a5335a8fa2a7bfb53b559fbfc927",
+    "pinSource": "https://chromium.googlesource.com/chromium/src/+/refs/tags/150.0.7871.250/DEPS (angle_revision)"
+  },
+  "chromium": "150.0.7871.250",
+  "electron": "43.7.6",
+  "depotTools": {
+    "repo": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+    "commit": "2da9ee6f6c86332551055bc44245fab94675272e"
+  },
+  "gclient": {
+    "customVars": {
+      "checkout_angle_cl_deps": false,
+      "checkout_angle_dawn_deps": false
+    },
+    "skipDeps": [
+      "third_party/VK-GL-CTS/src",
+      "third_party/glmark2/src",
+      "third_party/OpenCL-Docs/src",
+      "buildtools/reclient"
+    ]
+  },
+  "headers": ["include/EGL", "include/GLES2", "include/GLES3", "include/KHR"],
+  "commonGnArgs": {
+    "is_debug": false,
+    "is_component_build": false,
+    "symbol_level": 0,
+    "treat_warnings_as_errors": false,
+    "angle_build_tests": false,
+    "angle_enable_cl": false,
+    "angle_enable_gl": false,
+    "angle_enable_null": false,
+    "angle_enable_wgpu": false,
+    "angle_has_frame_capture": false
+  },
+  "targets": {
+    "macos-arm64-metal": {
+      "runner": "macos-26",
+      "gclientTargetOs": ["mac"],
+      "skipDeps": [
+        "third_party/SwiftShader",
+        "third_party/vulkan-validation-layers/src",
+        "third_party/lunarg-vulkantools/src",
+        "third_party/vulkan-tools/src",
+        "tools/skia_goldctl/mac_amd64",
+        "tools/skia_goldctl/mac_arm64"
+      ],
+      "gnArgs": {
+        "target_cpu": "arm64",
+        "angle_enable_metal": true,
+        "angle_enable_vulkan": false,
+        "angle_enable_swiftshader": false
+      },
+      "buildTargets": ["libEGL", "libGLESv2"],
+      "outputs": ["libEGL.dylib", "libGLESv2.dylib"],
+      "installNames": {
+        "libEGL.dylib": "@rpath/libEGL.dylib",
+        "libGLESv2.dylib": "@rpath/libGLESv2.dylib"
+      },
+      "probeExpect": "metal"
+    },
+    "windows-x64-d3d11": {
+      "runner": "windows-2025",
+      "gclientTargetOs": ["win"],
+      "skipDeps": [
+        "third_party/SwiftShader",
+        "third_party/vulkan-validation-layers/src",
+        "third_party/lunarg-vulkantools/src",
+        "third_party/vulkan-tools/src",
+        "tools/skia_goldctl/win"
+      ],
+      "gnArgs": {
+        "target_cpu": "x64",
+        "angle_enable_d3d11": true,
+        "angle_enable_d3d9": false,
+        "angle_enable_vulkan": false,
+        "angle_enable_swiftshader": false
+      },
+      "buildTargets": ["libEGL", "libGLESv2"],
+      "outputs": ["libEGL.dll", "libEGL.dll.lib", "libGLESv2.dll", "libGLESv2.dll.lib", "d3dcompiler_47.dll"],
+      "$importsComment": "The load-time imports each DLL may have (case-insensitive; delay imports count). ANGLE loads d3d11.dll and d3dcompiler_47.dll with LoadLibrary, so neither appears. A new import fails the gate until it is reviewed and listed here; opengl32.dll never may be.",
+      "peMachine": "x64",
+      "allowedImports": {
+        "libEGL.dll": ["KERNEL32.dll"],
+        "libGLESv2.dll": ["KERNEL32.dll", "USER32.dll", "dxgi.dll", "api-ms-win-core-synch-l1-2-0.dll"],
+        "d3dcompiler_47.dll": ["KERNEL32.dll", "ADVAPI32.dll", "RPCRT4.dll"]
+      },
+      "requiredExports": {
+        "libEGL.dll": ["eglGetPlatformDisplay", "eglGetProcAddress", "eglInitialize"],
+        "libGLESv2.dll": ["EGL_GetPlatformDisplay", "glDrawArrays", "glReadPixels"]
+      },
+      "probeExpect": "d3d11"
+    },
+    "linux-x64-vulkan": {
+      "runner": "ubuntu-24.04",
+      "gclientTargetOs": ["linux"],
+      "skipDeps": ["tools/skia_goldctl/linux"],
+      "gnArgs": {
+        "target_cpu": "x64",
+        "angle_enable_vulkan": true,
+        "angle_enable_swiftshader": true,
+        "angle_enable_vulkan_validation_layers": false
+      },
+      "buildTargets": ["libEGL", "libGLESv2"],
+      "outputs": ["libEGL.so", "libGLESv2.so", "libvulkan.so.1", "libvk_swiftshader.so", "vk_swiftshader_icd.json"],
+      "maxGlibc": "2.28",
+      "probeExpect": "vulkan"
+    }
+  }
+}

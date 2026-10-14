@@ -21,7 +21,7 @@ import type {
   Rect,
   RunNode,
 } from "../../run-graph.ts";
-import { runIdOf, thumbShot } from "../../run-graph.ts";
+import { runIdOf } from "../../run-graph.ts";
 import type { JobInfo } from "../../run-graph-workers.ts";
 import { AssetCardState, BLENDER_SOURCE } from "../../run-graph-assets.ts";
 import {
@@ -44,14 +44,19 @@ import { GraphSelection } from "../inspector/selection.ts";
 import { NodeCursor, ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
 import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
-import { useRoundStill } from "../run-stills.ts";
 import { FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
-import { useNow } from "./use-builds-model.ts";
+import { useNow, useStepPicture } from "./use-builds-model.ts";
 import type { ReferenceFrame } from "../../../shared/protocol.ts";
 import { imageSrc, useMessageImages } from "../../chat/MessageImages.tsx";
 
 /** How many asset pictures the assets tile shows before it counts the rest. */
 const ASSETS_SHOWN = 3;
+
+/** The words a step's card wears about its picture. */
+const MESSAGE = {
+  /** A builder frame whose workspace stood on the run's starting point after the build had moved on. */
+  builtOnStart: "Built on the starting point",
+} as const;
 
 /** How a node's frame looks: settled, a ghost of what is not there yet, at work right now, or your build. */
 const Variant = {
@@ -324,6 +329,12 @@ function triesChip(tries: number, working: boolean): string | null {
   return working ? `Try ${tries}` : `${tries} tries`;
 }
 
+/** The chip a step wears: its tries, and beside them that its picture stands on the starting point. */
+function stepChip(tries: number, working: boolean, onStart: boolean): string | null {
+  const parts = [triesChip(tries, working), onStart ? MESSAGE.builtOnStart : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 /** One step of a part: its shown try's picture (its agent's screen while it works), its state, and how many tries it took. */
 export const StepNode = memo(function StepNode({
   project,
@@ -336,13 +347,15 @@ export const StepNode = memo(function StepNode({
   onSelect,
 }: StepNodeProps): JSX.Element | null {
   const working = isLiveStep(step);
-  const shown = step.shown;
-  const shot = shown ? thumbShot(shown) : null;
-  const src = useRoundStill({ runId }, step.facetId, shown?.iteration ?? 1, shot?.path ?? null, working && active);
-  const frame = usePartFrame(project, runIdOf({ runId }), step.facetId, working && active);
+  // A chat turn's graph has no run whose saved frames or screens could be asked for.
+  const run = runIdOf({ runId });
+  const picture = useStepPicture(run, step.picture, working && active);
+  // The screen of the worker on the step now, never that of the attempt a restart replaced.
+  const frame = usePartFrame(project, run, step.builder, working && active);
   const screen = useFrameSrc(frame);
   const word = stepWord(step, active);
   const tries = step.tries.length;
+  const onStart = !screen && picture.onStart;
   if (!rect) return null;
   return (
     <PerformanceBoundary id={PerformanceComponent.StepNode}>
@@ -351,16 +364,16 @@ export const StepNode = memo(function StepNode({
         rect={rect}
         variant={stepVariant(working, ghost)}
         selected={selected}
-        label={`${step.name}: ${[word, tries > 1 ? `${tries} tries` : null].filter(Boolean).join(", ")}`}
+        label={`${step.name}: ${[word, tries > 1 ? `${tries} tries` : null, onStart ? MESSAGE.builtOnStart : null].filter(Boolean).join(", ")}`}
         screen={frame?.handle ?? null}
         onSelect={() => onSelect(step.id)}
       >
         <NodeFace
-          src={screen ?? src}
+          src={screen ?? picture.src}
           look={ghost ? Look.Dim : Look.Plain}
           fill={working ? Fill.Shimmer : Fill.Hatch}
           over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
-          chip={triesChip(tries, working)}
+          chip={stepChip(tries, working, onStart)}
           name={step.name}
           word={frame ? <ScreenWords frame={frame} state={checkingWord(step, word)} /> : word}
           tone={STATE_TONE[step.state]}

@@ -187,10 +187,11 @@ malformed case throws `CaseFileError` naming the case and field.
 
 Pinned: C1 `medieval-village` (dev-tuned: the seed was iterated on village runs), C2 `shooter`,
 C3 `mini-golf`, C5 `vague-brief` and C8 `canary` (no checklist; its verdict is machine-only).
-C9 `edit-existing`, C10 `follow-up`, C11 `long-horizon` and C12-C18 (projects, engines and the
+C9 `edit-existing`, C10 `follow-up`, C11 `long-horizon`, C12-C18 (projects, engines and the
 Loop's finish: `vague-unreal-on`, `unreal-plugin-off`, `port-to-unreal`, `godot-no-plugin`,
-`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) are drafts
-the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
+`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) and C19
+`touch-physics` (a touch-first physics game written for the Rust runtime, probed through its web
+build) are drafts the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
 marked holdout; holdout rows never enter Git or an export.
 
 Anti-fitting is a static check: `npm run check:isolation` (in `check:static` and CI, public

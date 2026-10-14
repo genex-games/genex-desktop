@@ -509,6 +509,10 @@ for (const ending of ["returns stopped", "throws aborted"] as const)
           (e.data.payload as { phase?: string } | undefined)?.phase === "interrupted",
       );
       assert.ok(interrupted, "the turn says it was interrupted");
+    } catch (error) {
+      // Keep the host/harness trace if this cancellation race fails in an aggregate run.
+      const events = await rig.core.listAllEvents();
+      throw new Error(`Stop trace (${ending}): ${JSON.stringify(events)}\n${rig.logs.join("\n")}`, { cause: error });
     } finally {
       await rig.core.stopThread(thread).catch(() => {});
     }

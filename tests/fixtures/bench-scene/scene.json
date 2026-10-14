@@ -1,0 +1,13 @@
+{
+  "format": "genex-bench-scene/1",
+  "about": "The matched performance scene (M2.12c): one fishing scene both stacks draw from these numbers alone. A ground slab, a water slab, a dock of planks, a rod with its line to a bobber, and a school of fish circling the dock on fixed orbits; no physics, no randomness, no assets, no HUD. rust/bench.rs (genex) and raylib/bench.cpp (raylib-cpp v1 baseline) both echo this object in their record, so the performance row can check the pair is matched.",
+  "worldSize": [960, 540],
+  "frames": 600,
+  "frameMs": 16.666666666666668,
+  "fish": 240,
+  "fishRadius": 0.22,
+  "schoolRings": 6,
+  "planks": 24,
+  "camera": { "eye": [0, 9, 14], "target": [0, 0, 0], "fovy": 45 },
+  "captures": 20
+}

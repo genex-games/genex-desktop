@@ -1,5 +1,6 @@
 import { preflightMultiplayer } from "../core/generation-prerequisites.ts";
 /** Harness RPC: plugin and MCP connector tools, and the capabilities a builder is told about. */
+import { type GameStack, stackOf } from "../../shared/game-project.ts";
 import { MCP_QUALIFIED_TOOL } from "../../shared/mcp.ts";
 import { PluginToolAudience } from "../../shared/plugins.ts";
 import type { GameKind } from "../../shared/project-facts.ts";
@@ -28,6 +29,13 @@ const MESSAGE = {
 
 /** The engine the local harness's own plugin calls are recorded under. */
 const LOCAL_HARNESS_ENGINE = "local";
+
+/** The stack of the library's game `project`, or null when none is named or the library has no such game. */
+async function stackOfProject(core: StudioCore, project: string | null | undefined): Promise<GameStack | null> {
+  if (!project) return null;
+  const game = (await core.games.list().catch(() => [])).find((listed) => listed.name === project);
+  return game ? stackOf(game.shape) : null;
+}
 
 /** The binding a plugin or connector call runs under; there is none until a project is open. */
 async function requirePluginBinding(core: StudioCore, project: string, threadId: string | undefined) {
@@ -116,10 +124,12 @@ export function pluginsRpc(core: StudioCore, x: CoreInternals) {
   return {
     [HostMethod.PluginsPreflightMultiplayer]: (p) => preflightMultiplayer(core, p.project, p.threadId),
     // One snapshot, so the local harness's tools and their guidance describe the same plugins,
-    // those that reach the game it serves.
+    // those that reach the game it serves; a named game's stack leaves out the skills it is never
+    // handed (a Rust game, three.js-only ones).
     [HostMethod.PluginsTools]: async (p = {}) => {
       const game = await kindOf(core, p?.project);
-      const { tools, guidance, kinds } = core.plugins.snapshot(game);
+      const stack = await stackOfProject(core, p?.project);
+      const { tools, guidance, kinds } = core.plugins.snapshot(game, undefined, stack);
       // A game with no kind yet: the engine card offers each kind as its plugin says it stands.
       const offered = await kindsWithReadiness(core, p?.project, game, kinds);
       return { tools, guidance, kinds: offered, revision: x.toolRegistryRevision };

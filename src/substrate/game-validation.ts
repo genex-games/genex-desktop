@@ -4,10 +4,18 @@
  * Read-only: nothing here writes into the game folder.
  */
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { ContractWord, type ProjectShape } from "../shared/game-project.ts";
-import { pathExists } from "./fsx.ts";
+import {
+  type CompiledStack,
+  ContractWord,
+  GameStack,
+  GameValidationCode,
+  isCompiledStack,
+  type ProjectShape,
+  stackOf,
+} from "../shared/game-project.ts";
+import { kindWords } from "../shared/shape-words.ts";
+import { entryExists, pathExists } from "./fsx.ts";
 import {
   type ContractReach,
   importMapKeys,
@@ -21,7 +29,14 @@ import {
   unreachableLoads,
 } from "./game-page.ts";
 import { isInside, toPosixRelative } from "./paths.ts";
-import { readProjectShape } from "./project-shape.ts";
+import {
+  cmakeCallsGenexAddGame,
+  GENEX_MANIFEST,
+  readGameDestinations,
+  readGameText,
+  readNativeSource,
+  readProjectShape,
+} from "./project-shape.ts";
 
 /** The most modules the reachable-source walk opens; a larger game is judged on its first ones. */
 const MAX_REACHABLE_SOURCES = 400;
@@ -59,6 +74,22 @@ const MESSAGE = {
   PredatesInspect:
     "src/studio.js predates the v2 contract (no inspect()) — scene checks and eye cameras are unavailable",
   NoPlayer: "installStudio() is called without scene/camera/player — scene checks fail and eye cameras do not exist",
+  NotAPlainFile: (file: string) =>
+    `${file} is not a plain file the studio can read (a link, a pipe or a folder) — the C++ lane builds only from a plain file`,
+  RustNotAPlainFile: (file: string) =>
+    `${file} is not a plain file the studio can read (a link, a pipe or a folder) — the Rust lane builds only from a plain file`,
+  RustOwnBuildInput: (file: string) =>
+    `${file} is a build input of the game's own — the studio writes the Rust manifest and lock from genex.toml and runs no build script or cargo configuration, so it refuses to build this game until ${file} is removed`,
+  GenexInstallRemoved: (main: string) =>
+    `${main} does not call genex::install(…) — the studio cannot step, inspect or capture this game until it does`,
+  KindUnsupported:
+    "a newer version of Genex made this game (studio.json names a kind this version does not know), so it opens read-only — update Genex to build or change it",
+  NeedsGenexCmake:
+    "CMakeLists.txt does not call genex_add_game(…) — the studio builds C++ games through it, so this one cannot be built or judged until it does",
+  NativeContractRemoved: (main: string) =>
+    `${main} does not call studio::install(…) — the studio cannot step, inspect or capture this game until it does`,
+  StackContradictsKind: (kind: string) =>
+    `studio.json names a stack this folder's files are not: it is ${kind}, and the files decide — correct or remove studio.json's "stack"`,
 } as const;
 
 /** What `validateGameDir` found: the problems that stop a judged build, the warnings, and the contract's word. */
@@ -71,6 +102,22 @@ export interface GameValidation {
   contract: ContractWord;
   reach: ContractReach;
   shape: ProjectShape;
+  /**
+   * The typed reasons among `problems`, in their order, so no reader matches a sentence. Every
+   * problem of a C++ game has one; a browser game's missing files and missing contract do.
+   */
+  codes: GameValidationCode[];
+}
+
+/** Problems and their codes, collected side by side. */
+function findings() {
+  const problems: string[] = [];
+  const codes: GameValidationCode[] = [];
+  const fail = (problem: string, code?: GameValidationCode): void => {
+    problems.push(problem);
+    if (code) codes.push(code);
+  };
+  return { problems, codes, fail };
 }
 
 /**
@@ -223,7 +270,7 @@ async function scanContractUse(dir: string, sources: string[]): Promise<Contract
     randomUsers: [],
   };
   for (const file of sources) {
-    const text = await readFile(file, "utf8").catch(() => "");
+    const text = (await readGameText(file)) ?? "";
     // `studio.js` is the contract itself: it contains both literals whatever the game does
     // with it, and counting it made every folder holding the file report "loaded" — which is
     // how a game the studio could only attach to was told to install what was never called.
@@ -277,19 +324,25 @@ function contractWarnings(use: ContractUse): string[] {
  * contract (hard-coded `Math.random`, no `window.__studio`).
  */
 export async function validateGameDir(dir: string): Promise<GameValidation> {
-  const warnings: string[] = [];
   const shape = await readProjectShape(dir);
+  // A newer Genex's game: nothing here can judge it, and nothing runs on it.
+  if (shape.readOnly) return readOnlyValidation(shape);
+  // A compiled game has no page of its own: its checks are its project files and its entry.
+  const stack = stackOf(shape);
+  if (isCompiledStack(stack)) return COMPILED_VALIDATIONS[stack](dir, shape);
+  const { problems, codes, fail } = findings();
+  const warnings: string[] = [];
   const indexExists = await pathExists(path.join(dir, "index.html"));
   const missing: string[] = [];
   if (!indexExists) missing.push("index.html");
   if (!(await pathExists(path.join(dir, shape.main)))) missing.push(shape.main);
-  const problems = missing.map((file) => MESSAGE.MissingFile(file));
+  for (const file of missing) fail(MESSAGE.MissingFile(file), GameValidationCode.MissingFile);
 
   // Only what the page actually loads. A template `src/main.js` left beside a Godot export or
   // a Vite game used to prove the contract on the studio's own dead scaffold, so validation
   // passed and every judge then reported "window.__studio is missing" on the real page.
   const { files: sources, unresolved } = await reachableSources(dir, shape);
-  const html = (await readFile(path.join(dir, "index.html"), "utf8").catch(() => "")) ?? "";
+  const html = (await readGameText(path.join(dir, "index.html"))) ?? "";
   const mapped = importMapKeys(html);
   // R6: the preview reaches only the public library/font CDNs (preview-network.ts). Said here,
   // where both the Open Game sheet and a builder's validate call read it, rather than as a
@@ -310,9 +363,359 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   // `installContract`). Answered as a word rather than left for every caller to match the
   // sentence in `problems` — the folder sheet already read it that way.
   const contract = contractWord(use.installsContract, reach, nonExecutable);
-  if (contract === ContractWord.Missing) problems.push(NO_CONTRACT_PROBLEM);
+  if (contract === ContractWord.Missing) fail(NO_CONTRACT_PROBLEM, GameValidationCode.NoContract);
   warnings.push(...contractWarnings(use));
-  return { ok: problems.length === 0, problems, missing, warnings, contract, reach, shape };
+  const destinations = await readGameDestinations(dir, shape, null);
+  warnings.push(...destinations.warnings);
+  if (destinations.stackContradicts)
+    fail(MESSAGE.StackContradictsKind(kindWords(shape.kind)), GameValidationCode.StackContradictsKind);
+  return { ok: problems.length === 0, problems, missing, warnings, contract, reach, shape, codes };
+}
+
+/** The tokens of a `studio::install(` call, in order, as {@link cppToken} reads them. */
+const INSTALL_CALL = ["studio", "::", "install", "("] as const;
+/** The prefixes that make a string literal raw: `R"delim( … )delim"`, inside which nothing is code. */
+const RAW_STRING_PREFIXES = new Set(["R", "LR", "uR", "UR", "u8R"]);
+/** The longest delimiter a raw string may have. */
+const MAX_RAW_DELIMITER = 16;
+/** The characters C++ reads as space between tokens. */
+const CPP_SPACE = new Set([" ", "\t", "\n", "\r", "\f", "\v"]);
+/** The letters after which a pp-number's `+` or `-` is an exponent's sign (`1e+5`, `0x1p-3`). */
+const EXPONENTS = new Set(["e", "E", "p", "P"]);
+
+/**
+ * One C++ token and where the next starts. `value` is an identifier or a punctuator; "" is a
+ * literal or a number, which no call is made of; null is what the compiler never sees (space, a
+ * comment), which leaves the tokens around it adjacent.
+ */
+interface CppToken {
+  value: string | null;
+  end: number;
+}
+
+function isDigit(char: string): boolean {
+  return char >= "0" && char <= "9";
+}
+
+/** A letter, a digit or `_`: what an identifier or a pp-number is made of. */
+function isWordChar(char: string): boolean {
+  const letter = (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
+  return letter || isDigit(char) || char === "_";
+}
+
+/** From just after `//`: where the comment ends, a backslash at a line's end carrying it onto the next. */
+function lineCommentEnd(text: string, from: number): number {
+  let newline = text.indexOf("\n", from);
+  while (newline !== -1 && endsWithSplice(text, newline)) newline = text.indexOf("\n", newline + 1);
+  return newline === -1 ? text.length : newline;
+}
+
+/** Whether the line ending at `newline` ends in a backslash, which splices the next line onto it. */
+function endsWithSplice(text: string, newline: number): boolean {
+  const last = text.charAt(newline - 1) === "\r" ? newline - 2 : newline - 1;
+  return text.charAt(last) === "\\";
+}
+
+/** From just inside a block comment: the index after the star and slash that close it, or the text's end. */
+function blockCommentEnd(text: string, from: number): number {
+  const close = text.indexOf("*/", from);
+  return close === -1 ? text.length : close + 2;
+}
+
+/** From just inside a string or character literal: the index after its closing `quote`, or its line's end. */
+function literalEnd(text: string, from: number, quote: string): number {
+  let at = from;
+  while (at < text.length) {
+    const char = text.charAt(at);
+    if (char === quote) return at + 1;
+    if (char === "\n") return at;
+    at += char === "\\" ? 2 : 1;
+  }
+  return text.length;
+}
+
+/** Whether `char` may be part of a raw string's delimiter. */
+function isRawDelimiterChar(char: string): boolean {
+  return char !== "" && char !== ")" && char !== "\\" && char !== '"' && !CPP_SPACE.has(char);
+}
+
+/**
+ * From a raw string's opening quote: the index after its `)delim"`, or the text's end when it never
+ * closes; null when no valid delimiter and `(` follow, so the quote opens an ordinary string.
+ */
+function rawStringEnd(text: string, quote: number): number | null {
+  for (let at = quote + 1; at <= quote + 1 + MAX_RAW_DELIMITER; at++) {
+    const char = text.charAt(at);
+    if (char === "(") {
+      const closing = `)${text.slice(quote + 1, at)}"`;
+      const close = text.indexOf(closing, at + 1);
+      return close === -1 ? text.length : close + closing.length;
+    }
+    if (!isRawDelimiterChar(char)) return null;
+  }
+  return null;
+}
+
+/** How many characters at `at` still belong to a pp-number: digit separators and exponent signs too; 0 at its end. */
+function numberStep(text: string, at: number): number {
+  const char = text.charAt(at);
+  if (isWordChar(char) || char === ".") return 1;
+  if (char === "'" && isWordChar(text.charAt(at + 1))) return 2;
+  const signed = (char === "+" || char === "-") && EXPONENTS.has(text.charAt(at - 1));
+  return signed ? 1 : 0;
+}
+
+/** From a pp-number's first character: the index after it. */
+function numberEnd(text: string, from: number): number {
+  let at = from + 1;
+  for (let step = numberStep(text, at); step > 0; step = numberStep(text, at)) at += step;
+  return at;
+}
+
+/** From an identifier's first character: the identifier, or the raw string it is the prefix of. */
+function wordToken(text: string, from: number): CppToken {
+  let end = from + 1;
+  while (isWordChar(text.charAt(end))) end++;
+  const word = text.slice(from, end);
+  if (RAW_STRING_PREFIXES.has(word) && text.charAt(end) === '"') {
+    const raw = rawStringEnd(text, end);
+    if (raw !== null) return { value: "", end: raw };
+  }
+  return { value: word, end };
+}
+
+/** One C++ token from `at`, which is never inside one. Every token is at least one character long. */
+function cppToken(text: string, at: number): CppToken {
+  const char = text.charAt(at);
+  const next = text.charAt(at + 1);
+  if (CPP_SPACE.has(char)) return { value: null, end: at + 1 };
+  if (char === "/" && next === "/") return { value: null, end: lineCommentEnd(text, at + 2) };
+  if (char === "/" && next === "*") return { value: null, end: blockCommentEnd(text, at + 2) };
+  if (char === '"' || char === "'") return { value: "", end: literalEnd(text, at + 1, char) };
+  if (isDigit(char) || (char === "." && isDigit(next))) return { value: "", end: numberEnd(text, at) };
+  if (isWordChar(char)) return wordToken(text, at);
+  if (char === ":" && next === ":") return { value: "::", end: at + 2 };
+  return { value: char, end: at + 1 };
+}
+
+/** How much of `studio::install(` has been read once `value` follows its first `matched` tokens. */
+function installProgress(matched: number, value: string): number {
+  if (value === INSTALL_CALL[matched]) return matched + 1;
+  return value === INSTALL_CALL[0] ? 1 : 0;
+}
+
+/**
+ * Whether C++ source calls `studio::install(`. Read token by token in one forward pass, the way a
+ * compiler reads it: comments, string, character and raw string literals never count, and a
+ * hostile file costs its length and nothing more.
+ */
+function installsNativeContract(source: string): boolean {
+  let matched = 0;
+  let at = 0;
+  while (at < source.length) {
+    const token = cppToken(source, at);
+    at = token.end;
+    if (token.value === null) continue;
+    matched = installProgress(matched, token.value);
+    if (matched === INSTALL_CALL.length) return true;
+  }
+  return false;
+}
+
+/** Why a file the C++ lane needs cannot be read: it is not there, or it is not a plain file. */
+async function unreadable(dir: string, file: string, notPlain = MESSAGE.NotAPlainFile): Promise<string> {
+  return (await pathExists(path.join(dir, file))) ? notPlain(file) : MESSAGE.MissingFile(file);
+}
+
+/**
+ * The static check of a C++ · raylib game: a CMake project that builds through `genex_add_game`,
+ * an entry that installs the C++ contract, and a studio.json that does not contradict its files.
+ * Every problem carries its code; nothing here asks a C++ game for a page it never has.
+ * Read-only, and every file is read as a plain file only (never through a link or a pipe).
+ */
+export async function validateNativeDir(dir: string, known?: ProjectShape): Promise<GameValidation> {
+  const shape = known ?? (await readProjectShape(dir));
+  const { problems, codes, fail } = findings();
+  const cmake = await readNativeSource(path.join(dir, "CMakeLists.txt"));
+  if (cmake === null) fail(await unreadable(dir, "CMakeLists.txt"), GameValidationCode.NativeMissingCMake);
+  else if (!cmakeCallsGenexAddGame(cmake)) fail(MESSAGE.NeedsGenexCmake, GameValidationCode.NativeNeedsGenexCmake);
+  const main = await readNativeSource(path.join(dir, shape.main));
+  const installed = main !== null && installsNativeContract(main);
+  if (main === null) fail(await unreadable(dir, shape.main), GameValidationCode.NativeMissingMain);
+  else if (!installed) fail(MESSAGE.NativeContractRemoved(shape.main), GameValidationCode.NativeContractRemoved);
+  const destinations = await readGameDestinations(dir, shape, null);
+  if (destinations.stackContradicts) {
+    fail(MESSAGE.StackContradictsKind(kindWords(shape.kind)), GameValidationCode.StackContradictsKind);
+  }
+  return {
+    ok: problems.length === 0,
+    problems,
+    missing: [],
+    warnings: destinations.warnings,
+    contract: installed ? ContractWord.Loaded : ContractWord.Missing,
+    reach: "none",
+    shape,
+    codes,
+  };
+}
+
+/**
+ * The build inputs a Rust game folder never holds: the studio writes the cargo manifest and lock
+ * from `genex.toml`, and runs no build script and no cargo configuration of the game's.
+ */
+const RUST_OWN_BUILD_INPUTS = ["Cargo.toml", "Cargo.lock", "build.rs", ".cargo"] as const;
+
+/**
+ * The static check of a Rust · wgpu game: its `genex.toml`, no build input of its own, an entry
+ * that hands the game to `genex::install`, and a studio.json that does not contradict its files.
+ * A missing or unreadable file is `missing-file` (a night has nothing to build on); a cargo file,
+ * build script or cargo configuration is `rust-own-build-input` (whatever it is: a link counts,
+ * and nothing is followed or opened); the call taken out of the entry is
+ * `native-contract-removed`, as for a C++ game. `unsafe` code is the lane's to refuse
+ * (`-F unsafe_code`). Read-only, every file read as a plain file only.
+ */
+export async function validateRustDir(dir: string, known?: ProjectShape): Promise<GameValidation> {
+  const shape = known ?? (await readProjectShape(dir));
+  const { problems, codes, fail } = findings();
+  for (const input of RUST_OWN_BUILD_INPUTS) {
+    if (await entryExists(path.join(dir, input)))
+      fail(MESSAGE.RustOwnBuildInput(input), GameValidationCode.RustOwnBuildInput);
+  }
+  if ((await readNativeSource(path.join(dir, GENEX_MANIFEST))) === null)
+    fail(await unreadable(dir, GENEX_MANIFEST, MESSAGE.RustNotAPlainFile), GameValidationCode.MissingFile);
+  const main = await readNativeSource(path.join(dir, shape.main));
+  const installed = main !== null && installsGenex(main);
+  if (main === null) fail(await unreadable(dir, shape.main, MESSAGE.RustNotAPlainFile), GameValidationCode.MissingFile);
+  else if (!installed) fail(MESSAGE.GenexInstallRemoved(shape.main), GameValidationCode.NativeContractRemoved);
+  const destinations = await readGameDestinations(dir, shape, null);
+  if (destinations.stackContradicts) {
+    fail(MESSAGE.StackContradictsKind(kindWords(shape.kind)), GameValidationCode.StackContradictsKind);
+  }
+  return {
+    ok: problems.length === 0,
+    problems,
+    missing: [],
+    warnings: destinations.warnings,
+    contract: installed ? ContractWord.Loaded : ContractWord.Missing,
+    reach: "none",
+    shape,
+    codes,
+  };
+}
+
+/** Each compiled stack's own static check. */
+const COMPILED_VALIDATIONS = {
+  [GameStack.RaylibCpp]: validateNativeDir,
+  [GameStack.RustWgpu]: validateRustDir,
+} as const satisfies Record<CompiledStack, (dir: string, known: ProjectShape) => Promise<GameValidation>>;
+
+/** A newer Genex's game ({@link ProjectShape.readOnly}): one problem, `kind-unsupported`, and nothing read. */
+function readOnlyValidation(shape: ProjectShape): GameValidation {
+  const { problems, codes, fail } = findings();
+  fail(MESSAGE.KindUnsupported, GameValidationCode.KindUnsupported);
+  return {
+    ok: false,
+    problems,
+    missing: [],
+    warnings: [],
+    contract: ContractWord.Missing,
+    reach: "none",
+    shape,
+    codes,
+  };
+}
+
+/** A `genex::install(` call, as it reads once {@link rustCode} has blanked comments and literals. */
+const GENEX_INSTALL_CALL = /\bgenex\s*::\s*install\s*\(/;
+/** A raw string's opening (`r"`, `r#"`, `br##"`, `cr"`…), read where it starts; group 1 is its `#`s. */
+const RUST_RAW_STRING = /[bc]?r(#*)"/y;
+/** The furthest a character literal's closing quote sits from its opening: `'\u{10FFFF}'`. */
+const MAX_RUST_CHAR_SPAN = 11;
+
+/** Whether a Rust entry hands its game to `genex::install(…)` in code, never in a comment or a literal. */
+export function installsGenex(source: string): boolean {
+  return GENEX_INSTALL_CALL.test(rustCode(source));
+}
+
+/** Rust source with every comment and every string or character literal replaced by one space. */
+function rustCode(text: string): string {
+  const pieces: string[] = [];
+  let start = 0;
+  let at = 0;
+  while (at < text.length) {
+    const end = rustNonCodeEnd(text, at);
+    if (end === at) {
+      at += 1;
+      continue;
+    }
+    pieces.push(text.slice(start, at), " ");
+    at = end;
+    start = end;
+  }
+  pieces.push(text.slice(start));
+  return pieces.join("");
+}
+
+/** Where the comment or literal that starts at `at` ends; `at` itself when code starts there. */
+function rustNonCodeEnd(text: string, at: number): number {
+  const char = text.charAt(at);
+  const next = text.charAt(at + 1);
+  if (char === "/" && next === "/") return rustLineEnd(text, at + 2);
+  if (char === "/" && next === "*") return rustBlockCommentEnd(text, at + 2);
+  if (char === '"') return rustStringEnd(text, at + 1);
+  if (char === "'") return rustCharEnd(text, at);
+  return rustRawStringEnd(text, at);
+}
+
+/** From just inside a line comment: its line's end (a backslash there splices nothing in Rust). */
+function rustLineEnd(text: string, from: number): number {
+  const newline = text.indexOf("\n", from);
+  return newline === -1 ? text.length : newline;
+}
+
+/** From just inside a block comment: the index after the `*` `/` that closes it, nested ones counted (Rust nests them). */
+function rustBlockCommentEnd(text: string, from: number): number {
+  let depth = 1;
+  let at = from;
+  while (at < text.length && depth > 0) {
+    const pair = text.slice(at, at + 2);
+    if (pair === "/*") depth++;
+    else if (pair === "*/") depth--;
+    at += pair === "/*" || pair === "*/" ? 2 : 1;
+  }
+  return at;
+}
+
+/** From just inside a string literal: the index after its closing quote (a Rust string may span lines). */
+function rustStringEnd(text: string, from: number): number {
+  let at = from;
+  while (at < text.length) {
+    const char = text.charAt(at);
+    if (char === '"') return at + 1;
+    at += char === "\\" ? 2 : 1;
+  }
+  return text.length;
+}
+
+/** At a `'`: the index after the character literal it opens, or `at` for a lifetime or a label (code). */
+function rustCharEnd(text: string, at: number): number {
+  if (text.charAt(at + 1) === "\\") {
+    const close = text.indexOf("'", at + 3);
+    return close === -1 || close > at + MAX_RUST_CHAR_SPAN ? at : close + 1;
+  }
+  const width = (text.codePointAt(at + 1) ?? 0) > 0xffff ? 2 : 1;
+  return text.charAt(at + 1 + width) === "'" ? at + 2 + width : at;
+}
+
+/** At a raw string's opening: the index after its closing quote and `#`s; `at` when none opens there. */
+function rustRawStringEnd(text: string, at: number): number {
+  if (at > 0 && isWordChar(text.charAt(at - 1))) return at;
+  RUST_RAW_STRING.lastIndex = at;
+  const open = RUST_RAW_STRING.exec(text);
+  if (!open) return at;
+  const hashes = open[1] ?? "";
+  const close = text.indexOf(`"${hashes}`, RUST_RAW_STRING.lastIndex);
+  return close === -1 ? text.length : close + 1 + hashes.length;
 }
 
 /** The reachable-source walk's state: what it found, what it still has to open, and what it has seen. */
@@ -371,7 +774,7 @@ function followSpecifier(walk: SourceWalk, from: string, specifier: string, mapp
  */
 async function reachableSources(dir: string, shape: ProjectShape): Promise<{ files: string[]; unresolved: string[] }> {
   const walk = sourceWalk(dir);
-  const html = await readFile(path.join(dir, "index.html"), "utf8").catch(() => null);
+  const html = await readGameText(path.join(dir, "index.html"));
   for (const src of html === null ? [] : pageScripts(html)) {
     if (!isRemoteSrc(src)) walk.enqueue(projectRelative(src));
   }
@@ -385,7 +788,7 @@ async function reachableSources(dir: string, shape: ProjectShape): Promise<{ fil
     const resolved = await resolveModule(file);
     if (!resolved) continue;
     walk.files.push(resolved);
-    const text = await readFile(resolved, "utf8").catch(() => "");
+    const text = (await readGameText(resolved)) ?? "";
     for (const specifier of moduleSpecifiers(text)) followSpecifier(walk, resolved, specifier, mapped);
   }
   return { files: walk.files, unresolved: [...walk.unresolved] };

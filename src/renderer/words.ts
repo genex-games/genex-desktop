@@ -21,12 +21,53 @@
 
 import type { GameEngine } from "../shared/game-engine.ts";
 import { WorkerStopCode } from "../shared/workers.ts";
-import { type PackageManager, type SandboxProblemCode, StudioPlatform } from "../shared/boot.ts";
+import {
+  APPARMOR_PATTERN_CHARACTERS,
+  type AppArmorBlockCode,
+  type PackageManager,
+  type SandboxProblemCode,
+  StudioPlatform,
+} from "../shared/boot.ts";
+import { BuildProblemCode } from "../shared/build-problem.ts";
+import { type ARTIFACT_SIGNINGS, ExportRefusal, ExportSigning } from "../shared/game-export-contract.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
+import { AssetRefusal } from "../shared/game-assets.ts";
+import {
+  BuildTarget,
+  type CompiledStack,
+  type CreatableStack,
+  GameStack,
+  isCompiledStack,
+} from "../shared/game-project.ts";
+import { DestinationBadge, TargetRefusal } from "../shared/game-targets.ts";
+import { GameBoxProblem, NativeRefusal, NativeRunState } from "../shared/native-contract.ts";
+import {
+  PrewarmState,
+  ToolchainId,
+  ToolchainInstallPhase,
+  ToolchainProblem,
+  ToolchainPruneRefusal,
+  ToolchainUnhosted,
+  UserSideState,
+  XcodeStatus,
+} from "../shared/toolchain.ts";
 import { sizeWords } from "../shared/byte-size.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
+import { type SeedRetakeAnswer, SeedRetakeRefusal } from "../shared/seed-retake.ts";
+import {
+  CrateAuditSource,
+  CrateAuditStatus,
+  type CrateBlock,
+  type CrateBlockRefusal,
+  CrateCheckEngine,
+  type CrateCheckReport,
+  CrateNotice,
+  CrateRefusal,
+  CrateRequestState,
+  type CrateRequestView,
+} from "../shared/crate-requests.ts";
 import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
@@ -2458,6 +2499,7 @@ const STUDIO_TOOLS: Record<string, ToolWords> = {
   play_deterministic: { icon: "game", label: "played the game" },
   new_game: { icon: "game", label: "started a new game" },
   export_game: { icon: "game", label: "exported the game" },
+  check_conformance: { icon: "game", label: "checked the game's conformance" },
   remember: { icon: "think", label: "remembered something" },
   forget: { icon: "think", label: "forgot something" },
   snapshot_now: { icon: "think", label: "saved a snapshot" },
@@ -3096,6 +3138,8 @@ export const SANDBOX_SETUP_WORDS = {
     "not-provisioned": "Windows needs a one-time setup of the protected workspace, approved by an administrator.",
     "git-missing":
       "Agents run their commands in Git Bash, which comes with Git for Windows. Install it from git-scm.com, then retry.",
+    "userns-restricted":
+      "Ubuntu only lets apps with an AppArmor profile create the isolated spaces agents run in. Genex needs its profile added once.",
     "isolation-blocked": "This system is blocking the isolation the protected workspace uses to keep agents apart.",
   } satisfies Record<SandboxProblemCode, string>,
   installThenRetry: "Install them in a terminal, then retry:",
@@ -3110,11 +3154,32 @@ export const SANDBOX_SETUP_WORDS = {
   copyCommand: (system: string) => `Copy the ${system} command`,
   retry: "Retry",
   retrying: "Checking…",
-  /** Windows: install it now, behind one administrator prompt. */
+  /** Windows and Linux: install it now, behind one administrator prompt. */
   setUp: "Set up",
   settingUp: "Waiting for approval…",
+  /** Linux: the profile is in, and the app is starting again under it. */
+  restarting: "Restarting…",
+  /** Windows: what Set up will ask for. */
   setUpHint: "Windows will ask an administrator to approve the setup once.",
+  /** Linux: what Set up will ask for and add, by the profile's file. */
+  profileSetUpHint: (file: string) =>
+    `Ubuntu will ask for your password once to add ${file}. It lets this copy of Genex, and the programs it starts, create user namespaces despite Ubuntu’s restriction. Then Genex restarts.`,
   setupCancelled: "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.",
+  /** Linux: the same profile install, by hand. */
+  byHand: "Add it in a terminal instead",
+  byHandHint: "Run this, then quit and reopen Genex:",
+  copyProfileCommand: "Copy the terminal command",
+  /** Linux: how to take the profile out again. */
+  removeHint: "To remove it later:",
+  copyRemoveCommand: "Copy the removal command",
+  /** Linux: why no profile is offered for this copy, by `AppArmorBlockCode`. */
+  apparmorBlocked: {
+    unnamable: `AppArmor can’t name the folder Genex is in. Move Genex to a folder whose path has none of ${APPARMOR_PATTERN_CHARACTERS.join(" ")}, then open it again.`,
+    "shared-folder":
+      "Genex is in a folder other people on this computer can change, so a profile must not name it. Move Genex to a folder only you can write to, such as ~/Genex, then open it again.",
+    "not-attached":
+      "Genex’s AppArmor profile is installed, but this window started without it. Quit and reopen Genex. If this screen comes back, AppArmor isn’t applying the profile to this copy; Details say which path it names.",
+  } satisfies Record<AppArmorBlockCode, string>,
   stillFailing: "Studio still couldn’t start:",
   details: "Details",
 } as const;
@@ -3533,6 +3598,770 @@ export const GENEX_WORDS = {
   credits: (count: number) => plural(count, "credit"),
   refunded: "Refunded",
 } as const;
+
+// ── C++ · raylib: stacks, destinations, toolchains and build problems ─────────────────────
+
+/** A game's stack, as the create dialog and the stage chip name it. A stack is never an "engine". */
+export const STACK_WORDS = {
+  [GameStack.ThreeJs]: "Three.js",
+  [GameStack.RaylibCpp]: "C++ · raylib",
+  [GameStack.RustWgpu]: "Rust · wgpu",
+} as const satisfies Record<GameStack, string>;
+
+/** Create Game's destinations, the stage's badges, Live's card for a game with no browser build, and Play on Mac. */
+export const DESTINATION_WORDS = {
+  question: "Where will people play?",
+  label: {
+    [BuildTarget.Web]: "Browser",
+    [BuildTarget.Mac]: "Mac",
+    [BuildTarget.Windows]: "Windows",
+    [BuildTarget.Linux]: "Linux",
+    [BuildTarget.Ios]: "iPhone and iPad",
+    [BuildTarget.Android]: "Android",
+  } satisfies Record<BuildTarget, string>,
+  /** The line under the choices: the stack the destinations make. */
+  stackLine: (stack: GameStack): string =>
+    isCompiledStack(stack)
+      ? `Made in ${STACK_WORDS[stack]}: one game, built for every place you pick.`
+      : `Made in ${STACK_WORDS[stack]} for the browser.`,
+  /** Create game's stack choice, offered where Rust · wgpu builds here beside Three.js. */
+  stackChoice: "Made in",
+  /** A stack's line in the stack choice. */
+  stackOption: (stack: CreatableStack): string => STACK_WORDS[stack],
+  /** Why a desktop box is refused while Three.js is the chosen stack. */
+  browserOnly: "Three.js games play in the browser. Choose Rust · wgpu to build for it.",
+  /** Why a box is refused for a chosen stack whose lane does not build it here yet. */
+  notYetForStack: (stack: CompiledStack): string => `${STACK_WORDS[stack]} games can’t be built for it here yet`,
+  /** Why a destination is refused, or only labelled, here. */
+  refusal: {
+    [TargetRefusal.MacBuildsNeedAMac]: "Mac games are built on a Mac",
+    [TargetRefusal.NotRunnableHere]: "Built here, but it can’t run on this computer",
+    [TargetRefusal.NoGameBox]: "This version of Genex can’t run it on this computer yet",
+    [TargetRefusal.NotADestination]: "Not one of this game’s destinations",
+    [TargetRefusal.StackIsFixed]: "A game keeps the stack it was made with. Add destinations it can already build for.",
+    [TargetRefusal.NoJudgingTarget]: "There is no build the judges can play: the browser build made for them failed.",
+    [TargetRefusal.KindUnsupported]: "A newer version of Genex made this game, so this one opens it read-only.",
+    [TargetRefusal.StackGated]: "Rust games aren’t available in this version of Genex yet.",
+    [TargetRefusal.ToolchainOffline]:
+      "This game’s tools aren’t installed, and Genex can’t download them while offline.",
+  } satisfies Record<TargetRefusal, string>,
+  badge: {
+    [DestinationBadge.Building]: "Building",
+    [DestinationBadge.Built]: "Built",
+    [DestinationBadge.Failed]: "Build failed",
+    [DestinationBadge.NotBuilt]: "Not built yet",
+    [DestinationBadge.NotRunHere]: "Built, not run here",
+    [DestinationBadge.CiPassed]: "CI smoke passed",
+    [DestinationBadge.VerifiedInVm]: "Verified in a VM",
+  } satisfies Record<DestinationBadge, string>,
+  /** Why a desktop destination's badge says it is not built. */
+  notBuiltWhy: "This version of Genex doesn’t build it from here yet.",
+  /** The not-run-here badge, naming the computer: a Mac says so. */
+  notRunHereOn: (host: StudioPlatform): string =>
+    host === StudioPlatform.Mac ? "Built, not run on this Mac" : "Built, not run here",
+  /** Why a cross-built destination's badge says it was not run. */
+  notRunHereWhy: "Genex built it and checked the program, but this computer can’t run it.",
+  /** Live, for a game without Browser among its destinations. */
+  liveStatusCard: {
+    title: "This game runs in its own window",
+    body: "Live shows browser builds, and this game has none. Play it in its own window instead.",
+  },
+  /** Live, for a game without Browser whose Mac build Live shows itself (a Rust game: no window of its own). */
+  liveMacCard: {
+    title: "This game plays its Mac build in Live",
+    body: "It has no browser build. Choose Native to play it here.",
+  },
+  playOnMac: "Play on Mac",
+  playOnMacUnavailable: "Play on Mac opens games made for Mac.",
+  /** A running build's stage on the strip, naming the stack's compiler. */
+  buildStage: {
+    [GameStack.RaylibCpp]: "Genex is compiling the C++ code.",
+    [GameStack.RustWgpu]: "Genex is compiling the Rust code with Cargo.",
+  } satisfies Record<CompiledStack, string>,
+  /** The badge of a Mac build Live shows itself (a game with no window of its own). */
+  inLiveNative: "In Live · Native",
+} as const;
+
+const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
+const BYTES_PER_GB = BYTES_PER_MB * BYTES_PER_KB;
+
+/** A download or disk size: "85 MB", "1.4 GB". */
+function byteWords(bytes: number): string {
+  if (bytes < BYTES_PER_GB) return `${Math.max(1, Math.round(bytes / BYTES_PER_MB))} MB`;
+  return `${(bytes / BYTES_PER_GB).toFixed(1)} GB`;
+}
+
+/** The first-run Toolchain sheet and Settings → Toolchains. */
+export const TOOLCHAIN_WORDS = {
+  title: "Set up C++ games",
+  intro: "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.",
+  /** The sheet's title, intro and unsupported-computer line for each compiled stack: a Rust game's never says C++. */
+  forStack: {
+    [GameStack.RaylibCpp]: {
+      title: "Set up C++ games",
+      intro:
+        "Set up once for every C++ destination this computer can build. These tools are shared by all your C++ games.",
+      unsupportedHost: "C++ games can’t be built on this computer yet.",
+    },
+    [GameStack.RustWgpu]: {
+      title: "Set up Rust games",
+      intro:
+        "Set up once for every Rust destination this computer can build. These tools are shared by all your Rust games.",
+      unsupportedHost: "Rust games can’t be built on this computer yet.",
+    },
+  } satisfies Record<CompiledStack, { title: string; intro: string; unsupportedHost: string }>,
+  clt: {
+    name: "Apple Command Line Tools",
+    missing: "Needed to build for Mac. macOS installs them in its own window.",
+    /** A Rust game's Mac build takes Xcode's copy of the tools. */
+    missingOrXcode: "Needed to build for Mac, unless Xcode is installed. macOS installs them in its own window.",
+    present: (version: string | null) => (version ? `Installed (${version})` : "Installed"),
+    viaXcode: "Included with Xcode",
+    install: "Install Command Line Tools",
+    installing: "Finish the install in Apple’s window, then come back.",
+  },
+  xcode: {
+    name: "Xcode",
+    missing: "Needed later to build for iPhone and iPad. Install it from the App Store.",
+    present: (version: string | null) => (version ? `Installed (${version})` : "Installed"),
+  },
+  /** A Rust sheet's phone rows: the iPhone's Xcode and Rust libraries, Android's SDK parts and its licence. */
+  phones: {
+    /** A store part that is in. */
+    installed: "Installed",
+    /** A part the person installs with Android's SDK manager, against the version builds need. */
+    userSide: {
+      [UserSideState.Ready]: (pin: string) => `Installed (${pin})`,
+      [UserSideState.OtherVersion]: (pin: string) =>
+        `Another version is installed. Builds need ${pin}; Android’s SDK manager installs it.`,
+      [UserSideState.Missing]: (pin: string) => `Not installed. Builds need ${pin}; Android’s SDK manager installs it.`,
+    } satisfies Record<UserSideState, (pin: string) => string>,
+    /** The iPhone's Xcode line, by `XcodeStatus`. */
+    xcode: {
+      [XcodeStatus.Absent]: "iPhone and iPad builds need Xcode 26 or later. Install it from the App Store.",
+      [XcodeStatus.TooOld]: "This Xcode is too old for iPhone and iPad builds: they need Xcode 26 or later.",
+      [XcodeStatus.IosSdkMissing]: "Xcode is missing the iOS 26 SDK. Open Xcode once to install it.",
+      [XcodeStatus.Ready]: "Xcode is ready for iPhone and iPad builds.",
+    } satisfies Record<XcodeStatus, string>,
+    /** The Android SDK licence a person accepts here; Genex never accepts it for them. */
+    licence: {
+      title: "Android SDK License",
+      intro:
+        "Android’s SDK, build tools and NDK are installed under Google’s Android Software Development Kit License Agreement. Read it, then accept it here. Genex never accepts it for you.",
+      url: "https://developer.android.com/studio/terms",
+      read: "Read the license",
+      accept: "Accept the license",
+      accepted: "You accepted the Android SDK License.",
+    },
+    /** A phone's install button. */
+    install: (phone: string) => `Install ${phone} tools`,
+    /** Why a phone's install is not offered, beyond Xcode's own line. */
+    sdkMissing: "No Android SDK was found. Install Android Studio or its command-line tools, then open this again.",
+    licenceNeeded: "Accept the Android SDK License before installing Android’s tools.",
+    notPublished: "Genex hasn’t published these tools for this computer yet.",
+    /** A phone whose builds have everything they need. */
+    ready: "Ready",
+  },
+  /** The Rust · wgpu sheet's own lines. */
+  rust: {
+    /** Settings → Toolchains' Rust · wgpu section. */
+    settingsTitle: "Rust games",
+    notInstalledHere: "Rust games are a developer preview: this version of Genex doesn’t download their tools yet.",
+    keptTitle: "Harness parts from before Rust games",
+    keptIntro:
+      "Harness changed these parts before it knew Rust games, so a Rust build won’t run on them. Re-take the shipped copy of each; Harness’s change is kept beside it.",
+  },
+  component: {
+    [ToolchainId.Cmake]: "CMake",
+    [ToolchainId.Ninja]: "Ninja",
+    [ToolchainId.Emsdk]: "Emscripten",
+    [ToolchainId.Zig]: "Zig",
+    [ToolchainId.LlvmMingw]: "LLVM MinGW",
+    [ToolchainId.RaylibSource]: "raylib",
+    [ToolchainId.AngleMac]: "ANGLE for Mac",
+    [ToolchainId.AngleWindows]: "ANGLE for Windows",
+    [ToolchainId.AngleLinux]: "ANGLE for Linux",
+    [ToolchainId.LinuxSysroot]: "Linux headers",
+    [ToolchainId.Rust]: "Rust",
+    [ToolchainId.RustStdWasm]: "Rust for the browser",
+    [ToolchainId.WasmBindgen]: "wasm-bindgen",
+    [ToolchainId.Binaryen]: "Binaryen",
+    [ToolchainId.RustVendor]: "Rust libraries",
+    [ToolchainId.RustStdWindows]: "Rust for Windows",
+    [ToolchainId.RustStdLinux]: "Rust for Linux",
+    [ToolchainId.CargoZigbuild]: "cargo-zigbuild",
+    [ToolchainId.SwiftShaderLinux]: "SwiftShader for Linux",
+    [ToolchainId.AndroidSdk]: "Android SDK platform",
+    [ToolchainId.AndroidBuildTools]: "Android build tools",
+    [ToolchainId.AndroidNdk]: "Android NDK",
+    [ToolchainId.Bundletool]: "bundletool",
+    [ToolchainId.Jdk]: "Java runtime",
+    [ToolchainId.RustStdIos]: "Rust for iPhone",
+    [ToolchainId.RustStdIosSim]: "Rust for the iOS Simulator",
+    [ToolchainId.RustStdAndroid]: "Rust for Android",
+    [ToolchainId.CargoDeny]: "cargo-deny",
+    [ToolchainId.CargoVet]: "cargo-vet",
+    [ToolchainId.RustsecAdvisoryDb]: "RustSec advisories",
+  } satisfies Record<ToolchainId, string>,
+  size: byteWords,
+  disk: (free: number, need: number) => `${byteWords(need)} needed, ${byteWords(free)} free`,
+  install: "Install",
+  cancel: "Cancel",
+  retry: "Try again",
+  close: "Close",
+  /** A component the sheet lists that has no pinned download for this computer yet. */
+  unavailable: "Not available yet",
+  /** A component a Rust game lacks, which this version lists but does not download. */
+  notInstalled: "Not installed",
+  /** A component that comes with Genex (ANGLE): nothing to download. */
+  included: "Included with Genex",
+  /** Under the list, when `count` of its components have no pinned download. */
+  unavailableNote: (count: number) =>
+    count === 1
+      ? "Genex has no pinned version of this tool for this computer yet; Install leaves it out."
+      : "Genex has no pinned versions of these tools for this computer yet; Install leaves them out.",
+  /** The destinations an install leaves out, each waiting for a download Genex has not published: before an install and after one. */
+  notYet: (targets: readonly BuildTarget[]) => {
+    const labels = targets.map((target) => DESTINATION_WORDS.label[target]);
+    const last = labels.at(-1) ?? "";
+    if (labels.length <= 1) return `${last} isn’t available yet`;
+    return `${labels.slice(0, -1).join(", ")} and ${last} aren’t available yet`;
+  },
+  /** Why a pinned component has no download, by `ToolchainUnhosted`. */
+  unhosted: {
+    [ToolchainUnhosted.NotPublished]: "Genex hasn’t published this download yet",
+  } satisfies Record<ToolchainUnhosted, string>,
+  /** A destination whose tools are installed but whose first build must be prepared again, by `PrewarmState`. */
+  prewarm: {
+    [PrewarmState.Ready]: "Ready",
+    [PrewarmState.Stale]: "Installed for an older version of Genex: set it up again before the next build.",
+    [PrewarmState.Missing]: "Installed, but the first build isn’t prepared yet: set it up to finish.",
+  } satisfies Record<PrewarmState, string>,
+  /** Install, when every tool is there and only the preparation must be redone. */
+  setUpAgain: "Set up again",
+  /** The build problem's button when the tools are installed but their first build was never prepared. */
+  setUp: "Set up",
+  phase: {
+    [ToolchainInstallPhase.Preflight]: "Checking disk space",
+    [ToolchainInstallPhase.Downloading]: "Downloading",
+    [ToolchainInstallPhase.Verifying]: "Checking the downloads",
+    [ToolchainInstallPhase.Extracting]: "Unpacking",
+    [ToolchainInstallPhase.Probing]: "Checking the tools run",
+    [ToolchainInstallPhase.Prewarming]: "Preparing the first build",
+    [ToolchainInstallPhase.Installed]: "Setup finished",
+    [ToolchainInstallPhase.Failed]: "The install stopped",
+    [ToolchainInstallPhase.Cancelled]: "Cancelled",
+  } satisfies Record<ToolchainInstallPhase, string>,
+  problem: {
+    [ToolchainProblem.Unpinned]: "Genex has no pinned version of this tool for this computer yet.",
+    [ToolchainProblem.NotHttps]: "A download address was not secure, so nothing was downloaded.",
+    [ToolchainProblem.Download]: "A download failed. Check the connection and try again.",
+    [ToolchainProblem.Integrity]: "A download did not match its pinned checksum and was thrown away.",
+    [ToolchainProblem.Archive]: "A download held files outside its own folder, so it was not unpacked.",
+    [ToolchainProblem.DiskSpace]: "There isn’t enough free disk space.",
+    [ToolchainProblem.Probe]: "A tool was installed but did not run.",
+    [ToolchainProblem.Prewarm]: "The tools installed, but preparing the first build failed.",
+    [ToolchainProblem.CltMissing]: "Apple’s Command Line Tools are needed first.",
+    [ToolchainProblem.UnsupportedHost]: "C++ games can’t be built on this computer yet.",
+    [ToolchainProblem.NotHosted]: "Genex hasn’t published a download of a tool this needs yet.",
+    [ToolchainProblem.NotBundled]:
+      "This copy of Genex is missing a bundled C++ component. Reinstall Genex, or rebuild it with the bundled tools.",
+  } satisfies Record<ToolchainProblem, string>,
+  settings: {
+    title: "Toolchains",
+    versions: "Installed versions",
+    disk: (bytes: number) => `${byteWords(bytes)} on disk`,
+    prune: "Remove old versions",
+    pruned: (count: number, bytes: number) =>
+      count === 0 ? "No old versions to remove" : `Removed ${plural(count, "old version")}, ${byteWords(bytes)}`,
+    /** Why a prune removed nothing, by `ToolchainPruneRefusal`. */
+    kept: {
+      [ToolchainPruneRefusal.Busy]: "Nothing removed: an install is running. Try again when it ends.",
+      [ToolchainPruneRefusal.NoLock]: "Nothing removed: no install has finished yet.",
+      [ToolchainPruneRefusal.UnknownGameLock]: "Nothing removed: a game may still need these versions.",
+      [ToolchainPruneRefusal.Shared]: "Nothing removed: this toolchain folder is shared with another Genex.",
+    } satisfies Record<ToolchainPruneRefusal, string>,
+    empty: "Nothing installed yet. Make a C++ game to set up its tools.",
+  },
+} as const;
+
+/** Re-taking the shipped copy of a harness part kept from before Rust games, and how each re-take went. */
+export const SEED_RETAKE_WORDS = {
+  retake: "Re-take shipped copy",
+  retaking: "Re-taking…",
+  /** Where Harness's change went once the shipped copy is back. */
+  retaken: (patchFile: string) => `Shipped copy back. Harness’s change is kept in ${patchFile}`,
+  /** Why a re-take did nothing, by `SeedRetakeRefusal`. */
+  refusal: {
+    [SeedRetakeRefusal.InvalidPath]: "That isn’t a harness part’s path, so nothing was changed.",
+    [SeedRetakeRefusal.NotSeedFile]: "Genex doesn’t ship this part, so there is no copy to re-take.",
+    [SeedRetakeRefusal.NotPlainFile]: "This part isn’t a plain file in the harness, so nothing was changed.",
+    [SeedRetakeRefusal.NotKept]: "This part is already the shipped copy.",
+    [SeedRetakeRefusal.PatchExists]: "An earlier re-take of this part is still where this one would go.",
+  } satisfies Record<SeedRetakeRefusal, string>,
+  /** The row's line once a re-take answered. */
+  answer: (answer: SeedRetakeAnswer): string =>
+    answer.ok ? SEED_RETAKE_WORDS.retaken(answer.patchFile) : SEED_RETAKE_WORDS.refusal[answer.code],
+} as const;
+
+/** A crate the checks named: `name version`. */
+const crateWords = (block: { name: string; version: string }): string => `${block.name} ${block.version}`;
+
+/** A snapshot's day (`YYYY-MM-DD`) as the person reads a date. */
+const snapshotDay = (day: string): string =>
+  new Date(`${day}T00:00:00Z`).toLocaleDateString([], {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+/** The blocks of one kind a request's report names. */
+const blocksOf = (view: CrateRequestView, refusal: CrateBlockRefusal): CrateBlock[] =>
+  (view.check?.blocked ?? []).filter((block) => block.refusal === refusal);
+
+/** A refusal that names the crate it was for (the requested one, or one it brings in); null when the report names none. */
+function namedRefusal(view: CrateRequestView): string | null {
+  const refusal = view.refusal;
+  const isBlock =
+    refusal === CrateRefusal.Advisory || refusal === CrateRefusal.Licence || refusal === CrateRefusal.Banned;
+  if (!isBlock) return null;
+  const [block] = blocksOf(view, refusal);
+  if (!block) return null;
+  const own = block.name === view.name && block.version === view.version;
+  const crate = crateWords(block);
+  if (refusal === CrateRefusal.Advisory) {
+    const advisory = block.detail ?? "unnamed";
+    return own
+      ? `A known security advisory (${advisory}) affects it, so it wasn’t added even with your approval.`
+      : `It brings in ${crate}, which a known security advisory (${advisory}) affects, so it wasn’t added even with your approval.`;
+  }
+  if (refusal === CrateRefusal.Licence) {
+    const licence = block.detail ?? "no licence";
+    return own
+      ? `Its licence (${licence}) isn’t one Genex allows in games.`
+      : `It brings in ${crate}, under ${licence}, a licence Genex doesn’t allow in games.`;
+  }
+  return own
+    ? "It’s a graphics backend Genex doesn’t allow in games."
+    : `It brings in ${crate}, a graphics backend Genex doesn’t allow in games.`;
+}
+
+/** Crates a Rust game asked for (extension ladder level 4): the person's card, its states and refusals. */
+export const CRATE_REQUEST_WORDS = {
+  title: "Crates games asked for",
+  intro:
+    "A game asked for a crate beyond Genex’s reviewed set. You decide. Genex reads the crate and checks it offline only after you approve: a known security advisory, a licence Genex doesn’t allow or a banned crate, in it or in a crate it brings in, stops it. Audits are shown for your information. Added crates are for that game only.",
+  forGame: (project: string) => `for ${project}`,
+  approve: "Approve",
+  approving: "Checking…",
+  decline: "Decline",
+  allowBuildScripts: "Allow build scripts",
+  allowProcMacros: "Allow proc macros",
+  /** What is known of the closure once it was read; before that, when it will be. */
+  facts: (view: CrateRequestView): string => {
+    if (view.licence === null && view.closureSize === null)
+      return "Its licence, advisories and audits are checked after you approve; nothing is added if a check stops it.";
+    const parts = [view.licence ?? "No licence named"];
+    if (view.closureSize !== null) parts.push(view.closureSize === 1 ? "1 crate" : `${view.closureSize} crates`);
+    if (view.buildScripts) parts.push("runs a build script");
+    if (view.procMacros) parts.push("has a proc macro");
+    return parts.join(" · ");
+  },
+  /** Where a request stands, by `CrateRequestState`; a refused one says why instead. */
+  state: {
+    [CrateRequestState.Pending]: "Waiting for you",
+    [CrateRequestState.Approved]: "Approved, checking…",
+    [CrateRequestState.Vendored]: "Added for this game",
+    [CrateRequestState.Refused]: "Not added",
+  } satisfies Record<CrateRequestState, string>,
+  /** Why a request was not added (or, for the checker's own two, why it waits again), by `CrateRefusal`. */
+  refusal: {
+    [CrateRefusal.Declined]: "You declined it.",
+    [CrateRefusal.NotFound]: "The registry has no such crate or version.",
+    [CrateRefusal.Yanked]: "Its authors withdrew this version.",
+    [CrateRefusal.Advisory]:
+      "A known security advisory affects it, or a crate it brings in, so it wasn’t added even with your approval.",
+    [CrateRefusal.Licence]: "It, or a crate it brings in, uses a licence Genex doesn’t allow in games.",
+    [CrateRefusal.Unvetted]: "No audit Genex trusts covers it yet.",
+    [CrateRefusal.BuildScript]: "It runs a build script, which you didn’t allow.",
+    [CrateRefusal.ProcMacro]: "It includes a proc macro, which you didn’t allow.",
+    [CrateRefusal.DuplicateVersion]: "It needs a second version of a crate Genex already ships.",
+    [CrateRefusal.OverlayTampered]: "Its files changed after they were checked, so Genex won’t use them.",
+    [CrateRefusal.EngineCrate]: "Genex’s engine already uses it; games reach it through Genex, not directly.",
+    [CrateRefusal.Banned]: "It, or a crate it brings in, is a graphics backend Genex doesn’t allow in games.",
+    [CrateRefusal.PolicyTampered]:
+      "Genex’s crate policy doesn’t match the one it shipped with, so nothing was checked or added. Reinstall Genex.",
+    [CrateRefusal.CheckerUnavailable]:
+      "Genex couldn’t install its crate checker, so nothing was checked or added. Connect to the internet and approve again.",
+    [CrateRefusal.CheckFailed]:
+      "Genex’s crate check didn’t finish, so nothing was added. Approve again to retry; if it keeps failing, reinstall the Rust toolchain in Settings › Toolchains or report the problem.",
+  } satisfies Record<CrateRefusal, string>,
+  /** The line under a decided request: a refusal names the crate it was for when the checks said. */
+  outcome: (view: CrateRequestView): string => {
+    if (!view.refusal) return CRATE_REQUEST_WORDS.state[view.state];
+    return namedRefusal(view) ?? CRATE_REQUEST_WORDS.refusal[view.refusal];
+  },
+  /** The labels of what the checks found. */
+  check: {
+    advisories: "Advisories",
+    licence: "Licence",
+    banned: "Banned",
+    audits: "Audits",
+    details: "How it was checked",
+    engine: "Checked by",
+    snapshot: "Advisory list",
+  },
+  /** The advisory row: each one that stopped it and the crate it affects, or none known as of the snapshot's day. */
+  advisories: (report: CrateCheckReport): string => {
+    const found = report.blocked.filter((block) => block.refusal === CrateRefusal.Advisory);
+    if (found.length > 0) return found.map((block) => `${block.detail} in ${crateWords(block)}`).join(", ");
+    if (report.advisories.length > 0) return report.advisories.join(", ");
+    return report.advisoryDbDate ? `None known as of ${snapshotDay(report.advisoryDbDate)}` : "None known";
+  },
+  /** The licence row: allowed, or each crate whose licence isn't, with that licence. */
+  licence: (report: CrateCheckReport): string => {
+    if (report.licenceAllowed) return "Allowed";
+    const found = report.blocked.filter((block) => block.refusal === CrateRefusal.Licence);
+    if (found.length === 0) return "Not allowed";
+    return `Not allowed: ${found.map((block) => `${crateWords(block)} (${block.detail ?? "no licence"})`).join(", ")}`;
+  },
+  /** The banned row's crates; empty when none is banned. */
+  banned: (report: CrateCheckReport): string =>
+    report.blocked
+      .filter((block) => block.refusal === CrateRefusal.Banned)
+      .map(crateWords)
+      .join(", "),
+  /** Each trusted source's name. */
+  auditSource: {
+    [CrateAuditSource.BytecodeAlliance]: "Bytecode Alliance",
+    [CrateAuditSource.Embark]: "Embark",
+    [CrateAuditSource.Google]: "Google",
+    [CrateAuditSource.Mozilla]: "Mozilla",
+    [CrateAuditSource.Zcash]: "Zcash",
+  } satisfies Record<CrateAuditSource, string>,
+  /** The audits row: who audited it, who didn't, and whose lists aren't installed (or that none is). */
+  audits: (report: CrateCheckReport): string => {
+    if (report.audits.every((row) => row.status === CrateAuditStatus.Unavailable))
+      return "No trusted audit lists installed yet";
+    const named = (status: CrateAuditStatus) =>
+      report.audits
+        .filter((row) => row.status === status)
+        .map((row) => CRATE_REQUEST_WORDS.auditSource[row.source])
+        .join(", ");
+    const groups = [
+      [named(CrateAuditStatus.Audited), "Audited by"],
+      [named(CrateAuditStatus.NotAudited), "Not audited by"],
+      [named(CrateAuditStatus.Unavailable), "No audit list yet from"],
+    ] as const;
+    return groups
+      .filter(([sources]) => sources !== "")
+      .map(([sources, lead]) => `${lead} ${sources}`)
+      .join(" · ");
+  },
+  /** What a vendored crate carries for the person, by `CrateNotice`. */
+  notice: {
+    [CrateNotice.Unaudited]: "No trusted source has audited it yet. It was added on your approval.",
+    [CrateNotice.NoAuditLists]:
+      "Genex has no audit lists to compare against yet, so it was added on your approval alone.",
+  } satisfies Record<CrateNotice, string>,
+  /** Each engine's name. */
+  engineName: {
+    [CrateCheckEngine.CargoDeny]: "cargo-deny",
+    [CrateCheckEngine.CargoVet]: "cargo-vet",
+    [CrateCheckEngine.Builtin]: "Genex’s built-in rules (test data)",
+  } satisfies Record<CrateCheckEngine, string>,
+  /** The engine row: what checked advisories, licences and bans, and what read the audits. */
+  engine: (report: CrateCheckReport): string => {
+    const one = (engine: CrateCheckEngine, version: string | null) =>
+      version ? `${CRATE_REQUEST_WORDS.engineName[engine]} ${version}` : CRATE_REQUEST_WORDS.engineName[engine];
+    const deny = one(report.engine, report.engineVersion);
+    const vet = report.auditEngine === null ? null : one(report.auditEngine, report.auditEngineVersion);
+    return vet === null || vet === deny ? deny : `${deny} · ${vet}`;
+  },
+  /** The snapshot row: RustSec at its commit and day. */
+  snapshot: (report: CrateCheckReport): string => {
+    const commit = report.advisoryDb ? `RustSec ${report.advisoryDb.slice(0, 8)}` : "RustSec";
+    return report.advisoryDbDate ? `${commit}, ${snapshotDay(report.advisoryDbDate)}` : commit;
+  },
+} as const;
+
+/** A C++ game's own run: Play on Mac's card, its states and why a run was refused. */
+export const NATIVE_WORDS = {
+  title: "Playing on Mac",
+  /** Where the run stands, by `NativeRunState`. */
+  state: {
+    [NativeRunState.Building]: "Building for Mac",
+    [NativeRunState.Admitting]: "Checking the build",
+    [NativeRunState.Starting]: "Starting",
+    [NativeRunState.Ready]: "Running in its own window",
+    [NativeRunState.Paused]: "Paused",
+    [NativeRunState.Stopping]: "Stopping",
+    [NativeRunState.Stopped]: "Stopped",
+    [NativeRunState.Crashed]: "The game crashed",
+    [NativeRunState.Killed]: "The game was stopped by force",
+    [NativeRunState.Refused]: "Genex didn’t start this build",
+  } satisfies Record<NativeRunState, string>,
+  /** Why the host refused a build, a run or a reply, by `NativeRefusal`. */
+  refusal: {
+    [NativeRefusal.ExtraMachO]: "The build holds a program Genex didn’t expect, so it wasn’t started.",
+    [NativeRefusal.Symlink]: "The build holds a link, so it wasn’t started.",
+    [NativeRefusal.HardLink]: "The build holds a file linked from somewhere else, so it wasn’t started.",
+    [NativeRefusal.LinksOpenGl]: "The build uses OpenGL, which Genex doesn’t run. Games draw through Metal.",
+    [NativeRefusal.MissingAngleImport]:
+      "The build doesn’t draw through Genex’s graphics library, so it wasn’t started.",
+    [NativeRefusal.ForeignRpath]: "The build loads libraries from outside the game, so it wasn’t started.",
+    [NativeRefusal.NotAnExecutable]: "The build isn’t a Mac program this computer can run.",
+    [NativeRefusal.AngleDigest]: "Genex’s graphics library didn’t match its checksum, so the game wasn’t started.",
+    [NativeRefusal.ExtraPe]: "The build holds a program Genex didn’t expect, so it wasn’t started.",
+    [NativeRefusal.ImportsOpengl32]: "The build uses OpenGL, which Genex doesn’t run on Windows.",
+    [NativeRefusal.ExtraSharedObject]: "The build holds a library Genex didn’t expect, so it wasn’t started.",
+    [NativeRefusal.ImportsLibGl]: "The build uses OpenGL directly, which Genex doesn’t run on Linux.",
+    [NativeRefusal.RunpathNotOrigin]: "The build loads libraries from outside the game, so it wasn’t started.",
+    [NativeRefusal.GlibcTooNew]: "The build needs a newer Linux than Genex supports.",
+    [NativeRefusal.BadHandshake]: "The game didn’t answer Genex the way a Genex game does, so it was stopped.",
+    [NativeRefusal.ReadyTimeout]: "The game took too long to start and was stopped.",
+    [NativeRefusal.ReplyTooLarge]: "The game sent Genex more than it accepts at once, so it was stopped.",
+    [NativeRefusal.ReplyInvalid]: "The game answered Genex with something it couldn’t read, so it was stopped.",
+    [NativeRefusal.CaptureTooLarge]: "The game’s picture was larger than Genex accepts.",
+    [NativeRefusal.CaptureDigest]: "The game’s picture didn’t match what it said it drew.",
+    [NativeRefusal.MemoryCap]: "The game used too much memory and was stopped.",
+    [NativeRefusal.Unresponsive]: "The game stopped responding and was stopped.",
+    [NativeRefusal.Unsupported]: "That isn’t something a C++ game can do here.",
+    [NativeRefusal.NoGameBox]: DESTINATION_WORDS.refusal[TargetRefusal.NoGameBox],
+    [NativeRefusal.NotADestination]: DESTINATION_WORDS.refusal[TargetRefusal.NotADestination],
+    [NativeRefusal.NotRunnableHere]: DESTINATION_WORDS.refusal[TargetRefusal.NotRunnableHere],
+    [NativeRefusal.KindUnsupported]: DESTINATION_WORDS.refusal[TargetRefusal.KindUnsupported],
+    [NativeRefusal.StackGated]: DESTINATION_WORDS.refusal[TargetRefusal.StackGated],
+    [NativeRefusal.ToolchainOffline]: DESTINATION_WORDS.refusal[TargetRefusal.ToolchainOffline],
+    [NativeRefusal.LaneMissing]: "This version of Genex can’t build this kind of game yet.",
+    [NativeRefusal.BuildFailed]: "The Mac build failed.",
+    [NativeRefusal.HarnessPredatesNative]:
+      "This version of the studio’s harness can’t judge C++ games. Update it, then try again.",
+    [NativeRefusal.EmbedUnsupported]: "This computer can’t show the game inside Live yet.",
+    [NativeRefusal.SlotUnknown]: "The game sent a picture Genex didn’t ask for, so it was stopped.",
+    [NativeRefusal.SlotMismatch]: "The game sent a picture Genex didn’t ask for, so it was stopped.",
+    [NativeRefusal.TooManySlots]: "The game asked for more pictures than Genex shares, so it was stopped.",
+    [NativeRefusal.FrameRate]: "The game sent pictures faster than Genex shows them, so it was stopped.",
+    [NativeRefusal.ElectronUntested]: "This version of Genex can’t show the game inside Live yet.",
+    [NativeRefusal.FramesInvalid]: "The game sent Live a picture Genex couldn’t use, so it was stopped.",
+    [NativeRefusal.FramesStalled]: "Live stopped showing the game, so it was stopped.",
+    [NativeRefusal.GamePredatesEmbedding]: "This game was made before Live could show Mac builds.",
+    [NativeRefusal.WrongMachine]: "The build is for a different kind of computer, so it wasn’t started.",
+    [NativeRefusal.ForeignImport]: "The build needs a system library Genex doesn’t allow, so it wasn’t started.",
+    [NativeRefusal.GpuUnsupported]: "This computer’s graphics can’t run the game: it needs WebGPU-class graphics.",
+    [NativeRefusal.DeviceLost]: "The game lost its graphics device. It’s getting it back; try again in a moment.",
+    [NativeRefusal.GpuHang]: "The game’s graphics stopped responding, so it was stopped.",
+    [NativeRefusal.NativeFeatureMissing]: "The game needs a graphics feature this computer doesn’t have.",
+    [NativeRefusal.NativeFeaturesWeb]: "The game needs graphics features browsers don’t offer, so it has no web build.",
+    [NativeRefusal.GpuPassInvalid]:
+      "One of the game’s own graphics passes didn’t pass Genex’s checks, so it wasn’t run.",
+    [NativeRefusal.TouchNotTaken]: "This preview can’t take touches, so the game’s touch controls weren’t played.",
+    [NativeRefusal.ConformanceRequired]:
+      "This game runs its own engine, and this build hasn’t passed the conformance checks yet, so it wasn’t started.",
+  } satisfies Record<NativeRefusal, string>,
+  /** Why a Windows or Linux computer has no game box to start the game in, by `GameBoxProblem`. */
+  box: {
+    [GameBoxProblem.LauncherMissing]: "This version of Genex has no game launcher for Windows yet.",
+    [GameBoxProblem.BubblewrapMissing]:
+      "Genex needs bubblewrap 0.8 or newer to run games here. Install it, then try again.",
+    [GameBoxProblem.UsernsRestricted]:
+      "Ubuntu only lets apps with an AppArmor profile create the isolated spaces games run in, so this game wasn’t started.",
+    [GameBoxProblem.X11Only]: "Genex opens game windows on Wayland only, and this session is X11.",
+    [GameBoxProblem.NoWayland]: "Genex couldn’t reach a Wayland session to open the game’s window.",
+    [GameBoxProblem.WaylandUnrestricted]:
+      "This desktop can’t give a game its own restricted Wayland connection, so Genex won’t open its window.",
+    [GameBoxProblem.NoHeadlessBuild]:
+      "Genex can’t run this build without a window on this computer yet, so the browser build is checked instead.",
+    [GameBoxProblem.BoxRefused]: "The sandbox Genex runs games in refused to start this one.",
+    [GameBoxProblem.WaylandHelperMissing]: "This version of Genex can’t open game windows on Linux yet.",
+  } satisfies Record<GameBoxProblem, string>,
+  /** A desktop build's failure, naming its destination: "The Windows build failed." */
+  buildFailedFor: (target: BuildTarget): string => `The ${DESTINATION_WORDS.label[target]} build failed.`,
+  stop: "Stop",
+  restart: "Restart",
+  front: "Bring to front",
+  details: "Details",
+  /** The card's heading once a window that ran has ended: nothing plays any more, its state says how it ended. */
+  ended: "Mac window",
+  /** The ended window's heading per desktop destination, for the card on a Windows or Linux host. */
+  windowTitle: {
+    [BuildTarget.Mac]: "Mac window",
+    [BuildTarget.Windows]: "Windows window",
+    [BuildTarget.Linux]: "Linux window",
+  } satisfies Partial<Record<BuildTarget, string>>,
+  /** Under the state, when the game ended on its own with an error. */
+  crashed: (code: number | null, signal: string | null) =>
+    signal ? `It ended on ${signal}.` : `It ended with code ${code ?? "unknown"}.`,
+  killed: "Genex stopped it after it didn’t quit when asked.",
+  /** Under "The Mac build failed." when the lane gave no problem: the card offers Try again. */
+  buildFailed: "Fix the error, then try again.",
+  /** The card's way back after a build failed or a run was refused: the build strip's word. */
+  tryAgain: "Try again",
+  /** Live's Web | Native toggle, Pop out, click-to-capture, and why a Mac build can't be shown inside Live. */
+  embed: {
+    /** The toggle's accessible name: which build Live shows. */
+    toggleLabel: "Build in Live",
+    web: "Web",
+    native: "Native",
+    popOut: "Pop out",
+    popOutLabel: "Play in its own window",
+    clickToPlay: "Click to play",
+    releaseHint: "Esc releases the keyboard",
+    /** The hidden field that takes the game's keyboard while Live has it. */
+    keyboard: "Game keyboard",
+    /** Said once, as the toggle goes: Play on Mac is the way on (the strip shows it again). */
+    unsupported: "This Mac can’t show the game inside Live. Play on Mac opens it in its own window.",
+    predates: "This game was made before Live could show Mac builds. Use Pop out.",
+    electronUntested:
+      "This version of Genex can’t show Mac builds inside Live yet. Play on Mac opens it in its own window.",
+    stalled: "Live stopped showing the game. Try again or use Pop out.",
+    /** WebGL2 is not there to draw frames with. */
+    cantDraw: "Live can’t draw the game on this Mac. Use Pop out.",
+    /** The embed call itself failed (main did not answer). */
+    failed: "Live couldn’t start the game. Try again or use Pop out.",
+  },
+} as const;
+
+/** Why a C++ game's build could not even run, by `BuildProblemCode`. */
+export const BUILD_PROBLEM_WORDS = {
+  [BuildProblemCode.CommandFailed]: "The build failed.",
+  [BuildProblemCode.InSourceBuild]:
+    "This game’s folder has a CMakeCache.txt. Genex builds outside the game folder: delete that file, then try again.",
+  [BuildProblemCode.ToolchainMissing]:
+    "The C++ tools this game builds with aren’t installed. Install them, then try again.",
+  [BuildProblemCode.ToolchainStale]:
+    "The C++ tools were set up for an older version of Genex. Set them up again, then try again.",
+  [BuildProblemCode.ToolchainNotHosted]: TOOLCHAIN_WORDS.problem[ToolchainProblem.NotHosted],
+  [BuildProblemCode.CltMissing]: "Building for Mac needs Apple’s Command Line Tools.",
+  [BuildProblemCode.UnsupportedHost]: TOOLCHAIN_WORDS.problem[ToolchainProblem.UnsupportedHost],
+  [BuildProblemCode.MacBuildsNeedAMac]: DESTINATION_WORDS.refusal[TargetRefusal.MacBuildsNeedAMac],
+  [BuildProblemCode.NotADestination]: "That isn’t one of this game’s destinations.",
+  [BuildProblemCode.TimedOut]: "The build took too long and was stopped.",
+  [BuildProblemCode.Cancelled]: "The build was stopped.",
+  [BuildProblemCode.ToolchainUnprepared]: "The C++ tools are installed but not set up yet. Set them up to finish.",
+  [BuildProblemCode.GateRefused]: "The build didn’t pass Genex’s safety check, so it isn’t used.",
+} as const satisfies Record<BuildProblemCode, string>;
+
+/** The signings a phone export takes, one per option of the export sheet. */
+type MobileExportSigning = (typeof ARTIFACT_SIGNINGS)[keyof typeof ARTIFACT_SIGNINGS][number];
+
+/** The chat header's export menu for a C++ game, its notice and why an export was refused, by `ExportRefusal`. */
+export const EXPORT_WORDS = {
+  menuLabel: "Export for",
+  browser: "Browser (web folder)",
+  mac: "Mac app",
+  windows: "Windows (.zip)",
+  linux: "Linux (.tar.gz)",
+  ios: "iPhone and iPad app",
+  android: "Android app",
+  /** After a Mac app export (ad hoc signed): where it opens, and how another Mac lets it open. */
+  exportedMac: (name: string) =>
+    `Exported ${name}.app. It opens on this Mac. On another Mac, open it from System Settings > Privacy & Security.`,
+  /** After a Windows export: the archive's file name, where it was built (this Mac unless told), and that it never ran on Windows. */
+  exportedWindows: (file: string, machine = "this Mac") =>
+    `Exported ${file}. Genex built it on ${machine} but hasn’t run it on Windows.`,
+  /** After a Linux export: the archive's file name, where it was built (this Mac unless told), and that it never ran on Linux. */
+  exportedLinux: (file: string, machine = "this Mac") =>
+    `Exported ${file}. Genex built it on ${machine} but hasn’t run it on Linux.`,
+  /** Where a desktop archive was built, on a Studio that is not a Mac. */
+  builtElsewhere: "this computer",
+  /** Beside a destination whose export only a software GPU has drawn (`GpuQualification.Untested`). */
+  untestedOnRealGpus: "Untested on real GPUs",
+  /** After such an export: what the label means. */
+  untestedNotice: "It’s untested on real GPUs: only a software renderer has drawn it so far.",
+  /** Beside a phone destination no real iPhone or Android phone has run yet (`GpuQualification.Untested`). */
+  untestedOnRealDevices: "Untested on real devices",
+  /** After a phone export so labelled: what the label means. */
+  untestedDevicesNotice: "It’s untested on real devices: Genex built it but hasn’t run it on a phone.",
+  /** After a browser export whose code is past its game's budget (`ExportWarningCode.WasmOverTarget`), sizes in MB. */
+  wasmOverTarget: (gzipMb: string, budgetMb: string) =>
+    `Its code is ${gzipMb} MB compressed, over the game’s ${budgetMb} MB budget, so it loads slower on phones and weak devices. Raise wasm_budget_mb in genex.toml if that’s fine.`,
+  /** The phone export sheet: what it makes and how it is signed. */
+  mobile: {
+    title: (phone: string) => `Export for ${phone}`,
+    intro:
+      "Choose what to make. Builds signed with your own identity or keystore are yours alone: the agent never makes them.",
+    choose: "What to make",
+    option: {
+      [ExportSigning.AdHoc]: {
+        name: "Simulator app",
+        detail: "Runs in the iOS Simulator on this Mac. Signed for this Mac only.",
+      },
+      [ExportSigning.IosDevelopment]: {
+        name: "Your iPhone or iPad (.ipa)",
+        detail: "Signed with your Apple Development identity and a provisioning profile that lists your device.",
+      },
+      [ExportSigning.IosDistribution]: {
+        name: "App Store or ad hoc (.ipa)",
+        detail: "Signed with your Apple Distribution identity and its provisioning profile.",
+      },
+      [ExportSigning.AndroidDebug]: {
+        name: "Development APK",
+        detail: "Signed with this profile’s own Genex debug key. Installs on a test phone.",
+      },
+      [ExportSigning.AndroidRelease]: {
+        name: "Google Play bundle (.aab)",
+        detail: "Signed with your own release keystore.",
+      },
+    } satisfies Record<MobileExportSigning, { name: string; detail: string }>,
+    /** Beside an option signed with the person's own identity or keystore. */
+    personOnly: "Only you",
+    field: {
+      identity: "Signing identity",
+      /** The identity field's example: the certificate's name for the signing chosen. */
+      identityPlaceholder: (signing: ExportSigning) =>
+        signing === ExportSigning.IosDistribution
+          ? "Apple Distribution: Your Name (TEAMID)"
+          : "Apple Development: Your Name (TEAMID)",
+      provisioningProfile: "Provisioning profile",
+      keystore: "Release keystore",
+      alias: "Key alias",
+      password: "Keystore password",
+      passwordFromEnv: "Environment variable",
+      passwordFromFile: "File",
+      passwordEnvPlaceholder: "GENEX_KEYSTORE_PASSWORD",
+      passwordNote:
+        "Genex never asks for the password itself: the signer reads it from the variable or the file when it signs.",
+      choose: "Choose…",
+      none: "No file chosen",
+    },
+    export: "Export",
+    exporting: "Exporting…",
+    cancel: "Cancel",
+    /** After a phone export: the artifact's file name. */
+    exported: (file: string) => `Exported ${file}.`,
+  },
+  refusal: {
+    [ExportRefusal.BuildFailed]: "The game’s current build failed, so nothing was exported.",
+    [ExportRefusal.LaneMissing]: "This version of Genex can’t build this kind of game yet, so nothing was exported.",
+    [ExportRefusal.NotADestination]: "That isn’t one of this game’s destinations.",
+    [ExportRefusal.NotAnExportFolder]: "The export folder holds files Genex didn’t put there, so nothing was exported.",
+    [ExportRefusal.SecretFound]: "A file held a secret key, so nothing was exported.",
+    [ExportRefusal.SigningInvalid]: "The signing details aren’t valid, so nothing was exported.",
+    [ExportRefusal.SigningUnavailable]: "This version of Genex exports Mac apps signed for this Mac only.",
+    [ExportRefusal.HarnessMayNotSign]: "Only you can sign an export with your own identity.",
+    [ExportRefusal.AdmissionRefused]: "The Mac build didn’t pass Genex’s checks, so no app was made.",
+    [ExportRefusal.MacBuildsNeedAMac]: DESTINATION_WORDS.refusal[TargetRefusal.MacBuildsNeedAMac],
+    [ExportRefusal.BuildChanged]: "The build changed while it was being exported. Try again.",
+    [ExportRefusal.ToolchainUnusable]:
+      "The C++ tools this export needs are missing or damaged. Set them up again, then try again.",
+    [ExportRefusal.SigningFailed]: "Signing didn’t finish, so nothing was exported.",
+    [ExportRefusal.TargetRefused]: "Genex can’t write the export there, so nothing was exported.",
+    [ExportRefusal.MissingNotice]: "A licence the export must include couldn’t be read, so nothing was exported.",
+    [ExportRefusal.ArchiveRefused]: "A file couldn’t be packed safely, so nothing was exported.",
+    [ExportRefusal.ConformanceRequired]:
+      "This game runs its own engine, and its current build hasn’t passed the conformance checks, so nothing was exported.",
+  } satisfies Record<ExportRefusal, string>,
+} as const;
+
+/** Why a delivered file cannot be used by the game's stack, by `AssetRefusal`; `ext` without its dot. */
+export const ASSET_REFUSAL_WORDS = {
+  [AssetRefusal.UnsupportedByRaylib]: (ext: string) =>
+    `C++ games can’t load .${ext} files. Use PNG or JPEG pictures, OGG, WAV or MP3 sound, and glTF or OBJ models.`,
+  [AssetRefusal.UnsupportedByRust]: (ext: string) =>
+    `Rust games can’t load .${ext} files. Use PNG, JPEG, WebP or KTX2 pictures, OGG, WAV, MP3 or FLAC sound, and glTF or OBJ models.`,
+} as const satisfies Record<AssetRefusal, (ext: string) => string>;
 
 /** Settings → Licenses: the shipped license texts (`panels/LicensesDialog.tsx`). */
 export const LICENSE_WORDS = {

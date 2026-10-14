@@ -55,7 +55,11 @@ import { DirectorTool as seedDirectorTool } from "../../src/harness-seed/loop/di
 import { finishLands, RunWriteTool } from "../../src/main/core/worker-tools.ts";
 import { RESUME_RUN as seedResumeRun } from "../../src/harness-seed/loop/after-loop-run.ts";
 import { REOPEN_RUN as seedReopenRun } from "../../src/harness-seed/loop/reopen-run-prompts.ts";
-import { tools as seedGameTools } from "../../src/harness-seed/tools/game-tools.ts";
+import {
+  COMMAND_TIMEOUT_MS as seedGameToolsTable,
+  tools as seedGameTools,
+} from "../../src/harness-seed/tools/game-tools.ts";
+import { COMMAND_TIMEOUT_MS } from "../../src/shared/toolchain.ts";
 import * as seedVerdict from "../../src/harness-seed/loop/verdict.ts";
 import { endsChatSessions } from "../../src/shared/chat-rewind.ts";
 import * as coordinator from "../../src/shared/coordinator.ts";
@@ -114,6 +118,158 @@ import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import * as seedLoopSwitch from "../../src/harness-seed/loop/loop-switch.ts";
 import { EngineKind } from "../../src/shared/engine-descriptor.ts";
 import { savedByLead } from "../../src/renderer/words.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import {
+  ALL_BUILD_TARGETS,
+  BUILD_TARGETS,
+  BuildTarget,
+  CREATABLE_STACKS,
+  CreationRefusal,
+  GameStack,
+  ProjectKind,
+  STACK_OF_KIND,
+  STACK_TARGETS,
+  stackForTargets,
+} from "../../src/shared/game-project.ts";
+import { HOST_MATRIX, judgingTarget, STACK_HOST_MATRIX, TargetRefusal } from "../../src/shared/game-targets.ts";
+import * as native from "../../src/shared/native-contract.ts";
+import { HARNESS_MOBILE_ARTIFACTS, MobileArtifact } from "../../src/shared/game-export-contract.ts";
+import * as seedNative from "../../src/harness-seed/loop/native-contract.ts";
+import * as conformance from "../../src/shared/game-conformance.ts";
+import * as renderQuality from "../../src/shared/render-quality.ts";
+import type { CameraPoseResult, EmptySceneResult, WitnessResult } from "../../src/shared/harness-api.ts";
+import { CheckKind as seedCheckKind } from "../../src/harness-seed/loop/spec.ts";
+import * as seedRunDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
+import { launchRefusalCode as seedLaunchRefusalCode } from "../../src/harness-seed/loop/native-loop.ts";
+import { RUST_NIGHT_PARTS } from "../../src/substrate/seed-upgrade.ts";
+
+/** renderSettings answers, and captures with and without their render provenance: each op's verdict must agree. */
+const RENDER_REPLY_CANDIDATES: unknown[] = [
+  {
+    preset: "low",
+    requested: "auto",
+    deviceClass: "mobile-mid",
+    detectedClass: "desktop-high",
+    features: { bloom: false },
+    renderScaleLock: null,
+    scale: 0.75,
+  },
+  {
+    preset: "auto",
+    requested: "auto",
+    deviceClass: "mobile-mid",
+    detectedClass: "desktop-high",
+    features: {},
+    renderScaleLock: null,
+    scale: 0.75,
+  },
+  {
+    preset: "low",
+    requested: "low",
+    deviceClass: "watch-low",
+    detectedClass: "desktop-high",
+    features: {},
+    renderScaleLock: null,
+    scale: 1,
+  },
+  {
+    preset: "low",
+    requested: "low",
+    deviceClass: "mobile-mid",
+    detectedClass: "mobile-mid",
+    features: { raytracing: true },
+    renderScaleLock: 0.5,
+    scale: 1,
+  },
+  {
+    preset: "low",
+    requested: "low",
+    deviceClass: "mobile-mid",
+    detectedClass: "mobile-mid",
+    features: {},
+    renderScaleLock: 3,
+    scale: 1,
+  },
+  {
+    preset: "low",
+    requested: "low",
+    deviceClass: "mobile-mid",
+    detectedClass: "mobile-mid",
+    features: {},
+    renderScaleLock: null,
+    frameBudgetMs: 4,
+    scale: 1,
+  },
+  {
+    preset: "low",
+    requested: "low",
+    deviceClass: "mobile-mid",
+    detectedClass: "mobile-mid",
+    features: {},
+    renderScaleLock: null,
+    frameBudgetMs: 0.5,
+    scale: 1,
+  },
+  {
+    seq: 1,
+    width: 64,
+    height: 64,
+    format: "bgra8",
+    digest: "0123456789abcdef",
+    render: {
+      preset: "high",
+      deviceClass: "desktop-high",
+      settingsSource: "reference-class",
+      scale: 1,
+      settleFrames: 8,
+      historyReset: true,
+      exposure: "instant",
+    },
+  },
+  {
+    seq: 1,
+    width: 64,
+    height: 64,
+    format: "bgra8",
+    digest: "0123456789abcdef",
+    render: { preset: "high", deviceClass: "desktop-high" },
+  },
+  {
+    seq: 1,
+    width: 64,
+    height: 64,
+    format: "bgra8",
+    digest: "0123456789abcdef",
+    render: {
+      preset: "high",
+      deviceClass: "desktop-high",
+      settingsSource: "saved",
+      scale: 1,
+      settleFrames: 1,
+      historyReset: true,
+      exposure: "instant",
+    },
+  },
+  {
+    seq: 1,
+    width: 64,
+    height: 64,
+    format: "bgra8",
+    digest: "0123456789abcdef",
+    render: {
+      preset: "high",
+      deviceClass: "desktop-high",
+      settingsSource: "toml",
+      scale: 1,
+      settleFrames: 17,
+      historyReset: true,
+      exposure: "instant",
+    },
+  },
+];
+
+/** True when `A` and `B` are each assignable to the other: two copies of one shape. */
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 let clock = 0;
 const at = () => new Date(Date.UTC(2026, 8, 24, 0, 0, clock++)).toISOString();
@@ -851,6 +1007,392 @@ describe("run budgets (shared/run-state.ts ↔ loop/chat-dispatch.ts)", () => {
       hours: null,
     });
     assert.deepEqual(recordedRunLoop(seedChatDispatch.intakeBudgets({ hours: 1 })), { hours: 1 });
+  });
+});
+
+/**
+ * The seed's copy of the C++ · raylib contract (`loop/native-contract.ts`): the same stacks,
+ * destinations, host matrix and judging target, the same native run vocabularies and constants,
+ * and the same verdict on every reply the host checks.
+ */
+describe("the C++ · raylib contract (shared/game-project.ts, game-targets.ts, native-contract.ts ↔ loop/native-contract.ts)", () => {
+  it("names the same stacks, destinations, kinds, hosts and refusals", () => {
+    assert.deepEqual(seedNative.GameStack, GameStack);
+    assert.deepEqual(seedNative.BuildTarget, BuildTarget);
+    assert.deepEqual(seedNative.ProjectKind, ProjectKind);
+    assert.deepEqual(seedNative.StudioPlatform, StudioPlatform);
+    assert.deepEqual(seedNative.TargetRefusal, TargetRefusal);
+    assert.deepEqual(seedNative.HOST_MATRIX, HOST_MATRIX);
+  });
+
+  it("both copies know the Rust · wgpu stack and kind, the mobile destinations and the per-stack tables", () => {
+    for (const copy of [{ GameStack, BuildTarget, ProjectKind }, seedNative]) {
+      assert.equal(copy.GameStack.RustWgpu, "rust-wgpu");
+      assert.equal(copy.ProjectKind.RustWgpu, "rust-wgpu");
+      assert.equal(copy.BuildTarget.Ios, "ios");
+      assert.equal(copy.BuildTarget.Android, "android");
+    }
+    assert.deepEqual(seedNative.STACK_OF_KIND, STACK_OF_KIND);
+    assert.deepEqual(seedNative.STACK_TARGETS, STACK_TARGETS);
+    assert.deepEqual(seedNative.STACK_HOST_MATRIX, STACK_HOST_MATRIX);
+    assert.deepEqual(seedNative.STACK_TARGETS[seedNative.GameStack.RustWgpu], ALL_BUILD_TARGETS);
+  });
+
+  it("both copies name the phone artifacts, and the harness makes only the Simulator app and the dev APK (M5.0)", () => {
+    assert.deepEqual(seedNative.MobileArtifact, MobileArtifact);
+    assert.deepEqual(seedNative.HARNESS_MOBILE_ARTIFACTS, HARNESS_MOBILE_ARTIFACTS);
+    assert.equal(seedNative.HARNESS_MOBILE_ARTIFACTS.includes(seedNative.MobileArtifact.Ipa), false);
+    assert.equal(seedNative.HARNESS_MOBILE_ARTIFACTS.includes(seedNative.MobileArtifact.Aab), false);
+  });
+
+  it("both copies build Rust's Windows and Linux destinations on a Mac and on the Linux Studio, nothing on Windows", () => {
+    for (const matrix of [STACK_HOST_MATRIX, seedNative.STACK_HOST_MATRIX]) {
+      const rust = matrix[GameStack.RustWgpu];
+      for (const host of [StudioPlatform.Mac, StudioPlatform.Linux]) {
+        const builds: readonly string[] = rust[host].build;
+        assert.ok(builds.includes(BuildTarget.Windows) && builds.includes(BuildTarget.Linux), host);
+      }
+      assert.deepEqual(rust[StudioPlatform.Linux].run, [BuildTarget.Web]);
+      assert.deepEqual(rust[StudioPlatform.Windows].build, []);
+    }
+  });
+
+  it("refuses the same Rust-era cases in both copies: an unsupported kind, a gated stack, an offline toolchain", () => {
+    for (const copy of [native.NativeRefusal, seedNative.NativeRefusal]) {
+      assert.equal(copy.KindUnsupported, TargetRefusal.KindUnsupported);
+      assert.equal(copy.StackGated, TargetRefusal.StackGated);
+      assert.equal(copy.ToolchainOffline, TargetRefusal.ToolchainOffline);
+    }
+  });
+
+  it("picks the same judging target for every destination set, host and game box", () => {
+    for (let mask = 1; mask < 1 << BUILD_TARGETS.length; mask++) {
+      const targets = BUILD_TARGETS.filter((_, index) => (mask & (1 << index)) !== 0);
+      const destinations = { stack: stackForTargets(targets), targets };
+      for (const host of [StudioPlatform.Mac, StudioPlatform.Windows, StudioPlatform.Linux])
+        for (const gameBox of [false, true])
+          assert.deepEqual(
+            seedNative.judgingTarget(destinations, host, { gameBox }),
+            judgingTarget(destinations, host, { gameBox }),
+            `${targets.join("+")} on ${host}, gameBox ${gameBox}`,
+          );
+    }
+  });
+
+  it("holds the same op arguments and results, admission facts and typed-probe answers", () => {
+    // Each pair must be assignable both ways; a field one copy lacks fails the typecheck here.
+    const args: Same<native.NativeOpArgs, seedNative.NativeOpArgs> = true;
+    const results: Same<native.NativeOpResults, seedNative.NativeOpResults> = true;
+    const admission: Same<native.NativeAdmissionFacts, seedNative.NativeAdmissionFacts> = true;
+    const witness: Same<WitnessResult, seedNative.WitnessResult> = true;
+    const emptyScene: Same<EmptySceneResult, seedNative.EmptySceneResult> = true;
+    const cameraPose: Same<CameraPoseResult, seedNative.CameraPoseResult> = true;
+    const input: Same<native.NativeInputAction, seedNative.NativeInputAction> = true;
+    const safeArea: Same<native.NativeSafeArea, seedNative.NativeSafeArea> = true;
+    const stateV2: Same<native.NativeStateV2, seedNative.NativeStateV2> = true;
+    assert.deepEqual(
+      [args, results, admission, witness, emptyScene, cameraPose, input, safeArea, stateV2],
+      Array(9).fill(true),
+    );
+  });
+
+  it("names the same render vocabulary and ranges as shared/render-quality.ts (renderSettings, volatile.render)", () => {
+    for (const name of [
+      "QualityPreset",
+      "FormFactor",
+      "PerformanceTier",
+      "DeviceClass",
+      "RenderFeature",
+      "DegradeReason",
+      "SettingsSource",
+      "CaptureExposure",
+      "RendererFeature",
+      "RenderInput",
+      "RenderSettingsRefusal",
+      "EFFECTIVE_PRESETS",
+      "RENDER_SCALE_MIN",
+      "RENDER_SCALE_MAX",
+      "FRAME_BUDGET_MS_MIN",
+      "FRAME_BUDGET_MS_MAX",
+      "CAPTURE_SETTLE_FRAMES_MAX",
+    ] as const)
+      assert.deepEqual(seedNative[name], renderQuality[name], name);
+    const settingsChange: Same<renderQuality.RenderSettingsChange, seedNative.RenderSettingsChange> = true;
+    const settingsAnswer: Same<renderQuality.RenderSettingsAnswer, seedNative.RenderSettingsAnswer> = true;
+    const status: Same<renderQuality.RenderStatus, seedNative.RenderStatus> = true;
+    const provenance: Same<renderQuality.CaptureProvenance, seedNative.CaptureProvenance> = true;
+    assert.deepEqual([settingsChange, settingsAnswer, status, provenance], [true, true, true, true]);
+    assert.equal(seedNative.NativeOp.RenderSettings, "renderSettings");
+    assert.equal(seedNative.NATIVE_RENDER_KEY, "render");
+  });
+
+  it("names the same custom pass stages, post-hdr and after-prepass among them (custom-pass API v2)", () => {
+    assert.deepEqual(seedNative.CustomPassStage, native.CustomPassStage);
+    assert.equal(native.CustomPassStage.PostHdr, "post-hdr");
+    assert.equal(native.CustomPassStage.AfterPrepass, "after-prepass");
+    assert.deepEqual(Object.values(native.CustomPassStage), [
+      "before-cull",
+      "after-opaque",
+      "after-transparent",
+      "post",
+      "post-hdr",
+      "after-prepass",
+    ]);
+    for (const copy of [native, seedNative]) {
+      assert.equal(copy.NATIVE_EXTENSION_API_VERSION, 2);
+      assert.equal(copy.NATIVE_CUSTOM_PASS_API_VERSION, 2);
+    }
+  });
+
+  it("names the same game conformance checks (M7.0)", () => {
+    assert.deepEqual(seedNative.ConformanceCheck, conformance.ConformanceCheck);
+    assert.deepEqual(Object.values(seedNative.ConformanceCheck), [...conformance.CONFORMANCE_CHECKS]);
+  });
+
+  it("names the same native run vocabularies", () => {
+    for (const name of [
+      "NativeOp",
+      "NativeEvent",
+      "NativeRunMode",
+      "NativeInputKind",
+      "NativeBackend",
+      "NativeRunState",
+      "NativeRefusal",
+      "NativeLifecycle",
+      "NativeEnhancedFeature",
+      "NativeGpuTier",
+      "NATIVE_PROTOCOL_VERSIONS",
+      "NATIVE_WGPU_BACKENDS",
+    ] as const)
+      assert.deepEqual(seedNative[name], native[name], name);
+  });
+
+  it("both copies speak protocol 2 and still accept protocol 1", () => {
+    for (const copy of [native, seedNative]) {
+      assert.equal(copy.NATIVE_PROTOCOL_VERSION, 2);
+      assert.equal(copy.NATIVE_PROTOCOL_V1, 1);
+      for (const value of [0, 1, 2, 3, "2", null])
+        assert.equal(copy.isNativeProtocolVersion(value), native.isNativeProtocolVersion(value), String(value));
+    }
+  });
+
+  it("the refusals a destination shares are TargetRefusal's strings in both copies", () => {
+    for (const copy of [native.NativeRefusal, seedNative.NativeRefusal]) {
+      assert.equal(copy.NoGameBox, TargetRefusal.NoGameBox);
+      assert.equal(copy.NotADestination, TargetRefusal.NotADestination);
+      assert.equal(copy.NotRunnableHere, TargetRefusal.NotRunnableHere);
+    }
+  });
+
+  it("holds the same constants", () => {
+    // How the host assembles a Mac bundle, and how Live receives an embedded run's frames, are the
+    // host's alone: the harness never builds a bundle or embeds a game.
+    const hostOnly = new Set([
+      "MAC_GAME_RPATH",
+      "NATIVE_BUNDLE_APP",
+      "NATIVE_FRAMES_ABI_VERSION",
+      "NATIVE_FRAMES_WIRE_VERSION",
+      "NATIVE_FRAME_BURST",
+      "NATIVE_FRAME_SLOT_WATCHDOG_MS",
+      "NATIVE_RESIZE_DEBOUNCE_MS",
+      "NATIVE_FRAME_PIXELS_MAX",
+      "NATIVE_FRAMES_RETIRED_MAX",
+      "NATIVE_FRAMES_SERVICE_PREFIX",
+      "NATIVE_NO_RUN_ID",
+      // The receipt's size cap and the WGSL cap are checked by the host (the port's ready parser,
+      // the lane's naga step); the harness reads a parsed receipt only.
+      "NATIVE_RECEIPT_MAX_BYTES",
+      "NATIVE_WGSL_MAX_BYTES",
+    ]);
+    const shared = Object.entries(native).filter(
+      ([name, value]) => /^(NATIVE|MAC)_/.test(name) && typeof value !== "object" && !hostOnly.has(name),
+    );
+    assert.ok(shared.length >= 20, "the scan found the constants");
+    for (const [name, value] of shared)
+      assert.equal((seedNative as Record<string, unknown>)[name], value, `${name} in the seed`);
+  });
+
+  it("gives every reply the host checks the same verdict", () => {
+    // Every op against every shape: the replies one op accepts are what another refuses.
+    const candidates: unknown[] = [
+      undefined,
+      null,
+      0,
+      "x",
+      [],
+      {},
+      { seed: 1, paused: true },
+      { seed: 1, paused: false },
+      { running: true },
+      { running: "yes" },
+      { frame: 1, simulatedMs: 16, steppedFrames: 1, drawCalls: 3 },
+      { frame: -1, simulatedMs: 16, steppedFrames: 1, drawCalls: 3 },
+      { frame: 1, simulatedMs: Number.NaN, steppedFrames: 1, drawCalls: 3 },
+      { held: ["KeyW"] },
+      { held: [1] },
+      { seq: 0, width: 64, height: 64, format: "bgra8", digest: "0123456789abcdef" },
+      { seq: 0, width: 5000, height: 64, format: "bgra8", digest: "0123456789abcdef" },
+      { seq: 0, width: 64, height: 64, format: "rgba8", digest: "0123456789abcdef" },
+      { seq: 0, width: 64, height: 64, format: "bgra8", digest: "XYZ" },
+      { ok: true, camera: "top" },
+      { ok: false, available: ["default"] },
+      { ok: "no" },
+      { cameras: ["a"] },
+      { eyes: [] },
+      { demos: ["jump"] },
+      { demos: [null] },
+      { ok: true, demo: "jump", result: 1 },
+      { muted: false },
+      { rms: 0.1, centroid: 900 },
+      { rms: Number.POSITIVE_INFINITY, centroid: 900 },
+      { frameMs: 16, updateMs: 2, drawMs: 3, frames: 9 },
+      { quitting: true },
+      { fronted: true },
+      { visible: false },
+      { ring: [{ slot: 0, handleRef: "a" }] },
+      { generation: 1, width: 1280, height: 720, slots: 3 },
+      { generation: 0, width: 1280, height: 720, slots: 3 },
+      { generation: 2 ** 32, width: 1280, height: 720, slots: 3 },
+      { generation: 1, width: 4097, height: 720, slots: 3 },
+      { generation: 1, width: 1280, height: 720, slots: 4 },
+      { lifecycle: "resumed", safeArea: { top: 0, left: 0, bottom: 34, right: 0 } },
+      { lifecycle: "suspended", safeArea: { top: 47, left: 0, bottom: 34, right: 0 }, phase: "play" },
+      { lifecycle: "background", safeArea: { top: 0, left: 0, bottom: 0, right: 0 } },
+      { lifecycle: "resumed" },
+      { lifecycle: "resumed", safeArea: { top: -1, left: 0, bottom: 0, right: 0 } },
+      { safeArea: { top: 0, left: 0, bottom: 0, right: 0 } },
+      ...RENDER_REPLY_CANDIDATES,
+    ];
+    for (const protocol of native.NATIVE_PROTOCOL_VERSIONS)
+      for (const op of Object.values(native.NativeOp))
+        for (const value of candidates)
+          assert.equal(
+            seedNative.isNativeResult(op, value, protocol),
+            native.isNativeResult(op, value, protocol),
+            `${op} v${protocol} ${JSON.stringify(value)}`,
+          );
+  });
+
+  it("measures on a raylib game exactly the seed's own check kinds", () => {
+    assert.deepEqual(Object.keys(seedNative.RAYLIB_CHECK_SUPPORT).sort(), Object.values(seedCheckKind).sort());
+  });
+});
+
+describe("raylib creation retired (shared/game-project.ts ↔ loop/native-contract.ts)", () => {
+  it("retires raylib creation in both copies: the same creatable stacks, refusal and implied stack for every destination set", () => {
+    assert.deepEqual(seedNative.CREATABLE_STACKS, CREATABLE_STACKS);
+    assert.deepEqual(seedNative.CreationRefusal, CreationRefusal);
+    for (let mask = 1; mask < 1 << ALL_BUILD_TARGETS.length; mask++) {
+      const targets = ALL_BUILD_TARGETS.filter((_, index) => (mask & (1 << index)) !== 0);
+      for (const chosen of [undefined, ...Object.values(GameStack)]) {
+        const implied = stackForTargets(targets, chosen);
+        assert.equal(seedNative.stackForTargets(targets, chosen), implied, `${targets.join("+")} ${chosen}`);
+        assert.notEqual(implied, GameStack.RaylibCpp, `${targets.join("+")} ${chosen}`);
+      }
+    }
+  });
+});
+
+describe("the parts a Rust night runs (loop/run-dispatch.ts RUST_PARTS ↔ substrate/seed-upgrade.ts RUST_NIGHT_PARTS)", () => {
+  /** The modules a Rust night runs that a raylib night does not (the play script for its touches). */
+  const RUST_ONLY = ["loop/native-loop.ts", "loop/native-evidence.ts", "loop/native-review.ts", "loop/play-script.ts"];
+  /** The chat launcher checks its own parts before it launches a night (chat-dispatch.ts), so the start does not list it. */
+  const LAUNCHER = "loop/chat-dispatch.ts";
+
+  it("names the modules the host reads for SERVES_RUST, the chat launcher aside", () => {
+    const seedParts = Object.keys(seedRunDispatch.RUST_PARTS);
+    assert.equal(new Set(seedParts).size, seedParts.length, "each part once");
+    assert.deepEqual([...seedParts, LAUNCHER].sort(), [...RUST_NIGHT_PARTS].sort());
+  });
+
+  it("holds under each name that module itself, and its own marks under its own name", async () => {
+    for (const [rel, part] of Object.entries(seedRunDispatch.RUST_PARTS)) {
+      if (rel === "loop/run-dispatch.ts") {
+        assert.equal(part.SERVES_RUST, true, "the start says it serves Rust nights");
+        assert.equal(part.SERVES_NATIVE, true, "and raylib nights");
+        continue;
+      }
+      const loaded: unknown = await import(`../../src/harness-seed/${rel}`);
+      assert.equal(part, loaded, `${rel} holds its own module`);
+    }
+  });
+
+  it("the shipped seed serves a Rust night: every part carries SERVES_RUST, and a lease declares rust-wgpu", () => {
+    const missing = Object.entries(seedRunDispatch.RUST_PARTS)
+      .filter(([, part]) => part.SERVES_RUST !== true)
+      .map(([rel]) => rel);
+    assert.deepEqual(missing, [], "every part a Rust night runs serves one");
+    assert.equal(seedNative.servesRust(Object.values(seedRunDispatch.RUST_PARTS)), true);
+    assert.ok(seedNative.servedStacks().includes(seedNative.GameStack.RustWgpu), "a lease declares rust-wgpu");
+    const rust = { name: "ferris", shape: { kind: ProjectKind.RustWgpu } };
+    assert.equal(
+      seedRunDispatch.loopRunRefusal(rust, [], undefined, {
+        servesRust: seedNative.servesRust(Object.values(seedRunDispatch.RUST_PARTS)),
+      }),
+      null,
+    );
+  });
+
+  it("holds the per-stack command timeout equal to the app's (shared/toolchain.ts)", () => {
+    assert.deepEqual({ ...seedGameToolsTable }, { ...COMMAND_TIMEOUT_MS });
+  });
+
+  it("is every part a raylib night runs, plus the native loop, evidence and review", () => {
+    for (const rel of RUST_ONLY) assert.ok(Object.hasOwn(seedRunDispatch.RUST_PARTS, rel), rel);
+    for (const [rel, part] of Object.entries(seedRunDispatch.RUST_PARTS))
+      if (!RUST_ONLY.includes(rel)) assert.equal(part.SERVES_NATIVE, true, `${rel} is a raylib night's part`);
+  });
+
+  it("refuses a Rust night by its code when a part lacks SERVES_RUST, and no other night", () => {
+    const rust = { name: "ferris", shape: { kind: ProjectKind.RustWgpu } };
+    const refused = seedRunDispatch.rustNightRefusal(rust, false);
+    assert.equal(refused?.code, seedNative.NativeNightRefusal.RustPartsMissing);
+    assert.equal(seedLaunchRefusalCode(refused), "rust-parts-missing", "a launch reads it as its typed refusal");
+    assert.equal(seedRunDispatch.rustNightRefusal(rust, true), null);
+    for (const kind of [ProjectKind.RaylibCpp, ProjectKind.ThreeVite, ProjectKind.StudioTemplate])
+      assert.equal(seedRunDispatch.rustNightRefusal({ name: "pong", shape: { kind } }, false), null, kind);
+    assert.equal(seedRunDispatch.loopRunRefusal(rust, [], undefined, { servesRust: false }), refused?.message);
+    assert.equal(seedRunDispatch.loopRunRefusal(rust, [], undefined, { servesRust: true }), null);
+    assert.equal(seedRunDispatch.loopRunRefusal(rust, []), null, "absent, the caller checked nothing");
+  });
+
+  it("a lease declares the stacks the harness serves: Rust only once every part a Rust night runs says so", async () => {
+    const { GameStack: Stack } = seedNative;
+    assert.deepEqual(seedNative.stacksServed({ native: true, rust: false }), [Stack.ThreeJs, Stack.RaylibCpp]);
+    assert.deepEqual(seedNative.stacksServed({ native: true, rust: true }), [
+      Stack.ThreeJs,
+      Stack.RaylibCpp,
+      Stack.RustWgpu,
+    ]);
+    assert.deepEqual(seedNative.stacksServed({ native: false, rust: false }), [Stack.ThreeJs]);
+    assert.equal(seedNative.servesRust([{ SERVES_RUST: true }, { SERVES_RUST: true }]), true);
+    assert.equal(seedNative.servesRust([{ SERVES_RUST: true }, { SERVES_NATIVE: true }]), false);
+    assert.equal(seedNative.servesRust([{ SERVES_RUST: "true" }]), false, "only the boolean mark counts");
+    const sent: Array<{ stacks?: readonly string[] }> = [];
+    const call: seedNative.AcquireCall = async (_method, params) => {
+      sent.push(params);
+      return { handle: "h1" };
+    };
+    const macOnly = { destinations: { stack: Stack.RaylibCpp, targets: [seedNative.BuildTarget.Mac] } };
+    const onMac = { host: seedNative.StudioPlatform.Mac, native: { gameBox: true } };
+    await seedNative.acquireFor(call, macOnly, onMac);
+    const declared = seedNative.servedStacks();
+    assert.deepEqual(sent[0]?.stacks, declared);
+    assert.equal(declared.includes(Stack.RaylibCpp), true);
+    const rustServed = seedNative.servesRust(Object.values(seedRunDispatch.RUST_PARTS));
+    assert.equal(declared.includes(Stack.RustWgpu), rustServed, "Rust is declared exactly when its parts serve it");
+  });
+
+  it("measures check kinds per stack: raylib's row is RAYLIB_CHECK_SUPPORT, three.js every kind, Rust no scene graph", () => {
+    const { CheckSupport, GameStack: Stack, STACK_CHECK_SUPPORT } = seedNative;
+    assert.deepEqual(Object.keys(STACK_CHECK_SUPPORT).sort(), Object.values(Stack).sort());
+    for (const row of Object.values(STACK_CHECK_SUPPORT))
+      assert.deepEqual(Object.keys(row).sort(), Object.values(seedCheckKind).sort());
+    assert.deepEqual(STACK_CHECK_SUPPORT[Stack.RaylibCpp], seedNative.RAYLIB_CHECK_SUPPORT);
+    assert.ok(Object.values(STACK_CHECK_SUPPORT[Stack.ThreeJs]).every((support) => support === CheckSupport.Measured));
+    assert.equal(STACK_CHECK_SUPPORT[Stack.RustWgpu][seedCheckKind.Scene], CheckSupport.Unmeasured);
+    assert.equal(seedNative.checkSupportFor(Stack.RustWgpu, seedCheckKind.Pixel), CheckSupport.Measured);
+    assert.equal(seedNative.checkSupportFor(Stack.RaylibCpp, seedCheckKind.Scene), CheckSupport.Unmeasured);
   });
 });
 

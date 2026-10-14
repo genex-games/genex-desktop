@@ -15,7 +15,17 @@ import type { McpConnectorDraft } from "./mcp-import.ts";
 import type { ConversationRecord, EventEnvelope, SnapshotRecord } from "./event-log.ts";
 import type { EngineDescriptor } from "./engine-descriptor.ts";
 import type { BackdropShaderRequest, BackdropShaderResult } from "./backdrop-shader.ts";
-import type { FolderInspection, GameLocation, GameName, GameNameRequest, GameProject } from "./game-project.ts";
+import type {
+  BuildTarget,
+  ExportResult,
+  FolderInspection,
+  GameLocation,
+  GameName,
+  GameNameRequest,
+  GameProject,
+  GameStack,
+  StackDefaultSwitch,
+} from "./game-project.ts";
 import type { BuildProblem, InstallResult } from "./build-problem.ts";
 import type { LoopRunReview } from "./run-review.ts";
 import type { StagedTarget } from "./self-change-files.ts";
@@ -32,6 +42,19 @@ import type { BootState, SandboxSetupResult } from "./boot.ts";
 import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
+import type { NativeEmbedSize, NativeFrameMeta, NativeInputActions, NativeRunStatus } from "./native-contract.ts";
+import type {
+  AndroidLicence,
+  MobileBuildTarget,
+  ToolchainInstallJob,
+  ToolchainPruneResult,
+  ToolchainStatus,
+} from "./toolchain.ts";
+import type { SigningReference } from "./game-export-contract.ts";
+import type { DeviceLaunchRequest, DeviceLaunchResult } from "./device-launch.ts";
+import type { SeedRetakeAnswer } from "./seed-retake.ts";
+import type { CrateDecisionInput, CrateRequestView } from "./crate-requests.ts";
+import type { EngineEjectAnswer, EngineState, EngineTrustAnswer } from "./game-conformance.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
 
 export type { ProjectAsset, ProjectAssets };
@@ -60,6 +83,17 @@ export interface Bootstrap {
   welcome?: boolean;
   /** An unpackaged developer run: the renderer may offer its developer tools (the colour tweaker). */
   developer?: boolean;
+  /**
+   * Whether this build makes Rust · wgpu games (`main/core/stack-gate.ts`): every developer build,
+   * and a release build where the Rust lane runs. Create game offers Rust only when it is true.
+   */
+  rustCreation?: boolean;
+  /**
+   * The new-game stack switch main read from the studio's settings (`stackDefault`): absent is
+   * the shipped switch. Reverted (`three-js`), Create game starts on Three.js with Rust · wgpu
+   * an explicit choice where it is offered.
+   */
+  stackDefault?: StackDefaultSwitch;
 }
 
 /** The window-control overlay's background and glyph colours, as `#rrggbb`. */
@@ -290,9 +324,19 @@ export interface StudioApi {
   providerUsage(): Promise<ProviderUsageReport[]>;
   hardware(): Promise<HardwareReport>;
   games(): Promise<GameProject[]>;
-  /** A new game in a fresh folder of its own: in the games folder, or inside `parent` when the user chose one. */
-  /** `provisional`: the title waits for the game's first idea (`GameName.provisional`). */
-  createGame(title: string, options?: { parent?: string; provisional?: boolean }): Promise<GameProject>;
+  /**
+   * A new game in a fresh folder of its own: in the games folder, or inside `parent` when the user
+   * chose one. `stack` and `targets` are where people play (Create Game's destinations); a game
+   * created without them is a Three.js browser game. `stack` is the explicit choice and wins over
+   * what `targets` imply. `rust-wgpu` is refused `stack-gated` in a release build; a development
+   * build creates it, and its lane builds the Mac and the web (the phones' builders wait for their
+   * toolchains; Windows and Linux are refused `target-unbuilt`). `provisional`: the title waits for
+   * the game's first idea (`GameName.provisional`).
+   */
+  createGame(
+    title: string,
+    options?: { parent?: string; stack?: GameStack; targets?: BuildTarget[]; provisional?: boolean },
+  ): Promise<GameProject>;
   /** A name for a game started from its first request, by the model picked for it; never fails for want of a model. */
   nameGame(request: GameNameRequest): Promise<GameName>;
   /** A live background for home from a description, by the model picked on home (`core/backdrop-generation.ts`). */
@@ -526,12 +570,104 @@ export interface StudioApi {
   /** `key` names the suggestion the person saw; the index alone names whatever sits there now. */
   acceptProposal(index: number, key?: { at?: string; skill?: string }): Promise<{ skill: string }>;
   discardProposal(index: number, reason?: string, key?: { at?: string; skill?: string }): Promise<boolean>;
-  exportGame(project: string): Promise<{ dir: string; files: number; included: string[]; excluded: string[] }>;
+  /**
+   * Export the game: the web folder by default, or `destination`: a Mac app on a Mac, or a Windows
+   * zip or Linux tarball built on this Mac. `signing` is checked by `parseExportSigning` in main; a
+   * Mac app is signed ad hoc and a Windows or Linux archive left unsigned unless it names another kind.
+   */
+  exportGame(project: string, options?: { destination?: BuildTarget; signing?: unknown }): Promise<ExportResult>;
+  /**
+   * The person picks a release keystore, a provisioning profile or a password file in the native
+   * file dialog, for the signing they are filling in; null when they cancel. Main answers the
+   * file's absolute path, which a signing choice then carries back through `parseExportSigning`.
+   */
+  exportSigningReference(kind: SigningReference): Promise<string | null>;
   modelInstallStatus(): Promise<import("./model-install.ts").ModelInstallJob | null>;
   /** Install Claude Code or Codex with its vendor's own installer, or join the install already running. */
   cliInstall(provider: string): Promise<import("./cli-install.ts").CliInstallJob>;
   /** The latest in-app install of each CLI, running or finished. */
   cliInstallStatus(): Promise<import("./cli-install.ts").CliInstallJob[]>;
+  /** The C++ toolchain store: the Command Line Tools, what is installed, the current lock and the install job. */
+  toolchainStatus(): Promise<ToolchainStatus>;
+  /**
+   * Install what `targets` need (default: Browser and this computer's own OS), or join the install
+   * already running. A download the person starts from the Toolchain sheet; never an agent's.
+   */
+  toolchainInstall(targets?: BuildTarget[]): Promise<ToolchainInstallJob>;
+  /** Cancel the running toolchain install; false when none runs. */
+  toolchainCancel(): Promise<boolean>;
+  /** Settings → Toolchains' "Remove old versions": every version no game's lock names. */
+  toolchainPrune(): Promise<ToolchainPruneResult>;
+  /** Asks macOS to install the Command Line Tools (Apple's own dialog); false when it could not ask. */
+  toolchainInstallClt(): Promise<boolean>;
+  /**
+   * Install what a phone's builds need that the store downloads (the Rust standard libraries, and
+   * for Android bundletool and the JDK), or join the install already running. The person's act
+   * from the Toolchain sheet, never an agent's; the Android SDK, Build-Tools and NDK stay the
+   * person's own install.
+   */
+  toolchainInstallMobile(target: MobileBuildTarget): Promise<ToolchainInstallJob>;
+  /**
+   * The person accepts the Android SDK licence the Toolchain sheet showed them. Only this press
+   * accepts it, never an agent and never a fixture; resolves true once it is recorded.
+   */
+  toolchainAcceptAndroidLicence(licence: AndroidLicence): Promise<boolean>;
+  /**
+   * Play on Mac: build the game's Mac destination, admit the bundle and open the game in its own
+   * window. Resolves with the run's status; a refusal is typed in it (`refusal`, `problem`).
+   */
+  nativeRun(project: string): Promise<NativeRunStatus>;
+  /** Stop the game's own window; false when none runs. */
+  nativeStop(project: string): Promise<boolean>;
+  /** The game's own window run, or null when there is none. */
+  nativeState(project: string): Promise<NativeRunStatus | null>;
+  /** Bring the game's own window to the front; false when there is none or it could not. */
+  nativeFront(project: string): Promise<boolean>;
+  /**
+   * Show the game's Mac build inside Live: a headless run whose frames reach `nativeFrames`, sized
+   * to Live's canvas. Resolves with the run's status; a refusal is typed in it (`embed-unsupported`,
+   * `game-predates-embedding`, …), and Pop out (`nativeRun`) is the way on.
+   */
+  nativeEmbed(project: string, size: NativeEmbedSize): Promise<NativeRunStatus>;
+  /** End the game's embedded run (Web chosen, Live hidden for good, the game switched); false when none ran. */
+  nativeUnembed(project: string): Promise<boolean>;
+  /** Live's captured keyboard and mouse, to the embedded run; false when none runs or the actions were refused. */
+  nativeInput(project: string, actions: NativeInputActions): Promise<boolean>;
+  /** Live's canvas changed size: main debounces it into a new ring; false when no embedded run takes it. */
+  nativeResize(project: string, size: NativeEmbedSize): Promise<boolean>;
+  /**
+   * The embedded run's frames, as the preload's `sharedTexture` receiver hands them over: a
+   * `VideoFrame` (typed loosely; the DOM lib declares it) and main's meta. One subscriber: a second
+   * replaces the first. The frame is closed and released when the listener's promise settles, so
+   * draw it before then. Not an IPC push, and a no-op where this build has no `sharedTexture`.
+   */
+  nativeFrames(listener: (frame: unknown, meta: NativeFrameMeta) => void | Promise<void>): () => void;
+  /**
+   * The person launches the game's admitted phone build on a Simulator, emulator or phone. Only
+   * the person does: no harness method reaches it (containment stage 1). Resolves with how it
+   * ended, which is also recorded as a `device_launch` event.
+   */
+  nativeLaunchDevice(project: string, request: DeviceLaunchRequest): Promise<DeviceLaunchResult>;
+  /**
+   * Re-take the seed copy of one harness module the agent kept from before Rust games, keeping its
+   * edit as a patch; `module` is the workspace-relative path a refused night named.
+   */
+  retakeSeedModule(module: string): Promise<SeedRetakeAnswer>;
+  /** The crate requests agents made, newest first: one game's, or every game's when `project` is absent. */
+  cratesList(project?: string): Promise<CrateRequestView[]>;
+  /** The person approves or declines one crate request; build scripts and proc macros are approved separately. */
+  cratesDecide(decision: CrateDecisionInput): Promise<CrateRequestView>;
+  /**
+   * The person ejects a Rust game's engine (extension ladder level 5): the genex crates of its lock
+   * line become a game-owned fork in `engine/`. Never a harness method: an agent can only suggest it.
+   */
+  engineEject(project: string): Promise<EngineEjectAnswer>;
+  /** The person gives an ejected game the store engine back, after a game snapshot. */
+  engineUneject(project: string): Promise<EngineEjectAnswer>;
+  /** The person turns a game's trust flag for `unsafe` and build scripts on or off; the sandbox never changes. */
+  engineSetTrust(project: string, trusted: boolean): Promise<EngineTrustAnswer>;
+  /** A Rust game's engine as the person's engine rows show it: ejected or Studio's, and its trust flag. A read. */
+  engineState(project: string): Promise<EngineState>;
   pullModel(model: string): Promise<boolean>;
   /** Add from Ollama: an exact tag's download size and fit on this Mac, from the public registry. */
   lookupModel(

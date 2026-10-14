@@ -21,6 +21,7 @@ import {
   resolveServed,
   routeHttp,
   servableProject,
+  servedContentType,
   servedLocation,
   servedRelative,
   shouldRewrite,
@@ -526,5 +527,40 @@ describe("where a game page may navigate (SECUI-3)", () => {
       assert.equal(previewNavigationAllowed(url, ports, { mainFrame: false }), true, url);
       assert.equal(previewNavigationAllowed(url, ports, { mainFrame: true }), false, url);
     }
+  });
+});
+
+describe("the C++ lane's web build, served", () => {
+  it("names the types an Emscripten build needs, and leaves every other file to Chromium", () => {
+    const table: Array<[string, string | null]> = [
+      ["out/index.wasm", "application/wasm"],
+      ["out/index.data", "application/octet-stream"],
+      ["out/index.js", "text/javascript"],
+      ["src/main.mjs", "text/javascript"],
+      ["levels/one.json", "application/json"],
+      ["index.html", "text/html"],
+      ["/abs/GAME.WASM", "application/wasm"],
+      ["assets/player.png", null],
+      ["assets/theme.ogg", null],
+      ["README", null],
+      ["archive.wasm.bak", null],
+    ];
+    for (const [file, type] of table) assert.equal(servedContentType(file), type, file);
+  });
+
+  it("serves a page without the studio's import map when the load says so, the shim still first (characterization)", () => {
+    const page = [
+      "<!doctype html>",
+      '<html><head><meta charset="utf-8"><title>game</title></head>',
+      '<body><canvas id="canvas"></canvas><script async src="index.js"></script></body></html>',
+    ].join("\n");
+    const documentUrl = "game://pong/index.html";
+    const withoutMap = rewriteGameHtml(page, { documentUrl, insertMap: false });
+    assert.equal(withoutMap.injected, true);
+    assert.ok(withoutMap.html.includes(SHIM_TAG));
+    assert.doesNotMatch(withoutMap.html, /type="importmap"/);
+    assert.equal(withoutMap.reach, "none");
+    assert.deepEqual(withoutMap.hooked, {});
+    assert.match(rewriteGameHtml(page, { documentUrl }).html, /type="importmap"/, "the default still inserts it");
   });
 });

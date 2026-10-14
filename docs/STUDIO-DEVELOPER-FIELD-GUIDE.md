@@ -19,6 +19,54 @@ Fixture windows are normally parked offscreen. For a human reviewing fixture dat
 `STUDIO_FIXTURE_INTERACTIVE=1` on start/restart. Fixtures keep provider and credential
 restrictions; they do not establish authentication, model quality or hosted readiness.
 
+The `cpp-game` fixture seeds two C++ games and a stub toolchain store whose builds copy
+`tests/fixtures/raylib-wasm/`. `GENEX_FIXTURE_TOOLCHAIN_STORE=<absolute folder outside the
+profile>` links the profile to a real store instead (the dev store that
+`node scripts/toolchains/dev-store.ts` builds); a linked store is never pruned. The dev store
+shares its components between worktrees but keeps one lock folder per worktree: a worktree's lock
+is named by `.studio-dev/dev-store-lock.json` (or `GENEX_DEV_STORE_LOCK`), never by the store's
+`current-lock.json`, so `npm run test:ui -- cpp-web-ui --store dev` APFS-clones the store and
+writes the worktree's lock into the clone only. The `native-game`
+fixture is `cpp-game` with a scripted native registry: pong-mac's Mac window already runs, with no
+game process, so the native run card renders and Stop works; Play on Mac and Bring to front stay
+refused like every native channel (`npm run test:ui -- native-card-ui`). The `cross-game` fixture
+adds pong-cross (Browser, Mac, Windows, Linux) with two recorded destination checks: Windows built,
+not run on this Mac, and Linux refused by the safety check (`imports-libgl`)
+(`npm run test:ui -- native-card-ui --suite cross`). The `rust-game` fixture scaffolds a Rust · wgpu
+game from the shipped template over a stub Rust store (`fixture-rust.ts`: stub cargo with JSON
+diagnostics, `GENEX_FORCE_ERROR` in `src/main.rs` forces one, and the committed wasm-bindgen output
+in `tests/fixtures/rust-wasm/`); `rust-mobile-game` adds a Browser, iPhone and Android game. The
+app's Rust lane (`src/main/core/rust-lane.ts`) builds over that store for the Mac and the web
+(the WebGPU page Live and browser exports use); the phones' builders build on a Mac (never run
+by an agent or a check), Windows and Linux are refused `target-unbuilt` until their cross components are pinned; Mac embedded and headless runs start from the admitted bytes, and only window runs and Mac exports are `lane-missing`. Real Rust rows read
+`GENEX_RUST_TOOLCHAIN_DIR` and the Rust dev store (`node scripts/toolchains/dev-store.ts --stack rust-wgpu`).
+The stage, create dialog and Toolchain sheet have rendered review runners over the real components
+(`npm run test:ui -- stage-ui`, `create-game-ui`, `toolchain-ui`; light and dark captures). A device
+launch is the person's press (`studio:native.launchDevice`, native-classified, refused in every fixture
+profile): never start a Simulator, emulator or phone from an agent or a check, and never run `adb`.
+Device launches are proven by the owner on a live profile, not here.
+
+No genex release is published, so an owned live profile builds Rust games from local artifacts.
+Build the Rust dev store once (`node scripts/toolchains/dev-store.ts --stack rust-wgpu`, or add
+`--release <dir>` to take the vendored set from a local `rust-release.ts cut --out <dir>`), then
+start the profile. At startup it seeds its own store from that store and this worktree's
+`.studio-dev/dev-store-rust-lock.json` (`GENEX_DEV_TOOLCHAINS` and `GENEX_DEV_STORE_RUST_LOCK`
+override them; `GENEX_DEV_RUST_SEED=0` turns it off): each component is cloned and held to its
+digest, the vendored set to its recorded tree, then the base and the web prewarm (and the Mac's,
+with the Command Line Tools) are built in the profile, which takes minutes the first time. The
+outcome is one `[core] rust dev seed:` line in the profile's `logs/studio.log`. The seed needs
+room for the whole eager store (about 6 GB, mostly the prewarms, which every new profile builds
+again): with less free space it adds nothing and logs `failed` with `disk-space`, so start the
+same profile again with `--reuse` instead of making a new one per round. Fixture profiles
+keep their stub store; release builds and the normal profile never seed.
+
+A development profile opens the Rust gate (`developmentStacksOpen`), so Create game offers Three.js
+and Rust · wgpu on an Apple-silicon Mac or Linux x64 once the Rust toolchain is installed or
+reachable, starting on Rust; elsewhere it makes a browser game. To prove the rollback, set
+`"stackDefault": "three-js"` in the profile's `settings.json` and reload: Create game starts on
+Three.js and Rust stays a choice. No setting makes a new game C++ · raylib, whose creation is
+refused `raylib-creation-retired`.
+
 A request to run the real app for manual testing authorizes a visible owned live profile.
 For “no mocks”, do not substitute fixture mode. Leave the session running for the person
 testing; stop it only when requested or when its agreed task is complete. Report the source
@@ -63,6 +111,9 @@ for account-connected checks. Preserve active user work; inspect ownership/statu
 
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
+Every start makes a new build (about 200 MB). `builds` lists them with the profiles whose
+launch, attempt or controller record names each one; `builds --prune` removes the orphans, those
+no profile names and older than an hour ([builds.ts](../scripts/studio-dev/builds.ts)).
 Use the controller to stop owned sessions; a PID alone is not authority to signal a process.
 `clean --profile <name>` removes only stopped recognized disposable state. Retained live
 profiles, evidence and normal games are not disposable fixture cleanup.
@@ -405,7 +456,10 @@ walks the full loop.
 The request union/runtime validator is src/main/dev/protocol.ts. Operations are status,
 snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace), key
 (surface/key/code/modifiers), select (selector/scope/value), scroll (surface/deltas/target),
-game.input (existing bounded action union), game.state, window.resize, capture, logs, runs, cpu.start/stop,
+game.input (existing bounded action union), game.state and game.renderSettings (the game's verb,
+with an optional `set`) (each with an optional `surface`: `game`, the default, or `native` for the
+open game's native run), window.resize, capture (`--surface native` takes `--frame pinned`, the
+run's own capture profile, or `live`, the studio window's Native view), logs, runs, cpu.start/stop,
 main.cpu.start/stop (a profile of the main process), heap,
 trace.start/stop and stop. `graph.drag` takes bounded duration/distance/steps and returns
 commit counters through release; `window.resize` takes bounded width/height deltas, steps and
@@ -495,6 +549,17 @@ accepts `STUDIO_PACKAGE_DIR` for an isolated package. `.github/workflows/termina
 focused suites and real UI on macOS and Linux (Xvfb); `package.yml` the packaged terminal. These fixture checks do
 not authenticate a provider, inspect user credentials or prove screen-reader assistive technology
 integration; account authorization retains the explicit permission gate above.
+
+### Linux C++ package checks
+
+For Linux C++ creation, `xvfb-run -a node tests/e2e/run-cpp-packaged-ui.mjs` extracts the current
+`.deb` under `out/make/deb` (or `STUDIO_CPP_DEB`) into owned temporary state and launches its
+payload. It checks Home, the C++ chooser, bundled-tool presentation and real project creation
+with offline fixture engines. `--studio-cpp-acceptance` requires `--studio-smoke` and refuses
+other launch lanes; package developer-control and native-action restrictions stay enforced.
+This check does not install tools or compile games; `cpp-linux-host.yml` covers those separately.
+`--studio-rust-acceptance` follows the same rules (never with the C++ lane); `npm run test:packaged`
+launches it on macOS arm64 and Linux x64 ([Rust games in the package](release-operations.md#rust-games-in-the-package)).
 
 ### Appearance checks
 

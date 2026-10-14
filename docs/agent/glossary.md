@@ -179,6 +179,88 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `src/shared/game-library.ts`).
 - **Thread / conversation**: the same thing. APIs say `threadId`; the event store stores
   `conversations/<id>/events` (`src/substrate/event-store.ts`); the UI says chat.
+- **Stack**: what a game is written in, `three-js`, `raylib-cpp` or `rust-wgpu`, decided by
+  the game's own files (`stackOf(shape)` over `STACK_OF_KIND` in `src/shared/game-project.ts`; a
+  Rust game by its `genex.toml`), recorded in its `studio.json` and never changed. raylib and
+  Rust are the compiled stacks (`isCompiledStack`); each has its own destinations
+  (`STACK_TARGETS`), host matrix (`STACK_HOST_MATRIX`) and lock file (`LOCK_FILE_OF_STACK`). A
+  kind only a newer Genex knows opens read-only, `kind-unsupported`.
+- **Creatable stack**: a stack a new game may start on, `three-js` or `rust-wgpu`
+  (`CREATABLE_STACKS`, `isCreatableStack`). C++ · raylib creation is retired: a request naming
+  it, by stack or kind or by only desktop destinations, is refused `raylib-creation-retired`
+  (`CreationRefusal`), while existing raylib games open, build and export as before.
+- **Stack default**: the stack a new game starts on, `defaultStackFor(switch, host)` in
+  `src/shared/toolchain.ts` (main's `stackDefaultHere`). The shipped switch `host-conditional`
+  (`StackDefaultSwitch`, the `stackDefault` key in `settings.json`, read into the bootstrap) picks
+  Rust · wgpu on an Apple-silicon Mac or Linux x64 and Three.js on Windows, an Intel Mac or an
+  offline first launch with no Rust toolchain; `three-js` starts Create game on Three.js and
+  leaves Rust · wgpu a choice.
+  `stackForTargets` maps any non-browser destination to Rust and never to raylib.
+- **Genex facade**: the `genex` crate a Rust game is written against (`native/genex-rust`;
+  contract `docs/GENEX_API.md`), with the extension ladder above it.
+- **Extension ladder**: how far a Rust game may reach past the facade, one level at a time,
+  lowest first: 0 hooks, 1 its own safe modules, 2 WGSL sources, 3 custom GPU passes
+  (`genex::gpu`), 4 a crate only the person approves (`request_crate`,
+  [tool permissions](../tool-permissions.md#crate-requests)), 5 eject. Guarantees hold by
+  behaviour (the game conformance suite), never by a looser sandbox; `npm run
+  report:extension-escapes` counts the escapes an owned profile recorded, so recurring ones
+  become genex features. Agent guidance: the template's `CLAUDE.md` and the seed skill
+  `skills/rust-extension-ladder.md`.
+- **Game conformance suite**: the behaviour checks any built Rust game must pass
+  (`src/main/core/game-conformance.ts`): every verb, seed determinism (both runs on one build),
+  the capture digest, Live's ring on a Mac (not judged yet: no caller has a frames host), Stop and
+  reap, and the renderer's presets and extensions (`src/main/core/game-conformance-render.ts`;
+  not judged for a game whose receipt has no `renderSettings`). Agents run it with
+  `check_conformance` (`game.conformance`, a host-only `conformance_run` event keyed by build
+  digest); developers with `npm run conformance:game` (a built game, or one of this repository's
+  game folders, which it builds first).
+- **Eject**: extension ladder level 5, the person's act alone (`studio:engine.eject`, the strip's
+  engine button): the game's lock-line genex crates are copied into its `engine/` as a
+  game-owned fork with digests, `genex.toml` gets the host's `[engine] ejected_from` row, the
+  profile records the eject (`engine-ejects.json`; a row without it is `engine-unrecorded`) and
+  engine updates stop. Only on a Mac for a game naming macOS (`eject-needs-mac`). Its Live, agent
+  runs and exports then need a green conformance run on the build they would use
+  (`conformance-required`, `src/main/core/game-conformance-gate.ts`). Un-eject snapshots the game
+  first.
+- **Trust flag**: the person's per-game switch (`studio:engine.setTrust`, default off, kept in the
+  profile's `engine-trust.json`, never in the game folder) that lets `unsafe` and build scripts
+  in the game's own crates build (`unsafe-code`, `build-script-refused` without it). The build
+  and game sandboxes are byte-identical either way; nothing a game or an agent writes can set it
+  (`trust-person-only`).
+- **Development gate**: Rust · wgpu creation is open in a development build and, in a release
+  build, only where its lane runs (Apple-silicon Mac, Linux x64); elsewhere it is refused
+  `stack-gated` before anything is written (`developmentStacksOpen` in `src/main/core/stack-gate.ts`).
+- **Build lane**: the builder of one compiled stack behind the seam `GameBuildLanes`
+  (`src/main/game-build.ts`, the core's `x.gameBuilds`): it dispatches by the stack the game's
+  files make it, and a stack with no lane yet is refused `lane-missing`.
+- **Destination**: where people play a game: Browser, Mac, Windows, Linux, iPhone and iPad or
+  Android (`BuildTarget`; the phones are Rust games' only, and built and admitted, never run by
+  an agent). A game's destinations are
+  its `targets`; `src/shared/game-targets.ts` says which this host builds and runs
+  (`TargetRefusal`).
+- **Admission**: the host's check of a built binary before anything runs or ships: its format,
+  machine, imports and caps, one gate per destination (`RUST_ADMITTED_EXECUTABLES` names the six
+  Rust binaries; the `native-gate-*.ts` readers, `native-cross-admission.ts`). A refused binary
+  is a typed `NativeRefusal`; an agent's report of its own build is never the fact.
+- **Device launch**: the person pressing **On a device** to install an admitted phone build on
+  the Simulator, an emulator or a phone (`studio:native.launchDevice`, `device_launch` event). It
+  is the one game process outside ProcessSandbox, and no agent can start it (containment stage 1,
+  [devices](../tool-permissions.md#devices-and-emulators)).
+- **Re-take**: the person's press that lays the shipped copy of a harness module down again and
+  keeps the agent's edit as a patch (`studio:seed.retake`, `seed_retake` event); the remedy for a
+  Rust run refused `rust-parts-missing` over modules kept from before Rust games.
+- **Game box**: the per-OS sandbox a native game runs in (the Seatbelt game profile on a Mac);
+  until a host has one, its desktop builds are built, once they can be, but not run
+  (`hasGameBox` in `src/renderer/panels/stage/destinations.ts`).
+- **Lane output**: the `out/` folder of a C++ build in `layout.cppBuilds`
+  (`<project>-<sha12>/<target>-<lock12>/out/`), the only thing Live serves and exports read for a
+  C++ game; a game's in-tree `build/` is agent scratch (`src/main/cpp-build.ts`).
+- **Toolchain store / lock**: the host's pinned tools under `layout.toolchains` (CMake, Ninja,
+  Emscripten, raylib, ANGLE for C++; Rust's sysroot and browser standard library are pinned in
+  `rust-recipe.json`; a release build does not download them yet), installed only from the
+  Toolchain sheet; a lock names the versions a game builds with by digest, one current lock per
+  compiled stack, and a game keeps its recorded lock across a bump
+  (`src/substrate/toolchain-store/`, `src/main/core/toolchains.ts`).
 - **Fixture profile**: a disposable `studio:dev` profile with scripted engines and native
   actions refused (`scripts/studio-dev.ts`, `src/main/dev/fixtures.ts`,
   `src/main/dev/native-policy.ts`).

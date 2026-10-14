@@ -1,0 +1,46 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.7 (shell exports, async capture, frame bridge, self-test record) and M2.9 (the
+# deferred start behind the IndexedDB saves mirror, the saves sample).
+# Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-platform-web"
+description = "Web shell on WebGPU only (the designed unsupported page otherwise), async capture, IndexedDB saves mirror."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The frame bridge and the self-test record are plain Rust and build (and are tested) on every
+# target; only the `web` module, the wasm-bindgen exports the shell calls, is wasm32-only.
+[dependencies]
+genex = { workspace = true }
+genex-core = { workspace = true }
+genex-render = { workspace = true }
+# The studio verbs `window.__studio` answers through (`Studio::web()`: the shared ops only, never
+# the fd-3 transport, which a wasm32 build cannot open).
+genex-studio = { workspace = true }
+# The HUD's painter (the web paints it over the world target as the native presenter does).
+genex-hud = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
+console_error_panic_hook = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
+
+# The saves sample `tests/conformance/rust-web.test.ts` packages for the browser (empty off wasm32).
+[[example]]
+name = "web_saves"
+crate-type = ["cdylib"]

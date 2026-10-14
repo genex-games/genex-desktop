@@ -1,0 +1,18 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  * Task{ba38912 #7 type=standard A=10213:games.genex.game.g0123456789ab U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=1}
+  ...
+
+ActivityTaskSupervisor state:
+  topDisplayFocusedRootTask=Task{ba38912 #7 type=standard A=10213:games.genex.game.g0123456789ab}
+  Display: mDisplayId=0 (organized)
+    init=320x640 160dpi mMinSizeOfResizeableTaskDp=220 cur=640x320 app=640x320 rng=320x320-640x640
+    deferred=false mLayoutNeeded=false
+  mLastOrientationSource=WindowedMagnification:0:31@175838894
+  deepestLastOrientationSource=ActivityRecord{88951430 u0 games.genex.game.g0123456789ab/android.app.NativeActivity t7}
+  overrideConfig={1.0 ?mcc0mnc [en_US] ldltr sw320dp w640dp h320dp 160dpi nrml long land finger qwerty/v/v -nav/h winConfig={ mBounds=Rect(0, 0 - 640, 320) mAppBounds=Rect(0, 0 - 640, 320) mMaxBounds=Rect(0, 0 - 640, 320) mDisplayRotation=ROTATION_90 mWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_90} as.3 s.31 fontWeightAdjustment=0}
+  ignoreOrientationRequest=false
+  mLayoutSeq=59
+  mCurrentFocus=Window{3855267 u0 Application Not Responding: com.android.systemui}
+  mFocusedApp=ActivityRecord{88951430 u0 games.genex.game.g0123456789ab/android.app.NativeActivity t7}
+

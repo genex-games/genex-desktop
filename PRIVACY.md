@@ -44,7 +44,7 @@ undo a remote action or recall data already sent.
 
 | Feature | Needs |
 | --- | --- |
-| Creating, opening, previewing, checking and exporting games | Nothing beyond a model below; exports are static web bundles |
+| Creating, opening, previewing, checking and exporting games | Nothing beyond a model below; exports are static web bundles, and a C++ game on a Mac also exports as a Mac app signed for that Mac (another Mac opens it from Privacy & Security); a Rust game's phone exports need Xcode or the Android SDK on this computer |
 | Local models | [Ollama](https://ollama.com) running on this Mac, or a Bonsai model downloaded in Settings (Apple Silicon) |
 | Claude models | [Claude Code](https://code.claude.com/docs/en/setup), installed separately and signed in with a Claude subscription |
 | ChatGPT/Codex models | The [Codex CLI](https://developers.openai.com/codex/cli/), installed separately; **Connect ChatGPT** signs in through your browser |

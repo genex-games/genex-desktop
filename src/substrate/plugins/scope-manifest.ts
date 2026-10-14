@@ -29,7 +29,7 @@ function distinctList(value: unknown, max: number, valid: (entry: unknown) => bo
 
 /** A `facts` list in canonical form: API 3, 1-8 distinct fact ids. */
 function factList(value: unknown, where: string, m: Pick<PluginManifest, "apiVersion">): string[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3(`${where}.facts`));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3(`${where}.facts`));
   const facts = distinctList(value, LIMIT.Facts, isFactId);
   if (!facts) throw new Error(MESSAGE.InvalidFacts(where));
   return facts;
@@ -43,7 +43,7 @@ export function applyToolScope(
 ): void {
   if (raw.facts !== undefined) tool.facts = factList(raw.facts, "tools[]", m);
   if (raw.makes === undefined) return;
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3("tools[].makes"));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3("tools[].makes"));
   if (!isAgentTool(raw)) throw new Error(MESSAGE.HarnessMakes);
   const makes = distinctList(raw.makes, LIMIT.Makes, isFactId);
   if (!makes) throw new Error(MESSAGE.InvalidMakes);

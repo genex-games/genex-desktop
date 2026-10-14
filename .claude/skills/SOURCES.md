@@ -24,7 +24,7 @@ frontmatter, which Claude Code honours; Codex reads the equivalent policy,
 Mirror: `.claude/skills/` is a byte-identical copy of this directory for Claude Code, so both
 agents load the same design and engineering skills. Edit here, copy there;
 `tests/conformance/skills-sync.test.ts` fails on any difference. The engineering skills
-(`add-ipc-channel`, `add-event-type`, `add-plugin-tool`, `run-area-tests`,
+(`add-ipc-channel`, `add-event-type`, `add-plugin-tool`, `add-genex-api`, `run-area-tests`,
 `verify-ui-via-dev-control`, `harness-incident-fix`) and the design skill `wire-art` (Genex's
 wireframe art language) are local to this repository.
 

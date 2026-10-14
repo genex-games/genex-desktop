@@ -41,6 +41,24 @@ folders instead of importing them.
 - One behaviour while iterating:
   `npm test -- --test-name-pattern='<test name>' tests/conformance/<name>.test.ts`.
 
+## Rust · wgpu changes
+
+A change under `native/genex-rust/**`, `src/game-template-rust/**` or the Rust lane has three
+layers; run the one that proves the behaviour and say which ran.
+
+- Host rows over stub cargo (`rust-build`, `rust-stage`, `genex-toml`, `core-rust-lane`,
+  `fixture-rust`): `npm run test:area -- stack-identity`; they need no toolchain.
+- Workspace rows: `npm run test:rust-spike`, or one crate with
+  `node scripts/toolchains/rust-env.ts -- cargo test -p <crate> --offline --locked`. Cargo runs only
+  through that helper, with one shared `CARGO_TARGET_DIR` (check free disk before a cold build).
+  `npm run test:area -- rust-runtime` runs the host side of the runtime.
+- Real-toolchain rows (`rust-lane-real`, the real `rust-store` and `rust-end-to-end` rows) skip
+  without `.studio-dev/spike-toolchain`; `GENEX_REQUIRE_TOOLCHAINS=1` makes a skip fail. A
+  phone, an emulator or a device is never run from a check: those rows are the owner's.
+
+A template change also needs `npm run verify:harness`; a facade change follows
+[add-genex-api](../add-genex-api/SKILL.md).
+
 ## Rules
 
 - Red first: run the new or changed test and see it fail for the right reason.

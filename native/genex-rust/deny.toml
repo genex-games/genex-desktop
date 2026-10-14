@@ -1,0 +1,92 @@
+# The vendored-set policy for the genex workspace (M1.5; plan "Toolchain and build store"): what
+# cargo-deny refuses in the resolved crate graph of every destination. It runs through the env
+# helper, so cargo-deny sees the pinned sysroot and the vendored registry only:
+#
+#   node scripts/toolchains/rust-env.ts -- cargo deny check
+#
+# `.github/workflows/rust-toolchain.yml` runs every check on Linux (advisories fetch the RustSec
+# database there); a closure change is a reviewed release change, together with
+# `scripts/toolchains/rust-inventory.json` and `supply-chain/`.
+
+[graph]
+# The six destinations' triples, so a crate pulled in for one platform is checked too.
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-pc-windows-gnullvm",
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "aarch64-linux-android",
+  "wasm32-unknown-unknown",
+]
+all-features = false
+
+[advisories]
+# Every RustSec advisory (vulnerability, unmaintained, unsound) and every yanked version fails,
+# except the listed unmaintained notices: each is transitive, has no maintained release to move
+# to, and is no vulnerability. Remove an entry once its parent crate drops the dependency.
+yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained (no vulnerability); only through image -> exr -> pulp, no fixed release" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained (no vulnerability); only through winit -> sctk-adwaita -> ab_glyph, no fixed release" },
+]
+
+[licenses]
+# Permissive licences, MPL-2.0 (file-level copyleft: symphonia and its codecs), and the egui
+# fonts' OFL-1.1, Ubuntu-font-1.0 and the Unicode data licence. No GPL or LGPL branch is taken.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "OFL-1.1",
+  "Ubuntu-font-1.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[bans]
+# Duplicates are allowed, except where one copy is the rule: glam (kira and glamx
+# need ^0.33; scalar-math and libm by feature unification) and symphonia (kira's own copy).
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+  { crate = "glam", deny-multiple-versions = true },
+  { crate = "symphonia", deny-multiple-versions = true },
+  # GL backends: WebGPU core is the floor everywhere, there is no GL or GLES tier.
+  { crate = "glow", reason = "a GL backend: WebGPU core is the floor" },
+  { crate = "khronos-egl", reason = "a GL backend: WebGPU core is the floor" },
+  { crate = "glutin", reason = "a GL backend: WebGPU core is the floor" },
+  { crate = "glutin_egl_sys", reason = "a GL backend: WebGPU core is the floor" },
+  { crate = "glutin_wgl_sys", reason = "a GL backend: WebGPU core is the floor" },
+]
+
+# wgpu's GL cargo features stay off in every crate that has them.
+[[bans.features]]
+crate = "wgpu"
+deny = ["gles", "webgl", "angle"]
+
+[[bans.features]]
+crate = "wgpu-core"
+deny = ["gles", "webgl", "angle"]
+
+[[bans.features]]
+crate = "wgpu-hal"
+deny = ["gles"]
+
+[sources]
+# Only the crates.io registry (the vendored tree replaces it offline); never a git source.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

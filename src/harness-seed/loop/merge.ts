@@ -3,20 +3,31 @@
  *
  * The template promises "adjacent one-line additions merge clean"; git disagrees, and every
  * facet of one run paid a builder turn to resolve two facets' import lines. When a merge
- * conflicts on exactly `src/main.js`, the three stages are union-merged, the result is checked
- * (no markers left, every line inside the wiring block unique), and the merge is committed.
- * Any other conflict keeps the old path: abort, tell the builder.
+ * conflicts on exactly the template's entry (`src/main.js`, or `src/main.cpp` in a C++ · raylib
+ * game, named by `main`), the three stages are union-merged, the result is checked (no markers
+ * left, every line inside the wiring block unique), and the merge is committed. Any other
+ * conflict keeps the old path: abort, tell the builder.
  */
 import { GIT } from "./git.ts";
 import { shellQuote } from "./shell.ts";
 import { CLIP_DETAIL } from "./text.ts";
 
+/**
+ * This merge takes a C++ · raylib entry (`main: "src/main.cpp"`): its FACET WIRING block is the
+ * same `//` comment pair. run-dispatch.ts and chat-dispatch.ts refuse a raylib night on a kept copy
+ * without this mark (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+/** The union merge takes a Rust · wgpu entry too (`src/main.rs`): its FACET WIRING block is the same `//` comment pair. */
+export const SERVES_RUST = true;
+
 export const WIRING_START = /^\s*\/\/\s*─*\s*FACET WIRING/;
 export const WIRING_END = /^\s*\/\/\s*─*\s*END FACET WIRING/;
 
 /**
- * Validate (and tidy) a union-merged main.js: fails on any conflict marker; deduplicates
- * identical lines inside the wiring block (both sides adding the same import is one import).
+ * Validate (and tidy) a union-merged entry (main.js, main.cpp): fails on any conflict marker;
+ * deduplicates identical lines inside the wiring block (both sides adding the same import is one
+ * import).
  */
 export function verifyWiringMerge(
   text: unknown,
@@ -61,9 +72,10 @@ function dedupeWiring(lines: readonly string[]): { out: string[]; duplicates: nu
 }
 
 /**
- * After a failed `git merge` in `cwd`: if the only unmerged path is src/main.js, union-merge
- * it and commit; otherwise leave the conflict for the caller to abort. `exec(command)` runs a
- * shell command in the worktree and returns `{ code, stdout, stderr }`.
+ * After a failed `git merge` in `cwd`: if the only unmerged path is the entry (`main`, src/main.js
+ * unless the shape names another, src/main.cpp for C++ · raylib), union-merge it and commit;
+ * otherwise leave the conflict for the caller to abort. `exec(command)` runs a shell command in the
+ * worktree and returns `{ code, stdout, stderr }`.
  */
 export async function unionMergeMain(
   exec: (command: string) => Promise<{ code: number | null; stdout?: string; stderr?: string }>,

@@ -1,0 +1,29 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.5, M2.8. Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-platform-desktop"
+description = "winit desktop shell: lifecycle, input sampling, gamepads, saves root; headless mode without an EventLoop."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+genex-core = { workspace = true }
+winit = { workspace = true }
+raw-window-handle = { workspace = true }
+gilrs = { workspace = true }
+pollster = { workspace = true }
+log = { workspace = true }
+
+# Q1 (plan "Open questions"): one binary with a runtime headless mode. The spike binary is the
+# evidence the shell tests spawn; games get their own binary from the lane.
+[[bin]]
+name = "genex-desktop-spike"
+path = "src/bin/genex-desktop-spike.rs"
+test = false

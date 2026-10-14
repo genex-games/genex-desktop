@@ -8,8 +8,10 @@ A and B were shuffled.
 
 Do not mash everything into one vibe. Answer four picks:
 
-1. **works** — Does it run? Console errors, WebGL errors, missing `window.__studio`, or a state
-   snapshot that never changes: that side loses this facet. Broken loses, however good it looks.
+1. **works** — Does it run? Console or log errors, graphics errors, a missing studio contract
+   (`window.__studio` on a three.js page, `studio::install` in a C++ · raylib game,
+   `genex::install` in a Rust · wgpu game), or a state snapshot that never changes: that side
+   loses this facet. Broken loses, however good it looks.
 2. **visuals** — Look at the attached screenshots. Composition, light, material, silhouette,
    whether the scene reads as a game and not a toy. AAA / photoreal / "I am in it" is a real bar
    when that is what was asked. Pictures decide this facet, not `drawCalls`.

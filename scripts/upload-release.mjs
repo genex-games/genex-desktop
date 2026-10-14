@@ -9,7 +9,7 @@ import {
   distributionPlatforms,
 } from "./release-policy.mjs";
 import { createHash } from "node:crypto";
-import { verifyReleaseArtifacts } from "./release-manifest.mjs";
+import { toolchainLockSha256, verifyReleaseArtifacts } from "./release-manifest.mjs";
 
 const runGh = (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
@@ -70,6 +70,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       source: process.env.GITHUB_SHA,
       electron: devDependencies.electron,
       lockfileSha256: createHash("sha256").update(lockfile).digest("hex"),
+      // Distributed packages must match this source's toolchain recipe and pins.
+      toolchainLockSha256: await toolchainLockSha256(fileURLToPath(new URL("..", import.meta.url))),
     },
     distributionPlatforms(signing),
   );

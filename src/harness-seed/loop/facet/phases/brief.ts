@@ -8,6 +8,8 @@ import {
   writeWorktreeFile,
 } from "../../library.ts";
 import { RECIPES_FILE, RECIPES_FILE_PATH, renderRecipesFile } from "../../brief-budget.ts";
+import { stackOfShape, stampedStack } from "../../native-loop.ts";
+import type { GameStack } from "../../native-contract.ts";
 import type { AnyRecord } from "../../../types/harness.d.ts";
 import type { FacetLoop, FacetRound } from "../state.ts";
 import type { RoundFlow } from "../flow.ts";
@@ -22,6 +24,20 @@ import { withIdentity } from "../../workers/identity.ts";
 /** A template game's entry module, when the shape names none. */
 const DEFAULT_ENTRY = "src/main.js";
 
+/**
+ * A C++ · raylib facet's brief carries only recipes written for its stack and reads its rules in
+ * C++ terms; a copy of this module kept from before native support would hand it three.js ones
+ * (native-contract.ts `servesNative`).
+ */
+export const SERVES_NATIVE = true;
+/** A Rust · wgpu facet's brief carries Rust recipes only and its prompt reads `RUST_FACET` (facet/prompt.ts `facetLinesFor`). */
+export const SERVES_RUST = true;
+
+/** The facet's game's stack: the run's stamp, else the folder's kind. */
+function facetStack({ run, shape }: Pick<FacetLoop, "run" | "shape">): GameStack {
+  return stampedStack(run) ?? stackOfShape(shape);
+}
+
 /** The brief (`.studio/BRIEF.md` in the worktree) and the prompt that points at it. */
 export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { baseShots, delegated, ownShape, ownsMain, run, shape, spec, workdir } = loop;
@@ -32,7 +48,15 @@ export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<Ro
   // the whole of it stays within BRIEF_MAX_CHARS (loop/brief-budget.ts).
   const fitted = fitBrief(
     { ...briefInput(loop, round), recipesFile },
-    { spec, ownsMain, ownShape, entryMain: shape?.main ?? DEFAULT_ENTRY, build: shape?.build ?? null },
+    {
+      spec,
+      ownsMain,
+      ownShape,
+      entryMain: shape?.main ?? DEFAULT_ENTRY,
+      build: shape?.build ?? null,
+      // A compiled game's seam, entry and demo rules are its own (CPP_FACET, RUST_FACET).
+      kind: shape?.kind,
+    },
   );
   round.briefText = fitted.briefText;
   round.brief = fitted.brief;
@@ -91,9 +115,11 @@ function pickRecipes(loop: FacetLoop, round: FacetRound): void {
     loop.recipes,
     [...round.failingChecks, ...round.unscored, ...round.fixDefects],
     undefined,
+    // A compiled facet is never handed a three.js recipe, nor a three.js facet a compiled one.
     {
       project: run.project,
       kind: typeof game?.kind === "string" ? game.kind : null,
+      stack: facetStack(loop),
       minScore: CRAFT_ADOPT_SCORE,
       exactOnly: round.unscored.map((check: { id: string }) => check.id),
     },
@@ -139,6 +165,7 @@ function briefInput(loop: FacetLoop, round: FacetRound) {
     move: loop.currentMove,
     fix: loop.currentFix,
     liveness: loop.lastLiveness ? renderLiveness(loop.lastLiveness) : null,
+    stack: facetStack(loop),
     // Building or finishing (facet/stage.ts): the stage this round was fixed in when its move was chosen.
     stage: roundStage(round, spec),
     // The worker's first, long round (facet/build-block.ts), and what undone rounds had fixed.

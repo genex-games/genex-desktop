@@ -70,9 +70,15 @@ through the JS API imports `@typescript/typescript6`.
 - `claude-rules.ts`: whether Claude Code would deny a path by an absolute rule, matched as CLI
   2.1.281 does (node-ignore, case-blind) for the shapes `claude-permissions.ts` writes.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
+- `gpu-games.ts`: the mark of a file that starts real games on this machine's GPU (and its
+  `metalRequired()`); the runners run those files one at a time, after the parallel ones.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.
+- `pe.ts`, `elf.ts`: pure-TS writers of minimal PE/COFF (`writePe`) and ELF64 (`writeElf`) images
+  for the Windows and Linux bundle gates' rows. Each returns a `layout` of offsets, so a hostile
+  row corrupts one field of an otherwise valid file (`patched`, `retagNeeded`). No compiler is
+  needed, so the rows run on every CI host; the images are read, never run.
 
 Characterization so far: the `api()` keys and `StudioCore` surface (`core-surface`, `rpc-surface`),
 the seed contracts the app keeps its own copy of (`seed-contracts`), spike snapshot/worktree

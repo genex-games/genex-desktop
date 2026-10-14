@@ -4,11 +4,14 @@
  * `toolbar`, both sanitized before they reach the DOM. A panel target opens its own dialog over
  * the stage (and says so, so the native game view gets out of the way); an action target runs
  * the same review → ticket → native approval sequence as the Plugins dialog. While Studio bundles
- * a newer version of the plugin, its buttons say Update instead and open Plugins at it.
+ * a newer version of the plugin, its buttons say Update instead and open Plugins at it. A button
+ * that does not apply to the game on the stage is left out (`plugin-toolbar-items.ts`: no Publish
+ * for a game without Browser).
  */
 import type { Dispatch, JSX, SetStateAction } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import type { BuildTarget } from "../../shared/game-project.ts";
 import { GENEX_PLUGIN_ID, GENEX_PUBLISH_PANEL } from "../../shared/genex.ts";
 import type { FactRef, FolderHolds } from "../../shared/project-facts.ts";
 import {
@@ -39,6 +42,7 @@ import { isGenexPublish, stripEntries, studioPublishButton } from "./plugins/gen
 import { PluginApproval } from "./PluginApproval.tsx";
 import { PanelSurface } from "./panel-bridge.ts";
 import { PluginPanelHost } from "./PluginPanelHost.tsx";
+import { playsOnWeb, visibleToolbarItems } from "./plugin-toolbar-items.ts";
 
 /** Status refreshes coalesce: a burst of change events wakes each plugin's process once. */
 const STATUS_DEBOUNCE_MS = SECOND_MS;
@@ -62,6 +66,8 @@ const DOT_CLASS: Record<NonNullable<PluginToolbarStatus["tone"]>, string> = {
 interface Props {
   plugins: PluginInfo[];
   project: string | null;
+  /** Where the game on the stage plays; null with no game. */
+  destinations: readonly BuildTarget[] | null;
   /** What the open game's folder holds: only a game served as a web game gets Publish (`stripEntries`). */
   facts: readonly FactRef[];
   /** With no facts, what the folder holds: one of a kind Genex can't name gets no Publish. */
@@ -304,18 +310,23 @@ function usePress({ project, onNotice, refreshRef, setPanel, setReview, setBusy 
   );
 }
 
+/** Whether the strip shows `entry` for a game made for `destinations`. */
+const shownFor = (entry: PluginToolbarEntry, destinations: readonly BuildTarget[] | null): boolean =>
+  visibleToolbarItems([entry.item], entry.plugin, destinations).length > 0;
+
 /**
  * Publish for every open web game: while Genex is off or not installed, Studio's own button opens a
- * dialog that brings Genex back, and once Genex's own Publish is there it takes over the dialog.
+ * dialog that brings Genex back, and once Genex's own Publish is there it takes over the dialog. A
+ * game without Browser among its destinations has no Publish at all (`playsOnWeb`).
  */
 function useStudioPublish(
   plugins: PluginInfo[],
   project: string | null,
-  { facts, holds }: { facts: readonly FactRef[]; holds: FolderHolds | undefined },
+  game: { facts: readonly FactRef[]; holds: FolderHolds | undefined; destinations: readonly BuildTarget[] | null },
   genexPublish: PluginToolbarEntry | undefined,
 ) {
   const [setup, setSetup] = useState(false);
-  const shown = studioPublishButton(plugins, project, facts, holds);
+  const shown = studioPublishButton(plugins, project, game.facts, game.holds) && playsOnWeb(game.destinations);
   useEffect(() => {
     if (setup && !project) setSetup(false);
   }, [setup, project]);
@@ -339,13 +350,17 @@ function StudioPublishButton({ onPress }: { onPress: () => void }): JSX.Element 
 export function PluginToolbar({
   plugins,
   project,
+  destinations,
   facts,
   holds,
   emptyGame,
   onNotice,
   onOpenChange,
 }: Props): JSX.Element {
-  const entries = useMemo(() => stripEntries(plugins, project, facts, holds), [plugins, project, facts, holds]);
+  const entries = useMemo(
+    () => stripEntries(plugins, project, facts, holds).filter((entry) => shownFor(entry, destinations)),
+    [plugins, project, facts, holds, destinations],
+  );
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   // Membership, not identity: the list is re-fetched every few seconds while the Plugins dialog
@@ -360,7 +375,12 @@ export function PluginToolbar({
   useEffect(() => {
     if (panel && !entries.some((e) => e.key === panel.key)) setPanel(null);
   }, [entries, panel]);
-  const studioPublish = useStudioPublish(plugins, project, { facts, holds }, entries.find(isGenexPublish));
+  const studioPublish = useStudioPublish(
+    plugins,
+    project,
+    { facts, holds, destinations },
+    entries.find(isGenexPublish),
+  );
   useEffect(() => {
     onOpenChange(Boolean(panel) || studioPublish.setup);
     return () => onOpenChange(false);

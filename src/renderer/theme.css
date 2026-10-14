@@ -2063,6 +2063,58 @@ button.chat-header-title:hover {
 .sidebar-game[data-menu-open="true"] :is(.sidebar-pin, .sidebar-game-status) {
   opacity: 0;
 }
+.game-name-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  padding-inline: 14px;
+  color: var(--ink-3);
+}
+.game-name-field:focus-within {
+  border-color: var(--focus-edge);
+}
+.game-name-field input {
+  min-width: 0;
+  flex: 1;
+  background: transparent;
+  padding-block: 12px;
+  font-size: var(--t-md);
+  color: var(--ink);
+  outline: none;
+}
+/* The C++ chooser's saved folder, with one shared label column. */
+.game-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  margin-top: 4px;
+  padding-left: 2px;
+}
+.game-facts > * {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+/* Saved to: the folder the game will get, and a button to change where. */
+.game-saved-to {
+  align-items: center;
+  min-height: 32px;
+}
+/* A long folder keeps one line and its end, the game's own folder: its beginning gives way to an
+   ellipsis. The path inside reads left to right whatever the line's direction. */
+.game-saved-path {
+  overflow: hidden;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-saved-path > [dir="ltr"] {
+  unicode-bidi: isolate;
+}
 .game-text-input {
   width: 100%;
   border: 1px solid var(--line-strong);

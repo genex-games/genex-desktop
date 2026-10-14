@@ -12,6 +12,7 @@ import {
   askedRest,
   budgetWords,
   buildReview,
+  capturedBy,
   capWords,
   checkingBuild,
   foldTries,
@@ -21,7 +22,9 @@ import {
   layoutSteps,
   leadStopped,
   leadWorking,
+  onStartingPoint,
   partRows,
+  PictureSource,
   readyToPlay,
   resultGate,
   resultStatus,
@@ -29,6 +32,7 @@ import {
   statusLine,
   stepPill,
   stepSentence,
+  startingPoint,
   stepWord,
   STEPS,
   triesWord,
@@ -38,6 +42,7 @@ import {
 import type { WorkerInfo } from "../../src/renderer/run-graph-workers.ts";
 import { WorkerEnd, WorkerStopCode } from "../../src/shared/workers.ts";
 import { sideBySideWords } from "../../src/renderer/words.ts";
+import { CAPTURE_MANIFEST_VERSION, type CaptureManifest } from "../../src/shared/build-preview.ts";
 const START = Date.parse("2026-09-19T15:36:00.000Z");
 let minute = 0;
 function event(eventType: string, payload: Record<string, unknown>, runId = "run_ice"): EventEnvelope {
@@ -687,6 +692,321 @@ describe("the words a card wears", () => {
     assert.equal(buildReview(looked("judge", "first-build", empty)), null);
     const unseen = "Nothing to compare it with: the game as it stood could not be photographed.";
     assert.equal(buildReview(looked("judge", "no-start", unseen)), null);
+  });
+});
+
+/**
+ * A night whose lead restarted both parts after the first merge: the single session `sword` became
+ * `sword2`, and the loop `land` became `land2`, whose rounds carry on after `land`'s one round.
+ */
+function restartedNight(): EventEnvelope[] {
+  minute = 0;
+  return [
+    event("run_started", { goal: "A sword in ice", mode: "director" }),
+    event("autopilot_started", { director: true, facets: [], maxParallel: 2 }),
+    event("autopilot_base", { ok: true, commit: "start" }),
+    event("director_worker", { workerId: "sword", title: "Sword, ice and light", state: "running", mode: "single" }),
+    event("director_worker", { workerId: "land", title: "Frozen landscape", state: "running", mode: "loop" }),
+    event("facet_build_started", { facetId: "land", facetTitle: "Frozen landscape", iteration: 1 }),
+    judged("land", 1, "challenger"),
+    event("integration_merge", { facetId: "land", head: "h1", commit: "c1", conflict: false, stage: "director" }),
+    event("director_worker", { workerId: "sword", state: "stopped", mode: "single", stoppedBecause: "restarted" }),
+    event("director_worker", {
+      workerId: "sword2",
+      title: "Sword, ice and light",
+      state: "running",
+      mode: "single",
+      replaces: "sword",
+    }),
+    event("director_worker", { workerId: "land", state: "stopped", mode: "loop", stoppedBecause: "restarted" }),
+    event("director_worker", {
+      workerId: "land2",
+      title: "Frozen landscape",
+      state: "running",
+      mode: "loop",
+      replaces: "land",
+    }),
+    event("facet_build_started", { facetId: "land2", facetTitle: "Frozen landscape", iteration: 1 }),
+    judged("land2", 1, "challenger"),
+    event("facet_build_started", { facetId: "land2", facetTitle: "Frozen landscape", iteration: 2 }),
+  ];
+}
+
+const manifestOf = (fields: Partial<CaptureManifest>): CaptureManifest => ({
+  version: CAPTURE_MANIFEST_VERSION,
+  runId: "run_ice",
+  workerId: "sword2",
+  call: 1,
+  camera: "default",
+  commit: "start",
+  edited: true,
+  capturedAt: "2026-09-19T17:00:00.000Z",
+  provenance: { seq: null, digest: null, camera: "default", runId: null, build: null },
+  ...fields,
+});
+
+/** `value`, or a failed assertion saying what was missing. */
+function must<T>(value: T | null | undefined, what: string): T {
+  assert.ok(value !== null && value !== undefined, `${what} is missing`);
+  return value;
+}
+
+/** A part's row in `rows`. */
+const rowOf = (rows: ReturnType<typeof partRows>, facetId: string) =>
+  must(
+    rows.find((row) => row.facet.facetId === facetId),
+    `the row of ${facetId}`,
+  );
+
+describe("the picture a card shows", () => {
+  it("shows a restarted single session's own builder capture, never the replaced worker's", () => {
+    const { rows } = rowsOf(restartedNight());
+    const sword = must(rowOf(rows, "sword").steps[0], "the session step");
+    assert.equal(sword.builder, "sword2");
+    assert.deepEqual(sword.picture, {
+      source: PictureSource.Builder,
+      worker: "sword2",
+      iteration: 1,
+      start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
+    });
+  });
+
+  it("shows a restarted loop's judged frame for a judged round and its own capture for the round in hand", () => {
+    const land = rowOf(rowsOf(restartedNight()).rows, "land");
+    assert.deepEqual(
+      land.steps.map((step) => [step.builder, step.picture.source]),
+      [
+        ["land", PictureSource.Judged],
+        ["land2", PictureSource.Judged],
+        ["land2", PictureSource.Builder],
+      ],
+    );
+    const [, judgedByLand2, inHand] = land.steps;
+    assert.deepEqual(must(judgedByLand2, "land2's judged step").picture, {
+      source: PictureSource.Judged,
+      shot: { camera: "default", path: "/runs/run_ice/land2/1/default.jpg" },
+    });
+    assert.deepEqual(must(inHand, "the step in hand").picture, {
+      source: PictureSource.Builder,
+      worker: "land2",
+      iteration: 2,
+      start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
+    });
+  });
+
+  it("puts the replacement's screen on a step whose newest try a restart folded in", () => {
+    // `land` tried the mountain and was undone; `land2` replaced it and tried the same step,
+    // undone without a frame. The step shows `land`'s judged frame, and its worker is `land2`.
+    minute = 0;
+    const events = [
+      ...restartedNight().slice(0, 3),
+      event("director_worker", { workerId: "land", title: "Frozen landscape", state: "running", mode: "loop" }),
+      move("land", 1, "Tall mountain: a blue-grey mass behind the sword", "mountain"),
+      judged("land", 1, "incumbent"),
+      event("director_worker", { workerId: "land", state: "stopped", mode: "loop", stoppedBecause: "restarted" }),
+      event("director_worker", {
+        workerId: "land2",
+        title: "Frozen landscape",
+        state: "running",
+        mode: "loop",
+        replaces: "land",
+      }),
+      move("land2", 1, "Tall mountain: a blue-grey mass behind the sword", "mountain"),
+      judged("land2", 1, "incumbent", { shots: [] }),
+    ];
+    const step = must(rowOf(rowsOf(events).rows, "land").steps.at(-1), "the mountain step");
+    assert.deepEqual(
+      step.tries.map((node) => node.iteration),
+      [1, 2],
+      "the replacement's try folds into the same step",
+    );
+    assert.equal(step.shown?.iteration, 1, "the step shows the try that has a frame");
+    assert.equal(step.builder, "land2", "the worker on the step now, never the attempt a restart replaced");
+    assert.deepEqual(
+      step.tryPictures.map((picture) => picture.source),
+      [PictureSource.Judged, PictureSource.None],
+    );
+  });
+
+  it("maps a restarted part's rounds by the graph's own shift, a flag-only round included", () => {
+    // `land` finished round 1 and raised a flag (a round 2 the graph draws, with no attempt),
+    // then `land2` replaced it: the graph counts `land2`'s round 1 as the part's round 3.
+    minute = 0;
+    const events = [
+      ...restartedNight().slice(0, 3),
+      event("director_worker", { workerId: "land", title: "Frozen landscape", state: "running", mode: "loop" }),
+      event("facet_build_started", { facetId: "land", facetTitle: "Frozen landscape", iteration: 1 }),
+      judged("land", 1, "challenger"),
+      event("facet_flag", {
+        facetId: "land",
+        facetTitle: "Frozen landscape",
+        what: "the ice has a seam",
+        checkId: null,
+      }),
+      event("director_worker", { workerId: "land", state: "stopped", mode: "loop", stoppedBecause: "restarted" }),
+      event("director_worker", {
+        workerId: "land2",
+        title: "Frozen landscape",
+        state: "running",
+        mode: "loop",
+        replaces: "land",
+      }),
+      event("facet_build_started", { facetId: "land2", facetTitle: "Frozen landscape", iteration: 1 }),
+    ];
+    const { graph, rows } = rowsOf(events);
+    assert.deepEqual(graph.restarts, [{ worker: "land2", part: "land", offset: 2 }]);
+    const inHand = must(rowOf(rows, "land").steps.at(-1), "the step in hand");
+    assert.equal(inHand.shown?.iteration, 3);
+    assert.deepEqual(inHand.picture, { source: PictureSource.Builder, worker: "land2", iteration: 1, start: null });
+  });
+
+  it("shows nothing for an undone try whose build showed no frame, never an older builder capture", () => {
+    // The night up to the mountain's first try, whose verdict carried no frame: its build failed.
+    const events = loopRun({ finished: false }).slice(0, -2);
+    events.push(judged("land", 4, "incumbent", { shots: [] }));
+    const mountain = must(rowOf(rowsOf(events).rows, "land").steps.at(-1), "the mountain step");
+    assert.equal(mountain.shown?.iteration, 4);
+    assert.deepEqual(mountain.picture, { source: PictureSource.None });
+  });
+
+  it("keeps a kept try's own builder capture when its pass saved no frame", () => {
+    // Kept on its checks, while the evidence pass had no window free: no frame, but a build.
+    const events = loopRun({ finished: false }).slice(0, -2);
+    events.push(judged("land", 4, "challenger", { shots: [] }));
+    const mountain = must(rowOf(rowsOf(events).rows, "land").steps.at(-1), "the mountain step");
+    assert.equal(mountain.shown?.iteration, 4);
+    assert.deepEqual(mountain.picture, { source: PictureSource.Builder, worker: "land", iteration: 4, start: null });
+  });
+
+  it("gives every try of a step its own picture: the judged frame, nothing for a failed build, else its builder's capture", () => {
+    // The mountain's first try was judged without a frame (its build failed); its second is in hand.
+    const events = loopRun({ finished: false }).slice(0, -2);
+    events.push(judged("land", 4, "incumbent", { shots: [] }));
+    events.push(move("land", 5, "Tall mountain: a blue-grey mass behind the sword", "mountain"));
+    const land = rowOf(rowsOf(events).rows, "land");
+    const mountain = must(land.steps.at(-1), "the mountain step");
+    assert.deepEqual(
+      mountain.tries.map((node) => node.iteration),
+      [4, 5],
+    );
+    assert.deepEqual(mountain.tryPictures, [
+      { source: PictureSource.None },
+      { source: PictureSource.Builder, worker: "land", iteration: 5, start: null },
+    ]);
+    const shore = must(
+      land.steps.find((step) => step.tries.some((node) => node.iteration === 2)),
+      "the shore step",
+    );
+    assert.deepEqual(
+      shore.tryPictures.map((picture) => picture.source),
+      [PictureSource.Judged, PictureSource.Judged],
+    );
+  });
+
+  it("maps a restarted part's tries to the replacement worker's own rounds", () => {
+    const { rows } = rowsOf(restartedNight());
+    assert.deepEqual(must(rowOf(rows, "land").steps.at(-1), "the step in hand").tryPictures, [
+      {
+        source: PictureSource.Builder,
+        worker: "land2",
+        iteration: 2,
+        start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
+      },
+    ]);
+    const sword = must(rowOf(rows, "sword").steps[0], "the session step");
+    assert.deepEqual(sword.tryPictures, [], "a session has no tries");
+  });
+
+  it("keeps a graph without a recorded outcome on each part's own folder, as before", () => {
+    const graph = must(buildRunGraph(loopRun({ finished: false })), "the graph");
+    const rows = partRows(graph, null);
+    const sword = must(rowOf(rows, "sword").steps[0], "the session step");
+    assert.deepEqual(sword.picture, {
+      source: PictureSource.Builder,
+      worker: "sword",
+      iteration: 1,
+      start: null,
+    });
+    const inHand = must(rowOf(rows, "land").steps.at(-1), "the step in hand");
+    assert.deepEqual(
+      [inHand.builder, inHand.picture],
+      ["land", { source: PictureSource.Builder, worker: "land", iteration: 5, start: null }],
+    );
+  });
+
+  it("knows where the run started and when the build first moved past it", () => {
+    assert.deepEqual(startingPoint(rowsOf(restartedNight()).graph, null), {
+      commit: "start",
+      movedOnAt: "2026-09-19T15:44:00.000Z",
+    });
+    minute = 0;
+    const early = restartedNight().slice(0, 7);
+    assert.equal(
+      startingPoint(must(buildRunGraph(early), "the graph"), null),
+      null,
+      "nothing merged yet: the start is the build",
+    );
+  });
+
+  it("labels the v1 incident's HUD-only frame: the workers forked after the lead's setup commits, the frame before the first merge", () => {
+    // run_mur5hcy1gsi6's shape (M-1.3): the report's base is the snapshot, the lead committed stub
+    // facets on top, every first worker forked from that commit, and the ui worker photographed
+    // its HUD over the starter 21 s before its own merge moved the build.
+    minute = 0;
+    const events = [
+      event("run_started", { goal: "A cozy fishing game", mode: "director" }, "run_fish"),
+      event("autopilot_started", { director: true, facets: [], maxParallel: 10 }, "run_fish"),
+      event(
+        "director_worker",
+        { workerId: "fishing", title: "fishing", mode: "single", from: "stubs", state: "running" },
+        "run_fish",
+      ),
+      event(
+        "director_worker",
+        { workerId: "ui", title: "ui", mode: "single", from: "stubs", state: "running" },
+        "run_fish",
+      ),
+      event(
+        "director_worker",
+        { workerId: "ui", title: "ui", mode: "single", state: "done", lastCommit: "u1" },
+        "run_fish",
+      ),
+      event(
+        "integration_merge",
+        { facetId: "ui", commit: "u1", head: "h1", previousHead: "stubs", conflict: false, stage: "director" },
+        "run_fish",
+      ),
+      event("run_finished", { baseCommit: "snapshot", integrationHead: "h1" }, "run_fish"),
+    ];
+    const graph = must(buildRunGraph(events), "the graph");
+    const start = startingPoint(graph, summarizeRun(events, "ice", "run_fish"));
+    assert.equal(start?.commit, "stubs", "the commit the first workers forked from, not the snapshot");
+    const capturedAt = new Date(Date.parse(must(start, "the start").movedOnAt) - 21_000).toISOString();
+    const frame = manifestOf({ runId: "run_fish", workerId: "ui", commit: "stubs", capturedAt });
+    assert.equal(onStartingPoint(frame, start), true, "read after the build moved on, the frame is the starter's");
+  });
+
+  it("labels a builder frame on the starting point once the build has moved past it", () => {
+    const start = { commit: "start", movedOnAt: "2026-09-19T16:00:00.000Z" };
+    assert.equal(onStartingPoint(manifestOf({}), start), true, "the worker's own edits, drawn on the starting point");
+    assert.equal(onStartingPoint(manifestOf({ edited: false }), start), true, "the starting point itself");
+    assert.equal(
+      onStartingPoint(manifestOf({ capturedAt: "2026-09-19T15:59:00.000Z" }), start),
+      true,
+      "captured before the move: the card is read after it, when the build no longer stands there",
+    );
+    assert.equal(onStartingPoint(manifestOf({ commit: "c9" }), start), false);
+    assert.equal(onStartingPoint(manifestOf({ commit: null }), start), false);
+    assert.equal(onStartingPoint(undefined, start), false, "a capture saved before manifests: no label");
+    assert.equal(onStartingPoint(manifestOf({}), null), false);
+  });
+
+  it("refuses a builder capture whose manifest names another worker or run", () => {
+    assert.equal(capturedBy(undefined, "run_ice", "sword2"), true, "a capture saved before manifests still shows");
+    assert.equal(capturedBy(manifestOf({}), "run_ice", "sword2"), true);
+    assert.equal(capturedBy(manifestOf({ workerId: "sword" }), "run_ice", "sword2"), false);
+    assert.equal(capturedBy(manifestOf({ runId: "run_other" }), "run_ice", "sword2"), false);
+    assert.equal(capturedBy(manifestOf({ workerId: null, runId: null }), "run_ice", "sword2"), true);
   });
 });
 

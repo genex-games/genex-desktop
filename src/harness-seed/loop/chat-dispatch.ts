@@ -16,6 +16,39 @@ import * as chatSessionParts from "./chat-session.ts";
 import * as delegatedTurnParts from "./delegated-turn.ts";
 import * as afterLoopRunPromptsParts from "./after-loop-run-prompts.ts";
 import * as runDispatchParts from "./run-dispatch.ts";
+// The parts a C++ · raylib run launched from here runs (`NATIVE_PARTS`).
+import * as gauntletParts from "./gauntlet.ts";
+import * as autopilotParts from "./autopilot.ts";
+import * as checksParts from "./checks.ts";
+import * as specParts from "./spec.ts";
+import * as reviewParts from "./review.ts";
+import * as mergeParts from "./merge.ts";
+import * as evidenceParts from "./evidence.ts";
+import * as judgeParts from "./judge.ts";
+import * as promptsBuildParts from "./prompts-build.ts";
+import * as spikeParts from "./spike.ts";
+import * as directorSetupParts from "./director/setup.ts";
+import * as directorIntegrateParts from "./director/integrate.ts";
+import * as directorBriefsParts from "./director/briefs.ts";
+import * as directorRulesParts from "./director/rules.ts";
+import * as directorWorkersParts from "./director/workers.ts";
+import * as optimizationParts from "./optimization.ts";
+import * as facetGateParts from "./facet/phases/gate.ts";
+import * as facetPromptParts from "./facet/prompt.ts";
+import * as facetBriefParts from "./facet/phases/brief.ts";
+import * as facetPlanParts from "./facet/phases/plan.ts";
+import * as libraryParts from "./library.ts";
+import * as gameToolsParts from "../tools/game-tools.ts";
+import * as previewToolsParts from "../tools/preview-tools.ts";
+import { NativeNightRefusal, ProjectKind, nativeNightRefused, servesNative } from "./native-contract.ts";
+import {
+  type NativeDescriptor,
+  type ScaffoldAsk,
+  launchRefusalCode,
+  nativeNightRefusal,
+  scaffoldFor,
+  stackChangeRefusal,
+} from "./native-loop.ts";
 import { afterLeadLoopRun, resumeAfterReply, servesAfterLoopRun, type AfterLoopRun } from "./after-loop-run.ts";
 import {
   commissionHours,
@@ -71,6 +104,8 @@ const FALLBACK_PROJECT = "game";
 const EMPTY_GOALS = new Set(["", "undefined", "null"]);
 /** The session phase a stopped turn leaves on its thread (`session_activity`). */
 const INTERRUPTED_PHASE = "interrupted";
+/** The start's own seed path: a copy kept from before Rust games lists no Rust parts, so it names itself. */
+const RUN_DISPATCH_PART = "loop/run-dispatch.ts";
 
 /** What the chat is told. */
 const MESSAGE = {
@@ -81,6 +116,8 @@ const MESSAGE = {
   alreadyBuilding: (project: string) =>
     `a build is already running for ${project} — wait for it to finish, or stop it, before starting another`,
   couldNotLaunch: (failure: string) => `the run could not launch: ${failure}`,
+  rustPartsMissing: (project: string, modules: readonly string[]) =>
+    `${project} would be a Rust · wgpu game, and parts of the studio's own harness its nights run were kept from before Rust games (${modules.join(", ")}), so they could not build or judge it. Nothing was made: re-take the seed copy of each, then start again.`,
   stoppedBeforeLaunch: "it was stopped before it started, and nothing new was started",
   stoppedBeforeTurn: "Stopped before it started — nothing was done. Send a message to go on.",
   turnFailed: (failure: unknown) => `turn failed: ${failure}`,
@@ -100,6 +137,54 @@ const MESSAGE = {
 
 /** The run a message belongs to, when it names one (the queued action carries the same fields). */
 type RunRecord = AnyRecord;
+
+/**
+ * This dispatch refuses a C++ · raylib run on an existing raylib game, by its code, when a part
+ * the run runs predates native support — the start in run-dispatch.ts among them, which a kept
+ * copy could not refuse itself. It never asks for a new raylib game: its creation is retired.
+ */
+export const SERVES_NATIVE = true;
+/**
+ * It scaffolds the Rust · wgpu template for a desktop or phone intake, and refuses to before any
+ * folder exists when a part the run runs predates Rust games (`RUST_PARTS`), then hands the run
+ * to run-dispatch.ts, which refuses it by the same code; this launcher is the one part outside that list.
+ */
+export const SERVES_RUST = true;
+
+/**
+ * Every part a C++ · raylib run launched from this chat runs, this dispatch (its own mark, read
+ * here rather than through an import of itself, which would be an import cycle) and the start in
+ * run-dispatch.ts included (native-contract.ts `servesNative`).
+ */
+const NATIVE_PARTS = [
+  { SERVES_NATIVE },
+  runDispatchParts,
+  chatSessionParts,
+  delegatedTurnParts,
+  gauntletParts,
+  autopilotParts,
+  checksParts,
+  specParts,
+  reviewParts,
+  mergeParts,
+  evidenceParts,
+  judgeParts,
+  promptsBuildParts,
+  spikeParts,
+  directorSetupParts,
+  directorIntegrateParts,
+  directorBriefsParts,
+  directorRulesParts,
+  directorWorkersParts,
+  optimizationParts,
+  facetGateParts,
+  facetPromptParts,
+  facetBriefParts,
+  facetPlanParts,
+  libraryParts,
+  gameToolsParts,
+  previewToolsParts,
+];
 
 /**
  * The parts the chat's own session after a lead's run depends on: the runner that picks its
@@ -603,6 +688,8 @@ function chatTurnOptions(
     ...(action.projectDir ? { projectDir: action.projectDir } : {}),
     ...(action.extraReads ? { extraReads: action.extraReads } : {}),
     ...(action.stills ? { stills: action.stills } : {}),
+    // The destinations a new game is asked with (a desktop or phone one scaffolds the Rust template).
+    ...(action.targets ? { targets: action.targets } : {}),
     ...(action.loop ? { loop: action.loop } : {}),
     ...(action.autopilot ? { autopilot: action.autopilot } : {}),
     ...(steer ? { steer } : {}),
@@ -713,12 +800,18 @@ async function launchOrSayWhy(studio: Studio, ctx: HarnessCtx, action: QueueActi
   const { host } = studio;
   await launchFromIntake(studio, ctx, action, spec).catch(async (err: any) => {
     const failure = err?.message ?? String(err);
+    // A refusal with a typed reason (a kept pre-native part, a fixed stack) keeps its code on
+    // the record, as the start's own refusal does (run-dispatch.ts `run_start_blocked`).
+    const code = launchRefusalCode(err);
+    const blocked = code
+      ? [{ type: EventKind.Custom, event_type: RunEvent.RunStartBlocked, payload: { reason: failure, code } }]
+      : [];
     // A launch that dies before run_started needs no run_finished — but it still owes the
     // chat a durable word, not just a push that vanishes with the window.
     await host
       .call(HostMethod.EventsAppend, {
         threadId: action.threadId,
-        batch: [{ type: EventKind.Error, message: MESSAGE.couldNotLaunch(failure) }],
+        batch: [...blocked, { type: EventKind.Error, message: MESSAGE.couldNotLaunch(failure) }],
       })
       .catch(() => {});
     host.notify("run.failed", { error: failure });
@@ -750,7 +843,10 @@ async function failChatTurn(host: Host, ctx: HarnessCtx, turnId: string, err: an
 
 /**
  * Launch the run an interview commissioned. Throws the sentence the chat is owed when it cannot
- * start: no goal, a folder that refuses, or a build already running for this chat or game.
+ * start: no goal, a folder that refuses, or a build already running for this chat or game. A
+ * C++ · raylib run on a part kept from before native support, a new Rust · wgpu folder whose
+ * run needs a part kept from before Rust games, and a desktop destination for a browser game that
+ * exists, throw their typed code with it.
  */
 export async function launchFromIntake(
   studio: Studio,
@@ -762,31 +858,33 @@ export async function launchFromIntake(
   requireGoal(spec);
   const games = await host.call(HostMethod.GameList, {});
   const project = intakeProject(action, spec, games);
-  // A Loop with no game yet makes a web game; one on a game with no kind starts it as one.
-  if (!games.some((g) => g.name === project)) {
+  const existing = games.find((g) => g.name === project) ?? null;
+  const { asked, served } = stackedLaunch(project, existing, spec.targets);
+  // A Loop with no game yet makes a web game (or the compiled template its destinations ask for);
+  // one on a game with no kind starts it as one.
+  if (!existing) {
     await ctx.call(HostMethod.GameScaffold, {
       name: project,
       title: spec.goal?.slice(0, CLIP_GAME_TITLE) || project,
       threadId: action.threadId,
       kind: ProjectStarter.Web,
+      ...asked,
     });
   }
   await startWebIfPending(host, project, games);
   // A Loop on a project that isn't a web game: kept edited parts that can't lead it (the run's start
   // among them) refuse it first, before a web game's checks could ask for web files in the folder.
-  const listed = games.find((g) => g.name === project) ?? null;
-  const openLoop = listed !== null && loopProfileOf(listed) === LoopProfile.Open;
+  const openLoop = existing !== null && loopProfileOf(existing) === LoopProfile.Open;
   if (openLoop && !openLoopLaunches()) throw new Error(OPEN_LOOP_REFUSAL.openLoopNeedsUpdate);
-  // What the folder itself refuses (loopRunRefusal): a page that cannot load, a game that is
-  // already compiled. Said in chat now, instead of found out at 3am.
+  // What the folder itself refuses (loopRunRefusal): a page that cannot load, a compiled game with
+  // nothing to build on (by its codes), an engine export. Said in chat now, instead of found out at 3am.
   const readiness = await host.call(HostMethod.GameValidate, { project }).catch(() => null);
-  const refusal = loopRunRefusal(
-    games.find((g) => g.name === project) ?? null,
-    readiness?.problems ?? [],
-    readiness?.missing,
-  );
+  const refusal = loopRunRefusal(existing, readiness?.problems ?? [], readiness?.missing, {
+    servesNative: served,
+    codes: readiness?.codes,
+  });
   if (refusal) throw new Error(refusal);
-  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action));
+  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action), asked);
   // A promise the run cannot keep is worse than no promise: a second Loop for a game
   // that already owns a run is refused below, and the only record of that refusal is an event
   // no chat surface renders. Ask the same question here, before anything is promised — once a
@@ -797,7 +895,7 @@ export async function launchFromIntake(
   if (ctx.cancelled) throw new Error(MESSAGE.stoppedBeforeLaunch);
   // A Loop on a project that isn't a web game is led by the chat's own session in place: said now,
   // before anything is promised, when the run's engine is none the host seats there.
-  const needsSession = await needsSessionRefusal(host, listed, spec);
+  const needsSession = await needsSessionRefusal(host, existing, spec);
   if (needsSession) throw new Error(needsSession);
   // Such a Loop adds no connection and ends on a reviewer's yes: its own promise.
   const promise = openLoop
@@ -826,6 +924,29 @@ export async function launchFromIntake(
   );
 }
 
+/**
+ * What a launch asks its new folder for (`asked`: the compiled template a desktop or phone intake
+ * names, never raylib, whose creation is retired) and whether every part a raylib run needs serves
+ * one (`served`), after the refusals its stack meets: a desktop destination for a browser game that
+ * exists (its stack is fixed), a new Rust folder whose run this harness could not lead (the host
+ * would refuse it every lease), and a raylib run on a part kept from before native support.
+ */
+function stackedLaunch(
+  project: string,
+  existing: NativeDescriptor | null,
+  targets: unknown,
+): { asked: ScaffoldAsk; served: boolean } {
+  const fixed = stackChangeRefusal(existing, targets);
+  if (fixed) throw fixed;
+  const asked = existing ? {} : scaffoldFor(targets);
+  const keptBeforeRust = rustFolderRefusal(project, asked);
+  if (keptBeforeRust) throw keptBeforeRust;
+  const served = servesNative(NATIVE_PARTS);
+  const native = nativeNightRefusal(existing ?? { name: project, shape: { kind: asked.kind } }, served);
+  if (native) throw native;
+  return { asked, served };
+}
+
 /** Whether a Loop on a project that isn't a web game can be launched: every part it needs serves one, the run's start (read by namespace) among them. */
 function openLoopLaunches(): boolean {
   return openLoopServed() && servesOpenLoop([runDispatchParts]);
@@ -845,6 +966,36 @@ async function needsSessionRefusal(host: Host, game: AnyRecord | null, spec: Any
   return leadsInPlace(described)
     ? null
     : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, openLoopBecause(game));
+}
+
+/**
+ * The parts a Rust · wgpu night launched from here would run that were kept from before Rust games
+ * (no `SERVES_RUST`), by seed path, read from the start's own list (run-dispatch.ts `RUST_PARTS`)
+ * when it is asked, never at load. A start kept from before Rust games has no list: it is the kept part.
+ */
+function partsKeptBeforeRust(): string[] {
+  const parts: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined = runDispatchParts.RUST_PARTS;
+  if (!parts) return [RUN_DISPATCH_PART];
+  return Object.entries(parts)
+    .filter(([, part]) => part.SERVES_RUST !== true)
+    .map(([rel]) => rel)
+    .sort();
+}
+
+/**
+ * The refusal a new Rust · wgpu folder meets before it is asked for, when a part its night runs was
+ * kept from before Rust games: typed `rust-parts-missing`, naming each kept module, whose remedy is
+ * re-taking its seed copy. Null for any other ask, and when every part serves Rust nights.
+ */
+function rustFolderRefusal(
+  project: string,
+  asked: ScaffoldAsk,
+): (Error & { code: NativeNightRefusal; modules: string[] }) | null {
+  if (asked.kind !== ProjectKind.RustWgpu) return null;
+  const modules = partsKeptBeforeRust();
+  if (modules.length === 0) return null;
+  const refused = nativeNightRefused(NativeNightRefusal.RustPartsMissing, MESSAGE.rustPartsMissing(project, modules));
+  return Object.assign(refused, { modules });
 }
 
 /**
@@ -911,18 +1062,23 @@ function intakeScope(spec: AnyRecord, asked: readonly string[]): AnyRecord {
   return scope.asked.length ? { scope } : {};
 }
 
-/** The run an interview commissioned, as `run_start` takes it. */
+/**
+ * The run an interview commissioned, as `run_start` takes it. A folder this launch scaffolded for
+ * desktop or phone destinations carries them (`scaffold`), so the run's own scaffold asks for the same game.
+ */
 function intakeRun(
   spec: AnyRecord,
   action: QueueAction,
   project: string,
   readiness: { contract?: string; problems?: string[] } | null,
   asked: readonly string[] = [],
+  scaffold: ScaffoldAsk = {},
 ): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     goal: spec.goal,
     project,
+    ...(scaffold.targets ? { targets: scaffold.targets } : {}),
     reference: spec.reference,
     budgets: intakeBudgets(spec),
     // What the folder still needs, as `game.validate` found it a moment ago. Not a refusal —

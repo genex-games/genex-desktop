@@ -1,0 +1,138 @@
+name: Rust Linux host
+# The Rust · wgpu runtime on the Linux .deb Studio (M4.4; plan "M4 Windows + Linux"). Every check
+# that is not a plain command is a step of scripts/ci/rust-linux-host.ts (its table), which owns the
+# checks; this file only installs what a step needs and calls the script. It builds the .deb the
+# release makes, extracts it (no system installation) and, from that payload:
+#
+# - bundle-pins: the ANGLE builds, the SwiftShader split and the Linux sysroot in the .deb's own
+#   resources are the pinned bytes (native/angle/bundle-lock.json, native/linux-sysroot);
+# - fixture-creation: the Rust template the .deb ships scaffolds a Rust game (web and Linux) through
+#   the product's workspace, with fixture engines and no provider;
+# - the packaged Rust acceptance (tests/e2e/run-rust-packaged-ui.mjs): the extracted app's own
+#   `--studio-rust-acceptance` in an owned fixture profile on Xvfb (the template and lock line it
+#   ships, Rust creation refused `stack-gated` in a release build, a cold Rust store);
+# - assemble-bundle and headless-box: the spike's pond (dev flavour, built on this runner from the
+#   committed pins) joins the .deb's verified SwiftShader in a run bundle and runs headless inside
+#   the product's Linux game box (bubblewrap, seccomp, no display, no network): tier core, a Vulkan
+#   receipt over a software adapter and a capture that drew something. The box needs bubblewrap 0.8
+#   or later, so scripts/ci/setup-bubblewrap.sh builds the pinned release first.
+#
+# What it does not do: it does not build a game through the Studio lane's own Linux build
+# (cargo-zigbuild and the sysroot's link stubs; tests/conformance/rust-linux-lane.test.ts, on a
+# developer's machine) and it runs no game on a GPU. On ubuntu-22.04 because Ubuntu 24.04's AppArmor
+# user-namespace restriction is linux-userns.yml's subject. No secrets; the build is unsigned.
+on:
+  pull_request:
+    paths: &rust-linux-inputs
+      - .github/workflows/rust-linux-host.yml
+      - scripts/ci/rust-linux-host.ts
+      - scripts/ci/setup-bubblewrap.sh
+      - scripts/ci/rust-spike.ts
+      - scripts/bundle-angle.mjs
+      - scripts/bundle-linux-sysroot.mjs
+      - scripts/rust-payload.ts
+      - forge.config.cjs
+      - native/angle/bundle-lock.json
+      - native/linux-sysroot/**
+      - native/genex-rust/**
+      - src/game-template-rust/**
+      - src/main/core/rust-lane.ts
+      - src/main/rust-build-linux.ts
+      - src/main/smoke/rust-acceptance.ts
+      - src/substrate/linux-game-box.ts
+      - src/substrate/native-game-port.ts
+      - src/substrate/rust-export-linux.ts
+      - src/substrate/toolchain-store/bundled.ts
+      - src/substrate/toolchain-store/linux-sysroot-bundle.ts
+      - src/substrate/toolchain-store/swiftshader-bundle.ts
+      - tests/e2e/run-rust-packaged-ui.mjs
+      - tests/conformance/rust-linux-host-ci.test.ts
+  push:
+    paths: *rust-linux-inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-linux-host-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+  EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-linux-host
+jobs:
+  deb:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds).
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (the .deb build and the pond's graph share the runner)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Desktop, process sandbox and audio/udev header prerequisites
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 bubblewrap socat ripgrep xz-utils pkg-config libasound2-dev libudev-dev meson ninja-build libcap-dev
+      # Linux node-pty has no spawn-helper until rebuilt; the root postinstall checks it (package.yml).
+      - name: Pinned application dependencies
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/electron/install.js
+          npm run rebuild:terminal
+          npm run runtime:check
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
+      - name: Make the .deb (unsigned)
+        run: npm run make -- --platform linux --arch x64 --targets @electron-forge/maker-deb
+      - name: Extract the .deb (no system installation)
+        run: |
+          mapfile -t debs < <(find out/make/deb -type f -name '*.deb')
+          test "${#debs[@]}" -eq 1
+          payload="$RUNNER_TEMP/deb"
+          dpkg-deb --extract "${debs[0]}" "$payload"
+          resources="$payload/usr/lib/genex/resources/app.asar.unpacked/dist/resources"
+          test -d "$resources"
+          echo "DEB_RESOURCES=$resources" >> "$GITHUB_ENV"
+      - name: This workflow calls every step of the script's table once, in order
+        run: node scripts/ci/rust-linux-host.ts --check-workflow .github/workflows/rust-linux-host.yml
+      - name: The .deb's pinned ANGLE builds, SwiftShader split and Linux sysroot
+        run: node scripts/ci/rust-linux-host.ts --step bundle-pins --resources "$DEB_RESOURCES" --evidence "$EVIDENCE"
+      - name: A Rust game is created from the .deb's template (fixtures, no provider)
+        run: node scripts/ci/rust-linux-host.ts --step fixture-creation --templates "$DEB_RESOURCES" --evidence "$EVIDENCE"
+      - name: The extracted .deb's own Rust acceptance (fixture profile, Xvfb)
+        run: xvfb-run -a node tests/e2e/run-rust-packaged-ui.mjs
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: Build the pond (dev flavour) from the committed pins
+        run: node scripts/ci/rust-spike.ts --step build-pond --profile release --evidence "$EVIDENCE"
+      - name: Assemble the run bundle (the game beside the .deb's verified SwiftShader)
+        run: node scripts/ci/rust-linux-host.ts --step assemble-bundle --resources "$DEB_RESOURCES" --pond "$CARGO_TARGET_DIR/release/pond" --bundle "$RUNNER_TEMP/rust-bundle" --evidence "$EVIDENCE"
+      # The box passes --disable-userns (bubblewrap 0.8+); Ubuntu 22.04's own bubblewrap is 0.6.1.
+      - name: The pinned bubblewrap the game box needs
+        run: bash scripts/ci/setup-bubblewrap.sh
+      - name: Headless in the Linux game box on SwiftShader Vulkan (tier core, a drawn capture)
+        run: node scripts/ci/rust-linux-host.ts --step headless-box --bundle "$RUNNER_TEMP/rust-bundle" --evidence "$EVIDENCE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-linux-host-${{ github.sha }}
+          path: |
+            ${{ env.EVIDENCE }}
+            .studio-dev/evidence/rust-packaged-ui
+          if-no-files-found: warn

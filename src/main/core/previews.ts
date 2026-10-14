@@ -12,8 +12,21 @@ import {
 } from "../game-assets.ts";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { ensureDir } from "../../substrate/fsx.ts";
+import {
+  confinedCaptureDir,
+  writeCaptureFrame,
+  writeCaptureManifest,
+  writeCaptureRefusal,
+} from "../../substrate/build-preview.ts";
+import {
+  type BuildIdentity,
+  CAPTURE_MANIFEST_VERSION,
+  type CaptureManifest,
+  type CaptureProvenance,
+  CaptureRefusal,
+} from "../../shared/build-preview.ts";
 import {
   TEMPLATE_SHAPE,
   isImageFile,
@@ -22,13 +35,23 @@ import {
   type GameProject,
 } from "../../substrate/game-workspace.ts";
 import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
-import type { ProjectShape } from "../../shared/game-project.ts";
 import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
-import { buildFailureNote, servedAfterBuild } from "../game-build.ts";
-import type { BuildProblem, InstallResult } from "../../shared/build-problem.ts";
+import { buildFailureNote, servedAfterBuild, type BuildOutcome } from "../game-build.ts";
+import { CPP_ENTRY, CppBuildPurpose, refusalProblem } from "../cpp-build.ts";
+import { BuildProblemCode, type BuildProblem, type InstallResult } from "../../shared/build-problem.ts";
+import {
+  BuildTarget,
+  destinationsOf,
+  GameStack,
+  isBuildTarget,
+  isCompiledStack,
+  type ProjectShape,
+  stackOf,
+} from "../../shared/game-project.ts";
+import type { ToolchainLock } from "../../shared/toolchain.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import {
   claudeFolderChanges,
@@ -45,7 +68,9 @@ import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { Revision } from "../../shared/optimization.ts";
 import { capActions } from "../../substrate/preview-input.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
-import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
+import { LIVE_HANDLE, PreviewPool, type PreviewPoolOptions, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
+import { NativeLeasePort } from "../../substrate/native-game-port.ts";
+import { NativeError, NativeRefusal, NativeRunMode } from "../../shared/native-contract.ts";
 import { awaitReady, bootBudget, unlockGesture, type ReadyResult } from "../../substrate/preview-ready.ts";
 import { COMPUTER_VIEW, setupReached, type PreviewSetup } from "../../substrate/computer-tool.ts";
 import {
@@ -73,7 +98,13 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { LiveGate, type LiveOffer } from "./live-gate.ts";
 import type { LiveBehindEvent } from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
-import { liveAudible, type LiveSound } from "../game-sound.ts";
+import {
+  type GameWindowFocus,
+  gameWindowAudible,
+  gameWindowFocused,
+  liveAudible,
+  type LiveSound,
+} from "../game-sound.ts";
 
 /** The most cameras one capture photographs. */
 const MAX_CAPTURE_CAMERAS = 8;
@@ -124,6 +155,10 @@ const COMMIT_HASH = /^[0-9a-f]{7,40}$/i;
 const REFERENCE_NOTE = /\.(md|txt|json)$/i;
 /** How long the stand-in stays open once the harness stops using it: a game in it keeps running. */
 const STAND_IN_IDLE_MS = 2 * MINUTE_MS;
+/** How long a builder's Mac capture waits for a native lease (a Loop's checks share them) before it says so. */
+export const MAC_CAPTURE_LEASE_WAIT_MS = 30 * SECOND_MS;
+/** The runs a Live action ends for the game it showed: the person's Play window and the ones drawn in Live. */
+const LIVE_TIED_MODES = [NativeRunMode.Window, NativeRunMode.Embedded] as const;
 
 /** How many of a too-large copy's largest folders its refusal names. */
 const COPY_FOLDERS_NAMED = 3;
@@ -139,6 +174,7 @@ const MESSAGE = {
       .map((folder) => `${folder.folder} ${sizeWords(folder.bytes)}`)
       .join(", ")}).`,
   noPreview: "no preview is attached (headless mode)",
+  buildFailed: "the game's build failed",
   benchRefused: (page: string, why: string) =>
     `capture did not load the bench page "${page}": ${why}. Nothing was loaded. A bench page is a .html file inside this workspace, such as bench/<part>.html.`,
   benchUnnamed: "no page was named",
@@ -151,9 +187,22 @@ const MESSAGE = {
   benchAfter:
     "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
+  noNativeProfiling: "a native run's lease cannot profile a candidate: profiling reads a web build in a browser window",
   previewChanged: "The selected preview changed while this build was preparing. Open the build again when ready.",
   noGameInSnapshot: "that snapshot has no game to play",
   sessionEnded: "the session ended before its window opened",
+  captureNotADestination: (target: string, targets: readonly string[]) =>
+    `"${target}" is not one of this game's destinations (${targets.join(", ") || "none"}): capture one of those.`,
+  captureCannotRun: (target: string) =>
+    `This computer cannot run the ${target} build: capture checks the destinations it can run, and says so here.`,
+  macBusy:
+    "No Mac run is free right now (the Loop's checks share them): look at the web build now and capture macos again later.",
+  macBuildFailed: (reason: string) => `your Mac build did not run: ${reason} — fix that before polishing anything.`,
+  captureFolderRefused: (reason: string) => `capture refused: ${reason}`,
+  capturedMac: (workspace: string) =>
+    `Captured your CURRENT Mac build (workspace ${workspace}), built through the studio's lane and run headless on this Mac:`,
+  macCaptureEnd:
+    "Read the image files above to actually look at them. The computer tool drives the web build; this Mac run ends with your session.",
   viewportNeedsLease: "preview.viewport sizes one leased window: name its handle (never Live or the stand-in)",
   viewportInSession: (handle: string) =>
     `preview window ${handle} is a computer session's: its view stays the size the agent plays at`,
@@ -173,6 +222,12 @@ const MESSAGE = {
   stillUnreadable: "unreadable",
   stillTooLarge: `larger than ${REFERENCE_MAX_MB} MB`,
   stillNotJudgeable: (what: string) => `${what} — the reviewers cannot read it; re-save as JPEG or PNG`,
+  liveNotADestination: "this game is not made for the browser, so Live has no page to show; it plays in its own window",
+  laneMissing: (stack: string) =>
+    `this version of Genex has no build lane for ${stack} games yet, so nothing was built or shown`,
+  snapshotNotBuilt: "the snapshot's web build failed; the game's console says why",
+  buildDidNotRun: (reason: string, lines: readonly string[]) =>
+    `the game's build did not run (${reason})${lines.length ? `: ${lines.join(", ")}` : ""}`,
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -284,11 +339,11 @@ function camerasToCapture(asked: string | undefined, known: readonly string[]): 
   return ["default"];
 }
 
-/** The highest capture number already on disk in a facet's iteration folder. */
+/** The highest capture number already on disk in a facet's iteration folder: a frame's, or a refused capture's record. */
 async function lastCaptureNumber(outDir: string): Promise<number> {
   let highest = 0;
   for (const name of await readdir(outDir).catch(() => [])) {
-    const m = /^c(\d+)_/.exec(name);
+    const m = /^c(\d+)[_.]/.exec(name);
     if (m) highest = Math.max(highest, Number(m[1]));
   }
   return highest;
@@ -345,6 +400,67 @@ async function placeCamera(port: PreviewPort, camera: string, placeable: boolean
 /** The address a load answers with when the build had nothing to serve. */
 function unservedUrl(p: { project: string; entry?: string | undefined }): string {
   return `game://${p.project}/${p.entry ?? "index.html"}`;
+}
+
+/** A build failure said on a window's console: its load error, and that the window does not show the asked build. */
+const BUILD_FAILED_NOTE = { loadError: true, buildFailed: true } as const;
+
+/** Where a capture's frame came from when the port does not say (a web page): every field unknown. */
+const UNKNOWN_PROVENANCE: CaptureProvenance = { seq: null, digest: null, camera: null, runId: null, build: null };
+
+/** Whose capture it is and what it renders: the manifest's fields the capture itself knows. */
+type CaptureSource = Pick<CaptureManifest, "runId" | "workerId" | "commit" | "edited">;
+
+/** One capture call: the folder its frames go to, its number, the cameras asked for and the workspace it renders. */
+interface CaptureShot {
+  outDir: string;
+  call: number;
+  cameras: string | undefined;
+  root: string;
+}
+
+/** What a preview serves for a project: the page, the folder it comes from, and how it is served. */
+export interface ServedEntry {
+  entry: string;
+  /** The folder to serve instead of the game's own; undefined serves the game folder. */
+  root: string | undefined;
+  /** Serve as http://localhost:<port>/ — what a game with its own shape expects. */
+  loopback: boolean;
+  /** Insert the studio's import map into a page that has none: false for a C++ game's page. */
+  insertMap: boolean;
+  /** The build failure a stale fallback is shown under, or null when the page is current. */
+  stale: string | null;
+  /** The build the page is: its stack, destination and, for a lane's build, its module digest and lock; null for a stale fallback. */
+  build: BuildIdentity | null;
+}
+
+/** The SHA-256 of a Rust web build's module, as the lane admitted it; null for any other build. */
+function webModuleDigest(outcome: BuildOutcome): string | null {
+  return outcome.rust?.receipt?.outputs.find((file) => file.path.endsWith(".wasm"))?.sha256 ?? null;
+}
+
+/** The game console's sentence for a build problem: the failed command's, or why nothing ran (a C++ refusal). */
+function problemNote(problem: BuildProblem): string {
+  if (problem.command || !problem.reason) return buildFailureNote(problem);
+  return MESSAGE.buildDidNotRun(problem.reason, problem.lines);
+}
+
+/** How a preview serves a project: may a live stage fall back to the last build that worked, and why a C++ game is built. */
+interface ServeOptions {
+  fallback?: boolean;
+  /** Default: Live for a load that may fall back, Judging for one that may not. */
+  purpose?: CppBuildPurpose;
+}
+
+/** A compiled game whose destinations leave the browser out: Live has no page of it to show. */
+function notForTheBrowser(game: GameProject | undefined): boolean {
+  if (!isCompiledStack(stackOf(game?.shape ?? TEMPLATE_SHAPE))) return false;
+  return !destinationsOf(game ?? {}).targets.includes(BuildTarget.Web);
+}
+
+/** The port's load options for a served entry. */
+function servedLoadOptions(served: ServedEntry): { loopback: boolean; insertMap: boolean } {
+  return { loopback: served.loopback, insertMap: served.insertMap };
 }
 
 /** A setup's demo, run; the note when the page refused it. */
@@ -484,6 +600,8 @@ export class PreviewService {
   #standInUses = 0;
   #standInIdle: NodeJS.Timeout | null = null;
   readonly #frames = new Map<string, PendingFrame>();
+  /** The build trouble last said on each window, so a judged load that built nothing says why. */
+  readonly #buildNotes = new WeakMap<PreviewPort, string | null>();
   #stageVisible = true;
   /** The person watches a game in Live, whatever briefly covers it (the renderer's `watchingLive`). */
   #liveWatched = true;
@@ -491,6 +609,12 @@ export class PreviewService {
   #liveObservers = 0;
   /** What the Live game's sound depends on, bar the stage and the agents that `#applySound` reads. */
   #sound: Pick<LiveSound, "on" | "foreground"> = { on: true, foreground: true };
+  /** Each game's Play window focus, as its run last said (window runs only). */
+  readonly #gameFocus = new Map<string, GameWindowFocus>();
+  /** The native registry's focus subscription, once the registry exists. */
+  #focusWatched = false;
+  /** The game whose Mac build Live last started inside it (an embedded run), as the registry announced it. */
+  #embeddedProject: string | null = null;
   /** Pooled windows a computer session plays in, by how many sessions hold each: none changes size. */
   readonly #sessionWindows = new Map<string, number>();
 
@@ -540,7 +664,34 @@ export class PreviewService {
     const preview = this.#optionalPreview();
     preview?.setObserved?.(observed);
     preview?.setVisible?.(this.#stageVisible || observed);
+    // Live's own canvas draws the Mac build while the web view gives its slot up (zero bounds):
+    // it is on screen whenever the person watches Live.
+    this.#embeddedVisible(this.#liveWatched || observed);
     this.#applySound();
+  }
+
+  /**
+   * A run drawn in Live rests with it: the registry pauses its clock and stops its frames. The
+   * person's Play window and agents' runs are never paused by the stage.
+   */
+  #embeddedVisible(visible: boolean): void {
+    this.#watchGameFocus();
+    const project = this.#embeddedShown() ?? this.#x.servedRoots.get(LIVE_HANDLE)?.project;
+    if (project) this.#x.nativeRuns?.showEmbedded(project, visible);
+  }
+
+  /**
+   * The game whose Mac build Live shows (its live embedded run): the game Live holds, or the one
+   * the registry last started inside Live (a Mac-only game has no page there); null when none.
+   */
+  #embeddedShown(): string | null {
+    const runs = this.#x.nativeRuns;
+    if (!runs) return null;
+    const holds = this.#x.servedRoots.get(LIVE_HANDLE)?.project ?? null;
+    for (const project of [holds, this.#embeddedProject]) {
+      if (project && runs.state(project, NativeRunMode.Embedded)) return project;
+    }
+    return null;
   }
 
   /** The user's switch. */
@@ -555,10 +706,68 @@ export class PreviewService {
     this.#applySound();
   }
 
-  /** Live is heard only while it is the user's own game, on screen, in front, with the switch on. */
+  /**
+   * Live is heard only while it is the user's own game, on screen, in front, with the switch on. Its
+   * game's Mac build, when Live shows that, is heard by the same rule, and Live's page is then not:
+   * one copy of a game is heard at a time.
+   */
   #applySound(): void {
-    const lent = this.#liveObservers > 0;
-    this.#optionalPreview()?.setAudioMuted?.(!liveAudible({ ...this.#sound, lent, shown: this.#stageVisible }));
+    const embedded = this.#embeddedShown();
+    this.#optionalPreview()?.setAudioMuted?.(!this.#liveHeard() || embedded !== null);
+    if (embedded) this.#x.nativeRuns?.portOf(embedded, NativeRunMode.Embedded)?.setAudioMuted(!this.#embeddedHeard());
+    this.#applyGameSound();
+  }
+
+  #liveHeard(): boolean {
+    return liveAudible({ ...this.#sound, lent: this.#liveObservers > 0, shown: this.#stageVisible });
+  }
+
+  /** The Mac build inside Live is shown by Live's own canvas, on screen while the person watches Live. */
+  #embeddedHeard(): boolean {
+    return liveAudible({ ...this.#sound, lent: this.#liveObservers > 0, shown: this.#liveWatched });
+  }
+
+  /**
+   * Each Play window is heard while Genex or that game's own window is in front, with the switch
+   * on; while Live is heard playing the same game, only while the window has the focus.
+   */
+  #applyGameSound(): void {
+    const runs = this.#watchGameFocus();
+    if (!runs) return;
+    const focus = [...this.#gameFocus.values()];
+    // Only a page Live loaded, or the game's Mac build inside Live, plays: a game without Browser
+    // shows a card there, and its window is heard.
+    const shown = this.#x.servedRoots.get(LIVE_HANDLE);
+    const embedded = this.#embeddedShown();
+    const pageHeard = shown?.loaded && this.#liveHeard() ? shown.project : undefined;
+    const heardInLive = embedded && this.#embeddedHeard() ? embedded : pageHeard;
+    for (const { project } of focus) {
+      const audible = gameWindowAudible(this.#sound, gameWindowFocused(project, focus), heardInLive === project);
+      runs.portOf(project, NativeRunMode.Window)?.setAudioMuted(!audible);
+    }
+  }
+
+  /**
+   * Listens to window runs' focus once the registry exists (a headless or embedded run's focus is no
+   * one's), and to embedded runs' changes: a run that starts or ends inside Live takes the stage's
+   * sight and sound at once.
+   */
+  #watchGameFocus(): CoreInternals["nativeRuns"] | null {
+    const runs = this.#x.nativeRuns;
+    if (!runs) return null;
+    if (this.#focusWatched) return runs;
+    this.#focusWatched = true;
+    runs.onStatus((run) => {
+      if (run.mode !== NativeRunMode.Embedded) return;
+      if (runs.state(run.project, NativeRunMode.Embedded)) this.#embeddedProject = run.project;
+      this.#updateVisibility();
+    });
+    runs.onFocus((run, focused) => {
+      if (run.mode !== NativeRunMode.Window) return;
+      this.#gameFocus.set(run.project, { project: run.project, mode: run.mode, focused });
+      this.#applyGameSound();
+    });
+    return runs;
   }
 
   /**
@@ -585,10 +794,28 @@ export class PreviewService {
         ...(this.#core.options.createHeadlessPreview
           ? { createHeadless: this.#core.options.createHeadlessPreview }
           : {}),
+        ...this.#nativeLeases(),
         max: this.#core.options.previewPoolMax ?? this.#x.settings.agentsMax,
       });
+      this.#watchGameFocus();
     }
     return this.#x.previewPool;
+  }
+
+  /** Native leases, where there is a registry and a game box: each a headless run through the registry. */
+  #nativeLeases(): Pick<PreviewPoolOptions, "createNative"> {
+    const runs = this.#x.nativeRuns;
+    const gameBox = runs ? this.#core.sandbox?.gameBoxAvailable() === true : false;
+    if (!runs || !gameBox) return {};
+    return {
+      createNative: async ({ target, owner }) =>
+        new NativeLeasePort({
+          start: (request) => runs.start(request),
+          stop: (runId) => runs.stop(runId),
+          target,
+          ...(owner ? { owner } : {}),
+        }),
+    };
   }
 
   async previewRevision(project: string, root: string | null): Promise<string | null> {
@@ -605,7 +832,8 @@ export class PreviewService {
    * Where the preview serves a project from. The studio's own shape serves the folder as it is.
    * A game with its own build is built first — in a shadow under the app's scratch, never in the
    * folder the user owns — and its output is served, so `/assets/…` inside the built page
-   * resolves where the bundler put it.
+   * resolves where the bundler put it. A compiled game is built by its stack's lane through the
+   * build-lane seam and served from its `out/` ({@link PreviewService.#servedCompiled}).
    *
    * When the build fails, the *live* stage falls back to the last output that worked and says
    * why (`buildProblem`); a judged load gets nothing, because scoring a stale page is scoring a
@@ -616,32 +844,129 @@ export class PreviewService {
     root: string | null,
     entry: string | undefined,
     port: PreviewPort,
-    options: { fallback?: boolean } = {},
-  ): Promise<{ entry: string; root: string | undefined; loopback: boolean; stale: string | null } | null> {
-    const descriptor = (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+    options: ServeOptions = {},
+  ): Promise<ServedEntry | null> {
+    this.#buildNotes.delete(port);
+    const descriptor = await this.#game(project);
     const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    if (isCompiledStack(stackOf(shape))) return this.#servedCompiled(project, root, entry, port, options, descriptor);
     const base = root ?? this.#core.games.dirFor(project);
     const loopback = await servedOnLoopback(descriptor, shape, base);
     const outcome = await this.#core.builds.ensure({ project, dir: base, shape });
-    const note = outcome.problem ? buildFailureNote(outcome.problem) : null;
-    if (note) port.note?.("error", note, { loadError: true });
-    // The live folder is the one the user is looking at, so it is the one whose trouble the
-    // stage reports; a worktree's build failure belongs to the run that made it.
-    if (root === null) {
-      if (outcome.problem) this.#x.buildProblems.set(project, outcome.problem);
-      else this.#x.buildProblems.delete(project);
-    }
+    const note = this.#reportBuild(project, root, outcome, port);
     const served = servedAfterBuild(outcome, { fallback: options.fallback === true });
     if (!served) return null;
     // Serving the source folder itself needs no override: the preview resolves the project on
     // its own, and a review worktree keeps the root its caller passed.
     const asSource = path.resolve(served.dir) === path.resolve(base);
+    const build = { stack: stackOf(shape), target: BuildTarget.Web, digest: null, lock: null };
     return {
       entry: entry ?? (asSource ? shape.entry : path.basename(shape.entry)),
       root: asSource ? (root ?? undefined) : served.dir,
       loopback,
+      insertMap: true,
       stale: served.stale ? note : null,
+      build: served.stale ? null : build,
     };
+  }
+
+  /** A game of the library by name, or undefined when there is none (or the library cannot be read). */
+  async #game(project: string): Promise<GameProject | undefined> {
+    return (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+  }
+
+  /**
+   * A compiled game: its lane's web build through the build-lane seam, its `index.html` served
+   * from the lane's `out/` on `game://`, with the shim and without the studio's `three` import
+   * map. Web always builds, for the judges too, except into the Live slot of a game that is not
+   * made for the browser: that slot loads nothing, and the stage shows where the game plays
+   * instead. Only a build of the game folder itself records its lock. A Rust game builds on its
+   * own retained lock, as Live's prepare and the exports do, so an app update that moved the Rust
+   * lock on never moves the game's recorded lock through a preview. A stack with no lane yet is
+   * refused by the seam: nothing builds, and the console says so.
+   */
+  async #servedCompiled(
+    project: string,
+    root: string | null,
+    entry: string | undefined,
+    port: PreviewPort,
+    options: ServeOptions,
+    descriptor: GameProject | undefined,
+  ): Promise<ServedEntry | null> {
+    const fallback = options.fallback === true;
+    const purpose = options.purpose ?? (fallback ? CppBuildPurpose.Live : CppBuildPurpose.Judging);
+    if (purpose === CppBuildPurpose.Live && notForTheBrowser(descriptor)) {
+      const problem = refusalProblem({
+        project,
+        target: BuildTarget.Web,
+        reason: BuildProblemCode.NotADestination,
+        at: new Date().toISOString(),
+      });
+      if (root === null) this.#x.buildProblems.set(project, problem);
+      port.note?.("info", MESSAGE.liveNotADestination);
+      return null;
+    }
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    const receipt = await this.#x.gameBuilds.ensure(
+      {
+        project,
+        dir: root ?? this.#core.games.dirFor(project),
+        shape,
+        destinations: destinationsOf(descriptor ?? {}),
+        lock: await this.#gameLock(project, shape),
+        recordLock: root === null,
+      },
+      BuildTarget.Web,
+      purpose,
+    );
+    const { outcome } = receipt;
+    if (!outcome) {
+      port.note?.("error", MESSAGE.laneMissing(receipt.stack), BUILD_FAILED_NOTE);
+      return null;
+    }
+    const note = this.#reportBuild(project, root, outcome, port);
+    const served = servedAfterBuild(outcome, { fallback });
+    if (!served) return null;
+    const build = {
+      stack: receipt.stack,
+      target: BuildTarget.Web,
+      digest: webModuleDigest(outcome),
+      lock: outcome.rust?.receipt?.lock ?? null,
+    };
+    return {
+      entry: entry ?? CPP_ENTRY,
+      root: served.dir,
+      loopback: false,
+      insertMap: false,
+      stale: served.stale ? note : null,
+      build: served.stale ? null : build,
+    };
+  }
+
+  /**
+   * The lock a compiled game's preview builds on: a Rust game's own (its recorded lock while the
+   * store keeps it, `ToolchainService.currentLock` with the project), else null and the lane reads
+   * its stack's current lock. An unreadable store is null too: the lane reports its own problem.
+   */
+  async #gameLock(project: string, shape: ProjectShape): Promise<ToolchainLock | null> {
+    const stack = stackOf(shape);
+    if (stack !== GameStack.RustWgpu) return null;
+    return this.#core.toolchains.currentLock(stack, project).catch(() => null);
+  }
+
+  /**
+   * A build's trouble, said: on the game's console, and on the stage for the live folder (the one
+   * the user is looking at); a worktree's build failure belongs to the run that made it.
+   */
+  #reportBuild(project: string, root: string | null, outcome: BuildOutcome, port: PreviewPort): string | null {
+    const note = outcome.problem ? problemNote(outcome.problem) : null;
+    this.#buildNotes.set(port, note);
+    if (note) port.note?.("error", note, BUILD_FAILED_NOTE);
+    if (root === null) {
+      if (outcome.problem) this.#x.buildProblems.set(project, outcome.problem);
+      else this.#x.buildProblems.delete(project);
+    }
+    return note;
   }
 
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
@@ -652,10 +977,43 @@ export class PreviewService {
       const checkedRoot = await this.#x.assertHarnessRoot(p.project, profiling ? null : p.root);
       this.#x.profileSources.delete(handle);
       const port = this.preview(p.handle);
+      // Before the candidate: a profiling load builds the web lane, which a native run cannot play.
+      if (port instanceof NativeLeasePort) {
+        if (profiling) throw new NativeError(NativeRefusal.Unsupported, MESSAGE.noNativeProfiling);
+        return this.#loadNative(p, handle, checkedRoot, port);
+      }
       if (p.candidateId && p.revision)
         return this.#loadCandidate(p, { candidateId: p.candidateId, revision: p.revision }, port);
+      if (handle === LIVE_HANDLE) this.#switchLive(p.project);
       return this.#loadServedPreview(p, handle, checkedRoot, port);
     });
+  }
+
+  /** A native lease: the game's desktop build, run headless through the registry. Live never shows one. */
+  async #loadNative(
+    p: HarnessParams<"preview.load">,
+    handle: string,
+    checkedRoot: string | null,
+    port: NativeLeasePort,
+  ): Promise<string> {
+    const remembered = { project: p.project, root: checkedRoot, entry: p.entry, loaded: null as string | null };
+    this.#x.servedRoots.set(handle, remembered);
+    const url = await port.load(p.project, p.entry, checkedRoot ?? undefined);
+    remembered.loaded = url;
+    return url;
+  }
+
+  /** Live is changing games: the previous game's Play window and embedded runs end (its agents' runs are theirs). */
+  #switchLive(project: string): void {
+    const previous = this.#x.servedRoots.get(LIVE_HANDLE)?.project;
+    if (previous === undefined || previous === project) return;
+    void this.#x.nativeRuns?.stopProject(previous, LIVE_TIED_MODES).catch(() => {});
+  }
+
+  /** Live Reload of a compiled game: its Play window and embedded runs end before the rebuild. */
+  async #endLiveTiedRuns(project: string): Promise<void> {
+    if (!isCompiledStack(stackOf((await this.#game(project))?.shape ?? TEMPLATE_SHAPE))) return;
+    await this.#x.nativeRuns?.stopProject(project, LIVE_TIED_MODES).catch(() => {});
   }
 
   /** A profiling load: an optimizer candidate's frozen revision, on a stage preview only. */
@@ -669,11 +1027,38 @@ export class PreviewService {
     const stageHandle = p.handle && !onStage ? p.handle : null;
     if (source.project !== p.project || !stageHandle) throw new Error(MESSAGE.profilingNeedsStage);
     const served = await this.servedEntry(p.project, source.root, p.entry, port);
+    if (!served) await this.#leaveNoPage(port);
     const url = served
-      ? await port.load(p.project, served.entry, served.root, { loopback: served.loopback })
+      ? await port.load(p.project, served.entry, served.root, servedLoadOptions(served))
       : unservedUrl(p);
     this.#x.profileSources.set(stageHandle, candidate);
     return url;
+  }
+
+  /**
+   * A judged load built nothing: its window is left on no page, so the older build it showed is
+   * never photographed or judged as this one (a capture refuses `build-failed`). Answers why.
+   */
+  async #leaveNoPage(port: PreviewPort): Promise<string> {
+    const problem = this.#buildNotes.get(port) ?? port.status().loadError ?? MESSAGE.buildFailed;
+    // The stage keeps its last good build: a session that looks through Live (a pool that
+    // cannot open hidden windows) never blanks the person's stage.
+    if (!this.#isStagePort(port)) await port.clearPage?.(problem);
+    return problem;
+  }
+
+  /** Whether `port` is a window the person watches: Live, or the stand-in covering it. */
+  #isStagePort(port: PreviewPort): boolean {
+    const pool = this.#x.previewPool;
+    if (!pool) return false;
+    const stage = [LIVE_HANDLE, STAND_IN_HANDLE].map((handle) => {
+      try {
+        return pool.port(handle);
+      } catch {
+        return null;
+      }
+    });
+    return stage.includes(port);
   }
 
   async #loadServedPreview(
@@ -691,15 +1076,21 @@ export class PreviewService {
       this.#showIdentity({ project: p.project, head: null, state: PreviewIdentityState.Loading, error: null });
     try {
       const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
-      if (!served) return unservedUrl(p);
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      if (!served) {
+        if (isLive) await this.#liveNothingServed(p.project, checkedRoot, print);
+        else await this.#leaveNoPage(port);
+        return unservedUrl(p);
+      }
+      const url = await port.load(p.project, served.entry, served.root, servedLoadOptions(served));
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       remembered.loaded = servedKey(served);
+      // Which game Live plays decides which Play window it outvoices.
+      if (isLive) this.#applyGameSound();
       if (isLive) await this.#identifyLoaded(p.project, checkedRoot, served.stale, revisionBefore);
       // Loading clears the port's error, and the build is still broken: the agent loop and the
       // judges read that flag, so the failure is put back on the page the user can see.
-      if (served.stale) port.note?.("error", served.stale, { loadError: true });
+      if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
       return url;
     } catch (error) {
       if (isLive)
@@ -711,6 +1102,29 @@ export class PreviewService {
         });
       throw error;
     }
+  }
+
+  /** Live was served nothing: the strip says why, and a Play window it outvoiced is heard again. */
+  async #liveNothingServed(project: string, root: string | null, print: string | null | undefined): Promise<void> {
+    await this.#liveUnserved(project, root, print);
+    this.#applyGameSound();
+  }
+
+  /**
+   * Live loaded no page. A game not made for the browser is as current as Live can show it, so
+   * nothing waits for Reload and the strip says why; a build with nothing to fall back on failed,
+   * and what waited for Reload still waits.
+   */
+  async #liveUnserved(project: string, root: string | null, print: string | null | undefined): Promise<void> {
+    if (notForTheBrowser(await this.#game(project))) {
+      await this.#live.loaded(project, { print, root });
+      const error = MESSAGE.liveNotADestination;
+      this.#showIdentity({ project, head: null, state: PreviewIdentityState.Unknown, error });
+      return;
+    }
+    const problem = root === null ? this.#x.buildProblems.get(project) : undefined;
+    const error = problem ? problemNote(problem) : null;
+    this.#showIdentity({ project, head: null, state: PreviewIdentityState.Failed, error });
   }
 
   /** What the live stage shows now, for the stage's identity strip. */
@@ -795,36 +1209,150 @@ export class PreviewService {
     currentRoot: () => string = () => root,
     /** Whose screen the frames land on (the card's role must not flip to "builder" on a capture). */
     role: AgentScreen["role"] = "builder",
+    /** The session's own headless run of the Mac build, taken by a capture that names `macos`. */
+    native: SessionPort | null = null,
   ): NonNullable<DelegateRequest["onCapture"]> {
     let sequence = 0;
     let sequenceSeeded = false;
-    return async ({ cameras, page } = {}) => {
-      // A bench page is checked before anything is touched: a refused one loads nothing.
-      const bench = page === undefined ? null : await this.#benchFor(sc.project, currentRoot(), String(page));
-      if (bench && "refusal" in bench) return bench.refusal;
-      const outDir = iterationDir(outBase, sc.iteration);
-      await ensureDir(outDir);
+    return async ({ cameras, page, target: destination } = {}) => {
+      const checked = await this.#captureChecks(sc.project, currentRoot(), { destination, page, native });
+      if ("refusal" in checked) return checked.refusal;
+      const { bench } = checked;
+      // The runs folder is writable by sandboxed agents: the host writes only into a folder it
+      // checked is the run's own, never through a link planted on the way.
+      let outDir: string;
+      try {
+        outDir = await confinedCaptureDir(this.#core.layout.runs, iterationDir(outBase, sc.iteration));
+      } catch (err) {
+        return MESSAGE.captureFolderRefused(errorMessage(err));
+      }
       // The counter continues from what is already on disk, so a review-fix turn (a second
       // delegation in the same iteration) never overwrites the baseline frames.
       if (!sequenceSeeded) {
         sequenceSeeded = true;
         sequence = Math.max(sequence, await lastCaptureNumber(outDir));
       }
-      const call = ++sequence;
-      const port = await session.get();
-      const loaded = await this.#loadForCapture(port, sc, session, { target: currentRoot(), bench });
-      if ("problem" in loaded)
-        return `your build failed to load: ${loaded.problem} — fix that before polishing anything.`;
-      const screen = captureScreen(sc, session, role);
-      this.openScreen(screen);
-      const registered = await port.studioCall("cameras").catch(() => null);
-      const known = Array.isArray(registered) ? registered.map(String) : [];
-      const lines: string[] = [];
-      for (const camera of camerasForShot(sc, bench, cameras, known))
-        lines.push(await this.#captureCamera(port, screen, { outDir, call, camera, known }));
-      const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
-      return captureAnswer({ bench, root, lines, errors, setupNote: loaded.setupNote });
+      const shot = { outDir, call: ++sequence, cameras, root: currentRoot() };
+      if (native && destination === BuildTarget.Mac) return this.#captureMac(native, sc, role, shot);
+      return this.#captureWeb(session, sc, role, { ...shot, bench, workspace: root });
     };
+  }
+
+  /**
+   * The session's window: a capture of the workspace as `#loadForCapture` loads it (the build, or a
+   * bench page), then the shots. The window stays loaded for the computer tool after a capture of
+   * the build; after a bench page the computer tool loads the game again.
+   */
+  async #captureWeb(
+    session: SessionPort,
+    sc: NonNullable<DelegateRequest["selfCapture"]>,
+    role: AgentScreen["role"],
+    shot: CaptureShot & { bench: { entry: string } | null; workspace: string },
+  ): Promise<string> {
+    const port = await session.get();
+    const screen = captureScreen(sc, session, role);
+    const source = await this.#captureSource(screen, shot.root);
+    const loaded = await this.#loadForCapture(port, sc, session, { target: shot.root, bench: shot.bench });
+    if ("problem" in loaded) {
+      await this.#saveRefusal(shot, source);
+      return `your build failed to load: ${loaded.problem} — fix that before polishing anything.`;
+    }
+    this.openScreen(screen);
+    const registered = await port.studioCall("cameras").catch(() => null);
+    const known = Array.isArray(registered) ? registered.map(String) : [];
+    const lines: string[] = [];
+    for (const camera of camerasForShot(sc, shot.bench, shot.cameras, known))
+      lines.push(await this.#captureCamera(port, screen, { ...shot, camera, known, source, build: loaded.build }));
+    const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
+    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote: loaded.setupNote });
+  }
+
+  /**
+   * What is checked before a capture touches anything: a destination the game is not made for, or
+   * this computer cannot run, runs nothing; a refused bench page loads nothing. Otherwise the bench
+   * page the capture loads, or null for the game itself.
+   */
+  async #captureChecks(
+    project: string,
+    root: string,
+    asked: { destination: string | undefined; page: string | undefined; native: SessionPort | null },
+  ): Promise<{ refusal: string } | { bench: { entry: string } | null }> {
+    const refused = await this.#captureRefusal(project, asked.destination, asked.native !== null);
+    if (refused) return { refusal: refused };
+    if (asked.page === undefined) return { bench: null };
+    const bench = await this.#benchFor(project, root, String(asked.page));
+    return "refusal" in bench ? bench : { bench };
+  }
+
+  /**
+   * Why a capture that names `target` looks at nothing, or null: it is not one of the game's
+   * destinations, or this computer cannot run it (only the browser and, with a native session, the
+   * Mac build are looked at here). A capture that names none looks at the judging destination.
+   */
+  async #captureRefusal(project: string, target: string | undefined, nativeSession: boolean): Promise<string | null> {
+    if (target === undefined) return null;
+    const { targets } = destinationsOf((await this.#game(project)) ?? {});
+    if (!isBuildTarget(target) || !targets.includes(target)) return MESSAGE.captureNotADestination(target, targets);
+    if (target === BuildTarget.Web) return null;
+    const runnable = target === BuildTarget.Mac && nativeSession && this.pool().native;
+    return runnable ? null : MESSAGE.captureCannotRun(target);
+  }
+
+  /**
+   * A capture of the Mac build: the workspace built through the lane and run headless in the
+   * session's own native lease (its game box, its captures), every named camera saved beside the
+   * web ones. A build or run that fails answers with why.
+   */
+  async #captureMac(
+    native: SessionPort,
+    sc: NonNullable<DelegateRequest["selfCapture"]>,
+    role: AgentScreen["role"],
+    shot: CaptureShot,
+  ): Promise<string> {
+    const port = await native.get().catch(() => null);
+    if (!port) return MESSAGE.macBusy;
+    // The native lease's handle, now that the session holds one.
+    const screen = captureScreen(sc, native, role);
+    const source = await this.#captureSource(screen, shot.root);
+    try {
+      await port.load(sc.project, undefined, shot.root);
+    } catch (err) {
+      await this.#saveRefusal(shot, source);
+      return MESSAGE.macBuildFailed(errorMessage(err));
+    }
+    const applied = await this.applySetup(port, sc.setup);
+    const registered = await port.studioCall("cameras").catch(() => null);
+    const known = Array.isArray(registered) ? registered.map(String) : [];
+    const lines: string[] = [];
+    for (const camera of camerasForShot(sc, null, shot.cameras, known))
+      lines.push(await this.#captureCamera(port, screen, { ...shot, camera, known, source, build: null }));
+    return [
+      MESSAGE.capturedMac(path.basename(shot.root)),
+      ...lines,
+      ...(applied ? [`note: ${applied}`] : []),
+      MESSAGE.macCaptureEnd,
+    ].join("\n");
+  }
+
+  /**
+   * A capture whose build failed took no frame: its record is saved alone, so the folder's newest
+   * capture is that failure and no older frame stands in for it. A record that cannot be saved is
+   * no reason to end the build.
+   */
+  async #saveRefusal(
+    shot: { outDir: string; call: number; cameras: string | undefined },
+    source: CaptureSource,
+  ): Promise<void> {
+    const [camera = "default"] = camerasToCapture(shot.cameras, []);
+    await writeCaptureRefusal(shot.outDir, {
+      version: CAPTURE_MANIFEST_VERSION,
+      ...source,
+      call: shot.call,
+      camera,
+      capturedAt: new Date().toISOString(),
+      provenance: UNKNOWN_PROVENANCE,
+      refused: CaptureRefusal.BuildFailed,
+    }).catch(() => {});
   }
 
   /**
@@ -839,7 +1367,7 @@ export class PreviewService {
     sc: NonNullable<DelegateRequest["selfCapture"]>,
     session: SessionPort,
     { target, bench }: { target: string; bench: { entry: string } | null },
-  ): Promise<{ problem: string } | { setupNote: string | null }> {
+  ): Promise<{ problem: string } | { setupNote: string | null; build: BuildIdentity | null }> {
     const loaded = await this.loadServed(port, sc.project, target, bench?.entry ?? sc.entry);
     if (loaded.problem) {
       session.loaded = null;
@@ -849,16 +1377,42 @@ export class PreviewService {
     session.loaded = bench ? null : { root: target, at: Date.now() };
     // A page the studio never heard report itself ready is still photographed — the frames
     // just come with the sentence that says what they are worth.
-    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null };
+    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null, build: loaded.build };
   }
 
-  /** One camera's frame of a capture, saved beside the facet's others; its line of the answer. */
+  /**
+   * Whose capture this is and what it renders, read before the load: the run, the worker and the
+   * commit the workspace stands at, with whether it has edits beyond it (a capture renders them).
+   */
+  async #captureSource(who: Omit<AgentScreen, "handle">, root: string): Promise<CaptureSource> {
+    const owner = { runId: who.runId ?? null, workerId: who.facetId ?? null };
+    try {
+      const commit = (await git(root, ["rev-parse", "HEAD"])).trim() || null;
+      const edited = (await git(root, ["status", "--porcelain"])).trim() !== "";
+      return { ...owner, commit, edited };
+    } catch {
+      return { ...owner, commit: null, edited: null };
+    }
+  }
+
+  /**
+   * One camera's frame of a capture, saved beside the facet's others with its manifest (who took
+   * it, of which commit, and the frame's provenance); its line of the answer.
+   */
   async #captureCamera(
     port: PreviewPort,
     screen: AgentScreen,
-    shot: { outDir: string; call: number; camera: string; known: readonly string[] },
+    shot: {
+      outDir: string;
+      call: number;
+      camera: string;
+      known: readonly string[];
+      source: CaptureSource;
+      /** The served build, for a frame whose port does not say (a web page); null when unknown. */
+      build: BuildIdentity | null;
+    },
   ): Promise<string> {
-    const { outDir, call, camera, known } = shot;
+    const { outDir, call, camera, known, source, build } = shot;
     try {
       const placeable = known.includes(camera) || camera.startsWith("eye:");
       const actual = await placeCamera(port, camera, placeable);
@@ -870,7 +1424,17 @@ export class PreviewService {
       // canvas-only eye, and the builder is the one who has to see what it built.
       const frame = await captureSurface(port, DEFAULT_SHOT_QUALITY, CaptureSurface.Auto);
       const file = path.join(outDir, `c${call}_${safePathSegment(camera)}.jpg`);
-      await writeFile(file, frame.jpeg);
+      await writeCaptureFrame(file, frame.jpeg);
+      // A web page says nothing of where its frame came from: the camera placed and the build served.
+      const provenance = frame.provenance ?? { ...UNKNOWN_PROVENANCE, camera: actual ?? camera, build };
+      await writeCaptureManifest(file, {
+        version: CAPTURE_MANIFEST_VERSION,
+        ...source,
+        call,
+        camera,
+        capturedAt: new Date().toISOString(),
+        provenance,
+      });
       await this.frame(port, screen, frame.jpeg, `capture ${camera}`, { deed: ScreenDeed.Look });
       return capturedLine(camera, file, frame, actual === camera, warning);
     } catch (err) {
@@ -879,6 +1443,25 @@ export class PreviewService {
   }
 
   // ── the computer: one pooled window per session ──────────────────────────────
+
+  /**
+   * A native lease for a builder's session, waiting at most `MAC_CAPTURE_LEASE_WAIT_MS` by the
+   * core's clock (a Loop's checks share the runs) or until the session ends.
+   */
+  async #nativeLease(
+    pool: PreviewPool,
+    request: { label: string; target: BuildTarget },
+    ended: AbortSignal,
+  ): Promise<{ handle: string }> {
+    const waited = new AbortController();
+    const timers = this.#x.nativeTimers;
+    const timer = timers.setTimeout(() => waited.abort(), MAC_CAPTURE_LEASE_WAIT_MS);
+    try {
+      return await pool.acquire({ ...request, signal: AbortSignal.any([ended, waited.signal]) });
+    } finally {
+      timers.clearTimeout(timer);
+    }
+  }
 
   /**
    * One preview port for a whole delegation: the facet's idle observation lease when the
@@ -890,9 +1473,10 @@ export class PreviewService {
    * for a pooled window, never Live or the stand-in every harness call shares, and when every
    * pooled window is leased it gets one past the pool's ceiling for its own length, or waits for one
    * (`OVERFLOW_WINDOWS_MAX`) until it ends. Only a build with no hidden windows at all (the test
-   * rigs) has nothing but the live view to lend.
+   * rigs) has nothing but the live view to lend. With a desktop `target` it is a native lease: a
+   * headless run of the game's build for that destination.
    */
-  sessionPortFor(options: { handle?: string; label: string }): SessionPort {
+  sessionPortFor(options: { handle?: string; label: string; target?: BuildTarget }): SessionPort {
     let port: PreviewPort | null = null;
     let lease: { handle: string } | null = null;
     let handle: string | null = null;
@@ -918,7 +1502,10 @@ export class PreviewService {
     }
     const take = async (): Promise<PreviewPort> => {
       const pool = this.pool();
-      if (!pool.headless) {
+      const { label, target } = options;
+      // A desktop build is a native lease of the session's own (it waits for one), never Live.
+      const native = target !== undefined && target !== BuildTarget.Web;
+      if (!native && !pool.headless) {
         handle = LIVE_HANDLE;
         port = pool.port();
         // Live keeps simulating while this session looks through it, even off the stage.
@@ -927,10 +1514,9 @@ export class PreviewService {
         this.#updateVisibility();
         return port;
       }
-      const { label } = options;
-      const taken = await pool
-        .acquire({ label })
-        .catch(() => pool.acquire({ label, overflow: true, signal: ended.signal }));
+      const taken = native
+        ? await this.#nativeLease(pool, { label, target }, ended.signal)
+        : await pool.acquire({ label }).catch(() => pool.acquire({ label, overflow: true, signal: ended.signal }));
       // The session ended while its window was opening: nobody will give this one back.
       if (ended.signal.aborted) {
         await pool.release(taken.handle).catch(() => {});
@@ -1029,21 +1615,22 @@ export class PreviewService {
     forceLoopback = false,
   ): Promise<LoadedServed> {
     const served = await this.servedEntry(project, root, entry, port);
-    if (!served) return { problem: port.status().loadError ?? "the game's build failed", note: null, ready: null };
+    if (!served) return { problem: await this.#leaveNoPage(port), note: null, ready: null, build: null };
     const budgetMs = await this.bootMsFor(project);
     // `shim.readyMs` is the same number: one budget, so the page and the studio give up together.
     const loaded = await port.load(project, served.entry, served.root, {
       loopback: served.loopback || forceLoopback,
+      insertMap: served.insertMap,
       shim: { readyMs: budgetMs },
     });
     const ready = await awaitReady(port, { timeoutMs: budgetMs });
     const status = port.status();
-    if (status.loadError) return { problem: status.loadError, note: null, ready };
+    if (status.loadError) return { problem: status.loadError, note: null, ready, build: null };
     const stray = strayPage(loaded, status.url);
-    if (stray) return { problem: stray, note: null, ready };
+    if (stray) return { problem: stray, note: null, ready, build: null };
     if (ready.phase === ReadyPhase.Failed)
-      return { problem: ready.reason ?? "the page reported that it failed to boot", note: null, ready };
-    return { problem: null, note: readyNote(ready), ready };
+      return { problem: ready.reason ?? "the page reported that it failed to boot", note: null, ready, build: null };
+    return { problem: null, note: readyNote(ready), ready, build: served.build };
   }
 
   /**
@@ -1421,9 +2008,25 @@ export class PreviewService {
       playDir,
       await this.nestedPolicy(this.#core.games.dirFor(project)),
     );
-    await this.preview().load(project, "index.html", playDir);
+    const game = await this.#game(project);
+    if (isCompiledStack(stackOf(game?.shape ?? TEMPLATE_SHAPE)))
+      await this.#playCompiledSnapshot(project, playDir, game);
+    else await this.preview().load(project, "index.html", playDir);
     await this.#live.loaded(project, { print: undefined, root: playDir });
     return { dir: playDir, snapshotId };
+  }
+
+  /**
+   * A compiled game's snapshot plays as its lane builds it: the worktree's web build, served from the lane's
+   * `out/` (never the worktree, which has no page), with no fallback to another build's output.
+   * A game not made for the browser has nothing to play in Live, and nothing is built.
+   */
+  async #playCompiledSnapshot(project: string, playDir: string, game: GameProject | undefined): Promise<void> {
+    if (notForTheBrowser(game)) throw new Error(MESSAGE.liveNotADestination);
+    const port = this.preview();
+    const served = await this.servedEntry(project, playDir, undefined, port, { purpose: CppBuildPurpose.Live });
+    if (!served) throw new Error(MESSAGE.snapshotNotBuilt);
+    await port.load(project, served.entry, served.root, servedLoadOptions(served));
   }
 
   /**
@@ -1520,24 +2123,34 @@ export class PreviewService {
   /** `preview.reload`: what is on disk now — a rebuild for a game with its own build — one load per handle at a time. */
   reloadPreview(p: HarnessParams<"preview.reload">): Promise<HarnessResult<"preview.reload">> {
     const handle = p?.handle ?? LIVE_HANDLE;
-    return serial(this.#x.previewOperations, handle, async () => {
-      if (handle === LIVE_HANDLE) {
-        this.#showIdentity({
-          ...this.#x.runPreview,
-          head: null,
-          state: PreviewIdentityState.RevisionUnverified,
-          error: null,
-        });
-      }
-      const port = this.preview(p?.handle);
-      const last = this.#x.servedRoots.get(handle);
-      const print = handle === LIVE_HANDLE && last ? await this.#live.printBefore(last.project, last.root) : undefined;
-      // Reload means "what is on disk NOW" — for a game with its own build, that is a rebuild.
-      const rebuilt = last ? await this.#rebuildServed(port, last, handle, p?.retry === true) : false;
-      if (!rebuilt) await port.reload();
-      if (last && handle === LIVE_HANDLE) await this.#live.loaded(last.project, { print, root: last.root });
+    return serial(this.#x.previewOperations, handle, () => this.#reload(p, handle));
+  }
+
+  /** One reload of `handle`, in its turn. */
+  async #reload(p: HarnessParams<"preview.reload">, handle: string): Promise<true> {
+    const isLive = handle === LIVE_HANDLE;
+    if (isLive) {
+      this.#showIdentity({
+        ...this.#x.runPreview,
+        head: null,
+        state: PreviewIdentityState.RevisionUnverified,
+        error: null,
+      });
+    }
+    const port = this.preview(p?.handle);
+    // A native lease builds and starts its game again; nothing of Live's is involved.
+    if (port instanceof NativeLeasePort) {
+      await port.reload();
       return true;
-    });
+    }
+    const last = this.#x.servedRoots.get(handle);
+    if (isLive && last) await this.#endLiveTiedRuns(last.project);
+    const print = isLive && last ? await this.#live.printBefore(last.project, last.root) : undefined;
+    // Reload means "what is on disk NOW" — for a game with its own build, that is a rebuild.
+    const rebuilt = last ? await this.#rebuildServed(port, last, handle, p?.retry === true) : false;
+    if (!rebuilt) await port.reload();
+    if (last && isLive) await this.#live.loaded(last.project, { print, root: last.root });
+    return true;
   }
 
   /** The person's Stop: Live's game stops running, after any load of it already under way. */
@@ -1683,16 +2296,20 @@ export class PreviewService {
     const served = await this.servedEntry(last.project, last.root, last.entry, port, {
       fallback: handle === LIVE_HANDLE,
     });
-    if (!served) return true;
+    if (!served) {
+      // A judged window is left on no page, never on the build before this one.
+      await this.#leaveNoPage(port);
+      return true;
+    }
     // A different folder from the one the port is showing — the stage fell back to the last
     // build that worked, or the build that had nothing to show now builds — so it is loaded
     // rather than reloaded. `port.reload()` re-loads the URL the page already has, and after
     // a failed load that is the previous game's page, or nothing at all.
     const key = servedKey(served);
     if (!served.stale && last.loaded === key) return false;
-    await port.load(last.project, served.entry, served.root, { loopback: served.loopback });
+    await port.load(last.project, served.entry, served.root, servedLoadOptions(served));
     last.loaded = key;
-    if (served.stale) port.note?.("error", served.stale, { loadError: true });
+    if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
     return true;
   }
 }
@@ -1718,4 +2335,6 @@ export interface LoadedServed {
   problem: string | null;
   note: string | null;
   ready: ReadyResult | null;
+  /** The build the loaded page is; null when nothing loaded or it is not known. */
+  build: BuildIdentity | null;
 }

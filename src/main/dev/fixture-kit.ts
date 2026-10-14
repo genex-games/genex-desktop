@@ -45,7 +45,17 @@ export const FixtureName = {
   /** An Unreal lead's runs on the Builds graph: milestones, save points, sub-agents and the critic's advice. */
   LeadGraph: "lead-graph",
   SandboxSetup: "sandbox-setup",
+  /** Two C++ · raylib games over a pre-seeded toolchain store whose cmake and ninja are stubs. */
+  CppGame: "cpp-game",
+  /** The cpp-game fixture with a scripted native registry: pong-mac's Mac window already runs, with no process. */
+  NativeGame: "native-game",
   UpdateReady: "update-ready",
+  /** The cpp-game fixture plus pong-cross (all four destinations) whose library holds Windows and Linux checks. */
+  CrossGame: "cross-game",
+  /** A Rust · wgpu game over a pre-seeded Rust store whose cargo, rustc and wasm-bindgen are stubs (`fixture-rust.ts`). */
+  RustGame: "rust-game",
+  /** The rust-game fixture plus ferris-pocket (Browser, iPhone, Android); its stub store prewarms the phones too. */
+  RustMobileGame: "rust-mobile-game",
   UnrealGame: "unreal-game",
   UnrealChat: "unreal-chat",
   /**

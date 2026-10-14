@@ -4,9 +4,136 @@
  * and re-exports the types; the renderer reads them through `window.studio`.
  */
 import type { EngineBinding } from "./game-engine.ts";
+import type { ExportWarning, GpuQualification } from "./game-export-contract.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
+import type { TargetRefusal } from "./game-targets.ts";
+import type { DestinationCheck } from "./native-contract.ts";
 import type { HookEvent } from "./plugin-hooks.ts";
 import type { FolderHolds, ProjectFact } from "./project-facts.ts";
+
+/** The runtime a game is written for. Wire values (studio.json `stack`): never rename one. */
+export const GameStack = {
+  ThreeJs: "three-js",
+  RaylibCpp: "raylib-cpp",
+  /** Rust gameplay on the genex facade, drawn by wgpu: the default where its lane runs ({@link CREATABLE_STACKS}). */
+  RustWgpu: "rust-wgpu",
+} as const;
+export type GameStack = (typeof GameStack)[keyof typeof GameStack];
+
+/** A stack the studio compiles with a managed toolchain: every stack but Three.js. */
+export type CompiledStack = Exclude<GameStack, typeof GameStack.ThreeJs>;
+
+/** Does `stack` build with a managed toolchain (C++ · raylib, Rust · wgpu)? */
+export function isCompiledStack(stack: GameStack): stack is CompiledStack {
+  return stack !== GameStack.ThreeJs;
+}
+
+/**
+ * Can Live show this stack's Mac build in its canvas (Web | Native, an embedded run)? Every
+ * compiled stack: a raylib game's headless build and a Rust game's studio mode both draw into
+ * Live's frames ring.
+ */
+export function liveEmbedsStack(stack: GameStack): stack is CompiledStack {
+  return isCompiledStack(stack);
+}
+
+/**
+ * Does this stack's Mac build play in its own window (Play on Mac, Pop out)? raylib's only: a
+ * Rust game's studio mode serves headless, so a window run would show no window.
+ */
+export function playsInOwnWindow(stack: GameStack): boolean {
+  return stack === GameStack.RaylibCpp;
+}
+
+/** Where people play, as a destination the studio builds for. Wire values (studio.json `targets`). */
+export const BuildTarget = {
+  Web: "web",
+  Mac: "macos",
+  Windows: "windows",
+  Linux: "linux",
+  /** iPhone and iPad: a Rust · wgpu destination only. */
+  Ios: "ios",
+  /** Android phones and tablets: a Rust · wgpu destination only. */
+  Android: "android",
+} as const;
+export type BuildTarget = (typeof BuildTarget)[keyof typeof BuildTarget];
+
+/**
+ * The destinations the studio offers and accepts today, in the order the create dialog lists
+ * them: the browser and the desktop. The mobile destinations are vocabulary only until their lane
+ * lands, so input naming one is still refused as unknown.
+ */
+export const BUILD_TARGETS: readonly BuildTarget[] = Object.freeze([
+  BuildTarget.Web,
+  BuildTarget.Mac,
+  BuildTarget.Windows,
+  BuildTarget.Linux,
+]);
+
+/**
+ * The stacks a new game may be created with: Three.js and Rust · wgpu. C++ · raylib creation ended
+ * when Rust · wgpu creation shipped (owner decision 2026-10-06): existing raylib games stay
+ * openable, buildable and exportable, and no switch, host or destination set re-enables it.
+ */
+export type CreatableStack = Exclude<GameStack, typeof GameStack.RaylibCpp>;
+
+/** {@link CreatableStack} in the order the create dialog lists them. */
+export const CREATABLE_STACKS: readonly CreatableStack[] = Object.freeze([GameStack.ThreeJs, GameStack.RustWgpu]);
+
+/** May a new game be created with `value`? Never raylib, never a stack this version does not know. */
+export function isCreatableStack(value: unknown): value is CreatableStack {
+  return typeof value === "string" && (CREATABLE_STACKS as readonly string[]).includes(value);
+}
+
+/** Why a create request is refused for its stack. Wire values (the error's `code`): never rename one. */
+export const CreationRefusal = {
+  /**
+   * The request names C++ · raylib, by stack or kind, or only desktop destinations as a pre-Rust
+   * caller did: raylib creation is retired, and nothing is written.
+   */
+  RaylibCreationRetired: "raylib-creation-retired",
+} as const;
+export type CreationRefusal = (typeof CreationRefusal)[keyof typeof CreationRefusal];
+
+/**
+ * The settings switch for a new game's default stack. Wire values (the `stackDefault` setting):
+ * never rename one. Host-conditional is Rust · wgpu where its lane runs and Three.js elsewhere;
+ * the reverted switch is Three.js everywhere, with Rust · wgpu still creatable when chosen.
+ */
+export const StackDefaultSwitch = {
+  HostConditional: "host-conditional",
+  ThreeJs: "three-js",
+} as const;
+export type StackDefaultSwitch = (typeof StackDefaultSwitch)[keyof typeof StackDefaultSwitch];
+
+/** The switch this version ships: the rollback is setting it (or this constant) to {@link StackDefaultSwitch.ThreeJs}. */
+export const SHIPPED_STACK_DEFAULT_SWITCH: StackDefaultSwitch = StackDefaultSwitch.HostConditional;
+
+/** The setting's key in the studio's settings. */
+export const STACK_DEFAULT_SETTING = "stackDefault";
+
+const STACK_DEFAULT_SWITCHES: readonly string[] = Object.freeze(Object.values(StackDefaultSwitch));
+
+const isStackDefaultSwitch = (value: unknown): value is StackDefaultSwitch =>
+  typeof value === "string" && STACK_DEFAULT_SWITCHES.includes(value);
+
+/** The switch a stored setting names; anything else (absent, unknown, a stack name) is the shipped switch. */
+export function parseStackDefaultSwitch(value: unknown): StackDefaultSwitch {
+  return isStackDefaultSwitch(value) ? value : SHIPPED_STACK_DEFAULT_SWITCH;
+}
+
+/** The phone and tablet destinations, which only a Rust · wgpu game can name. */
+export const MOBILE_TARGETS: readonly BuildTarget[] = Object.freeze([BuildTarget.Ios, BuildTarget.Android]);
+
+/** Every destination in the vocabulary, mobile included, in list order. */
+export const ALL_BUILD_TARGETS: readonly BuildTarget[] = Object.freeze([...BUILD_TARGETS, ...MOBILE_TARGETS]);
+
+/** The desktop destinations: a new game naming any of them is Rust · wgpu ({@link stackForTargets}). */
+export const DESKTOP_TARGETS: readonly BuildTarget[] = Object.freeze([
+  BuildTarget.Mac,
+  BuildTarget.Windows,
+  BuildTarget.Linux,
+]);
 
 export interface GameProject {
   primaryThreadId?: string;
@@ -25,6 +152,13 @@ export interface GameProject {
   shape: ProjectShape;
   /** `shape.own`: the folder brought its own game, so the studio builds it and serves its output. */
   built: boolean;
+  /**
+   * The stack and destinations the game was created with. Optional so older literals still
+   * compile; `GameWorkspaces` always fills it, and readers go through {@link destinationsOf}.
+   */
+  destinations?: GameDestinations;
+  /** A C++ game's desktop checks from the host's library (`GameLibraryEntry.native.checks`); absent when it has none. */
+  nativeChecks?: Partial<Record<BuildTarget, DestinationCheck>>;
   /** The engine project Genex linked this game to; absent for a web game (`shared/game-engine.ts`). */
   engine?: EngineBinding;
   /**
@@ -69,15 +203,46 @@ export interface GameProject {
  *
  * The kind says what the game *is*; `build` and `serve` say how it runs. A bundled Phaser game
  * is `phaser`, not `three-vite`.
+ *
+ * Now an object as well as a type: existing call sites keep their string literals; new ones
+ * write `ProjectKind.RaylibCpp`. Wire values (studio.json `kind`): never rename one.
  */
-export type ProjectKind =
-  | "studio-template"
-  | "three-vite"
-  | "three-modules"
-  | "canvas2d"
-  | "phaser"
-  | "engine-export"
-  | "own-script";
+export const ProjectKind = {
+  StudioTemplate: "studio-template",
+  ThreeVite: "three-vite",
+  ThreeModules: "three-modules",
+  Canvas2d: "canvas2d",
+  Phaser: "phaser",
+  EngineExport: "engine-export",
+  OwnScript: "own-script",
+  /** A CMake project that builds with raylib: C++ for the browser and the desktop. */
+  RaylibCpp: "raylib-cpp",
+  /** A `genex.toml` project: Rust gameplay on the genex facade, built by the host's Rust lane. */
+  RustWgpu: "rust-wgpu",
+} as const;
+export type ProjectKind = (typeof ProjectKind)[keyof typeof ProjectKind];
+
+/** The stack each kind is: raylib and Rust are their own, every other kind is a browser game. */
+export const STACK_OF_KIND = {
+  [ProjectKind.StudioTemplate]: GameStack.ThreeJs,
+  [ProjectKind.ThreeVite]: GameStack.ThreeJs,
+  [ProjectKind.ThreeModules]: GameStack.ThreeJs,
+  [ProjectKind.Canvas2d]: GameStack.ThreeJs,
+  [ProjectKind.Phaser]: GameStack.ThreeJs,
+  [ProjectKind.EngineExport]: GameStack.ThreeJs,
+  [ProjectKind.OwnScript]: GameStack.ThreeJs,
+  [ProjectKind.RaylibCpp]: GameStack.RaylibCpp,
+  [ProjectKind.RustWgpu]: GameStack.RustWgpu,
+} as const satisfies Record<ProjectKind, GameStack>;
+
+/** Every destination a game of each stack may name, in list order; a host's own abilities are `STACK_HOST_MATRIX`. */
+export const STACK_TARGETS = {
+  [GameStack.ThreeJs]: Object.freeze([BuildTarget.Web]),
+  // Raylib's own list, never `BUILD_TARGETS`: that one grows when the phone lanes land, and raylib
+  // games never gain them (the seed's mirror pins the same four).
+  [GameStack.RaylibCpp]: Object.freeze([BuildTarget.Web, ...DESKTOP_TARGETS]),
+  [GameStack.RustWgpu]: ALL_BUILD_TARGETS,
+} as const satisfies Record<GameStack, readonly BuildTarget[]>;
 
 /**
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
@@ -115,6 +280,79 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * Set when studio.json records a kind this version of Genex does not know: a newer Genex made the
+   * game. The studio lists and shows it but writes nothing into it, runs no command it records and
+   * refuses every change with `kind-unsupported`. Absent for every kind this version knows.
+   */
+  readOnly?: TargetRefusal;
+}
+
+/** The stack and destinations a game was created with; a game that records none is a Three.js browser game. */
+export interface GameDestinations {
+  stack: GameStack;
+  targets: readonly BuildTarget[];
+}
+
+/** What every existing game is: Three.js for the browser. */
+export const DEFAULT_DESTINATIONS: GameDestinations = Object.freeze({
+  stack: GameStack.ThreeJs,
+  targets: Object.freeze([BuildTarget.Web]),
+});
+
+/** Is `value` a destination the studio knows? */
+export function isBuildTarget(value: unknown): value is BuildTarget {
+  return typeof value === "string" && (BUILD_TARGETS as readonly string[]).includes(value);
+}
+
+const GAME_STACKS: readonly GameStack[] = Object.freeze(Object.values(GameStack));
+
+/** Is `value` a stack the studio knows? */
+export function isGameStack(value: unknown): value is GameStack {
+  return typeof value === "string" && (GAME_STACKS as readonly string[]).includes(value);
+}
+
+/**
+ * The stack a set of destinations implies for a new game: any destination beyond the browser (a
+ * desktop or a phone) means Rust · wgpu, the browser alone Three.js; `chosen` Rust · wgpu forces it
+ * for a browser-only game. Never C++ · raylib (its creation is retired, M6): a `chosen` raylib is
+ * ignored, and refusing a request that names it is the create path's (`raylib-creation-retired`).
+ */
+export function stackForTargets(targets: readonly BuildTarget[], chosen?: GameStack): CreatableStack {
+  if (chosen === GameStack.RustWgpu) return GameStack.RustWgpu;
+  return targets.some((target) => target !== BuildTarget.Web) ? GameStack.RustWgpu : GameStack.ThreeJs;
+}
+
+/** The stack a shape belongs to ({@link STACK_OF_KIND}). */
+export function stackOf(shape: Pick<ProjectShape, "kind">): GameStack {
+  return STACK_OF_KIND[shape.kind];
+}
+
+/** Typed reasons `game.validate` reports beside its sentences, so no reader matches English. Never rename a value. */
+export const GameValidationCode = {
+  MissingFile: "missing-file",
+  EngineExport: "engine-export",
+  NoContract: "no-contract",
+  NativeMissingCMake: "native-missing-cmake",
+  NativeMissingMain: "native-missing-main",
+  NativeContractRemoved: "native-contract-removed",
+  /** A raylib CMake project that does not call `genex_add_game(`: the lane cannot build it until it does. */
+  NativeNeedsGenexCmake: "native-needs-genex-cmake",
+  /** studio.json names a stack the folder's files are not (the files win; a night refuses). */
+  StackContradictsKind: "stack-contradicts-kind",
+  /** studio.json records a kind only a newer Genex knows: the game opens read-only and nothing runs on it. */
+  KindUnsupported: "kind-unsupported",
+  /**
+   * A Rust game folder holds a build input of its own (`Cargo.toml`, `Cargo.lock`, `build.rs`,
+   * `.cargo/`): the studio writes the manifest and lock from `genex.toml`, so the lane refuses it.
+   */
+  RustOwnBuildInput: "rust-own-build-input",
+} as const;
+export type GameValidationCode = (typeof GameValidationCode)[keyof typeof GameValidationCode];
+
+/** The destinations a project has, whether or not its description carries them (older literals do not). */
+export function destinationsOf(project: { destinations?: GameDestinations }): GameDestinations {
+  return project.destinations ?? DEFAULT_DESTINATIONS;
 }
 
 /** What the served page does with the contract the judge reads — a word, not a sentence. Wire values: never rename one. */
@@ -226,6 +464,14 @@ export interface ExportResult {
   files: number;
   included: string[];
   excluded: string[];
+  /** The build exported; absent for a browser game's own export (the web folder). */
+  destination?: BuildTarget;
+  /** The one artifact a desktop export made (the `.app`, the Windows `.zip`, the Linux `.tar.gz`), inside `dir`; absent for a web folder. */
+  artifact?: string;
+  /** Whether the export's GPU path ran on a real GPU of its destination (`gpuQualificationOf`); absent where the receipt carries none. */
+  gpuQualification?: GpuQualification;
+  /** What the export made but warns about (a browser game's code past its budget); absent: none. */
+  warnings?: ExportWarning[];
 }
 
 /**

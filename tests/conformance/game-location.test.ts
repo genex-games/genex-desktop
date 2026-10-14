@@ -8,22 +8,52 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { GameWorkspaces } from "../../src/substrate/game-workspace.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
+import { GameWorkspaces, ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 const posixOnly = process.platform === "win32" ? "symlinks need privileges on Windows" : false;
 
+/** A stand-in for `src/game-template-cpp` until the C++ template lands: the files a C++ game starts from. */
+async function cppTemplate(dir: string): Promise<string> {
+  const files: Record<string, string> = {
+    "CMakeLists.txt": "cmake_minimum_required(VERSION 3.28)\nproject(game CXX C)\ngenex_add_game(SOURCES src/*.cpp)\n",
+    "src/main.cpp": '#include "studio.h"\nint main() {\n  studio::install({});\n}\n',
+    "CLAUDE.md": "# Rules for a C++ game\n",
+    "CLAUDE.own.md": "# Rules for a C++ game of its own\n",
+    "NOTES.md": "# __GAME_TITLE__\n",
+    "NOTES.own.md": "# __GAME_TITLE__ (its own)\n",
+    "docs/CONTRACT.md": "# The C++ contract\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await writeFile(path.join(dir, rel), text);
+  }
+  return dir;
+}
+
+/** `[first, <empty>, last]`: a list with an empty slot, which a renderer's structured clone carries as it is. */
+function gapped(first: string, last: string): string[] {
+  const list: string[] = [];
+  list[0] = first;
+  list[2] = last;
+  return list;
+}
+
 async function workspaces() {
   const base = await tmpDir("studio-game-location-");
   const options = {
     root: path.join(base, "library"),
     templateDir: path.join(repo, "src", "game-template"),
+    cppTemplateDir: await cppTemplate(path.join(base, "game-template-cpp")),
     vendorDir: path.join(base, "vendor"),
     indexFile: path.join(base, "projects.json"),
     userData: path.join(base, "userData"),
     homeDir: base,
+    platform: StudioPlatform.Mac,
   };
   await mkdir(options.userData, { recursive: true });
   const places = path.join(base, "places");
@@ -184,6 +214,70 @@ describe("creating a game in a chosen folder", () => {
     await symlink(path.join(places, "real"), path.join(base, "shortcut"));
     const game = await games.create("Linked", { parent: path.join(base, "shortcut") });
     assert.equal(game.dir, path.join(await realpath(path.join(places, "real")), "Linked"));
+  });
+});
+
+describe("creating a C++ · raylib game", () => {
+  it("writes the C++ template and studio.json's stack and targets in the games folder and under a chosen folder", async () => {
+    const { games, places } = await workspaces();
+    const parent = path.join(places, "Projects");
+    await mkdir(parent);
+    const destinations = { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] };
+    // Only the host, named as the caller, still makes a raylib game (M6 review: absent is not the host).
+    const internal = { caller: ScaffoldCaller.Internal };
+    const inLibrary = await games.create("Pong", { ...destinations, ...internal });
+    const chosen = await games.create("Pong", { ...destinations, ...internal, parent });
+    assert.equal(inLibrary.library, true);
+    assert.equal(chosen.dir, path.join(await realpath(parent), "Pong"));
+    for (const game of [inLibrary, chosen]) {
+      assert.match(await readFile(path.join(game.dir, "CMakeLists.txt"), "utf8"), /genex_add_game\(/, game.dir);
+      assert.ok(!(await readdir(game.dir)).includes("index.html"), `${game.dir} has no browser page`);
+      const meta = JSON.parse(await readFile(path.join(game.dir, "studio.json"), "utf8"));
+      assert.equal(meta.stack, GameStack.RaylibCpp, game.dir);
+      assert.deepEqual(meta.targets, destinations.targets, game.dir);
+      assert.equal(meta.title, "Pong", game.dir);
+      assert.equal(game.shape.kind, ProjectKind.RaylibCpp, game.dir);
+      assert.deepEqual(game.destinations, destinations, game.dir);
+    }
+    // Made without destinations, a game records no stack or destinations, and lists as the browser
+    // game it becomes. FLIPPED for empty new projects: its folder holds no page until its first
+    // message picks its kind, where it used to get the Three.js starter.
+    const plain = await games.create("Plain", { parent });
+    assert.ok(!(await readdir(plain.dir)).includes("index.html"), "no page before the first message");
+    const plainMeta = JSON.parse(await readFile(path.join(plain.dir, "studio.json"), "utf8"));
+    assert.equal("stack" in plainMeta, false);
+    assert.equal("targets" in plainMeta, false);
+    assert.deepEqual(plain.destinations, { stack: GameStack.ThreeJs, targets: [BuildTarget.Web] });
+  });
+
+  it("refuses a stack or destinations it cannot honour before anything is written, in the library or a chosen folder", async () => {
+    const env = await workspaces();
+    const parent = path.join(env.places, "Projects");
+    await mkdir(parent);
+    const refused: Array<[string, unknown]> = [
+      ["an unknown stack", { stack: "unity" }],
+      ["an unknown destination", { targets: [BuildTarget.Web, "playstation"] }],
+      ["no destination", { targets: [] }],
+      ["one destination twice", { targets: [BuildTarget.Mac, BuildTarget.Mac] }],
+      ["a destination that is not a string", { targets: [BuildTarget.Web, 1] }],
+      ["destinations that are not a list", { targets: BuildTarget.Mac }],
+      ["a prototype's name", { targets: ["__proto__"] }],
+      ["forty destinations", { targets: Array.from({ length: 40 }, () => BuildTarget.Web) }],
+      ["a Three.js game on the desktop", { stack: GameStack.ThreeJs, targets: [BuildTarget.Web, BuildTarget.Mac] }],
+      ["an empty slot", { targets: new Array(1) }],
+      ["an empty slot in a C++ game", { stack: GameStack.RaylibCpp, targets: new Array(1) }],
+      ["a gap between destinations", { targets: gapped(BuildTarget.Web, BuildTarget.Mac) }],
+    ];
+    for (const [label, destinations] of refused) {
+      for (const where of [{}, { parent }]) {
+        const before = await sideEffects(env.games, env.options, parent);
+        await assert.rejects(
+          env.games.create("Pong", { ...(destinations as object), ...where }),
+          `${label} ${JSON.stringify(where)}`,
+        );
+        assert.deepEqual(await sideEffects(env.games, env.options, parent), before, label);
+      }
+    }
   });
 });
 

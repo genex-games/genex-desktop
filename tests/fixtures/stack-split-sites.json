@@ -1,0 +1,411 @@
+{
+  "about": "The stack split sites (M1.3): every former raylib-equality site and its bucket. compiled: the rule applies to every compiled stack (isCompiledStack); raylib-specific: stays raylib's, Rust gets its own path in the owner package; needs-rust-content: the site needs Rust words or facts, filled by M3.4. Sites are named by file and function, not line.",
+  "sites": [
+    {
+      "file": "src/main/core/previews.ts",
+      "site": "notForTheBrowser",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched to isCompiledStack: a compiled game without Browser has no Live page."
+    },
+    {
+      "file": "src/main/core/previews.ts",
+      "site": "PreviewService.servedEntry",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched: a compiled game's web build goes through x.gameBuilds (#servedCompiled); lane-missing notes the console and serves nothing."
+    },
+    {
+      "file": "src/main/core/previews.ts",
+      "site": "PreviewService.#endLiveTiedRuns",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched to isCompiledStack: Live Reload ends any compiled game's Play window and embedded runs."
+    },
+    {
+      "file": "src/main/core/previews.ts",
+      "site": "PreviewService.playSnapshot",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched to isCompiledStack: a compiled snapshot plays its lane's web build (#playCompiledSnapshot)."
+    },
+    {
+      "file": "src/main/studio-core.ts",
+      "site": "StudioCore.exportPublicCopy",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched: a compiled game's browser export builds through x.gameBuilds (#exportCompiledWeb); lane-missing is build-failed."
+    },
+    {
+      "file": "src/main/harness-rpc/game.ts",
+      "site": "harnessExport",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched: a compiled game is never exported as its raw folder; always through exportPublicCopy."
+    },
+    {
+      "file": "src/main/harness-rpc/game.ts",
+      "site": "upgradeContract",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched: no compiled game receives the JavaScript contract; Rust answers its own reason (rustContractKept)."
+    },
+    {
+      "file": "src/main/harness-rpc/native.ts",
+      "site": "nativeGame (native.build)",
+      "bucket": "compiled",
+      "owner": "M1.3",
+      "note": "Switched: native.build accepts any compiled game and builds through x.gameBuilds; lane-missing is stack-gated. admissionOf below stays raylib's (Mac bundle, ANGLE) until M3.5."
+    },
+    {
+      "file": "src/main/harness-rpc/game.ts",
+      "site": "scaffoldOptions",
+      "bucket": "raylib-specific",
+      "owner": "M1.3",
+      "note": "kind raylib-cpp maps to the raylib template; kind rust-wgpu is a separate branch behind the development gate (core/stack-gate.ts), stack-gated in release builds."
+    },
+    {
+      "file": "src/main/harness-rpc/preview.ts",
+      "site": "refuseUntargetedNative",
+      "bucket": "raylib-specific",
+      "owner": "M1.3",
+      "note": "The untargeted-lease backstop stays raylib's; Rust has its own rule: a lease must declare rust-wgpu in preview.acquire {stacks}."
+    },
+    {
+      "file": "src/main/core/native-prepare.ts",
+      "site": "nativeGame",
+      "bucket": "raylib-specific",
+      "owner": "M3.5",
+      "note": "A Rust game's Mac embedded and headless runs go through the wgpu admission and a run directory without ANGLE (playsInOwnWindow/liveEmbedsStack); its window run and Windows/Linux runs stay lane-missing. The Live sender is productized by M3.1."
+    },
+    {
+      "file": "src/main/core/native-export-run.ts",
+      "site": "assertMacDestination",
+      "bucket": "raylib-specific",
+      "owner": "M4.5",
+      "note": "Gate stays raylib (the app is assembled from a raylib bundle, ANGLE and raylib licences); the build goes through x.gameBuilds. Rust Mac export arrives with the export dispatch table."
+    },
+    {
+      "file": "src/main/core/desktop-export-run.ts",
+      "site": "ownedGame",
+      "bucket": "raylib-specific",
+      "owner": "M4.5",
+      "note": "Gate stays raylib (zig cross builds, ANGLE, raylib licences); the build goes through x.gameBuilds. Rust Windows/Linux archives arrive with the export dispatch table."
+    },
+    {
+      "file": "src/main/core/delegation.ts",
+      "site": "DelegationService.#applyPlugins",
+      "bucket": "raylib-specific",
+      "owner": "M3.13",
+      "note": "CppSession is raylib's; M3.13 generalizes it into a per-stack compiled session with rustToolchainEnv."
+    },
+    {
+      "file": "src/main/smoke/cpp-acceptance.ts",
+      "site": "created project records C++ even for Browser only",
+      "bucket": "raylib-specific",
+      "owner": "M1.3",
+      "note": "The C++ acceptance smoke checks raylib's own creation path; unchanged."
+    },
+    {
+      "file": "src/main/smoke/cpp-acceptance.ts",
+      "site": "IPC creation records the C++ stack",
+      "bucket": "raylib-specific",
+      "owner": "M1.3",
+      "note": "The C++ acceptance smoke checks raylib's own creation path; unchanged."
+    },
+    {
+      "file": "src/main/planning-capabilities.ts",
+      "site": "dependencyFacts",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "A Rust game must get its own dependency sentence (vendored crates, no network), never the three.js /vendor/ one. Done in M3.4: the Rust row names it."
+    },
+    {
+      "file": "src/main/core/generation-prerequisites.ts",
+      "site": "multiplayerReadiness",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "A Rust game must be answered first with its own typed reason: Genex's multiplayer packages are JavaScript. Done in M3.4: the Rust row answers it."
+    },
+    {
+      "file": "src/main/harness-rpc/game.ts",
+      "site": "MESSAGE.rustContractKept",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "Placeholder Rust wording for upgradeContract; M3.4 owns the final Rust contract text."
+    },
+    {
+      "file": "src/main/core/connections.ts",
+      "site": "multiplayer packages",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "Plan site connections.ts:116: JS multiplayer packages refused for a Rust game."
+    },
+    {
+      "file": "src/plugins/genex/plugin.json",
+      "site": "genex plugin wording",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "Plan site plugin.json:119: tool and skill wording names C++ for desktop."
+    },
+    {
+      "file": "src/substrate/game-workspace-prompts.ts",
+      "site": "howItRuns",
+      "bucket": "needs-rust-content",
+      "owner": "M3.4",
+      "note": "A Rust game needs its own how-it-runs text (cargo through the host lane), not raylib's."
+    },
+    {
+      "file": "src/substrate/game-validation.ts",
+      "site": "validateGameDir",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "Raylib folders validate as native; Rust gets validateRustDir (M1.2)."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "withheldFiles",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "CPP_GAME_KEEP is raylib's file list; Rust needs its own keep list."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "getsOwnPages",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "A compiled game has no browser page of its own to scaffold."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "destinationFields",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "Any compiled stack records stack and targets in studio.json."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.exists",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "Kind check for a raylib folder; RUST_SHAPE adds the Rust kind."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.writeNativeLock",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "A lane records the lock it built with for any compiled game (per-stack lock files, M1.4)."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.writeNativeCheck",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "Destination checks are recorded for any compiled game."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.bundleIdFor",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "Every compiled game exported to Apple platforms needs a once-chosen bundle id."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.#requestedDestinations",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "Raylib defaults; the stack-gated Rust guard is replaced by the real scaffold gate (M1.2 with core/stack-gate.ts)."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.setDestinations",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "Destinations may be added to any compiled game within STACK_TARGETS."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.#ensurePlayable",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "#ensureNativePlayable writes raylib's scaffold; Rust needs its own."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.#writesStudioJson",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "A compiled game's studio.json is the host's record of its stack."
+    },
+    {
+      "file": "src/substrate/game-workspace.ts",
+      "site": "GameWorkspaces.export",
+      "bucket": "compiled",
+      "owner": "M1.2",
+      "note": "A compiled game's folder is never exported as it stands."
+    },
+    {
+      "file": "src/substrate/project-shape.ts",
+      "site": "isRecordedKind",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "Files decide raylib; Rust gets RUST_SHAPE from genex.toml ahead of TEMPLATE_SHAPE."
+    },
+    {
+      "file": "src/substrate/project-shape.ts",
+      "site": "isRaylibFolder",
+      "bucket": "raylib-specific",
+      "owner": "M1.2",
+      "note": "raylib folder detection; Rust detection is separate."
+    },
+    {
+      "file": "src/renderer/chat/use-chat-export.ts",
+      "site": "exportDestinationsFor",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "A compiled game's export lists its destinations."
+    },
+    {
+      "file": "src/renderer/create-game-destinations.ts",
+      "site": "destinationChoice",
+      "bucket": "raylib-specific",
+      "owner": "M1.7",
+      "note": "Desktop boxes imply Rust · wgpu since M6.0 (stackForTargets); M6.3 retires raylib from the dialog."
+    },
+    {
+      "file": "src/renderer/create-game-destinations.ts",
+      "site": "asksToolchains",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Any compiled stack asks for its toolchain; per-stack setup status (M3.7 shows Rust rows)."
+    },
+    {
+      "file": "src/renderer/create-game-destinations.ts",
+      "site": "sheetOffer",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "The toolchain sheet is offered for any compiled stack; Rust rows hidden until M3.7."
+    },
+    {
+      "file": "src/renderer/panels/PreviewPanel.tsx",
+      "site": "nativeGame",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Live's native card for any compiled game."
+    },
+    {
+      "file": "src/renderer/panels/PreviewPanel.tsx",
+      "site": "useStageToolchain",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Stage toolchain prompt for any compiled game."
+    },
+    {
+      "file": "src/renderer/panels/PreviewPanel.tsx",
+      "site": "useLiveView",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Live's view switching for any compiled game."
+    },
+    {
+      "file": "src/renderer/panels/stage/StageStrip.tsx",
+      "site": "StageStrip",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Stage words per stack."
+    },
+    {
+      "file": "src/renderer/panels/stage/destinations.ts",
+      "site": "liveCard",
+      "bucket": "compiled",
+      "owner": "M1.7",
+      "note": "Live card for any compiled game."
+    },
+    {
+      "file": "src/renderer/words.ts",
+      "site": "commandResultWords",
+      "bucket": "raylib-specific",
+      "owner": "M1.7",
+      "note": "Words naming C++ build results; Rust words per stack."
+    },
+    {
+      "file": "src/shared/game-assets.ts",
+      "site": "stackAcceptsAsset",
+      "bucket": "raylib-specific",
+      "owner": "M3.0",
+      "note": "Raylib's accepted asset formats; Rust's (glb, ktx2 ...) are their own table row."
+    },
+    {
+      "file": "src/shared/game-project.ts",
+      "site": "stackForTargets",
+      "bucket": "compiled",
+      "owner": "M6.0",
+      "note": "Flipped by M6.0: any destination beyond the browser implies Rust · wgpu, never raylib."
+    },
+    {
+      "file": "src/harness-seed/loop/library.ts",
+      "site": "renderBrief",
+      "bucket": "raylib-specific",
+      "owner": "M3.2",
+      "note": "Brief text for raylib; Rust briefs in rust-briefs.ts (M3.4)."
+    },
+    {
+      "file": "src/harness-seed/loop/native-briefs.ts",
+      "site": "isNativeShape",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "Seed routing: native means any compiled shape."
+    },
+    {
+      "file": "src/harness-seed/loop/native-briefs.ts",
+      "site": "isNativeStack",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "Seed routing: native means any compiled stack."
+    },
+    {
+      "file": "src/harness-seed/loop/native-loop.ts",
+      "site": "stackOfShape",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "Binary ternary becomes the seed's STACK_OF_KIND."
+    },
+    {
+      "file": "src/harness-seed/loop/native-loop.ts",
+      "site": "stampedStack",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "A run stamped with any compiled stack keeps it."
+    },
+    {
+      "file": "src/harness-seed/loop/native-loop.ts",
+      "site": "wiringFor",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "Compiled entries are always wired by the host's template."
+    },
+    {
+      "file": "src/harness-seed/loop/native-loop.ts",
+      "site": "nativeNightRefusal",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "A compiled night needs its lane served."
+    },
+    {
+      "file": "src/harness-seed/loop/native-loop.ts",
+      "site": "stackChangeRefusal",
+      "bucket": "compiled",
+      "owner": "M3.2",
+      "note": "A compiled game's stack is fixed."
+    },
+    {
+      "file": "src/harness-seed/loop/native-review.ts",
+      "site": "reviewsCpp",
+      "bucket": "raylib-specific",
+      "owner": "M3.2",
+      "note": "C++ review rubric; Rust rubric is M3.3's."
+    }
+  ]
+}

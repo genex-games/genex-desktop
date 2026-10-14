@@ -14,6 +14,9 @@ import type { StudioCore } from "../studio-core.ts";
 import { seedLargeBuildGraph } from "./fixture-large-graph.ts";
 import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
+import { seedCppGame } from "./fixture-toolchains.ts";
+import { RustFixtureKind, seedRustFixture } from "./fixture-rust.ts";
+import { seedCrossGame } from "./fixture-native.ts";
 import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
 import { seedFinishCheck } from "./fixture-finish-check.ts";
 import { seedPausedBuild } from "./fixture-paused-build.ts";
@@ -141,6 +144,8 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.LeadGraph) return seedLeadGraph(core, game.project.name, threadId);
   if (id === FixtureName.ChatWorkers) return seedChatWorkers(core, game.project.name, threadId);
   if (id === FixtureName.Sidebar) return seedSidebar(core, game.project.name);
+  const native = seedNativeFixture(core, id);
+  if (native) return native;
   // The rest seed a fresh profile only; a reused one keeps what it has.
   if (existing) return;
   if (id === FixtureName.StudioActivity) return seedStudioActivity(core, threadId);
@@ -151,6 +156,21 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.StillsGame) return seedStillsGame(core);
   if (id === FixtureName.OpenProjects) return seedOpenProjects(core, game.project.name, threadId);
   if (id === FixtureName.UnrealChat) return seedUnrealChat(core, game.project, threadId);
+}
+
+/**
+ * The seed of a C++ or Rust fixture, or none for another fixture. A native fixture's store follows
+ * this launch's environment, so it is seeded (or linked) on every launch, a reused profile too.
+ */
+function seedNativeFixture(core: StudioCore, id: FixtureName): Promise<void> | undefined {
+  // The native-game fixture holds the same games; its scripted registry (`fixture-native.ts`) runs pong-mac.
+  if (id === FixtureName.CppGame || id === FixtureName.NativeGame) return seedCppGame(core);
+  // The cross-game fixture adds a game whose Windows and Linux builds were checked (`fixture-native.ts`).
+  if (id === FixtureName.CrossGame) return seedCrossGame(core);
+  // The Rust fixtures write their Rust · wgpu games and the stub Rust store, on every launch as the C++ one.
+  if (id === FixtureName.RustGame) return seedRustFixture(core, RustFixtureKind.Game);
+  if (id === FixtureName.RustMobileGame) return seedRustFixture(core, RustFixtureKind.Mobile);
+  return undefined;
 }
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {

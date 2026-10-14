@@ -37,6 +37,38 @@ const NOT_PROVISIONED: SandboxProblem = {
   details: ["sandbox user not provisioned"],
 };
 
+/** Ubuntu 24.04 before Genex's AppArmor profile: bubblewrap gets no capabilities in its namespace. */
+const USERNS_RESTRICTED: SandboxProblem = {
+  code: SandboxProblemCode.UsernsRestricted,
+  platform: StudioPlatform.Linux,
+  missingTools: [],
+  installCommands: [],
+  details: ["kernel.apparmor_restrict_unprivileged_userns is 1"],
+  apparmor: {
+    profile: "/etc/apparmor.d/genex-portable",
+    command: "sudo /bin/sh -c …",
+    remove: "sudo apparmor_parser -R …",
+  },
+};
+
+/** A Linux gate held on the restriction, whose install answers `answer`; installs, attempts and restarts counted. */
+function linuxGate(answer: () => Promise<{ cancelled: boolean; restart?: boolean }>) {
+  const counts = { installs: 0, attempts: 0, restarts: 0 };
+  const gate = createBootGate(StudioPlatform.Linux, {
+    installSandbox: () => {
+      counts.installs++;
+      return answer();
+    },
+    restart: () => {
+      counts.restarts++;
+    },
+  });
+  gate.hold(USERNS_RESTRICTED, async () => {
+    counts.attempts++;
+  });
+  return { gate, counts };
+}
+
 /** A Windows gate held on the setup screen, with its installs and startup attempts counted. */
 function windowsGate(install: () => Promise<{ cancelled: boolean }>) {
   const counts = { installs: 0, attempts: 0 };
@@ -171,6 +203,47 @@ describe("Set up (Windows)", () => {
     const noInstaller = createBootGate(StudioPlatform.Windows);
     noInstaller.hold(NOT_PROVISIONED, async () => {});
     await assert.rejects(noInstaller.setUp(), /nothing to set up/);
+    assert.equal(installs, 0);
+  });
+});
+
+describe("Set up (Linux)", () => {
+  it("installs Genex's profile, then restarts the app instead of retrying in this process", async () => {
+    const { gate, counts } = linuxGate(async () => ({ cancelled: false, restart: true }));
+    assert.deepEqual(await gate.setUp(), {
+      outcome: SandboxSetupOutcome.Restarting,
+      state: { platform: StudioPlatform.Linux, phase: BootPhase.SandboxSetup, sandbox: USERNS_RESTRICTED },
+    });
+    assert.deepEqual(counts, { installs: 1, attempts: 0, restarts: 1 });
+  });
+
+  it("a dismissed password prompt stays on the setup screen and restarts nothing", async () => {
+    const { gate, counts } = linuxGate(async () => ({ cancelled: true }));
+    assert.equal((await gate.setUp()).outcome, SandboxSetupOutcome.Cancelled);
+    assert.deepEqual(counts, { installs: 1, attempts: 0, restarts: 0 });
+  });
+
+  it("a failed install rejects and restarts nothing", async () => {
+    const { gate, counts } = linuxGate(async () => {
+      throw new Error("Installing the AppArmor profile failed (exit 1)");
+    });
+    await assert.rejects(gate.setUp(), /exit 1/);
+    assert.deepEqual(gate.state().sandbox, USERNS_RESTRICTED);
+    assert.deepEqual(counts, { installs: 1, attempts: 0, restarts: 0 });
+  });
+
+  it("refuses while the folder cannot be named in a profile: there is nothing to install", async () => {
+    const { apparmor: _fix, ...unnamable } = USERNS_RESTRICTED;
+    let installs = 0;
+    const gate = createBootGate(StudioPlatform.Linux, {
+      installSandbox: async () => {
+        installs++;
+        return { cancelled: false, restart: true };
+      },
+      restart: () => {},
+    });
+    gate.hold(unnamable, async () => {});
+    await assert.rejects(gate.setUp(), /nothing to set up/);
     assert.equal(installs, 0);
   });
 });

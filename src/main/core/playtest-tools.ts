@@ -3,10 +3,10 @@
  * They sit beside the computer tool on the same pooled window of the build under test; each one
  * acts, leaves a frame on the agent's screen and answers with the game's state.
  */
-import { writeFile } from "node:fs/promises";
 import { type ScreenAct, ScreenDeed } from "../../shared/agent-screen.ts";
 import type { DelegateRequest, LiveToolResult } from "../../substrate/engines/types.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
+import { writeCaptureFrame } from "../../substrate/build-preview.ts";
 import { GameSteer } from "../../shared/preview-contract.ts";
 import { DEFAULT_SHOT_QUALITY } from "./capture.ts";
 
@@ -165,7 +165,8 @@ const HANDLERS: Record<PlaytestTool, PlaytestHandler> = {
       ? await live.screenshotWithStats(DEFAULT_SHOT_QUALITY)
       : { jpeg: await live.screenshot(DEFAULT_SHOT_QUALITY), stats: null };
     const file = await ctx.shotFile(camera);
-    await writeFile(file, jpeg);
+    // Whole or not at all, and never through a link planted at its name in the runs folder.
+    await writeCaptureFrame(file, jpeg);
     await ctx.frame(live, jpeg, camera ? `camera ${camera}` : "screenshot", { deed: ScreenDeed.Look });
     const measured = stats
       ? ` (litFraction ${stats.litFraction.toFixed(2)}, meanLuma ${Math.round(stats.meanLuma)})`

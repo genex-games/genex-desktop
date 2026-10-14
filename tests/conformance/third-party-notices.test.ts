@@ -4,6 +4,8 @@
  * package that ships none must have its notice in THIRD-PARTY-NOTICES.md, and every library in
  * three.js's vendored `examples/jsm/libs` must be listed there. A gap stops the build instead of
  * shipping code without its license. Drives scripts/third-party-notices.mjs, which build.mjs calls.
+ * The Rust · wgpu asset importer's WebAssembly decoders and the egui fonts the Rust HUD compiles in
+ * are held to the same page.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +13,19 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpDir } from "../helpers/tmp.ts";
-import { assertThreeLibsListed, stylesheetPackages, writeBundledNotices } from "../../scripts/third-party-notices.mjs";
+import {
+  assertEguiFontsListed,
+  assertImportDecodersListed,
+  assertRustCratesListed,
+  assertRustToolchainRuntimeListed,
+  assertThreeLibsListed,
+  RUST_TOOLCHAIN_RUNTIME,
+  stylesheetPackages,
+  writeBundledNotices,
+} from "../../scripts/third-party-notices.mjs";
+import { BuildTarget } from "../../src/shared/game-project.ts";
+import { IMPORT_DECODERS } from "../../src/substrate/asset-import/decoders.ts";
+import { RUST_NOTICE_ROWS, RustRuntimePart } from "../../src/substrate/rust-notices.ts";
 
 const REPO = path.resolve(import.meta.dirname, "../..");
 
@@ -124,4 +138,192 @@ test("the installed three.js libraries and stylesheet packages are all covered t
   assert.doesNotThrow(() => assertThreeLibsListed(path.join(REPO, "node_modules/three/examples/jsm/libs"), notices));
   const css = await readFile(path.join(REPO, "src/renderer/theme.css"), "utf8");
   for (const manifest of stylesheetPackages(css)) assert.ok(existsSync(path.join(REPO, manifest)), manifest);
+});
+
+/** A decoder table shaped like the importer's: one decoder per file list. */
+const DECODERS = {
+  basisu: {
+    files: ["examples/jsm/libs/basis/basis_transcoder.js", "examples/jsm/libs/basis/basis_transcoder.wasm"],
+    upstream: "https://github.com/BinomialLLC/basis_universal",
+    license: "Apache-2.0",
+  },
+  meshopt: {
+    files: ["examples/jsm/libs/meshopt_decoder.module.js"],
+    upstream: "https://github.com/zeux/meshoptimizer",
+    license: "MIT",
+  },
+};
+
+const BASIS_ROW =
+  "| `examples/jsm/libs/basis/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) | Apache-2.0 |";
+const MESHOPT_ROW =
+  "| `examples/jsm/libs/meshopt_decoder.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) | MIT |";
+
+/** An importer table holding `rows`, followed by another section holding `after`. */
+const importerSection = (rows: string[], after: string[] = []) =>
+  [
+    "## Asset importer decoders",
+    "",
+    "| File | Project | License |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+    "## Something else",
+    "",
+    ...after,
+  ].join("\n");
+
+test("every importer decoder needs a row naming its files, upstream and licence in the importer table", () => {
+  assert.doesNotThrow(() => assertImportDecodersListed(DECODERS, importerSection([BASIS_ROW, MESHOPT_ROW])));
+  const rows: Array<[string, string]> = [
+    ["a decoder with no row", importerSection([BASIS_ROW])],
+    ["a row in another section", importerSection([BASIS_ROW], [MESHOPT_ROW])],
+    [
+      "a row without the upstream",
+      importerSection([BASIS_ROW, MESHOPT_ROW.replace("(https://github.com/zeux/meshoptimizer)", "")]),
+    ],
+    ["a row with another licence", importerSection([BASIS_ROW, MESHOPT_ROW.replace("| MIT |", "| BSD-3-Clause |")])],
+    [
+      "a folder row that does not hold the file",
+      importerSection([BASIS_ROW, MESHOPT_ROW.replace("meshopt_decoder.module.js`", "meshopt/`")]),
+    ],
+  ];
+  for (const [name, markdown] of rows) {
+    assert.throws(
+      () => assertImportDecodersListed(DECODERS, markdown),
+      (error: Error) => error.message.includes("meshopt") && !error.message.includes("basisu"),
+      name,
+    );
+  }
+  assert.throws(() => assertImportDecodersListed(DECODERS, "# Third-party notices\n"), /basisu.*meshopt/);
+});
+
+/** A Cargo.lock that resolves `epaint_default_fonts` at `version`. */
+const lockWith = (version: string) =>
+  `[[package]]\nname = "egui"\nversion = "0.36.2"\n\n[[package]]\nname = "epaint_default_fonts"\nversion = "${version}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n`;
+
+const RUST_SECTION = [
+  "## Rust runtime crates",
+  "",
+  "- egui's default fonts, compiled into the HUD through `epaint_default_fonts` 0.36.2: Ubuntu Light.",
+  "",
+  "## Components under other terms",
+  "",
+  "- `epaint_default_fonts` 0.37.0 is named here, outside the Rust section.",
+].join("\n");
+
+test("the egui fonts the lock resolves are named, at that version, in the Rust runtime crates section", () => {
+  assert.doesNotThrow(() => assertEguiFontsListed(lockWith("0.36.2"), RUST_SECTION));
+  assert.throws(
+    () => assertEguiFontsListed(lockWith("0.37.0"), RUST_SECTION),
+    (error: Error) => error.message.includes("epaint_default_fonts 0.37.0"),
+  );
+  assert.throws(() => assertEguiFontsListed(lockWith("0.36.2"), "# Third-party notices\n"), /0\.36\.2/);
+  assert.doesNotThrow(() => assertEguiFontsListed('[[package]]\nname = "egui"\nversion = "0.36.2"\n', ""));
+});
+
+test("the importer's decoders and the lock's egui fonts are covered today", async () => {
+  const notices = await readFile(path.join(REPO, "THIRD-PARTY-NOTICES.md"), "utf8");
+  assert.doesNotThrow(() => assertImportDecodersListed(IMPORT_DECODERS, notices));
+  const lock = await readFile(path.join(REPO, "native/genex-rust/Cargo.lock"), "utf8");
+  assert.doesNotThrow(() => assertEguiFontsListed(lock, notices));
+});
+
+/** A Cargo.lock: the workspace's own path package, then registry packages `name@version`. */
+const registryLock = (...crates: string[]) =>
+  [
+    'version = 4\n\n[[package]]\nname = "genex"\nversion = "0.1.0"\n',
+    ...crates.map((crate) => {
+      const [name, version] = crate.split("@");
+      return `[[package]]\nname = "${name}"\nversion = "${version}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\n`;
+    }),
+  ].join("\n");
+
+const CRATES_SECTION = [
+  "## Rust runtime crates",
+  "",
+  "| Licence (as the crate declares it) | Crates | Crates and versions |",
+  "| --- | --- | --- |",
+  "| MIT OR Apache-2.0 | 2 | glam 0.33.12, wgpu 30.0.1 |",
+  "",
+  "## Something else",
+  "",
+  "| MIT | 1 | serde 1.0.229 |",
+].join("\n");
+
+test("every crate the Rust lock resolves from the registry is named, at that version, in the Rust runtime crates section", () => {
+  assert.doesNotThrow(() => assertRustCratesListed(registryLock("glam@0.33.12", "wgpu@30.0.1"), CRATES_SECTION));
+  const rows: Array<[string, string, string]> = [
+    ["a crate with no entry", registryLock("glam@0.33.12", "rapier3d@0.36.0"), "rapier3d 0.36.0"],
+    ["a crate at another version", registryLock("glam@0.33.13"), "glam 0.33.13"],
+    ["a crate named only outside the section", registryLock("serde@1.0.229"), "serde 1.0.229"],
+  ];
+  for (const [name, lock, missing] of rows) {
+    assert.throws(
+      () => assertRustCratesListed(lock, CRATES_SECTION),
+      (error: Error) => error.message.includes(missing) && !error.message.includes("genex"),
+      name,
+    );
+  }
+});
+
+/** The toolchain runtime table, holding `rows`. */
+const toolchainSection = (rows: string[]) =>
+  [
+    "## Rust toolchain runtime",
+    "",
+    "| Component | Linked into | License |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+    "## Something else",
+  ].join("\n");
+
+test("the toolchain runtime every Rust game links is listed with the destinations it reaches and its licence", () => {
+  const all = RUST_TOOLCHAIN_RUNTIME.map((part) => `| \`${part.name}\` | ${part.destinations} | ${part.license} |`);
+  assert.doesNotThrow(() => assertRustToolchainRuntimeListed(toolchainSection(all)));
+  const [first, ...rest] = all;
+  assert.ok(first);
+  assert.throws(() => assertRustToolchainRuntimeListed(toolchainSection(rest)), /Rust toolchain runtime/);
+  const relicensed = first.replace(/\| [^|]+ \|$/, "| GPL-3.0 |");
+  assert.throws(
+    () => assertRustToolchainRuntimeListed(toolchainSection([relicensed, ...rest])),
+    /Rust toolchain runtime/,
+  );
+  assert.throws(() => assertRustToolchainRuntimeListed("# Third-party notices\n"), /Rust toolchain runtime/);
+});
+
+/** How the toolchain runtime table's "Linked into" column names each destination. */
+const DESTINATION: Record<string, string> = {
+  [BuildTarget.Web]: "web",
+  [BuildTarget.Mac]: "Mac",
+  [BuildTarget.Windows]: "Windows",
+  [BuildTarget.Linux]: "Linux",
+  [BuildTarget.Ios]: "iOS",
+  [BuildTarget.Android]: "Android",
+} satisfies Record<BuildTarget, string>;
+
+/** Parts the page covers in sections of their own: egui's fonts in the crates section, the decoders in theirs. */
+const COVERED_ELSEWHERE: ReadonlySet<string> = new Set([RustRuntimePart.EguiFonts, RustRuntimePart.ImporterDecoders]);
+
+test("every runtime part a Rust export's notices carry is in the toolchain runtime table, with that export's destination", () => {
+  const listed = new Map(RUST_TOOLCHAIN_RUNTIME.map((part) => [part.name, part]));
+  const unlisted: string[] = [];
+  for (const [target, row] of Object.entries(RUST_NOTICE_ROWS)) {
+    for (const { part } of row ?? []) {
+      if (COVERED_ELSEWHERE.has(part)) continue;
+      const entry = listed.get(part);
+      const reaches =
+        entry?.destinations === "every destination" || entry?.destinations.includes(DESTINATION[target] ?? target);
+      if (!reaches) unlisted.push(`${part} (${target})`);
+    }
+  }
+  assert.deepEqual(unlisted, []);
+});
+
+test("the Rust lock's crate closure and the toolchain runtime are covered today", async () => {
+  const notices = await readFile(path.join(REPO, "THIRD-PARTY-NOTICES.md"), "utf8");
+  const lock = await readFile(path.join(REPO, "native/genex-rust/Cargo.lock"), "utf8");
+  assert.doesNotThrow(() => assertRustCratesListed(lock, notices));
+  assert.doesNotThrow(() => assertRustToolchainRuntimeListed(notices));
 });

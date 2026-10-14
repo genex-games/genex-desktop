@@ -1,7 +1,7 @@
 {
-  "apiVersion": 3,
+  "apiVersion": 4,
   "id": "blender",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "name": "Local Blender",
   "publisher": "Studio",
   "description": "Model 3D assets with Blender on this Mac. No account or credits.",
@@ -66,7 +66,13 @@
     {
       "name": "local-modeling",
       "engines": ["web"],
-      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; the script can read no other file of the game unless inputs names it (a shared module in assets/src, a texture image). Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly."
+      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model, inspect returned renders, load the exact returned model.glb path with GLTFLoader and verify it in the actual game preview. Each export has a unique job directory. Preserve those paths in code; this is not the old assets/<slug>.glb layout. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; the script can read no other file of the game unless inputs names it (a shared module in assets/src, a texture image). Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly.",
+      "stacks": ["three-js", "raylib-cpp"]
+    },
+    {
+      "name": "local-modeling-rust",
+      "text": "For useful 3D silhouettes, Local Blender can model assets from a bpy script at assets/src/<name>.py. Inspect blender__status first. The model script starts from an empty scene; do not save/export/render. Call blender__model and inspect the returned renders. It delivers model.glb under assets/blender/<job>/, a unique job directory per export: load it in on_reset with gfx.assets().model(\"blender/<job>/model.glb\"), the returned path without its leading assets/, draw it with frame.model, and verify it in the running game: state().__render.missingModels stays absent while every model loads. Preserve those paths in code. Reuse geometry and inspect triangle/texture costs. Size is a performance diagnostic, not a 4 MiB rejection. Native outputs including renders are capped at 100 MiB per job. For an existing GLB pass model to blender__model and import ASSET_INPUTS[\"model\"]; the script can read no other file of the game unless inputs names it (a shared module in assets/src, a texture image). Preserve the source model. Local Blender and a remote modeling connector are independent choices; never switch to a paid service implicitly.",
+      "stacks": ["rust-wgpu"]
     }
   ],
   "panels": [

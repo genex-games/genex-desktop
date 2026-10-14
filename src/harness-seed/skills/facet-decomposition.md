@@ -140,4 +140,38 @@ When spatial coupling forces one facet to hold more than 3 visual sub-systems, r
 `identity` and mark their checks `identity` — the loop works identity checks first and will not
 polish a lower item while a higher one still fails.
 
+## An existing C++ · raylib game
+
+New games are never C++ · raylib: a desktop or phone game is Rust · wgpu (below). A game made
+before that keeps its stack, so when the ask carries the line `THE GAME IS C++ · RAYLIB`, the plan
+has the same shape in C++ terms, and the ask's own C++ lines win over this section:
+
+- Each facet owns `src/<slug>.cpp` (and its `.h` when it shares types); `mainOwner` is the only
+  facet that may restructure `src/main.cpp` and the runtime (`src/studio.*`, `src/platform.*`,
+  `src/hud.*`). A non-owner adds exactly one line inside the FACET WIRING block of
+  `src/main.cpp`: `void wire_<slug>(studio::Game&); wire_<slug>(game);`.
+- `base.files` are headers every facet shares (`src/palette.h`, `src/world.h`), never `.js`.
+- Every check kind above is measured on a raylib game except `scene`: say the same thing with a
+  probe (`houses >= 6` from a `probes()` leaf), and give milestones probe checks for the same reason.
+- Tags come from `studio::tag("<tag>")` before a draw, the HUD from `studio::hud`, input from
+  `ctx.keys` / `ctx.look` / `ctx.wheel` / `ctx.pointer` / `ctx.pads`, and a demo is a
+  `studio::Game` `demos` entry.
+
+## A Rust · wgpu game
+
+When the ask carries the line `THE GAME IS RUST · WGPU`, the plan has the same shape in Rust
+terms, and the ask's own Rust lines win over this section:
+
+- Each facet owns `src/facets/<slug>.rs` (a Rust module name: lower case, words joined by `_`)
+  with `pub fn wire(game: &mut Game<super::World>)`; `mainOwner` is the only facet that may
+  restructure `src/main.rs`, `src/game.rs` and `genex.toml`. A non-owner adds exactly two lines
+  inside the FACET WIRING block of `src/main.rs`: `#[path = "facets/<slug>.rs"] mod <slug>;` and
+  `<slug>::wire(&mut game);`. `docs/GENEX_API.md` is read-only.
+- `base.files` are Rust modules every facet shares (the `World` type in `src/game.rs`), never `.js`.
+- Every check kind above is measured on a Rust game except `scene`: say the same thing with a
+  probe (`houses >= 6` from a `game.probe` leaf), and give milestones probe checks for the same reason.
+- Tags come from `frame.tag("<tag>")` before a draw, the HUD from egui in `on_ui`, input from
+  `ctx.keys` / `ctx.touches` / `ctx.pointer` / `ctx.look` / `ctx.pads`, and a demo is a
+  `game.demo` entry. Touch is first-class: plan every action so a phone player can reach it.
+
 (SkillOpt-editable guidance accretes below this line.)

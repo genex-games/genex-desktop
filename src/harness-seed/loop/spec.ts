@@ -29,6 +29,58 @@ import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
 // a named import it lacks would stop this file loading.
 import * as kinds from "./kinds.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
+import type { GameStack } from "./native-contract.ts";
+
+/**
+ * The boards here know a C++ · raylib game: the one-screen checks read a three.js page, so they
+ * are off its board (`withHarnessChecks` `stack`). run-dispatch.ts and chat-dispatch.ts refuse a
+ * raylib night on a kept copy without this mark (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * The boards here know a Rust · wgpu game by the same per-stack table (`BOARD_OF_STACK`): no DOM
+ * screen checks and no scene checks offered. run-dispatch.ts refuses a Rust night on a kept copy
+ * without this mark (`servesRust`, native-contract.ts).
+ */
+export const SERVES_RUST = true;
+
+/**
+ * The stacks this module tells apart, copied from native-contract.ts: that module imports this one
+ * (for `CheckKind`), so its objects cannot be imported back without a cycle.
+ */
+const Stack = {
+  ThreeJs: "three-js",
+  RaylibCpp: "raylib-cpp",
+  RustWgpu: "rust-wgpu",
+} as const satisfies Record<string, GameStack>;
+
+/** What a board of one stack can carry: the one-screen checks of a DOM page, and scene checks. */
+interface StackBoard {
+  /** The game is a page with a DOM and a three.js HUD to count and measure: the one-screen checks ride (`SCREEN_CHECKS`). */
+  domScreen: boolean;
+  /** The game has a three.js scene graph a scene check can inspect (native-contract.ts `STACK_CHECK_SUPPORT`). */
+  sceneGraph: boolean;
+}
+/** A compiled game (C++ · raylib, Rust · wgpu) draws its own screen: no DOM, no scene graph. */
+const COMPILED_BOARD: StackBoard = Object.freeze({ domScreen: false, sceneGraph: false });
+/**
+ * Each stack's board. loop-modes-stack.test.ts holds `sceneGraph` to native-contract.ts
+ * `STACK_CHECK_SUPPORT`'s scene row.
+ */
+const BOARD_OF_STACK = {
+  [Stack.ThreeJs]: Object.freeze({ domScreen: true, sceneGraph: true }),
+  [Stack.RaylibCpp]: COMPILED_BOARD,
+  [Stack.RustWgpu]: COMPILED_BOARD,
+} as const satisfies Record<GameStack, StackBoard>;
+
+/** The board of `stack`: a three.js page's when the stack is absent or one this seed does not know. */
+function stackBoard(stack: GameStack | null | undefined): StackBoard {
+  const known = typeof stack === "string" && Object.hasOwn(BOARD_OF_STACK, stack);
+  return known ? BOARD_OF_STACK[stack] : BOARD_OF_STACK[Stack.ThreeJs];
+}
+/** The harness-owned checks about the three.js page's one screen: DOM UI, a second HUD, and the HUD's coverage and overlap. */
+const SCREEN_CHECKS: readonly string[] = ["no-dom-ui", "single-hud", ...HUD_LAYOUT_CHECKS];
 
 /** The most checks one facet's board carries. */
 export const MAX_CHECKS = 16;
@@ -1079,9 +1131,9 @@ function harnessCheckIds(
   // it; the one-screen checks describe the template's screen, not this game's.
   const driven = traits.keyboardMove || traits.mouseLook;
   // Any part can paint a second HUD; only the part that draws the HUD answers for its size and layout.
-  const layout = drawsHud ? HUD_LAYOUT_CHECKS : [];
+  const layoutOff: ReadonlySet<string> = new Set(drawsHud ? [] : HUD_LAYOUT_CHECKS);
   return [
-    ...(screen && traits.hud ? ["no-dom-ui", "single-hud", ...layout] : []),
+    ...(screen && traits.hud ? SCREEN_CHECKS.filter((id) => !layoutOff.has(id)) : []),
     ...(owner && traits.mouseLook ? ["look-turns-camera"] : []),
     ...(owner && traits.keyboardMove ? ["keys-move-player"] : []),
     ...(owner && driven ? ["reaches-play"] : []),
@@ -1119,6 +1171,7 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     screen = true,
     keepsFrontEnd = false,
     drawsHud = true,
+    stack = null,
   }: {
     ownsMain?: boolean;
     role?: string;
@@ -1126,12 +1179,16 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     screen?: boolean;
     keepsFrontEnd?: boolean;
     drawsHud?: boolean;
+    stack?: GameStack | null;
   } = {},
 ): S & { checks: Check[] } {
   const traits = normalizeGameTraits(game);
   const owner = ownsMain || role === "integration";
   const probes = inputProbesFor(game) ?? {};
-  const wanted = harnessCheckIds(game, { owner, screen, drawsHud }).filter(
+  // A compiled game (C++ · raylib, Rust · wgpu) has no DOM and no three.js page HUD to count or
+  // measure: the one-screen checks are off its board altogether.
+  const compiled = !stackBoard(stack).domScreen;
+  const wanted = harnessCheckIds(game, { owner, screen: screen && !compiled, drawsHud }).filter(
     (id) => !keepsFrontEnd || !IN_PLAY_CHECKS.has(id),
   );
   const overrides: Record<string, AnyRecord> = {
@@ -1139,9 +1196,13 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     "keys-move-player": inputProbe(probes.move, "keys-move-player"),
     "hud-coverage": hudCoverage(hudBudgetFor(traits) ?? DEFAULT_HUD_BUDGET),
   };
-  const checks = (spec.checks ?? []).filter((c) => !wanted.includes(c.id));
-  for (const id of wanted)
-    checks.push(normalizeCheck({ id, ...HARNESS_CHECKS[id], ...(overrides[id] ?? {}) }, checks.length)!);
+  const offBoard = (id: string) => wanted.includes(id) || (compiled && SCREEN_CHECKS.includes(id));
+  const checks = (spec.checks ?? []).filter((c) => !offBoard(c.id));
+  for (const id of wanted) {
+    // Every harness check normalizes; a null would be a broken table, and it rides on no board.
+    const check = normalizeCheck({ id, ...HARNESS_CHECKS[id], ...(overrides[id] ?? {}) }, checks.length);
+    if (check) checks.push(check);
+  }
   return { ...spec, checks };
 }
 
@@ -1356,19 +1417,22 @@ export function catalogueEntryEarned(entry: CatalogueEntry): boolean {
  */
 export function renderCatalogueForPlanner(
   catalogue: Pick<Catalogue, "checks"> | null | undefined,
-  options: number | { limit?: number; game?: AnyRecord | null; screen?: boolean } | null = {},
+  options: number | CatalogueMenuOptions | null = {},
 ): string {
   const {
     limit = CATALOGUE_LIMIT,
     game = null,
     screen = true,
-  }: { limit?: number; game?: AnyRecord | null; screen?: boolean } = typeof options === "number"
-    ? { limit: options }
-    : (options ?? {});
+    stack = null,
+  }: CatalogueMenuOptions = typeof options === "number" ? { limit: options } : (options ?? {});
   const wantedFamily = kindFamily(game?.kind ?? null);
-  const all = Object.entries(catalogue?.checks ?? {}).filter(
-    ([id, c]) => !HARNESS_CHECKS[id] && catalogueEntryEarned(c) && forFamily(c, wantedFamily) && !lintCheck(c),
-  );
+  const offered = ([id, c]: [string, CatalogueEntry]): boolean =>
+    !HARNESS_CHECKS[id] &&
+    catalogueEntryEarned(c) &&
+    forFamily(c, wantedFamily) &&
+    !lintCheck(c) &&
+    measurableOnBoard(stack, c.kind);
+  const all = Object.entries(catalogue?.checks ?? {}).filter(offered);
   const general = all
     .filter(([, c]) => groupsOf(c).length === 0)
     .sort(([, a], [, b]) => (b.passes ?? 0) - (a.passes ?? 0) || (b.uses ?? 0) - (a.uses ?? 0))
@@ -1384,8 +1448,25 @@ export function renderCatalogueForPlanner(
       ...entries.slice(0, limit).map(catalogueLine),
     );
   }
-  lines.push("", ridingLine(game, screen));
+  lines.push("", ridingLine(game, screen, stack));
   return lines.join("\n");
+}
+
+/**
+ * Whether a board of `stack` can measure a check of `kind`: a compiled game has no three.js scene
+ * graph, so its planner is never offered a scene check (native-contract.ts `STACK_CHECK_SUPPORT`;
+ * loop-modes-stack.test.ts holds the two together).
+ */
+function measurableOnBoard(stack: GameStack | null, kind: unknown): boolean {
+  return stackBoard(stack).sceneGraph || kind !== CheckKind.Scene;
+}
+
+/** How the catalogue is offered: how many entries, for which game, its screen, and its stack. */
+interface CatalogueMenuOptions {
+  limit?: number;
+  game?: AnyRecord | null;
+  screen?: boolean;
+  stack?: GameStack | null;
 }
 
 /**
@@ -1445,10 +1526,11 @@ const learnedByRuns = (entry: { origin?: string }): boolean =>
  * that declared nothing carries none of them, and telling the planner otherwise is the lie that
  * made every plan re-declare a HUD rule its game does not have.
  */
-function ridingLine(game: AnyRecord | null, screen: boolean): string {
-  const riding = withHarnessChecks({ id: "board", checks: [] as Check[] }, { ownsMain: true, game, screen }).checks.map(
-    (c) => c.id,
-  );
+function ridingLine(game: AnyRecord | null, screen: boolean, stack: GameStack | null): string {
+  const riding = withHarnessChecks(
+    { id: "board", checks: [] as Check[] },
+    { ownsMain: true, game, screen, stack },
+  ).checks.map((c) => c.id);
   if (!riding.length)
     return `No harness-owned checks ride on this game's board — declare hud, mouseLook or keyboardMove in game if it has them.`;
   return `Already on this game's board (harness-owned, do not re-declare): ${riding.join(", ")}.${ridingWords(riding, hudBudgetFor(game))}`;

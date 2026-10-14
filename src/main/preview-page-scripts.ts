@@ -3,7 +3,9 @@
  * and saw (trusted input, the attach report, WebGL errors), the page-side capture and the bounded
  * read of `__studio.state()`. Each is an expression string for `webContents.executeJavaScript`.
  */
+import { NativeError, NativeRefusal } from "../shared/native-contract.ts";
 import { ElidedKind, StateShape, keepPathsOf } from "../shared/studio-state-shape.ts";
+import { NativeOpRefusedError } from "../substrate/native-game-port.ts";
 
 /** The studio reads at most this much of a `state()` whole; past it, the largest lists are cut. */
 export const STATE_MAX_CHARS = 48_000;
@@ -186,6 +188,41 @@ export const GL_PROBE = `(() => {
   window.__studioGl = { errors: () => { drain(); return seen.slice(); } };
   return true;
 })()`;
+
+/**
+ * One page-contract verb (`window.__studio.<method>(argument)`), or `MissingVerb`. A Rust web shell
+ * that refused to start for want of WebGPU binds no verbs and shows `GenexShell.status.state`
+ * `unsupported` with its typed code; the answer carries that code so the caller can refuse typed.
+ * `method` must already be a plain identifier and `argument` JSON (or empty).
+ */
+export function studioCallScript(method: string, argument: string): string {
+  return `(() => {
+  if (window.__studio && typeof window.__studio.${method} === "function") return window.__studio.${method}(${argument});
+  const status = window.GenexShell && window.GenexShell.status;
+  if (!status || status.state !== "unsupported") return { __missing: true };
+  return { __missing: true, gpu: String(status.code || "") };
+})()`;
+}
+
+/** Why a page verb was refused, in the studio's words. */
+const PAGE_MESSAGE = {
+  noWebGpu: "this preview offers no WebGPU, so the game's web build never started (gpu-unsupported)",
+} as const;
+
+/**
+ * A page verb's answer as the caller takes it: a Rust web page that refused to start for want of
+ * WebGPU is refused `gpu-unsupported` (the preview's limit, never the game's); a verb the game
+ * refused (`{__refused: code}`, the Rust shell's `renderSettings`) rejects as a native game's
+ * refusal of the op does, with its code; anything else is returned as the page answered it,
+ * `{__missing: true}` included.
+ */
+export function readStudioCall(answer: unknown, method: string): unknown {
+  const record = typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : null;
+  if (record?.__missing === true && record.gpu === NativeRefusal.GpuUnsupported)
+    throw new NativeError(NativeRefusal.GpuUnsupported, PAGE_MESSAGE.noWebGpu);
+  if (typeof record?.__refused === "string") throw new NativeOpRefusedError(method, record.__refused);
+  return answer;
+}
 
 /**
  * How every expression is evaluated in the page: awaited first (an async probe must resolve

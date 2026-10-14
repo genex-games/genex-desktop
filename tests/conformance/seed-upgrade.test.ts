@@ -6,41 +6,57 @@
  * never touched.** Upgrades flow through untouched files; edited files are never overwritten.
  */
 import assert from "node:assert/strict";
-import { appendFile, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
   applySeed,
   craftCheckOwners,
+  keptPreRustParts,
   reconcileManifestWithSeedVintages,
+  RetakeBase,
+  RetakeRefusalCode,
+  retakeSeedModule,
   retireMigratedCraftChecks,
   RETIRED_SEED_PATHS,
+  RUST_NIGHT_PARTS,
   SEED_CALL_CHANGES,
   SEED_MOVES,
+  SeedRefusalCode,
+  seedNightRefusal,
   SUPERSEDED_CHECKS,
   type SeedUpgradeReport,
 } from "../../src/substrate/seed-upgrade.ts";
 import { RENAMED_SEED_FILES, RENAMED_SEED_NAMES, renameInSource } from "../../src/substrate/seed-renames.ts";
 import {
+  keptPreRustNotice,
   SEED_CALL_MEMORY_PREFIX,
   SEED_MOVE_MEMORY_PREFIX,
+  SeedRemedy,
   seedCallMemory,
   seedMoveMemory,
+  seedRetakeNote,
   seedUpgradedPayload,
 } from "../../src/main/seed-upgrade-notice.ts";
+import { GameStack } from "../../src/shared/game-project.ts";
 import { atomicWriteJson, pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
 import { closeBeforeCleanup, removeTree, tmpDir } from "../helpers/tmp.ts";
+import { coreLite } from "../helpers/core-lite.ts";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { studioActivity } from "../../src/shared/studio-activity.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
+import type { PreviewPort } from "../../src/substrate/preview-port.ts";
 import { SEED_GENERATED } from "../../scripts/gen-harness-types.ts";
 import { OPEN_LOOP_REFUSAL } from "../../src/harness-seed/loop/open-loop-prompts.ts";
 import { gameRepo, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
+import { GameEngine } from "../../src/shared/game-engine.ts";
+import { factsOfEngine } from "../../src/shared/project-facts.ts";
 
 /** Where an upgrade keeps the agent's copy of `rel`: a renamed module's new path (seed-renames.ts). */
 const keptAt = (rel: string): string => RENAMED_SEED_FILES[rel] ?? rel;
@@ -1225,9 +1241,10 @@ describe("seed upgrade across the harness step flag", () => {
     // The older shapes: a scaffold that names no kind, a run start that starts nothing, no start tool.
     const older: ReadonlyArray<readonly [string, string, string]> = [
       ["loop/chat-dispatch.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/autopilot.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/director/setup.ts", "kind: ProjectStarter.Web", ""],
-      ["loop/gauntlet.ts", "kind: ProjectStarter.Web,", ""],
+      // A run's own scaffold asks through runScaffoldAsk: the older copies named no kind at all.
+      ["loop/autopilot.ts", "...runScaffoldAsk(listed, run.project, run.targets),", ""],
+      ["loop/director/setup.ts", "...runScaffoldAsk(listed, run.project, run.targets),", ""],
+      ["loop/gauntlet.ts", "...runScaffoldAsk(listed, run.project, run.targets),", ""],
       ["loop/run-dispatch.ts", "await startWebIfPending(host, run.project, games);", ""],
       ["tools/game-tools.ts", "HostMethod.GameStart", "HostMethod.GameValidate"],
     ];
@@ -2596,6 +2613,716 @@ describe("seed upgrade across the review fixes", () => {
       }
     }
     assert.deepEqual(unlinked, []);
+  });
+});
+
+/**
+ * The native contract (C++ · raylib) joins a seed whose every module an installed harness may keep
+ * from before it. The vintage is every module's exports at origin/dev cf4b2c56, the public seed the
+ * native work was ported onto. New names live in new modules (`loop/native-contract.ts`); a raylib night refuses to run
+ * on a part kept from before (no `SERVES_NATIVE`), and the host refuses a raylib preview to a
+ * lease that names no target, which only a harness from before native support acquires.
+ */
+describe("seed upgrade across native", () => {
+  const VINTAGE_COMMIT = "cf4b2c56";
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-native.json", import.meta.url)), "utf8"),
+  ) as { about: string; modules: Record<string, string[]> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+  const repo = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  /** `git` in the repository; null when the vintage commit is not in this clone (a shallow checkout). */
+  const atVintage = (args: string[]): string | null => {
+    try {
+      return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return null;
+    }
+  };
+  const vintageMissing =
+    atVintage(["cat-file", "-e", `${VINTAGE_COMMIT}^{commit}`]) === null
+      ? `not run: ${VINTAGE_COMMIT} is not in this clone`
+      : false;
+
+  it("the vintage is every seed module at the merge base", { skip: vintageMissing }, () => {
+    assert.match(vintage.about, new RegExp(`origin/dev at ${VINTAGE_COMMIT}`));
+    const listed = (atVintage(["ls-tree", "-r", "--name-only", VINTAGE_COMMIT, "--", "src/harness-seed"]) ?? "")
+      .split("\n")
+      .map((file) => file.replace(/^src\/harness-seed\//, ""))
+      .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".d.ts") && !rel.startsWith("types/"));
+    assert.ok(listed.length > 100, "the seed had over a hundred modules");
+    assert.deepEqual(Object.keys(vintage.modules).sort(), listed.sort());
+  });
+
+  /** A seeded workspace where `rel` is the agent's copy of the older vintage: its names, nothing newer. */
+  async function keptFromBefore(rel: string, text?: string) {
+    const root = await tmpDir("seed-native-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    const names = vintage.modules[rel] ?? [];
+    const older = text ?? names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`).join("\n");
+    await writeFile(path.join(ws, rel), `${older}\n// the agent's own change\n`);
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    return { ws, report };
+  }
+
+  it("any one module kept from before the native contract still loads the harness and the native contract", async () => {
+    // Only a module that now exports a name its vintage did not can break a fresh importer; the
+    // native contract's own imports are checked whatever changed.
+    const always = ["loop/spec.ts", "loop/time.ts", "loop/host-methods.ts"];
+    const grown: string[] = [];
+    for (const [rel, names] of Object.entries(vintage.modules)) {
+      const file = path.join(shipped, rel);
+      if (!(await pathExists(file))) continue;
+      const current = Object.keys(await import(pathToFileURL(file).href));
+      if (current.some((name) => !names.includes(name))) grown.push(rel);
+    }
+    const unlinked: string[] = [];
+    for (const rel of [...new Set([...always, ...grown])]) {
+      const { ws, report } = await keptFromBefore(rel);
+      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
+      for (const entry of ["loop/main.ts", "loop/native-contract.ts"]) {
+        try {
+          await import(pathToFileURL(path.join(ws, entry)).href);
+        } catch (err) {
+          unlinked.push(`${rel} kept, ${entry}: ${(err as Error).message}`);
+        }
+      }
+    }
+    assert.deepEqual(unlinked, []);
+  });
+
+  it("native verdicts stay linkable and retain their rule beside an edited pre-native verdict module", {
+    skip: vintageMissing,
+  }, async () => {
+    const older = atVintage(["show", `${VINTAGE_COMMIT}:src/harness-seed/loop/verdict.ts`]);
+    assert.ok(older, "the vintage verdict.ts");
+    const { ws, report } = await keptFromBefore("loop/verdict.ts", older);
+    const keptText = `${older}\n// the agent's own change\n`;
+    assert.ok(report.kept.includes("loop/verdict.ts"), "the agent's verdict module is kept");
+    assert.equal(await readFile(path.join(ws, "loop/verdict.ts"), "utf8"), keptText);
+    const main = await import(pathToFileURL(path.join(ws, "loop/main.ts")).href);
+    assert.equal(typeof main.createStudio, "function", "fresh director imports link beside the old verdict");
+    const kept = await import(pathToFileURL(path.join(ws, "loop/verdict.ts")).href);
+    const native = await import(pathToFileURL(path.join(ws, "loop/native-verdict.ts")).href);
+    assert.equal(kept.VerdictRule.NativeCheckFailed, undefined, "the old vocabulary lacks the new rule");
+    assert.equal(kept.NotLandedReason.FinalCheckFailed, undefined, "the old vocabulary lacks the new close reason");
+    const rule = native.failedObservationRule(
+      { parity: { pass: false, reason: "crossTarget", refusal: null, targets: [] } },
+      kept.VerdictRule.DoesNotStart,
+    );
+    assert.equal(rule, "native-check-failed");
+    assert.equal(native.NativeVerdict.NotLanded, "final-check-failed");
+    assert.equal(
+      native.failedObservationRule({ loadError: "failed to load" }, kept.VerdictRule.DoesNotStart),
+      "does-not-start",
+    );
+    const record = kept.verdictRecord({ pass: kept.VerdictPass.Health, rule, ok: false });
+    assert.equal(record.decision.rule, "native-check-failed", "the kept recorder retains the truthful rule");
+    assert.equal(
+      await readFile(path.join(ws, "loop/verdict.ts"), "utf8"),
+      keptText,
+      "judging never rewrites the agent's module",
+    );
+  });
+
+  it("a kept pre-native run-dispatch.ts is reported, and the fresh chat-dispatch.ts refuses a raylib night on it (typed)", {
+    skip: vintageMissing,
+  }, async () => {
+    const older = atVintage(["show", `${VINTAGE_COMMIT}:src/harness-seed/loop/run-dispatch.ts`]);
+    assert.ok(older, "the vintage run-dispatch.ts");
+    const { ws, report } = await keptFromBefore("loop/run-dispatch.ts", older);
+    assert.ok(report.kept.includes("loop/run-dispatch.ts"), "the kept copy is reported");
+    const chat = (await import(pathToFileURL(path.join(ws, "loop", "chat-dispatch.ts")).href)) as {
+      launchFromIntake(studio: unknown, ctx: unknown, action: unknown, spec: unknown): Promise<void>;
+    };
+    const contract = (await import(pathToFileURL(path.join(ws, "loop", "native-contract.ts")).href)) as {
+      NativeNightRefusal?: { PartsMissing: string };
+    };
+    const game = {
+      name: "pong",
+      dir: "/games/pong",
+      title: "Pong",
+      shape: {
+        entry: "index.html",
+        main: "src/main.cpp",
+        build: null,
+        install: null,
+        own: false,
+        kind: "raylib-cpp",
+        serve: ".",
+      },
+      destinations: { stack: "raylib-cpp", targets: ["macos"] },
+    };
+    const calls: string[] = [];
+    const call = async (method: string) => {
+      calls.push(method);
+      if (method === "game.list") return [game];
+      if (method === "game.validate") return { ok: true, problems: [], warnings: [], contract: "installed" };
+      return null;
+    };
+    const studio = { host: { call, notify: () => {} }, moodBoards: new Map() };
+    const ctx = { call, cancelled: false };
+    const action = { type: "user_message", threadId: "t1", project: "pong", text: "make it" };
+    const refused = await chat.launchFromIntake(studio, ctx, action, { goal: "a raylib pong" }).then(
+      () => null,
+      (error: unknown) => error as { code?: string },
+    );
+    assert.ok(refused, "the night was refused");
+    assert.equal(refused.code, contract.NativeNightRefusal?.PartsMissing, "with the typed code, never by its words");
+    assert.ok(!calls.includes("events.append"), "nothing was promised in the chat");
+  });
+
+  // Modules whose behaviour a raylib night needs (worker windows, the optimizer's lease and C++
+  // review, stack-aware boards): a copy kept from before refuses the night up front, by its code.
+  // The facet's brief and plan and the library's brief carry the C++ rules and recipes by stack.
+  for (const rel of [
+    "loop/director/workers.ts",
+    "loop/director/rules.ts",
+    "loop/optimization.ts",
+    "loop/facet/phases/brief.ts",
+    "loop/facet/phases/plan.ts",
+    "loop/library.ts",
+  ]) {
+    it(`a kept pre-native ${rel} refuses a raylib night with native-parts-missing`, async () => {
+      const { ws, report } = await keptFromBefore(rel);
+      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
+      const chat = (await import(pathToFileURL(path.join(ws, "loop", "chat-dispatch.ts")).href)) as {
+        launchFromIntake(studio: unknown, ctx: unknown, action: unknown, spec: unknown): Promise<void>;
+      };
+      const contract = (await import(pathToFileURL(path.join(ws, "loop", "native-contract.ts")).href)) as {
+        NativeNightRefusal?: { PartsMissing: string };
+      };
+      const game = {
+        name: "pong",
+        dir: "/games/pong",
+        title: "Pong",
+        shape: {
+          entry: "index.html",
+          main: "src/main.cpp",
+          build: null,
+          install: null,
+          own: false,
+          kind: "raylib-cpp",
+          serve: ".",
+        },
+        destinations: { stack: "raylib-cpp", targets: ["macos"] },
+      };
+      const calls: string[] = [];
+      const call = async (method: string) => {
+        calls.push(method);
+        if (method === "game.list") return [game];
+        if (method === "game.validate") return { ok: true, problems: [], warnings: [], contract: "installed" };
+        return null;
+      };
+      const studio = { host: { call, notify: () => {} }, moodBoards: new Map() };
+      const ctx = { call, cancelled: false };
+      const action = { type: "user_message", threadId: "t1", project: "pong", text: "make it" };
+      const refused = await chat.launchFromIntake(studio, ctx, action, { goal: "a raylib pong" }).then(
+        () => null,
+        (error: unknown) => error as { code?: string },
+      );
+      assert.ok(refused, "the night was refused");
+      assert.equal(refused.code, contract.NativeNightRefusal?.PartsMissing, "with the typed code, never by its words");
+      assert.ok(!calls.includes("events.append"), "nothing was promised in the chat");
+    });
+  }
+
+  it("an agent that edited evidence.ts before native keeps it, the fresh native-evidence.ts imports the verdicts from frame-verdicts.ts, and the harness still loads", {
+    skip: vintageMissing,
+  }, async () => {
+    const older = atVintage(["show", `${VINTAGE_COMMIT}:src/harness-seed/loop/evidence.ts`]);
+    assert.ok(older, "the vintage evidence.ts");
+    const { ws, report } = await keptFromBefore("loop/evidence.ts", older);
+    assert.ok(report.kept.includes("loop/evidence.ts"), "the agent's evidence pass is kept");
+    const move = report.moved.find(
+      (entry) => entry.from === "loop/evidence.ts" && entry.to === "loop/frame-verdicts.ts",
+    );
+    assert.ok(move, "the move to frame-verdicts.ts is reported");
+    assert.deepEqual(
+      [...move.names].sort(),
+      ["sameFrameEverywhere", "weighBlackness", "weighDraws", "weighDuplicates"],
+      "the kept copy still defines all four verdicts",
+    );
+    assert.ok(move.callers.includes("loop/native-evidence.ts"), "the native pass runs the shipped verdicts");
+    const verdicts = (await import(pathToFileURL(path.join(ws, "loop", "frame-verdicts.ts")).href)) as Record<
+      string,
+      unknown
+    >;
+    const native = (await import(pathToFileURL(path.join(ws, "loop", "native-evidence.ts")).href)) as Record<
+      string,
+      unknown
+    >;
+    assert.equal(typeof verdicts.weighBlackness, "function");
+    assert.equal(typeof native.nativeEvidence, "function");
+    const main = (await import(`${pathToFileURL(path.join(ws, "loop", "main.ts")).href}?v=${Date.now()}`)) as {
+      createStudio?: unknown;
+    };
+    assert.equal(typeof main.createStudio, "function", "the harness loads beside the kept evidence pass");
+  });
+
+  it("with both callers kept pre-native, the night's first raylib preview load is refused harness-predates-native", async () => {
+    const leased: Array<{ loads: number }> = [];
+    /** A preview port that counts its loads and answers nothing else of note. */
+    const fake = (): PreviewPort => {
+      const record = { loads: 0 };
+      leased.push(record);
+      return {
+        load: async () => {
+          record.loads++;
+          return "";
+        },
+        reload: async () => {},
+        screenshot: async () => Buffer.alloc(0),
+        evaluate: async () => null,
+        studioState: async () => ({}),
+        studioCall: async () => ({}),
+        input: async () => ({ ok: true, applied: 0, width: 1, height: 1 }),
+        consoleEntries: () => [],
+        status: () => ({
+          project: null,
+          url: null,
+          crashed: false,
+          unresponsive: false,
+          loadError: null,
+          consoleErrors: null,
+        }),
+      };
+    };
+    const { core, api } = await coreLite({ preview: fake(), createHeadlessPreview: async () => fake() });
+    const game = {
+      name: "pong",
+      dir: path.join(core.layout.gamesRoot, "pong"),
+      title: "Pong",
+      createdAt: new Date(0).toISOString(),
+      pathLabel: "~/AI Games/pong",
+      library: true,
+      facts: factsOfEngine(GameEngine.Web),
+      shape: {
+        entry: "index.html",
+        main: "src/main.cpp",
+        build: null,
+        install: null,
+        own: false,
+        kind: "raylib-cpp" as const,
+        serve: ".",
+      },
+      built: false,
+      destinations: { stack: "raylib-cpp" as const, targets: ["macos" as const] },
+    };
+    core.games.list = async () => [game];
+    // What a harness from before native support does: a lease that names no target.
+    const { handle } = await api()["preview.acquire"]({ label: "evidence" });
+    const refused = await api()
+      ["preview.load"]({ project: "pong", handle })
+      .then(
+        () => null,
+        (error: unknown) => error as { refusal?: string },
+      );
+    assert.ok(refused, "the load was refused");
+    assert.equal(refused.refusal, "harness-predates-native");
+    assert.deepEqual(
+      leased.map((port) => port.loads),
+      leased.map(() => 0),
+      "nothing was built or loaded",
+    );
+  });
+});
+
+/**
+ * Rust games (M1.6). A seed upgrade keeps every module the in-app agent edited, so a part a Rust
+ * night runs may be the agent's copy of a module from before Rust: it lacks `SERVES_RUST` and
+ * routes by the binary raylib checks it was written with, which would send a Rust game down the
+ * three.js path without a word. The vintage is every module's exports at origin/dev cf4b2c56 (the
+ * public seed the Rust work was ported onto) and the native modules as they were before Rust; the
+ * host refuses such a night by module name and offers to re-take the seed copy, keeping the
+ * agent's edit as a patch.
+ */
+describe("seed upgrade across Rust", () => {
+  const VINTAGE_COMMIT = "cf4b2c56";
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-rust.json", import.meta.url)), "utf8"),
+  ) as { about: string; modules: Record<string, string[]> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+  const repo = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  const atVintage = (args: string[]): string | null => {
+    try {
+      return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return null;
+    }
+  };
+  const vintageMissing =
+    atVintage(["cat-file", "-e", `${VINTAGE_COMMIT}^{commit}`]) === null
+      ? `not run: ${VINTAGE_COMMIT} is not in this clone`
+      : false;
+  const AGENT_EDIT = "\n// the agent's own change\n";
+
+  it("the vintage is every seed module at the Rust baseline, and the native modules it ran", {
+    skip: vintageMissing,
+  }, () => {
+    assert.match(vintage.about, new RegExp(`at origin/dev ${VINTAGE_COMMIT}`));
+    const listed = (atVintage(["ls-tree", "-r", "--name-only", VINTAGE_COMMIT, "--", "src/harness-seed"]) ?? "")
+      .split("\n")
+      .map((file) => file.replace(/^src\/harness-seed\//, ""))
+      .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".d.ts") && !rel.startsWith("types/"));
+    assert.ok(listed.length > 100, "the seed had over a hundred modules");
+    const native = Object.keys(vintage.modules).filter((rel) => !listed.includes(rel));
+    assert.deepEqual(Object.keys(vintage.modules).sort(), [...listed, ...native].sort());
+    for (const rel of native) assert.ok(vintage.about.includes(rel), `${rel} is named as a native module`);
+  });
+
+  it("every part a Rust night runs is a seed module the vintage already had", async () => {
+    assert.ok(RUST_NIGHT_PARTS.length >= 29, "the native parts, the three native modules and the launcher");
+    for (const rel of RUST_NIGHT_PARTS) {
+      assert.ok(await pathExists(path.join(shipped, rel)), `${rel} is shipped`);
+      assert.ok(vintage.modules[rel], `${rel} has a pre-Rust vintage`);
+    }
+  });
+
+  /** The agent's copy of `rel` from before Rust: the module's pre-Rust exports, edited. */
+  const preRustCopy = (rel: string): string =>
+    (vintage.modules[rel] ?? []).map((name) => `export const ${name} = () => ${JSON.stringify(name)};`).join("\n");
+
+  /** One seeded workspace, copied per row: seeding the whole harness once keeps the table fast. */
+  let seededOnce: Promise<{ root: string; ws: string; manifest: string }> | null = null;
+  function seeded() {
+    seededOnce ??= (async () => {
+      const root = await tmpDir("seed-rust-template-");
+      const ws = path.join(root, "workspace");
+      const manifest = path.join(root, "manifest.json");
+      await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+      return { root, ws, manifest };
+    })();
+    return seededOnce;
+  }
+
+  /** A workspace after an upgrade that kept the agent's `text` (default: the module's pre-Rust exports) at each of `rels`. */
+  async function keptFromBefore(rels: readonly string[], text?: (rel: string) => string) {
+    const template = await seeded();
+    const root = await tmpDir("seed-rust-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await cp(template.ws, ws, { recursive: true });
+    await cp(template.manifest, manifest);
+    const kept = new Map<string, string>();
+    for (const rel of rels) {
+      kept.set(rel, `${text?.(rel) ?? preRustCopy(rel)}${AGENT_EDIT}`);
+      await writeFile(path.join(ws, rel), kept.get(rel) ?? "");
+    }
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    return { root, ws, manifest, report, kept };
+  }
+
+  it("an upgrade keeps every pre-Rust part the agent edited, and a Rust night names them all", async () => {
+    const { ws, report, kept } = await keptFromBefore(RUST_NIGHT_PARTS);
+    for (const rel of RUST_NIGHT_PARTS) {
+      assert.ok(report.kept.includes(rel), `${rel} is the agent's`);
+      assert.equal(await readFile(path.join(ws, rel), "utf8"), kept.get(rel), `${rel}: the harness edit is preserved`);
+    }
+    const refusal = await seedNightRefusal(GameStack.RustWgpu, { seedDir: shipped, workspaceDir: ws });
+    assert.deepEqual(refusal, { code: SeedRefusalCode.KeptPreRust, modules: [...RUST_NIGHT_PARTS].sort() });
+  });
+
+  // One row per part a Rust night runs, generated from the vintage: kept from before Rust, the
+  // night is refused by that module's name, never handed to the three.js or raylib rows. The rows
+  // share one seeded workspace (the upgrade that keeps the copy is the row above), each putting
+  // the seed copy back after itself.
+  for (const rel of RUST_NIGHT_PARTS) {
+    it(`RUST-NIGHT. a kept pre-Rust ${rel} refuses a Rust night by name and keeps the edit`, async () => {
+      const { ws } = await seeded();
+      const copy = `${preRustCopy(rel)}${AGENT_EDIT}`;
+      await writeFile(path.join(ws, rel), copy);
+      try {
+        const dirs = { seedDir: shipped, workspaceDir: ws };
+        assert.deepEqual(await keptPreRustParts(dirs), [rel]);
+        assert.deepEqual(await seedNightRefusal(GameStack.RustWgpu, dirs), {
+          code: SeedRefusalCode.KeptPreRust,
+          modules: [rel],
+        });
+        assert.equal(await seedNightRefusal(GameStack.ThreeJs, dirs), null, "a three.js night is not the Rust gate's");
+        assert.equal(await seedNightRefusal(GameStack.RaylibCpp, dirs), null, "a raylib night keeps its own gate");
+        assert.equal(await readFile(path.join(ws, rel), "utf8"), copy, "the harness edit is preserved");
+      } finally {
+        await cp(path.join(shipped, rel), path.join(ws, rel));
+      }
+    });
+  }
+
+  it("a kept native-loop.ts with SERVES_RUST passes, and the edit stays", async () => {
+    const rel = "loop/native-loop.ts";
+    const marked = (at: string) => `${preRustCopy(at)}\nexport const SERVES_RUST = true;\n`;
+    const { ws, report, kept } = await keptFromBefore([rel], marked);
+    assert.ok(report.kept.includes(rel));
+    const dirs = { seedDir: shipped, workspaceDir: ws };
+    assert.deepEqual(await keptPreRustParts(dirs), []);
+    assert.equal(await seedNightRefusal(GameStack.RustWgpu, dirs), null);
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), kept.get(rel));
+  });
+
+  it("a mark only in a comment, or set false, does not serve Rust", async () => {
+    const rel = "loop/native-loop.ts";
+    for (const mark of ["// export const SERVES_RUST = true;", "export const SERVES_RUST = false;"]) {
+      const { ws } = await keptFromBefore([rel], () => `export const nightStack = () => null;\n${mark}\n`);
+      assert.deepEqual(await keptPreRustParts({ seedDir: shipped, workspaceDir: ws }), [rel], mark);
+    }
+  });
+
+  it("names every kept pre-Rust part, a deleted one included, and leaves untouched modules out", async () => {
+    const { ws } = await keptFromBefore(["loop/native-loop.ts", "loop/gauntlet.ts"]);
+    await rm(path.join(ws, "loop/judge.ts"));
+    const refusal = await seedNightRefusal(GameStack.RustWgpu, { seedDir: shipped, workspaceDir: ws });
+    assert.deepEqual(refusal?.modules, ["loop/gauntlet.ts", "loop/judge.ts", "loop/native-loop.ts"]);
+  });
+
+  it("a FIFO, a link or a folder at a part a Rust night runs is kept and never opened, so the check returns", {
+    skip: process.platform === "win32" ? "not run: mkfifo is POSIX" : false,
+    timeout: 10_000,
+  }, async () => {
+    const { root, ws } = await keptFromBefore([]);
+    const outside = path.join(root, "outside.ts");
+    await writeFile(outside, "export const SERVES_RUST = true;\n");
+    const fifo = "loop/run-dispatch.ts";
+    const linked = "loop/gauntlet.ts";
+    const folder = "loop/judge.ts";
+    for (const rel of [fifo, linked, folder]) await rm(path.join(ws, rel));
+    execFileSync("mkfifo", [path.join(ws, fifo)]);
+    await symlink(outside, path.join(ws, linked));
+    await mkdir(path.join(ws, folder));
+    const dirs = { seedDir: shipped, workspaceDir: ws };
+    assert.deepEqual(await keptPreRustParts(dirs), [linked, folder, fifo].sort(), "a link's target carries nothing");
+    assert.deepEqual((await seedNightRefusal(GameStack.RustWgpu, dirs))?.modules, [linked, folder, fifo].sort());
+    assert.equal(await readFile(outside, "utf8"), "export const SERVES_RUST = true;\n");
+  });
+
+  /** `git apply` of `patch` onto a folder holding `base` at `rel`: the bytes it leaves there, or null when it removed the file. */
+  async function applied(patchFile: string, rel: string, base: string | null): Promise<string | null> {
+    const dir = await tmpDir("seed-rust-apply-");
+    if (base !== null) {
+      await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+      await writeFile(path.join(dir, rel), base);
+    }
+    execFileSync("git", ["apply", patchFile], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    return (await pathExists(path.join(dir, rel))) ? readFile(path.join(dir, rel), "utf8") : null;
+  }
+
+  it("re-taking the seed copy keeps the agent's diff as a patch, and the module is the app's again", async () => {
+    const rel = "loop/native-loop.ts";
+    // The seed copy as the seeded workspace holds it, which the agent then edits.
+    const current = await readFile(path.join((await seeded()).ws, rel), "utf8");
+    const edited = `// the agent's preface\n${current}export const agentHelper = () => 1;\n`;
+    const { root, ws, manifest } = await keptFromBefore([rel], () => edited);
+    const agentCopy = await readFile(path.join(ws, rel), "utf8");
+    const patchDir = path.join(root, "retake");
+    const result = await retakeSeedModule({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      patchDir,
+      rel,
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(result.base, RetakeBase.LastApplied, "the seed copy the agent edited is the one shipped");
+    assert.equal(await applied(result.patchFile, rel, current), agentCopy, "the patch is exactly the agent's diff");
+    assert.equal(await readFile(result.keptFile ?? "", "utf8"), agentCopy, "the whole edited copy is kept too");
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), current, "the workspace runs the seed copy");
+    assert.deepEqual(await keptPreRustParts({ seedDir: shipped, workspaceDir: ws }), []);
+    const next = await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    assert.ok(!next.kept.includes(rel), "the next upgrade reads the module as the app's");
+  });
+
+  it("re-taking diffs against the vintage the agent edited when an upgrade backed it up", async () => {
+    const { seed, ws, manifest } = await rig();
+    const rel = "loop/turn-loop.mjs";
+    const root = path.dirname(seed);
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    const updates = path.join(root, "updates");
+    await mkdir(path.join(updates, "seed-backup-1", "loop"), { recursive: true });
+    await writeFile(path.join(updates, "seed-backup-1", rel), "// v1 turn loop\n");
+    const agentCopy = "// v1 turn loop\n// the agent's fix\n";
+    await writeFile(path.join(ws, rel), agentCopy);
+    await writeFile(path.join(seed, rel), "// v2 turn loop\n");
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    const result = await retakeSeedModule({
+      seedDir: seed,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      updatesDir: updates,
+      patchDir: path.join(root, "retake"),
+      rel,
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(result.base, RetakeBase.LastApplied);
+    assert.equal(await applied(result.patchFile, rel, "// v1 turn loop\n"), agentCopy);
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), "// v2 turn loop\n");
+  });
+
+  it("re-taking diffs against the shipped copy when the edited vintage is gone", async () => {
+    const { seed, ws, manifest } = await rig();
+    const rel = "loop/turn-loop.mjs";
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    const agentCopy = "// v1 turn loop\n// the agent's fix\n";
+    await writeFile(path.join(ws, rel), agentCopy);
+    await writeFile(path.join(seed, rel), "// v2 turn loop\n");
+    const result = await retakeSeedModule({
+      seedDir: seed,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      patchDir: path.join(path.dirname(seed), "retake"),
+      rel,
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(result.base, RetakeBase.Shipped);
+    assert.equal(await applied(result.patchFile, rel, "// v2 turn loop\n"), agentCopy);
+  });
+
+  it("re-taking a module the agent deleted keeps the deletion as a patch and lays the seed copy down", async () => {
+    const { seed, ws, manifest } = await rig();
+    const rel = "loop/turn-loop.mjs";
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    await rm(path.join(ws, rel));
+    const result = await retakeSeedModule({
+      seedDir: seed,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      patchDir: path.join(path.dirname(seed), "retake"),
+      rel,
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(result.keptFile, null);
+    assert.equal(await applied(result.patchFile, rel, "// v1 turn loop\n"), null, "the agent's diff is a deletion");
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), "// v1 turn loop\n");
+  });
+
+  /** Every file under `dir` with its bytes, for a no-side-effect assertion. */
+  async function snapshot(dir: string): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    const visit = async (at: string, prefix: string) => {
+      for (const entry of await readdir(at, { withFileTypes: true })) {
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) await visit(path.join(at, entry.name), rel);
+        else if (entry.isSymbolicLink()) out[rel] = `-> ${await readlink(path.join(at, entry.name))}`;
+        else out[rel] = await readFile(path.join(at, entry.name), "utf8");
+      }
+    };
+    await visit(dir, "");
+    return out;
+  }
+
+  const HOSTILE_RETAKES: ReadonlyArray<{ name: string; rel: string; code: RetakeRefusalCode }> = [
+    { name: "a parent escape", rel: "../outside/secret.mjs", code: RetakeRefusalCode.InvalidPath },
+    { name: "a nested parent escape", rel: "loop/../../outside/secret.mjs", code: RetakeRefusalCode.InvalidPath },
+    { name: "an absolute path", rel: "/etc/hosts", code: RetakeRefusalCode.InvalidPath },
+    { name: "an empty path", rel: "", code: RetakeRefusalCode.InvalidPath },
+    { name: "a backslash", rel: "loop\\turn-loop.mjs", code: RetakeRefusalCode.InvalidPath },
+    { name: "a NUL byte", rel: "loop/turn-loop.mjs\0", code: RetakeRefusalCode.InvalidPath },
+    { name: "a file the seed does not ship", rel: "loop/homegrown.mjs", code: RetakeRefusalCode.NotSeedFile },
+    { name: "a module the agent did not change", rel: "package.json", code: RetakeRefusalCode.NotKept },
+    { name: "a workspace file linked outside", rel: "loop/turn-loop.mjs", code: RetakeRefusalCode.NotPlainFile },
+    { name: "a workspace folder linked outside", rel: "loop/main.mjs", code: RetakeRefusalCode.NotPlainFile },
+  ];
+
+  for (const row of HOSTILE_RETAKES) {
+    it(`RETAKE-HOSTILE. ${row.name} is refused typed, with no side effect`, async () => {
+      const { seed, ws, manifest } = await rig();
+      const root = path.dirname(seed);
+      await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+      const outside = path.join(root, "outside");
+      await mkdir(outside, { recursive: true });
+      await writeFile(path.join(outside, "secret.mjs"), "// not the studio's\n");
+      await writeFile(path.join(outside, "main.mjs"), "// not the studio's either\n");
+      await writeFile(path.join(ws, "loop", "homegrown.mjs"), "// the agent's own\n");
+      if (row.code === RetakeRefusalCode.NotPlainFile && row.rel.endsWith("turn-loop.mjs")) {
+        await rm(path.join(ws, row.rel));
+        await symlink(path.join(outside, "secret.mjs"), path.join(ws, row.rel));
+      }
+      if (row.code === RetakeRefusalCode.NotPlainFile && row.rel.endsWith("main.mjs")) {
+        await rm(path.join(ws, "loop"), { recursive: true });
+        await symlink(outside, path.join(ws, "loop"));
+      }
+      const before = {
+        ws: await snapshot(ws),
+        outside: await snapshot(outside),
+        manifest: await readFile(manifest, "utf8"),
+      };
+      const patchDir = path.join(root, "retake");
+      const result = await retakeSeedModule({
+        seedDir: seed,
+        workspaceDir: ws,
+        manifestFile: manifest,
+        patchDir,
+        rel: row.rel,
+      });
+      assert.deepEqual(result, { ok: false, code: row.code });
+      assert.deepEqual(await snapshot(ws), before.ws, "the workspace is untouched");
+      assert.deepEqual(await snapshot(outside), before.outside, "nothing outside was read into place or written");
+      assert.equal(await readFile(manifest, "utf8"), before.manifest, "the manifest is untouched");
+      assert.equal(await pathExists(patchDir), false, "no patch was written");
+    });
+  }
+
+  it("RETAKE-HOSTILE. a FIFO at the module is refused typed and never opened, with no side effect", {
+    skip: process.platform === "win32" ? "not run: mkfifo is POSIX" : false,
+    timeout: 10_000,
+  }, async () => {
+    const { seed, ws, manifest } = await rig();
+    const rel = "loop/turn-loop.mjs";
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    await rm(path.join(ws, rel));
+    execFileSync("mkfifo", [path.join(ws, rel)]);
+    const manifestBefore = await readFile(manifest, "utf8");
+    const patchDir = path.join(path.dirname(seed), "retake");
+    const result = await retakeSeedModule({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, patchDir, rel });
+    assert.deepEqual(result, { ok: false, code: RetakeRefusalCode.NotPlainFile });
+    assert.equal(await readFile(manifest, "utf8"), manifestBefore, "the manifest is untouched");
+    assert.equal(await pathExists(patchDir), false, "no patch was written");
+  });
+
+  it("refuses to overwrite an earlier patch, with no side effect", async () => {
+    const { seed, ws, manifest } = await rig();
+    const rel = "loop/turn-loop.mjs";
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest });
+    await writeFile(path.join(ws, rel), "// edited\n");
+    const patchDir = path.join(path.dirname(seed), "retake");
+    await mkdir(path.join(patchDir, "loop"), { recursive: true });
+    await writeFile(path.join(patchDir, `${rel}.patch`), "an earlier re-take\n");
+    const result = await retakeSeedModule({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, patchDir, rel });
+    assert.deepEqual(result, { ok: false, code: RetakeRefusalCode.PatchExists });
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), "// edited\n");
+    assert.equal(await readFile(path.join(patchDir, `${rel}.patch`), "utf8"), "an earlier re-take\n");
+  });
+
+  it("the notice names each kept module with the re-take remedy, and says nothing without a refusal", () => {
+    assert.equal(keptPreRustNotice(null), null);
+    const notice = keptPreRustNotice({
+      code: SeedRefusalCode.KeptPreRust,
+      modules: ["loop/gauntlet.ts", "loop/native-loop.ts"],
+    });
+    assert.deepEqual(notice?.remedies, [
+      { module: "loop/gauntlet.ts", remedy: SeedRemedy.RetakeSeedCopy },
+      { module: "loop/native-loop.ts", remedy: SeedRemedy.RetakeSeedCopy },
+    ]);
+    assert.equal(notice?.code, SeedRefusalCode.KeptPreRust);
+    for (const module of ["loop/gauntlet.ts", "loop/native-loop.ts"]) assert.ok(notice?.text.includes(module));
+  });
+
+  it("the agent's note after a re-take says where its edit went, within the memory limit", () => {
+    const note = seedRetakeNote({
+      rel: "loop/native-loop.ts",
+      patchFile: `/updates/seed-retake/${"deep/".repeat(80)}loop/native-loop.ts.patch`,
+    });
+    assert.ok(note.length <= 300, `${note.length} chars`);
+    assert.ok(note.includes("loop/native-loop.ts"));
   });
 });
 

@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Genex game</title>
+    <link rel="icon" href="data:," />
+    <!--
+      The web shell of a rust-wgpu game (M0a.7; scripts/spike/rust-wgpu/web.sh copies it next to
+      the wasm-bindgen output as index.html, beside game.js and game_bg.wasm).
+
+      WebGPU is the minimum; there is no fallback renderer. Before the game's module is fetched the
+      shell checks for navigator.gpu, an adapter, and adapter limits at WebGPU's defaults; then
+      studio_boot runs the renderer's own floor check. Any refusal shows the "needs WebGPU" page with
+      the typed code gpu-unsupported, and the game never starts.
+
+      Page contract: window.__studio (version 1) as the C++ web shell's. Every verb goes through the
+      one studio_call export (genex-studio's Studio::web(): the {id:null, ok, op, result} envelope
+      the C++ webCall answers, the shared ops only) and is bound with the C++ shell's VERBS table and
+      page shapes. capture(camera) draws that view, awaits studio_capture (top-down BGRA from the
+      world target) and hands the PNG to the studio's capture shim (window.__studioCapture), as the
+      C++ shell does. Each is bound only when its export exists (studio_call for the verbs,
+      studio_capture for capture), as the C++ shell binds each verb. Spike-only extras, absent from
+      the game template's shell: captureRaw() (the BGRA bytes and their FNV-1a-64 digest) and
+      selfTest(ticks, seed, demo). window.GenexShell.status = {state: "starting" | "running" |
+      "unsupported" | "failed", code, reason, limit, receipt}.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --page: #f4f1ea;
+        --card: #ffffff;
+        --ink: #1d1f24;
+        --muted: #5b606b;
+        --rule: #dcd6ca;
+        --accent: #2b6cb0;
+        --stage: #12141c;
+        --radius: 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --page: #12141c;
+          --card: #1c1f29;
+          --ink: #eceae4;
+          --muted: #a3a7b2;
+          --rule: #2e3240;
+          --accent: #7fb2ec;
+        }
+      }
+      :root[data-theme="dark"] {
+        --page: #12141c;
+        --card: #1c1f29;
+        --ink: #eceae4;
+        --muted: #a3a7b2;
+        --rule: #2e3240;
+        --accent: #7fb2ec;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--stage);
+        color: var(--ink);
+        font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #game {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+        touch-action: none;
+      }
+      #game[hidden] {
+        display: none;
+      }
+      body.unsupported {
+        background: var(--page);
+        overflow: auto;
+      }
+      #unsupported {
+        box-sizing: border-box;
+        max-width: 38rem;
+        margin: 0 auto;
+        padding: 12vh 16px 48px;
+      }
+      #unsupported[hidden] {
+        display: none;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius);
+        padding: 28px 28px 20px;
+      }
+      .card h1 {
+        margin: 0 0 8px;
+        font-size: 1.5rem;
+        line-height: 1.25;
+        text-wrap: balance;
+      }
+      .card h2 {
+        margin: 20px 0 6px;
+        font-size: 0.8rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .card p,
+      .card li {
+        color: var(--ink);
+      }
+      .card ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+      .card .excluded {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .card footer {
+        margin-top: 20px;
+        padding-top: 12px;
+        border-top: 1px solid var(--rule);
+        color: var(--muted);
+        font-size: 0.85rem;
+        overflow-wrap: anywhere;
+      }
+      .card code {
+        font: 0.85rem ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" tabindex="0" aria-label="Game" hidden></canvas>
+    <main id="unsupported" hidden>
+      <section class="card" role="alert" aria-labelledby="unsupported-title">
+        <h1 id="unsupported-title">This game needs WebGPU</h1>
+        <p>
+          Your browser or graphics hardware does not offer WebGPU, which this game draws with. There is no
+          fallback, so the game cannot start here.
+        </p>
+        <h2>Supported browsers</h2>
+        <ul>
+          <li>Chrome or Edge on Windows, macOS and ChromeOS</li>
+          <li>Chrome on Android, on supported GPUs</li>
+          <li>Safari 26 on macOS, iOS and iPadOS</li>
+          <li>Firefox 141 or later on Windows, Firefox 147 or later on macOS</li>
+        </ul>
+        <h2>Not supported</h2>
+        <p class="excluded">
+          Firefox on Linux and Android, Safari before 26, Chrome on Linux outside its WebGPU GPU list, and any
+          browser with WebGPU turned off.
+        </p>
+        <footer>
+          Code <code data-genex-code>gpu-unsupported</code>
+          <span data-genex-reason></span>
+        </footer>
+      </section>
+    </main>
+    <script type="module">
+      /** WebGPU's default limits (wgpu's Limits::defaults()): an adapter below any is below core. */
+      const CORE_MAXIMA = {
+        maxTextureDimension1D: 8192,
+        maxTextureDimension2D: 8192,
+        maxTextureDimension3D: 2048,
+        maxTextureArrayLayers: 256,
+        maxBindGroups: 4,
+        maxBindingsPerBindGroup: 1000,
+        maxDynamicUniformBuffersPerPipelineLayout: 8,
+        maxDynamicStorageBuffersPerPipelineLayout: 4,
+        maxSampledTexturesPerShaderStage: 16,
+        maxSamplersPerShaderStage: 16,
+        maxStorageBuffersPerShaderStage: 8,
+        maxStorageTexturesPerShaderStage: 4,
+        maxUniformBuffersPerShaderStage: 12,
+        maxUniformBufferBindingSize: 65536,
+        maxStorageBufferBindingSize: 134217728,
+        maxVertexBuffers: 8,
+        maxBufferSize: 268435456,
+        maxVertexAttributes: 16,
+        maxVertexBufferArrayStride: 2048,
+        maxColorAttachments: 8,
+        maxComputeWorkgroupStorageSize: 16384,
+        maxComputeInvocationsPerWorkgroup: 256,
+        maxComputeWorkgroupSizeX: 256,
+        maxComputeWorkgroupSizeY: 256,
+        maxComputeWorkgroupSizeZ: 64,
+        maxComputeWorkgroupsPerDimension: 65535,
+      };
+      /** Alignments, which an adapter may only lower. */
+      const CORE_ALIGNMENTS = { minUniformBufferOffsetAlignment: 256, minStorageBufferOffsetAlignment: 256 };
+      const GPU_UNSUPPORTED = "gpu-unsupported";
+      const Reason = {
+        NoWebGpu: "no-webgpu",
+        NoAdapter: "no-adapter",
+        LimitBelowCore: "limit-below-core",
+      };
+      const State = { Starting: "starting", Running: "running", Unsupported: "unsupported", Failed: "failed" };
+      /** One live frame feeds the simulation at most this long (the runtime caps it too). */
+      const MAX_FRAME_MS = 250;
+
+      const canvas = document.getElementById("game");
+      const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
+      const shell = { status, module: null };
+      window.GenexShell = shell;
+
+      function firstLimitBelowCore(limits) {
+        for (const [name, least] of Object.entries(CORE_MAXIMA)) {
+          if (!(Number(limits?.[name]) >= least)) return name;
+        }
+        for (const [name, most] of Object.entries(CORE_ALIGNMENTS)) {
+          if (!(Number(limits?.[name]) <= most)) return name;
+        }
+        return null;
+      }
+
+      /** The refusal before anything is fetched, or null when the browser looks like WebGPU core. */
+      async function preflight() {
+        if (!("gpu" in navigator) || !navigator.gpu) return { reason: Reason.NoWebGpu };
+        let adapter = null;
+        try {
+          adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+        } catch {
+          adapter = null;
+        }
+        if (!adapter) return { reason: Reason.NoAdapter };
+        const limit = firstLimitBelowCore(adapter.limits);
+        return limit ? { reason: Reason.LimitBelowCore, limit } : null;
+      }
+
+      function showUnsupported(refusal) {
+        Object.assign(status, {
+          state: State.Unsupported,
+          code: refusal.code ?? GPU_UNSUPPORTED,
+          reason: refusal.reason ?? null,
+          limit: refusal.limit ?? null,
+        });
+        canvas.hidden = true;
+        document.body.classList.add("unsupported");
+        document.querySelector("[data-genex-code]").textContent = status.code;
+        const detail = [status.reason, status.limit].filter(Boolean).join(": ");
+        document.querySelector("[data-genex-reason]").textContent = detail ? `(${detail})` : "";
+        document.getElementById("unsupported").hidden = false;
+      }
+
+      /** The canvas's drawing buffer at its displayed size in device pixels (left alone when already there). */
+      function fitCanvas() {
+        const ratio = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+        const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+      }
+
+      /**
+       * Keep the canvas at its displayed size from the moment it is shown. The studio's Live view
+       * can get its size while studio_boot still runs (it keeps a loading page at no size), so a
+       * listener added after the boot missed it and the game drew into a 1×1 canvas: black.
+       */
+      function followCanvasSize() {
+        fitCanvas();
+        window.addEventListener("resize", fitCanvas);
+        if (typeof ResizeObserver === "function") new ResizeObserver(fitCanvas).observe(canvas);
+      }
+
+      function hex(bytes) {
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+
+      /** A PNG of a capture for the page contract (the digest stays the BGRA bytes'). */
+      function pngOf(capture) {
+        const rgba = new Uint8ClampedArray(capture.bgra.length);
+        for (let i = 0; i < rgba.length; i += 4) {
+          rgba[i] = capture.bgra[i + 2];
+          rgba[i + 1] = capture.bgra[i + 1];
+          rgba[i + 2] = capture.bgra[i];
+          rgba[i + 3] = capture.bgra[i + 3];
+        }
+        const board = document.createElement("canvas");
+        board.width = capture.width;
+        board.height = capture.height;
+        board.getContext("2d").putImageData(new ImageData(rgba, capture.width, capture.height), 0, 0);
+        return board.toDataURL("image/png");
+      }
+
+      /** [verb, op, the argument built from the verb's parameter, the answer read from the result] (the C++ shell's table). */
+      const VERBS = [
+        ["seed", "seed", (n) => ({ seed: n }), (r) => r.seed],
+        ["start", "start", () => ({}), () => true],
+        ["pause", "pause", () => ({}), () => true],
+        ["step", "step", (ms) => ({ ms }), (r) => r],
+        ["state", "state", () => ({}), (r) => r],
+        ["input", "input", (arg) => arg ?? {}, (r) => r],
+        ["debugCamera", "debugCamera", (name) => ({ camera: name ?? null }), (r) => r],
+        ["cameras", "cameras", () => ({}), (r) => r.cameras],
+        ["eyes", "eyes", () => ({}), (r) => r.eyes],
+        ["demos", "demos", () => ({}), (r) => r.demos],
+        ["demo", "demo", (name) => ({ name }), (r) => r],
+      ];
+      /** What a verb the game refused answers on the page: its code, which the studio reads as a native game's refusal. */
+      const REFUSED = "__refused";
+
+      /** One op through studio_call: the argument goes in as JSON and the envelope comes back as JSON. */
+      function call(game, op, arg) {
+        const reply = JSON.parse(game.studio_call(op, JSON.stringify(arg ?? null)));
+        if (reply?.ok === true) return reply.result;
+        console.warn(`${op}: ${reply?.error}`);
+        return undefined;
+      }
+
+      /** Hand a picture to the capture shim; an older shim only notes it, and without one it is returned as taken. */
+      async function throughCaptureShim(url, record) {
+        const shim = window.__studioCapture;
+        if (typeof shim?.paint === "function") {
+          const painted = await Promise.resolve()
+            .then(() => shim.paint(url, record))
+            .catch(() => null);
+          return painted || url;
+        }
+        try {
+          shim?.note?.({ ...record, composited: false });
+        } catch {
+          /* an older shim has no note to take */
+        }
+        return url;
+      }
+
+      /** The verbs whose page-contract shape differs from the op's (the C++ shell's bindPageShapes). */
+      function bindPageShapes(game, api) {
+        api.injectInput = (input) => {
+          const look = { x: input?.look?.dx || 0, y: input?.look?.dy || 0 };
+          const wheel = { x: input?.wheel?.dx || 0, y: input?.wheel?.dy || 0 };
+          const result = call(game, "input", { down: input?.down ?? [], up: input?.up ?? [], look, wheel });
+          return { keys: result?.held ?? [], look, wheel };
+        };
+        api.eye = (name) => api.debugCamera(name);
+        /** The renderer's quality, read (`{}`) or changed (`{set}`), as the native op; a refusal answers `{__refused: code}`. */
+        api.renderSettings = (arg) => {
+          const reply = JSON.parse(game.studio_call("renderSettings", JSON.stringify(arg ?? {})));
+          return reply?.ok === true ? reply.result : { [REFUSED]: String(reply?.error ?? "") };
+        };
+        api.player = () => api.state()?.player ?? null;
+        /** `audio({muted})` mutes; `audio()` is the level probe, which the web build does not measure. */
+        api.audio = (arg) => {
+          if (typeof arg?.muted !== "boolean") return { available: false, rms: 0, centroid: 0 };
+          return call(game, "audio", { muted: arg.muted });
+        };
+        // Bound only when the module exports its capture, as the C++ shell binds each verb.
+        if (typeof game.studio_capture !== "function") return;
+        /** Draws the view, awaits the world-target readback and goes through the capture shim; never the canvas. */
+        api.capture = async (camera) => {
+          const result = call(game, "capture", camera ? { camera } : {});
+          if (result === undefined) return null;
+          const url = pngOf(await game.studio_capture());
+          const record = {
+            reason: url ? null : "the game's own capture produced no image",
+            drawCalls: result.drawCalls ?? null,
+            ladder: ["render"],
+          };
+          return throughCaptureShim(url, record);
+        };
+      }
+
+      function bindStudio(game) {
+        const api = { version: 1 };
+        // Every verb goes through studio_call: a module without it gets no verbs (the C++ shell's rule).
+        if (typeof game.studio_call === "function") {
+          for (const [verb, op, argument, answer] of VERBS) {
+            api[verb] = (value) => {
+              const result = call(game, op, argument(value));
+              return result === undefined ? undefined : answer(result);
+            };
+          }
+          bindPageShapes(game, api);
+        }
+        // Spike only: the BGRA bytes and their digest, and the self-test record (M0a.7 parity rows).
+        // The game template's shell has neither (src/game-template-rust/web/shell.html).
+        if (typeof game.studio_capture === "function") api.captureRaw = () => game.studio_capture();
+        if (typeof game.studio_self_test === "function") {
+          api.selfTest = (ticks, seed = 1, demo = "cast") =>
+            game.studio_self_test(ticks >>> 0, seed >>> 0, String(demo)).then((text) => JSON.parse(text));
+        }
+        window.__studio = api;
+        shell.hex = hex;
+      }
+
+      function run(game) {
+        let last = performance.now();
+        const frame = (now) => {
+          const ms = Math.min(MAX_FRAME_MS, Math.max(0, now - last));
+          last = now;
+          try {
+            game.studio_frame(ms);
+          } catch (error) {
+            Object.assign(status, { state: State.Failed, code: "frame-failed", reason: String(error?.message ?? error) });
+            return;
+          }
+          requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }
+
+      function listen(game) {
+        const keyEvent = (field) => (event) => {
+          if (event.repeat) return;
+          call(game, "input", { [field]: [event.code] });
+          event.preventDefault();
+        };
+        canvas.addEventListener("keydown", keyEvent("down"));
+        canvas.addEventListener("keyup", keyEvent("up"));
+        canvas.addEventListener("pointerdown", (event) => {
+          const box = canvas.getBoundingClientRect();
+          const pointer = { x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height };
+          call(game, "input", { pointer, tap: ["Mouse1"] });
+          canvas.focus();
+        });
+      }
+
+      async function boot() {
+        const refusal = await preflight();
+        if (refusal) return showUnsupported(refusal);
+        const params = new URLSearchParams(location.search);
+        const game = await import("./game.js");
+        await game.default();
+        shell.module = game;
+        canvas.hidden = false;
+        followCanvasSize();
+        const answer = JSON.parse(await game.studio_boot(canvas));
+        if (!answer.ok) {
+          canvas.hidden = true;
+          return showUnsupported(answer);
+        }
+        Object.assign(status, { state: State.Running, receipt: answer.receipt });
+        bindStudio(game);
+        listen(game);
+        if (!params.has("paused")) window.__studio.start();
+        run(game);
+      }
+
+      boot().catch((error) => {
+        Object.assign(status, { state: State.Failed, code: "boot-failed", reason: String(error?.message ?? error) });
+        console.error(error);
+      });
+    </script>
+  </body>
+</html>

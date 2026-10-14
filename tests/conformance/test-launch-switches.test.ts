@@ -12,6 +12,7 @@ import {
   quitsWhenLastWindowCloses,
   testLaunchChromiumSwitches,
 } from "../../src/main/dev/launch-flags.ts";
+import * as launchFlags from "../../src/main/dev/launch-flags.ts";
 
 test("a Windows test launch turns off native occlusion tracking for its parked window", () => {
   assert.deepEqual(testLaunchChromiumSwitches({ platform: "win32", testLaunch: true }), [
@@ -34,6 +35,53 @@ test("closing the last window quits a normal launch off macOS, never a test laun
   assert.equal(quitsWhenLastWindowCloses({ platform: "darwin", testLaunch: false }), false);
   assert.equal(quitsWhenLastWindowCloses({ platform: "win32", testLaunch: true }), false);
   assert.equal(quitsWhenLastWindowCloses({ platform: "linux", testLaunch: true }), false);
+});
+
+test("C++ package acceptance uses only an explicitly isolated smoke launch", () => {
+  assert.equal(launchFlags.cppAcceptanceLaunch([]), false);
+  assert.equal(launchFlags.cppAcceptanceLaunch(["--studio-smoke"]), false);
+  assert.equal(launchFlags.cppAcceptanceLaunch(["--studio-smoke", "--studio-cpp-acceptance"]), true);
+});
+
+test("C++ acceptance refuses a normal-profile launch before it can initialize", () => {
+  assert.throws(() => launchFlags.cppAcceptanceLaunch(["--studio-cpp-acceptance"]), /requires --studio-smoke/);
+});
+
+test("C++ acceptance cannot select another test lane or developer launch", () => {
+  for (const other of [
+    "--studio-selftest",
+    "--studio-dev-launch=/not-an-owned-launch.json",
+    "--studio-provider-acceptance=/tmp/live",
+    "--studio-bonsai-acceptance=/tmp/live",
+    "--studio-eval-lane=/tmp/spec.json",
+    "--studio-terminal-smoke",
+    "--studio-build-smoke",
+  ]) {
+    assert.throws(
+      () => launchFlags.cppAcceptanceLaunch(["--studio-smoke", "--studio-cpp-acceptance", other]),
+      /cannot be combined/,
+      other,
+    );
+  }
+});
+
+test("Rust package acceptance uses only an explicitly isolated smoke launch", () => {
+  assert.equal(launchFlags.rustAcceptanceLaunch([]), false);
+  assert.equal(launchFlags.rustAcceptanceLaunch(["--studio-smoke"]), false);
+  assert.equal(launchFlags.rustAcceptanceLaunch(["--studio-smoke", "--studio-rust-acceptance"]), true);
+  assert.throws(() => launchFlags.rustAcceptanceLaunch(["--studio-rust-acceptance"]), /requires --studio-smoke/);
+});
+
+test("the C++ and Rust acceptances cannot run in one launch, nor with another lane", () => {
+  const both = ["--studio-smoke", "--studio-cpp-acceptance", "--studio-rust-acceptance"];
+  assert.throws(() => launchFlags.cppAcceptanceLaunch(both), /cannot be combined/);
+  assert.throws(() => launchFlags.rustAcceptanceLaunch(both), /cannot be combined/);
+  for (const other of ["--studio-selftest", "--studio-dev-launch=/x.json", "--studio-eval-lane=/x.json"])
+    assert.throws(
+      () => launchFlags.rustAcceptanceLaunch(["--studio-smoke", "--studio-rust-acceptance", other]),
+      /Rust acceptance cannot be combined/,
+      other,
+    );
 });
 
 // Electron 43 picks `basic_text` (a public key) on desktops Chromium does not recognise, such as

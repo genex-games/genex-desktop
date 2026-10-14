@@ -25,6 +25,10 @@ export const StudioFlag = {
   /** `=<png>`: where the computer smoke saves its screenshot. */
   ComputerShot: "--studio-computer-shot",
   TerminalSmoke: "--studio-terminal-smoke",
+  /** The shipped Linux UI and C++ creation IPC, fixture-only inside a disposable smoke profile. */
+  CppAcceptance: "--studio-cpp-acceptance",
+  /** The shipped Rust · wgpu payload, release gate and cold Rust store, fixture-only inside a disposable smoke profile. */
+  RustAcceptance: "--studio-rust-acceptance",
   /** `=<png>`: where the smoke saves the sign-in screenshot. */
   LoginShot: "--studio-login-shot",
   /** `=<png>`: a PNG of the smoke window when it finishes. */
@@ -144,4 +148,42 @@ export function hasFlag(flag: StudioFlag, argv: readonly string[] = process.argv
 /** The value of `flag=value` on the command line, or undefined when the switch is absent. */
 export function flagValue(flag: StudioFlag | ExpectedStatusFlag, argv: readonly string[] = process.argv) {
   return argv.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1);
+}
+
+/** Launch lanes an isolated package acceptance never runs beside. */
+const ACCEPTANCE_EXCLUDES: readonly StudioFlag[] = [
+  StudioFlag.SelfTest,
+  StudioFlag.Dev,
+  StudioFlag.DevLaunch,
+  StudioFlag.ProviderAcceptance,
+  StudioFlag.BonsaiAcceptance,
+  StudioFlag.EvalLane,
+  StudioFlag.TerminalSmoke,
+  StudioFlag.BuildSmoke,
+  StudioFlag.ComputerSmoke,
+  StudioFlag.CppAcceptance,
+  StudioFlag.RustAcceptance,
+];
+
+/**
+ * Whether `flag`'s isolated package acceptance runs: only inside a smoke launch, and alone. Throws
+ * before main chooses or initializes any application profile otherwise.
+ */
+function isolatedAcceptance(flag: StudioFlag, label: string, argv: readonly string[]): boolean {
+  if (!hasFlag(flag, argv)) return false;
+  if (!hasFlag(StudioFlag.Smoke, argv)) throw new Error(`${label} acceptance requires --studio-smoke`);
+  const others = ACCEPTANCE_EXCLUDES.filter((other) => other !== flag);
+  if (others.some((other) => hasFlag(other, argv) || flagValue(other, argv) !== undefined))
+    throw new Error(`${label} acceptance cannot be combined with another launch lane`);
+  return true;
+}
+
+/** Validate this isolated lane before main chooses or initializes any application profile. */
+export function cppAcceptanceLaunch(argv: readonly string[] = process.argv): boolean {
+  return isolatedAcceptance(StudioFlag.CppAcceptance, "C++", argv);
+}
+
+/** The Rust · wgpu package acceptance (`smoke/rust-acceptance.ts`), validated as {@link cppAcceptanceLaunch} is. */
+export function rustAcceptanceLaunch(argv: readonly string[] = process.argv): boolean {
+  return isolatedAcceptance(StudioFlag.RustAcceptance, "Rust", argv);
 }

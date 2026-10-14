@@ -5,7 +5,13 @@
  */
 import type { JSX, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../ui/dropdown-menu.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+} from "../ui/dropdown-menu.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { Shortcut } from "../ui/Shortcut.tsx";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip.tsx";
@@ -13,7 +19,9 @@ import { formatTokens } from "../chat-labels.ts";
 import { TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
 import type { ContextUsage } from "../../shared/context.ts";
 import { hostPlatform } from "../platform.ts";
-import { fileManagerWords, freeGameWords, freeSpaceWords } from "../words.ts";
+import { EXPORT_WORDS, fileManagerWords, freeGameWords, freeSpaceWords } from "../words.ts";
+import type { BuildTarget } from "../../shared/game-project.ts";
+import { exportDestinationLabel, useExportCaveat, useExportDestinations } from "../chat/use-chat-export.ts";
 import type { GameStorage } from "../chat/use-game-storage.ts";
 import { freeableBytes } from "../../shared/storage-space.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
@@ -30,7 +38,8 @@ interface Props {
   onCompact: () => void;
   onRename: (title: string) => void;
   onReveal?: () => void;
-  onExport?: () => void;
+  /** Exports the game: to the browser folder when no destination is named, as a three.js game always does. */
+  onExport?: (destination?: BuildTarget) => void;
   exporting?: boolean;
   /** A game chat's space and freeing it (the Free button, once it is worth it). */
   storage?: GameStorage;
@@ -191,6 +200,49 @@ function ChatTitle({
   );
 }
 
+/** A destination's item words: its label, and under it the caveat when its export has one. */
+function ExportDestinationWords({ destination, caveat }: { destination: BuildTarget; caveat: string | null }) {
+  if (!caveat) return <>{exportDestinationLabel(destination)}</>;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span>{exportDestinationLabel(destination)}</span>
+      <span data-chat-export-caveat={destination} className="text-xs text-muted-foreground">
+        {caveat}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * A compiled game's export destinations, shown in the menu once Export is chosen: one item per
+ * destination this computer exports, under the menu's "Export for" label; a destination only a
+ * software GPU has drawn says so under its label.
+ */
+function ExportDestinations({
+  destinations,
+  caveat,
+  onExport,
+}: {
+  destinations: readonly BuildTarget[];
+  caveat: (destination: BuildTarget) => string | null;
+  onExport?: (destination?: BuildTarget) => void;
+}): JSX.Element {
+  return (
+    <>
+      <DropdownMenuLabel>{EXPORT_WORDS.menuLabel}</DropdownMenuLabel>
+      {destinations.map((destination) => (
+        <DropdownMenuItem
+          key={destination}
+          data-chat-export-destination={destination}
+          onSelect={() => onExport?.(destination)}
+        >
+          <ExportDestinationWords destination={destination} caveat={caveat(destination)} />
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
 /**
  * Free: shown once a game's older builds and Rewind copies reach `OFFER_FREE_BYTES`; its tooltip
  * says what goes and what stays, and a confirmation asks before anything is deleted.
@@ -224,27 +276,51 @@ function FreeSpaceButton({ storage, game }: { storage: GameStorage; game: string
   );
 }
 
-/** The ⋯ menu: export the game, rename the chat. Closing it returns focus to the rename field. */
+/**
+ * What the ⋯ menu's Export item offers: a compiled game's destinations (null: it exports at once),
+ * each one's caveat, whether they show, and how to show them.
+ */
+interface ExportChoice {
+  destinations: readonly BuildTarget[] | null;
+  caveat: (destination: BuildTarget) => string | null;
+  choosing: boolean;
+  onChoose: () => void;
+}
+
+/**
+ * The ⋯ menu: export the game, rename the chat. Closing it returns focus to the rename field. A
+ * compiled game's Export item opens its destinations in place instead of exporting at once.
+ */
 function ChatActions({
   input,
+  project,
   exporting,
   onExport,
   onRename,
 }: {
   input: RefObject<HTMLInputElement | null>;
+  project: string | null;
   exporting?: boolean;
-  onExport?: () => void;
+  onExport?: (destination?: BuildTarget) => void;
   onRename: () => void;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const destinations = useExportDestinations(project);
+  const caveat = useExportCaveat(project);
+  const openMenu = (open: boolean): void => {
+    setMenuOpen(open);
+    if (!open) setChoosing(false);
+  };
   return (
     <ChatActionsMenu
       input={input}
       open={menuOpen}
-      onOpenChange={setMenuOpen}
+      onOpenChange={openMenu}
       exporting={exporting}
       onExport={onExport}
       onRename={onRename}
+      choice={{ destinations, caveat, choosing, onChoose: () => setChoosing(true) }}
     />
   );
 }
@@ -257,14 +333,18 @@ function ChatActionsMenu({
   exporting,
   onExport,
   onRename,
+  choice,
 }: {
   input: RefObject<HTMLInputElement | null>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   exporting?: boolean;
-  onExport?: () => void;
+  onExport?: (destination?: BuildTarget) => void;
   onRename: () => void;
+  choice: ExportChoice;
 }): JSX.Element {
+  const { destinations } = choice;
+  const noDestination = destinations !== null && destinations.length === 0;
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <Tooltip>
@@ -287,10 +367,25 @@ function ChatActionsMenu({
           }
         }}
       >
-        <DropdownMenuItem data-chat-action="export" disabled={!onExport || exporting} onSelect={() => onExport?.()}>
+        <DropdownMenuItem
+          data-chat-action="export"
+          disabled={!onExport || exporting || noDestination}
+          onSelect={(event) => {
+            if (destinations === null) {
+              onExport?.();
+              return;
+            }
+            // Keep the menu open: the destinations appear below the item.
+            event.preventDefault();
+            choice.onChoose();
+          }}
+        >
           <Icon name="export" />
           {exporting ? "Exporting…" : "Export game…"}
         </DropdownMenuItem>
+        {choice.choosing && destinations && (
+          <ExportDestinations destinations={destinations} caveat={choice.caveat} onExport={onExport} />
+        )}
         <DropdownMenuItem data-chat-action="rename" onSelect={onRename}>
           <Icon name="rename" />
           Rename
@@ -393,7 +488,13 @@ export function ChatHeader({
         onClick={() => window.dispatchEvent(new Event(TOGGLE_TERMINAL_EVENT))}
       />
       {!isStudio && (
-        <ChatActions input={inputRef} exporting={exporting} onExport={onExport} onRename={() => setEditing(true)} />
+        <ChatActions
+          input={inputRef}
+          project={project}
+          exporting={exporting}
+          onExport={onExport}
+          onRename={() => setEditing(true)}
+        />
       )}
     </div>
   );

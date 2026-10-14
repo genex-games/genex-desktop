@@ -20,6 +20,8 @@
  * returns a plain object, so every path can be tested without a run.
  */
 
+import { NativeVerdict } from "./native-verdict.ts";
+
 /** What a record keeps of each list: problems and console lines, cameras and demos, board entries. */
 const MAX_PROBLEMS = 5;
 const MAX_CAMERAS = 12;
@@ -82,6 +84,7 @@ export const VerdictRule = {
   NoStart: "no-start",
   Starts: "starts",
   DoesNotStart: "does-not-start",
+  NativeCheckFailed: NativeVerdict.Rule,
   Preferred: "preferred",
   NotPreferred: "not-preferred",
   Unseen: "unseen",
@@ -95,6 +98,7 @@ export const NotLandedReason = {
   NotAsked: "not-asked",
   NothingNew: "nothing-new",
   DoesNotRun: "does-not-run",
+  FinalCheckFailed: NativeVerdict.NotLanded,
   CouldNotLand: "could-not-land",
   NestedNotVersioned: "nested-not-versioned",
   FinalCommitFailed: "final-commit-failed",
@@ -176,6 +180,7 @@ const BECAUSE: Record<string, string> = {
   "no-start": "Nothing to compare it with: the game as it stood could not be photographed.",
   starts: "It starts and draws its first frame.",
   "does-not-start": "It did not start when it was looked at.",
+  "native-check-failed": "The native checks did not pass.",
   preferred: "The judge preferred it.",
   "not-preferred": "The judge preferred the other build.",
   unseen: "Nobody could look at it.",
@@ -188,6 +193,8 @@ const NOT_LANDED: Record<string, string> = {
   "not-asked": "Nothing was made live: the lead kept this build aside.",
   "nothing-new": "Nothing was made live: the build added nothing to the game you already had.",
   "does-not-run": "Nothing was made live: this build did not start when it was checked at the end.",
+  "final-check-failed":
+    "Nothing was made live: the final checks did not pass, so this build was kept beside your game.",
   "could-not-land": "Nothing was made live: your game folder had changes of its own, so this build was left beside it.",
   "nested-not-versioned":
     "Nothing was made live: part of this game keeps its own version history, and only you can add this build's work to it — the build is waiting for you.",

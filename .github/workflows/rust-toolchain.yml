@@ -1,0 +1,87 @@
+name: Rust toolchain
+# The vendored-set gate of the Rust · wgpu runtime (M1.5; plan "Toolchain and build store"). On
+# Linux, from the committed pins only (scripts/spike/rust-wgpu/pins.md; CI never pins):
+#
+# - the vendored crate tree is re-vendored from the allowlist and every build script, proc macro
+#   and non-source file in it must be listed in scripts/toolchains/rust-inventory.json;
+# - cargo-deny over the genex workspace (native/genex-rust/deny.toml): RustSec advisories and
+#   yanked versions, licences, crates.io as the only source, one glam and one symphonia, no GL
+#   backend crate and none of wgpu's GL features;
+# - cargo-vet over the same graph (native/genex-rust/supply-chain/): no crate or version outside
+#   the reviewed audits and exemptions;
+# - the game template typechecks against the facade through the lane's clippy gate, and its
+#   FACET WIRING block union-merges (tests/conformance/rust-template.test.ts, loop-merge.test.ts);
+# - the release inputs are built (vendored archive, genex sources, sysroot manifest) and kept as a
+#   short-lived workflow artifact. Publishing them as release assets is an owner step; nothing
+#   installed ever references a workflow artifact.
+on:
+  push:
+    paths:
+      - .github/workflows/rust-toolchain.yml
+      - native/genex-rust/**
+      - scripts/toolchains/rust-env.ts
+      - scripts/toolchains/rust-vendor.ts
+      - scripts/toolchains/rust-inventory.json
+      - scripts/spike/rust-wgpu/pins.md
+      - scripts/spike/rust-wgpu/setup-toolchain.sh
+      - scripts/spike/rust-wgpu/vendor-allowlist.toml
+      - src/game-template-rust/**
+      - src/harness-seed/loop/merge.ts
+      - tests/conformance/rust-template.test.ts
+      - tests/conformance/loop-merge.test.ts
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-toolchain-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+  RELEASE_INPUTS: ${{ github.workspace }}/.studio-dev/ci/rust-release-inputs
+jobs:
+  vendored-set:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      # The template's clippy gate builds the facade's Linux closure: libudev-sys and alsa-sys
+      # find their system libraries through pkg-config.
+      - name: The audio and udev headers the facade links
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev
+      - name: Pinned application dependencies
+        run: npm ci --ignore-scripts
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --with supply-chain
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: Every build script, proc macro and non-source file is in the reviewed inventory
+        run: node scripts/toolchains/rust-vendor.ts check
+      - name: cargo-deny (advisories, bans, licences, sources)
+        run: node scripts/toolchains/rust-env.ts -- cargo deny check
+      - name: cargo-vet (audits and exemptions)
+        if: ${{ !cancelled() }}
+        run: node scripts/toolchains/rust-env.ts -- cargo vet --locked
+      # No `if:` here: the clippy typecheck compiles the vendored closure (every build script and
+      # proc macro in it), so it runs only once the inventory and cargo-deny passed
+      # (scripts/toolchains/rust-gate-workflow.ts).
+      - name: The template typechecks under the pinned sysroot and its wiring union-merges
+        env:
+          GENEX_REQUIRE_SPIKE_TOOLCHAIN: "1"
+        run: node --test tests/conformance/rust-template.test.ts tests/conformance/loop-merge.test.ts
+      - name: Release inputs (vendored archive, genex sources, sysroot manifest)
+        run: node scripts/toolchains/rust-vendor.ts archive --out "$RELEASE_INPUTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-release-inputs-${{ github.sha }}
+          path: ${{ env.RELEASE_INPUTS }}
+          retention-days: 7
+          if-no-files-found: error

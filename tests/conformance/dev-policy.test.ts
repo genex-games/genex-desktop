@@ -11,6 +11,7 @@ import { assertOwnedProject } from "../../src/main/project-policy.ts";
 import { fixtureEngines } from "../../src/main/dev/fixtures.ts";
 import { OllamaEngine } from "../../src/substrate/engines/ollama.ts";
 import { CodexEngine } from "../../src/substrate/engines/codex.ts";
+import { ToolchainInstallPhase } from "../../src/shared/toolchain.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
 import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
@@ -143,6 +144,74 @@ test("indexed external project is rejected before sandbox/snapshot write registr
   await assert.rejects(core.init(), /outside the owned/);
   assert.equal(core.sandbox, undefined);
   assert.equal(await fs.readFile(path.join(external, "index.html"), "utf8"), "external project");
+});
+test("the fixture guard refuses the toolchain download and the Command Line Tools install, and writes nothing", async (t) => {
+  const { createIpcHandle } = await import("../../src/main/ipc-handle.ts");
+  const { classifyChannel } = await import("../../src/main/dev/native-policy.ts");
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "dev-toolchain-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const listeners = new Map<string, (event: unknown, payload: unknown) => Promise<unknown>>();
+  const handle = createIpcHandle(
+    { handle: (channel, listener) => void listeners.set(channel, listener as never) },
+    { fixture: true, isStudioUi: () => true },
+  );
+  // Each handler would write a marker: a refused call must never reach it.
+  handle("studio:toolchain.install", async () => {
+    await fs.writeFile(path.join(root, "installed"), "x");
+    return { phase: ToolchainInstallPhase.Installed, entry: null, completed: 0, total: 0, startedAt: "" };
+  });
+  handle("studio:toolchain.installClt", async () => {
+    await fs.writeFile(path.join(root, "clt"), "x");
+    return true;
+  });
+  const studio = { sender: null, senderFrame: null };
+  for (const channel of ["studio:toolchain.install", "studio:toolchain.installClt"]) {
+    const listener = listeners.get(channel);
+    assert.ok(listener, channel);
+    const answer = (await listener(studio, { targets: ["web"] })) as { ok: boolean; error?: string };
+    assert.equal(answer.ok, false, channel);
+    // Refused as native, not merely as a channel nobody classified.
+    assert.equal(classifyChannel(channel), "native", channel);
+    assert.match(answer.error ?? "", /^unsupported-in-fixture: native/, channel);
+  }
+  assert.deepEqual(await fs.readdir(root), [], "no refused handler ran");
+});
+test("the fixture guard refuses Play on Mac and Bring to front, and writes nothing; a window's state and Stop run", async (t) => {
+  const { createIpcHandle } = await import("../../src/main/ipc-handle.ts");
+  const { classifyChannel } = await import("../../src/main/dev/native-policy.ts");
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const listeners = new Map<string, (event: unknown, payload: unknown) => Promise<unknown>>();
+  const handle = createIpcHandle(
+    { handle: (channel, listener) => void listeners.set(channel, listener as never) },
+    { fixture: true, isStudioUi: () => true },
+  );
+  // Each handler would write a marker: a refused call must never reach it.
+  for (const channel of ["studio:native.run", "studio:native.front"] as const)
+    handle(channel, async () => {
+      await fs.writeFile(path.join(root, channel.replace(":", "-")), "x");
+      throw new Error("a refused handler ran");
+    });
+  handle("studio:native.state", async () => null);
+  handle("studio:native.stop", async () => false);
+  const studio = { sender: null, senderFrame: null };
+  for (const channel of ["studio:native.run", "studio:native.front"]) {
+    const listener = listeners.get(channel);
+    assert.ok(listener, channel);
+    const answer = (await listener(studio, { project: "pong" })) as { ok: boolean; error?: string };
+    assert.equal(answer.ok, false, channel);
+    assert.equal(classifyChannel(channel), "native", channel);
+    assert.match(answer.error ?? "", /^unsupported-in-fixture: native/, channel);
+  }
+  assert.deepEqual(await fs.readdir(root), [], "no refused handler ran");
+  for (const [channel, value] of [
+    ["studio:native.state", null],
+    ["studio:native.stop", false],
+  ] as const) {
+    const listener = listeners.get(channel);
+    assert.ok(listener, channel);
+    assert.deepEqual(await listener(studio, { project: "pong" }), { ok: true, value }, channel);
+  }
 });
 test("fixture native guard covers all account, external, picker, export and download routes", async () => {
   const { assertNativeActionAllowed, FIXTURE_BLOCKED_CHANNELS } = await import("../../src/main/dev/native-policy.ts");

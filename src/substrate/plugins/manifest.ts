@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { constants, type Dirent } from "node:fs";
 import { lstat, open, readdir, readFile } from "node:fs/promises";
 import type {
+  PluginApiVersion,
   PluginFileSkill,
   PluginManifest,
   PluginManifestTool,
@@ -31,10 +32,13 @@ import {
   PluginCapability,
   PluginHostTool,
   PluginToolAudience,
+  PRE_RUST_SKILL_STACKS,
+  RUST_SKILL_STACKS_API,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
+import { GameStack, isGameStack } from "../../shared/game-project.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
 import { MakingKind, type PluginToolAsset, readToolAsset } from "../../shared/asset-making.ts";
 import { pictureType } from "../image-sniff.ts";
@@ -77,7 +81,9 @@ const SENSITIVE_ACTIONS = new Set([
   "publish-gallery",
 ]);
 const reservedLower = new Set([...RESERVED_TOOLBAR_LABELS].map((l) => l.toLowerCase()));
-const SUPPORTED_API_VERSIONS = [1, 2, 3];
+const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, RUST_SKILL_STACKS_API] satisfies PluginApiVersion[];
+/** The first API with file skills, object parameters, host tools, asset limits and native runtimes; later APIs keep them. */
+const FILE_SKILLS_API = 3;
 /** Declared limits, each the largest a manifest field may be. */
 const LIMIT = {
   NameChars: 200,
@@ -108,6 +114,8 @@ const LIMIT = {
   SkillChars: 16_000,
   SkillSummaryChars: 300,
   SkillReferences: 16,
+  /** A skill serves one, two or all three stacks; naming all three is the same as naming none. */
+  SkillStacks: 3,
   /** Genex's multiplayer card is 69,881 bytes before Studio's preface. */
   SkillFileBytes: 128 * KIB,
   SkillPackageBytes: 1024 * KIB,
@@ -157,6 +165,8 @@ const MESSAGE = {
   SkillTextOrFile: "A plugin skill has either text or a file, not both",
   InvalidSkillText: `Invalid plugin skill text (1-${LIMIT.SkillChars} characters)`,
   InvalidSkillSummary: `Invalid plugin skill summary (1-${LIMIT.SkillSummaryChars} characters)`,
+  InvalidSkillStacks: `Invalid plugin skill stacks (1-${LIMIT.SkillStacks} distinct stacks: three-js, raylib-cpp, rust-wgpu)`,
+  RustSkillStackNeedsApi: `Plugin skill stacks name rust-wgpu, which requires apiVersion ${RUST_SKILL_STACKS_API}`,
   SkillNotMarkdown: "A plugin skill file is a Markdown (.md) file",
   SkillInDotFolder: "A plugin skill file may not be a dot file or sit in a dot folder: packing leaves those out",
   InvalidSkillReferences: `Invalid plugin skill references (at most ${LIMIT.SkillReferences}, distinct, and not the skill's own file)`,
@@ -190,7 +200,7 @@ const MESSAGE = {
   ToolbarNeedsApi2: "toolbar requires apiVersion 2",
   McpNeedsApi2: "mcpServers requires apiVersion 2",
   NativeNeedsApi3: "Native runtimes require API 3 and native-runtime capability",
-  IncompatibleManifest: "Invalid or incompatible plugin manifest (Studio API 1, 2 or 3 required)",
+  IncompatibleManifest: `Invalid or incompatible plugin manifest (Studio API 1, 2, 3 or ${RUST_SKILL_STACKS_API} required)`,
   MissingList: (field: string) => `Missing plugin ${field}`,
   UnsupportedCapability: "Unsupported plugin capability",
   McpStdioOnly: "An mcpServers entry is stdio",
@@ -270,11 +280,12 @@ type ParameterSpec = PluginTool["parameters"]["properties"][string];
 
 /** One tool parameter: scalar (or, in API 3, an object that may arrive as a JSON string). */
 function toolParameter(s: ParameterSpec, apiVersion: number): ParameterSpec {
-  const types = [...SCALAR_TYPES, ...(apiVersion === 3 ? ["object"] : [])];
+  const types = [...SCALAR_TYPES, ...(apiVersion >= FILE_SKILLS_API ? ["object"] : [])];
   if (!s || !types.includes(s.type)) throw new Error(MESSAGE.ScalarParameters);
   if (s.description !== undefined && typeof s.description !== "string")
     throw new Error(MESSAGE.InvalidParameterDescription);
-  const jsonCompatible = apiVersion === 3 && s.type === "object" && typeof s.acceptJsonString === "boolean";
+  const jsonCompatible =
+    apiVersion >= FILE_SKILLS_API && s.type === "object" && typeof s.acceptJsonString === "boolean";
   if (s.acceptJsonString !== undefined && !jsonCompatible) throw new Error(MESSAGE.InvalidJsonCompatibility);
   return {
     type: s.type,
@@ -298,7 +309,7 @@ function assertName(kind: string, name: unknown): asserts name is string {
 
 /** A tool's `host`: a known host program, on the bundled Genex plugin's API 3 only, consented when it spends. */
 function validateHost(t: PluginManifestTool, m: PluginManifest): void {
-  if (m.id !== HOST_CLI_PLUGIN || m.apiVersion !== 3) throw new Error(MESSAGE.HostToolReserved);
+  if (m.id !== HOST_CLI_PLUGIN || m.apiVersion < FILE_SKILLS_API) throw new Error(MESSAGE.HostToolReserved);
   if (!HOST_TOOLS.has(t.host)) throw new Error(MESSAGE.InvalidHostTool);
   if (CONSENTED_HOST_TOOLS.has(String(t.host)) && t.confirmation === undefined)
     throw new Error(MESSAGE.HostToolNeedsConfirmation);
@@ -378,12 +389,78 @@ function skillReferences(value: unknown, file: string): string[] {
 
 /** An API 3 file skill in canonical form. */
 function fileSkill(s: Record<string, unknown>, name: string, m: PluginManifest): PluginFileSkill {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.FileSkillNeedsApi3);
+  if (m.apiVersion < FILE_SKILLS_API) throw new Error(MESSAGE.FileSkillNeedsApi3);
   if (!isText(s.summary, 1, LIMIT.SkillSummaryChars)) throw new Error(MESSAGE.InvalidSkillSummary);
   const file = assertSkillPath(s.file);
   const skill: PluginFileSkill = { name, summary: s.summary, file };
   if (s.references !== undefined) skill.references = skillReferences(s.references, file);
   return skill;
+}
+
+/** Why a manifest was refused, for a caller that acts on the reason rather than the words. Wire values: never rename one. */
+export const PluginManifestRefusal = {
+  /** A skill names `rust-wgpu` on an API before {@link RUST_SKILL_STACKS_API}. */
+  RustSkillStackNeedsApi: "rust-skill-stack-needs-api",
+} as const;
+export type PluginManifestRefusal = (typeof PluginManifestRefusal)[keyof typeof PluginManifestRefusal];
+
+/** A manifest refusal with a typed {@link PluginManifestRefusal} code beside its words. */
+export class PluginManifestError extends Error {
+  readonly code: PluginManifestRefusal;
+  constructor(code: PluginManifestRefusal, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** Does a plugin on `apiVersion` know `stack`? `rust-wgpu` exists only from {@link RUST_SKILL_STACKS_API}. */
+export function apiKnowsStack(apiVersion: number, stack: GameStack): boolean {
+  return stack !== GameStack.RustWgpu || apiVersion >= RUST_SKILL_STACKS_API;
+}
+
+/**
+ * Does `stacks`, declared on `apiVersion`, mean every game? On an API before Rust · wgpu, a list
+ * naming every stack that API knew was its way of saying "all": it serves a Rust game too.
+ */
+function namesEveryStack(stacks: readonly GameStack[], apiVersion: number): boolean {
+  return apiVersion < RUST_SKILL_STACKS_API && PRE_RUST_SKILL_STACKS.every((known) => stacks.includes(known));
+}
+
+/**
+ * Does `skill`, from a manifest on `apiVersion`, serve a game of `stack`? A skill that names no
+ * stacks serves every game, as does a pre-Rust list naming every stack its API knew, and every
+ * skill serves when the stack is not known (no game bound): withholding is the exception, by the
+ * manifest's own typed field and never by a skill's name.
+ */
+export function servesStack(
+  skill: Pick<PluginSkill, "stacks">,
+  stack: GameStack | null | undefined,
+  apiVersion: number,
+): boolean {
+  if (!stack || !skill.stacks) return true;
+  return skill.stacks.includes(stack) || namesEveryStack(skill.stacks, apiVersion);
+}
+
+/** `manifest` as a game of `stack` sees it: only the skills that serve that stack. */
+export function manifestForStack<M extends Pick<PluginManifest, "skills" | "apiVersion">>(
+  manifest: M,
+  stack: GameStack | null | undefined,
+): M {
+  if (!stack) return manifest;
+  return { ...manifest, skills: manifest.skills.filter((skill) => servesStack(skill, stack, manifest.apiVersion)) };
+}
+
+/**
+ * A skill's `stacks`: one to three of the studio's stacks, each once, in the manifest's order.
+ * `rust-wgpu` is refused, typed, on an API that does not know it.
+ */
+function skillStacks(value: unknown, apiVersion: number): GameStack[] {
+  const list = Array.isArray(value) ? value : [];
+  const valid = list.length >= 1 && list.length <= LIMIT.SkillStacks && list.every(isGameStack);
+  if (!valid || new Set(list).size !== list.length) throw new Error(MESSAGE.InvalidSkillStacks);
+  if (!list.every((stack) => apiKnowsStack(apiVersion, stack)))
+    throw new PluginManifestError(PluginManifestRefusal.RustSkillStackNeedsApi, MESSAGE.RustSkillStackNeedsApi);
+  return [...list];
 }
 
 /** The engines a skill names, in canonical form: known engines, at least one, each once. */
@@ -401,7 +478,8 @@ function inlineSkill(raw: Record<string, unknown>, name: string): PluginSkill {
 
 /**
  * One skill in canonical form: inline text, or (API 3) a file with a summary; never both. Either
- * may name the engines or the facts whose games' briefs carry it, and the agent tools it explains.
+ * may name the engines or the facts whose games' briefs carry it, the stacks it serves, and the
+ * agent tools it explains.
  */
 function validateSkill(
   raw: Record<string, unknown>,
@@ -412,7 +490,8 @@ function validateSkill(
   if ((raw.text === undefined) === (raw.file === undefined)) throw new Error(MESSAGE.SkillTextOrFile);
   const skill = raw.file !== undefined ? fileSkill(raw, name, m) : inlineSkill(raw, name);
   const engines = raw.engines === undefined ? {} : { engines: skillEngines(raw.engines) };
-  return { ...skill, ...engines, ...skillScopeFields(raw, tools, m) };
+  const stacks = raw.stacks === undefined ? {} : { stacks: skillStacks(raw.stacks, m.apiVersion) };
+  return { ...skill, ...engines, ...stacks, ...skillScopeFields(raw, tools, m) };
 }
 
 /**
@@ -428,7 +507,7 @@ function legacySkill(raw: Record<string, unknown>, name: string): PluginSkill {
 /** Every skill in canonical form. API 3 refuses a repeated name; API 1 and 2 keep the first. */
 function validateSkills(m: PluginManifest, tools: PluginManifestTool[]): PluginSkill[] {
   if (m.skills.length > LIMIT.SkillCount) throw new Error(MESSAGE.TooManySkills);
-  const legacy = m.apiVersion < 3;
+  const legacy = m.apiVersion < FILE_SKILLS_API;
   const names = new Set<string>();
   const skills: PluginSkill[] = [];
   for (const raw of m.skills as unknown[]) {
@@ -552,7 +631,7 @@ function validateAccount(
 function validateAssetLimits(m: PluginManifest): NonNullable<PluginManifest["assetLimits"]> {
   const limits = m.assetLimits;
   const valid =
-    m.apiVersion === 3 &&
+    m.apiVersion >= FILE_SKILLS_API &&
     limits &&
     Number.isSafeInteger(limits.fileBytes) &&
     limits.fileBytes > 0 &&
@@ -597,7 +676,7 @@ function validateHostSections(m: PluginManifest, canonical: PluginManifest): voi
   validateMomentSections(m, canonical);
   if (m.observers !== undefined) canonical.observers = validateObservers(m, canonical);
   if (m.nativeRuntimes !== undefined || m.nativeJobs !== undefined) {
-    if (m.apiVersion !== 3 || !hasCapability(m, PluginCapability.NativeRuntime))
+    if (m.apiVersion < FILE_SKILLS_API || !hasCapability(m, PluginCapability.NativeRuntime))
       throw new Error(MESSAGE.NativeNeedsApi3);
     Object.assign(canonical, validateNativeDeclarations(m));
   }

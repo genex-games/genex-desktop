@@ -1,7 +1,8 @@
 /**
  * The Genex promo, as pure decisions: a finished welcome queues it once, it shows while Genex can
- * still be connected, and it settles for good once it is dismissed or a Genex account is connected.
- * `panels/GenexPromo.tsx` draws the card these decide.
+ * still be connected, it settles for good once it is dismissed or a Genex account is connected, and
+ * floats over Home or a game's stage while no dialog is open. `panels/GenexPromo.tsx` draws the
+ * card these decide.
  */
 import type { ConnectionSnapshot } from "../shared/connections.ts";
 import { type KeyValueStorage, browserStorage, readText, STORAGE_KEYS, writeText } from "./storage.ts";
@@ -41,6 +42,7 @@ export interface PromoInput {
   account: PromoAccount;
   welcoming: boolean;
   pluginsOpen: boolean;
+  overlayOpen?: boolean;
 }
 
 /**
@@ -56,7 +58,8 @@ const CONNECTABLE: ReadonlySet<PromoAccount> = new Set<PromoAccount>([
 
 /** Whether the card shows: queued, Genex installed and on, an account still to connect, nothing in front of it. */
 export function genexPromoVisible(input: PromoInput): boolean {
-  if (input.stored !== GenexPromoState.Pending || input.welcoming || input.pluginsOpen) return false;
+  const covered = input.welcoming || input.pluginsOpen || input.overlayOpen;
+  if (input.stored !== GenexPromoState.Pending || covered) return false;
   if (!input.plugin?.installed || !input.plugin.enabled) return false;
   return CONNECTABLE.has(input.account);
 }

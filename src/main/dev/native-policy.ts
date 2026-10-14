@@ -71,12 +71,36 @@ const NATIVE_CHANNELS = [
   "studio:feedback.send",
   "studio:cancel-model-download",
   "studio:export",
+  // Picking a keystore, provisioning profile or password file opens the native file dialog.
+  "studio:export.signingReference",
   // The one channel that opens the network: "Install packages" runs the folder's own
   // package manager with registry.npmjs.org allowed. A fixture profile refuses downloads.
   "studio:packages.install",
   // Set up (Windows) creates a local user account and network filters behind an administrator
   // prompt; a fixture profile never provisions anything on the machine.
   "studio:boot.setup",
+  // A download: CMake, Ninja, Emscripten, raylib and ANGLE from their pinned hosts.
+  "studio:toolchain.install",
+  // `xcode-select --install` opens Apple's installer dialog on the desktop.
+  "studio:toolchain.installClt",
+  // A download: the phones' Rust standard libraries, bundletool and the JDK from their pinned hosts.
+  "studio:toolchain.installMobile",
+  // The Android SDK licence is the person's own agreement: never an agent's, never a fixture's.
+  "studio:toolchain.acceptAndroidLicence",
+  // Play on Mac opens the game in a window of its own on the desktop, outside the fixture.
+  "studio:native.run",
+  // Bring to front raises that window over the developer's own.
+  "studio:native.front",
+  // A launch on a Simulator, emulator or phone runs the game outside ProcessSandbox, on a device
+  // outside the profile: the person's act alone, never a fixture's (containment stage 1).
+  "studio:native.launchDevice",
+  // Approving a crate request lets new code into the profile's vendored set; the person decides.
+  "studio:crates.decide",
+  // Ejecting or un-ejecting a game's engine rewrites its build inputs, and the trust flag lets
+  // `unsafe` and build scripts into its crates: the person's acts alone, never an agent's or a fixture's.
+  "studio:engine.eject",
+  "studio:engine.uneject",
+  "studio:engine.setTrust",
   // Relaunch to update quits the app and installs a downloaded release over it.
   "studio:update.restart",
   // Download opens the waiting release's page in the person's real browser.
@@ -188,6 +212,27 @@ const FIXTURE_SAFE = [
   "studio:hardware",
   "studio:model-install.status",
   "studio:cli-install.status",
+  // The toolchain store's state, cancelling its install, and removing versions no lock names:
+  // reads and deletions inside the profile's own store, no dialog, download or socket.
+  "studio:toolchain.status",
+  "studio:toolchain.cancel",
+  "studio:toolchain.prune",
+  // The game window's state, and stopping it: the profile's own runs, no window opened or raised.
+  "studio:native.stop",
+  "studio:native.state",
+  // Embedded play opens no desktop window: a headless game draws into Live's own canvas, and its
+  // input and size come from Live. Pop out is `studio:native.run`, which stays native.
+  "studio:native.embed",
+  "studio:native.unembed",
+  "studio:native.input",
+  "studio:native.resize",
+  // Re-taking a seed copy rewrites one module of the profile's own harness workspace and keeps
+  // the agent's edit as a patch there; nothing outside the profile is touched.
+  "studio:seed.retake",
+  // The crate requests agents made: a read of the profile's own records.
+  "studio:crates.list",
+  // A Rust game's engine and trust flag: a read of its genex.toml and the profile's trust file.
+  "studio:engine.state",
   // Plan limits come from the profile's own engines; fixture engines report none and open no socket.
   "studio:provider-usage",
   // The count on Studio's own Dock icon; it reaches nothing outside this app.

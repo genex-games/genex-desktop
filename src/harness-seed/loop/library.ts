@@ -44,9 +44,13 @@ import {
   RECIPE_INTENT_CHARS,
   REVIEW_VIOLATIONS_SHOWN,
 } from "./brief-budget.ts";
+import { sketchBlock } from "./recipe-sketch.ts";
 import { isRecord } from "./json.ts";
 import { lessonLine, MAX_CONTRACT_LESSONS, renderContractLessons } from "./contract-lessons.ts";
 import { RECIPE_ID_CHARS } from "./config.ts";
+import { GameStack } from "./native-contract.ts";
+import { CPP_FACET } from "./native-briefs.ts";
+import { type CompiledFacetLines, RUST_FACET } from "./rust-briefs.ts";
 import { FacetStage, FINISH_POLISH_NOTES, moveEscalated, stageOf } from "./facet/stage.ts";
 import {
   FINISH_CRITIC_KEY,
@@ -129,6 +133,40 @@ export interface Recipe {
   project?: string;
   retiredBecause?: string;
   file?: string;
+  /**
+   * The stack the recipe is written for: three.js unless it says C++ · raylib. `normalizeRecipe`
+   * always sets it; a library from before runtimes leaves it out, and that is a three.js recipe.
+   */
+  runtime?: GameStack;
+}
+
+/**
+ * A C++ · raylib night retrieves recipes for its stack and renders its facets' briefs in C++ terms
+ * here; a copy of this module kept from before native support would do neither (native-contract.ts
+ * `servesNative`).
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * A Rust · wgpu night retrieves only recipes written for Rust (a recipe that names no stack is a
+ * three.js one, and never reaches it), offers its planner only Rust craft, and renders its facets'
+ * briefs in Rust terms here: a copy kept from before Rust games handed it three.js recipes, and
+ * run-dispatch.ts refuses a Rust night on it (`RUST_PARTS`).
+ */
+export const SERVES_RUST = true;
+
+/** The stacks a recipe may be written for. */
+const RECIPE_RUNTIMES: readonly string[] = Object.values(GameStack);
+
+/** Is this recipe written for a game of `stack`? A recipe that names no stack is a three.js one. */
+function servesStack(recipe: Recipe, stack: GameStack): boolean {
+  return (recipe.runtime ?? GameStack.ThreeJs) === stack;
+}
+
+/** The recipes a game of `stack` may be handed; every recipe when the caller names no stack (as before stacks). */
+function forStack(recipes: readonly Recipe[] | null | undefined, stack: GameStack | undefined): Recipe[] {
+  const all = [...(recipes ?? [])];
+  return stack === undefined ? all : all.filter((recipe) => servesStack(recipe, stack));
 }
 
 /** A recipe retrieved for failing checks, and the check it answers most strongly. */
@@ -241,6 +279,8 @@ export function normalizeRecipe(raw: AnyRecord | null | undefined): Recipe | nul
     evidence: Array.isArray(raw.evidence) ? raw.evidence.slice(0, MAX_RECIPE_EVIDENCE) : [],
     stats: recipeStats(raw.stats),
     status: RECIPE_STATUS.includes(raw.status) ? raw.status : RecipeStatus.Candidate,
+    // Every recipe before C++ · raylib was a three.js one, and still is.
+    runtime: RECIPE_RUNTIMES.includes(raw.runtime) ? raw.runtime : GameStack.ThreeJs,
     ...recipeProvenance(raw),
     ...recipeKinds(raw.kinds),
   };
@@ -362,14 +402,20 @@ export function recipeMatchesCheck(recipe: Recipe, check: CheckWords | null | un
  * checkClass. One shared word was enough once, and a ragdoll spike's recipe got retrieved
  * for — and then blamed for — a crosshair check. Retired recipes never come back; promoted
  * ones outrank candidates at equal overlap; a project-scoped recipe reaches another project
- * only on an exact match.
+ * only on an exact match; a recipe for other kinds of game reaches this one (`kind`) only on its
+ * own check; a recipe written for another stack (`runtime`) never reaches this game's (`stack`,
+ * three.js unless the caller names another).
  */
 export function scoreRecipe(
   recipe: Recipe,
   check: CheckWords | null | undefined,
-  { project = null, kind = null }: { project?: string | null; kind?: string | null } = {},
+  {
+    project = null,
+    kind = null,
+    stack = GameStack.ThreeJs,
+  }: { project?: string | null; kind?: string | null; stack?: GameStack } = {},
 ): number {
-  if (recipe.status === RecipeStatus.Retired) return 0;
+  if (recipe.status === RecipeStatus.Retired || !servesStack(recipe, stack)) return 0;
   const exact = recipeMatchesCheck(recipe, check);
   if (belongsElsewhere(recipe, project) && !exact) return 0;
   // A recipe for other kinds of game reaches this one only on its own check.
@@ -401,10 +447,12 @@ export function scoreRecipe(
   return overlap * promotion * Math.max(0.5, record);
 }
 
-/** How retrieval narrows: this game's project and kind, the score a word overlap must reach, and the checks only an exact recipe may answer. */
+/** How retrieval narrows: this game's project, kind and stack, the score a word overlap must reach, and the checks only an exact recipe may answer. */
 export interface RetrievalOptions {
   project?: string | null;
   kind?: string | null;
+  /** The game's stack: a recipe written for another stack (`runtime`) never reaches it (three.js when absent). */
+  stack?: GameStack;
   /** The least score a hit that is not the recipe's own check needs (CRAFT_ADOPT_SCORE in a brief). */
   minScore?: number;
   /** Checks answered by exact matches only: nothing has failed them yet, so two words in common are no reason. */
@@ -443,9 +491,9 @@ export function recipesForChecks(
 function retrievalScore(
   recipe: Recipe,
   check: CheckWords & { id: string },
-  { project = null, kind = null, minScore = 0, exactOnly = [] }: RetrievalOptions,
+  { project = null, kind = null, stack = GameStack.ThreeJs, minScore = 0, exactOnly = [] }: RetrievalOptions,
 ): number {
-  const score = scoreRecipe(recipe, check, { project, kind });
+  const score = scoreRecipe(recipe, check, { project, kind, stack });
   if (score <= 0 || recipeMatchesCheck(recipe, check)) return score;
   const weak = exactOnly.includes(check.id) || score < minScore;
   return weak ? 0 : score;
@@ -492,6 +540,7 @@ export function recipeFromSpike({
   evidence,
   origin = "spike",
   project = null,
+  runtime = GameStack.ThreeJs,
 }: {
   id: string;
   check?: CheckWords | null;
@@ -502,9 +551,12 @@ export function recipeFromSpike({
   evidence?: AnyRecord | null;
   origin?: string;
   project?: string | null;
+  /** The stack the spike's code is written for: its recipe reaches only games of that stack. */
+  runtime?: GameStack;
 }): Recipe | null {
   return normalizeRecipe({
     id,
+    runtime,
     title: intent?.split("\n")[0]?.slice(0, CLIP_QUOTE) || id,
     tags: [...new Set([...(tags ?? []), ...checkTokens(check)])],
     checkClass: check?.id ?? "",
@@ -542,12 +594,13 @@ export function isCraftRecipe(recipe: Recipe | null | undefined): recipe is Reci
   return recipe?.kind === RecipeKind.Craft && Boolean(recipe?.check?.id);
 }
 
-/** Every craft check the library holds, by check id: `id -> { recipe, check }`. */
+/** Every craft check the library holds (for a game of `stack`, when named), by check id: `id -> { recipe, check }`. */
 export function craftChecks(
   recipes: readonly Recipe[] | null | undefined,
+  { stack }: { stack?: GameStack } = {},
 ): Map<string, { recipe: Recipe; check: AnyRecord }> {
   const out = new Map<string, { recipe: Recipe; check: AnyRecord }>();
-  for (const recipe of recipes ?? []) {
+  for (const recipe of forStack(recipes, stack)) {
     if (!isCraftRecipe(recipe)) continue;
     const id = String(recipe.check.id).toLowerCase();
     if (!id || out.has(id)) continue;
@@ -561,14 +614,15 @@ export function craftChecks(
  * plan can ask for the few its game actually needs. Deliberately small — forty-one one-liners
  * with their notes is seven kilobytes of prompt, and the point of this change was that nobody
  * has to read them all. `perPack` lines per pack, notes cut to CRAFT_NOTE_CHARS, and the whole
- * block dropped back line by line (largest pack first) until it fits CRAFT_MENU_MAX.
+ * block dropped back line by line (largest pack first) until it fits CRAFT_MENU_MAX. A game of a
+ * named `stack` is offered only the recipes written for it.
  */
 export function renderCraftForPlanner(
   recipes: readonly Recipe[] | null | undefined,
-  { perPack = 4, max = CRAFT_MENU_MAX }: { perPack?: number; max?: number } = {},
+  { perPack = 4, max = CRAFT_MENU_MAX, stack }: { perPack?: number; max?: number; stack?: GameStack } = {},
 ): string {
   const packs = new Map<string, Recipe[]>();
-  const ranked = (recipes ?? [])
+  const ranked = forStack(recipes, stack)
     .filter((r) => isCraftRecipe(r) && r.status !== RecipeStatus.Retired)
     .sort(
       (a, b) =>
@@ -621,8 +675,8 @@ export function renderCraftForPlanner(
  */
 export function withCraftChecks<S extends { craft?: unknown; checks?: Check[]; cameras?: string[] }>(
   spec: S,
-  recipes: readonly Recipe[] | null | undefined,
-  { max = MAX_CRAFT, maxChecks = MAX_CHECKS }: { max?: number; maxChecks?: number } = {},
+  available: readonly Recipe[] | null | undefined,
+  { max = MAX_CRAFT, maxChecks = MAX_CHECKS, stack }: { max?: number; maxChecks?: number; stack?: GameStack } = {},
 ): { spec: S; added: Array<{ id: string; recipe: string }>; unknown: string[]; dropped: string[] } {
   const wanted = [
     ...new Set<string>(
@@ -632,6 +686,8 @@ export function withCraftChecks<S extends { craft?: unknown; checks?: Check[]; c
     ),
   ].slice(0, max);
   if (!wanted.length) return { spec, added: [], unknown: [], dropped: [] };
+  // A recipe written for another stack is not this game's to adopt: it is named unknown.
+  const recipes = forStack(available, stack);
   const byRecipe = new Map<string, Recipe & { check: AnyRecord }>();
   const byCheck = craftChecks(recipes);
   for (const recipe of recipes ?? [])
@@ -727,17 +783,23 @@ export function checksFromDefects(
  * The craft recipe worth handing a builder alongside a check somebody just wrote — a judge's
  * new vision check, a milestone's check. Only a real overlap counts: below CRAFT_ADOPT_SCORE
  * two words in common is a coincidence, and a wrong recipe costs an iteration. `kind` is the
- * game's kind: a recipe for other kinds of game reaches it only on its own check.
+ * game's kind: a recipe for other kinds of game reaches it only on its own check; `stack` is the
+ * game's stack, and a recipe written for another never reaches it.
  */
 export function craftForNewCheck(
   recipes: readonly Recipe[] | null | undefined,
   newCheck: CheckWords | null | undefined,
-  { min = CRAFT_ADOPT_SCORE, limit = 1, kind = null }: { min?: number; limit?: number; kind?: string | null } = {},
+  {
+    min = CRAFT_ADOPT_SCORE,
+    limit = 1,
+    kind = null,
+    stack = GameStack.ThreeJs,
+  }: { min?: number; limit?: number; kind?: string | null; stack?: GameStack } = {},
 ): Array<{ recipe: Recipe; score: number }> {
   const hits: Array<{ recipe: Recipe; score: number }> = [];
   for (const recipe of recipes ?? []) {
     if (!isCraftRecipe(recipe)) continue;
-    const score = scoreRecipe(recipe, newCheck, { kind });
+    const score = scoreRecipe(recipe, newCheck, { kind, stack });
     if (score >= min) hits.push({ recipe, score });
   }
   return hits.sort((a, b) => b.score - a.score || (a.recipe.id < b.recipe.id ? -1 : 1)).slice(0, limit);
@@ -787,6 +849,8 @@ export interface BriefOptions {
   critic?: string;
   template?: boolean;
   game?: AnyRecord | null;
+  /** The game's stack: a compiled facet reads its rules, its FIX and its recipes' code in its own language's terms. */
+  stack?: GameStack;
   /** The worker's stage (facet/stage.ts): "finish" makes polish the work; anything else is the build stage. */
   stage?: string | null;
   /** The brief's ceiling (loop/brief-budget.ts); the lowest sections leave first when it is over. */
@@ -860,17 +924,21 @@ function renderBriefSections(
     recipesFile = null,
     buildBlock = null,
     carried = [],
+    entryMain = "src/main.js",
+    stack = GameStack.ThreeJs,
   }: BriefOptions,
   cuts: ReadonlySet<BriefCut>,
 ): string {
   const finishing = stageOf({ stage }) === FacetStage.Finish;
   const recipeShape = { file: recipesFile, pinned: fix?.recipe?.id ?? null, bodies: !cuts.has(BriefCut.RecipeBodies) };
+  const facet = COMPILED_FACET_LINES[stack];
   const lines = [
     ...briefHeader(run, spec, iteration, game),
     ...steeringSection(steering),
     ...(buildBlock ? blockBriefSection(buildBlock.bench) : []),
     ...(finishing ? finishSection(polish, finishRules(spec, screen && template)) : moveSection(move)),
-    ...fixSection(fix, template, finishing),
+    // A compiled game has none of the template's JavaScript modules: its FIX reads in the game's own terms.
+    ...fixSection(fix, template && !facet, finishing),
     ...carryOverSection(carried),
     ...scoreboardSection(board, comparison, spec),
     ...doNotRegressSection(spec.doNotRegress),
@@ -884,7 +952,7 @@ function renderBriefSections(
     ...(spike ? [`## Spike result`, spike, ``] : []),
     ...attemptsSection(attempts, !cuts.has(BriefCut.DiffStats), carried.length > 0),
     ...recipesSection(recipes, recipeShape),
-    ...briefRules(run, spec, { screen, template, resumed }),
+    ...briefRules(run, spec, { screen, template, resumed, facet, entryMain }),
     ...(cuts.has(BriefCut.Lessons) ? [] : lessonsSections(gameLessons, lessons)),
   ];
   return lines
@@ -1191,21 +1259,58 @@ function recipeLines({ recipe, checkIds }: RecipeHit, shape: RecipeShape): strin
     `### ${recipe.title} (${recipe.id}, ${recipe.status}; ${recipe.stats.wins}W/${recipe.stats.losses}L) — for ${checkIds.join(", ")}`,
     // Past the budget only the title and the pointer stay: the file has the rest.
     shape.bodies ? `How: ${how}` : "",
-    keptHere && recipe.sketch ? "```js\n" + recipe.sketch.trim() + "\n```" : "",
+    keptHere && recipe.sketch ? sketchBlock(recipe) : "",
     keptHere && recipe.port ? `Port: ${recipe.port}` : "",
     keptHere ? "" : pointer,
     ``,
   ];
 }
 
-/** The rules that do not change, in the template's terms or the game's own. */
+/** The facet lines each stack's brief rules read: a compiled stack's own, none for three.js (`threeBriefRules`). */
+const COMPILED_FACET_LINES = {
+  [GameStack.ThreeJs]: null,
+  [GameStack.RaylibCpp]: CPP_FACET,
+  [GameStack.RustWgpu]: RUST_FACET,
+} as const satisfies Record<GameStack, CompiledFacetLines | null>;
+
+/** The rules that do not change, in the template's terms, the game's own, or a compiled game's (`facet`). */
 function briefRules(
   run: BriefOptions["run"],
   spec: BriefOptions["spec"],
-  { screen, template, resumed }: { screen: boolean; template: boolean; resumed: boolean },
+  {
+    screen,
+    template,
+    resumed,
+    facet,
+    entryMain,
+  }: { screen: boolean; template: boolean; resumed: boolean; facet: CompiledFacetLines | null; entryMain: string },
 ): string[] {
   return [
     `## Rules that do not change`,
+    ...(facet ? compiledBriefRules(facet, screen, entryMain) : threeBriefRules(run, spec, { screen, template })),
+    `- Capture (${toolCall(roleEngine(run, RoleKey.Builder), "capture")}) after every meaningful change and LOOK before you finish; write what you tried and why in ${facetNotes(spec.id)}.`,
+    // A bench page is the three.js template's: a compiled game has no page to mount one module on.
+    ...(template && !facet ? [benchRule(spec.id)] : []),
+    `- A line beginning \`HARNESS:\` in ${facetNotes(spec.id)} is read by the loop, not by the next builder: use it to say a check cannot pass as written (name the check id) or that a camera cannot see what it asks — the planner re-points the check instead of you burning iterations.`,
+    resumed
+      ? `- You are resuming your own session: you remember your previous attempt — change the mechanism where a check keeps failing, do not re-tune the same numbers.`
+      : "",
+  ];
+}
+
+/** A compiled game's tagging, screen and input, contract and determinism rules (`CPP_FACET`, `RUST_FACET`). */
+function compiledBriefRules(facet: CompiledFacetLines, screen: boolean, entryMain: string): string[] {
+  const own = screen ? facet.oneScreen("") : facet.ownShape(entryMain);
+  return [facet.tag, own, facet.finish, facet.determinism, ...(facet.ladder ? [facet.ladder] : [])];
+}
+
+/** A three.js game's tagging, screen, input, contract and determinism rules: the template's, or its own game's. */
+function threeBriefRules(
+  run: BriefOptions["run"],
+  spec: BriefOptions["spec"],
+  { screen, template }: { screen: boolean; template: boolean },
+): string[] {
+  return [
     `- Tag every object you create: \`obj.userData.tag = "<tag>"\` — untagged objects are invisible to scene checks and do not count.`,
     // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
     screen
@@ -1223,12 +1328,6 @@ function briefRules(
     template
       ? `- Determinism: rng from update(), no Math.random, no wall clock.`
       : `- Determinism: the studio seeds Math.random and owns the clock for this page, so the same seed replays the same run — take time from the delta your own loop already computes, never from a second clock of your own.`,
-    `- Capture (${toolCall(roleEngine(run, RoleKey.Builder), "capture")}) after every meaningful change and LOOK before you finish; write what you tried and why in ${facetNotes(spec.id)}.`,
-    ...(template ? [benchRule(spec.id)] : []),
-    `- A line beginning \`HARNESS:\` in ${facetNotes(spec.id)} is read by the loop, not by the next builder: use it to say a check cannot pass as written (name the check id) or that a camera cannot see what it asks — the planner re-points the check instead of you burning iterations.`,
-    resumed
-      ? `- You are resuming your own session: you remember your previous attempt — change the mechanism where a check keeps failing, do not re-tune the same numbers.`
-      : "",
   ];
 }
 

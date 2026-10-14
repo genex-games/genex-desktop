@@ -8,7 +8,8 @@
 import { lstat, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type EngineBinding, GameEngine, isProjectPath, parseEngineBinding } from "../shared/game-engine.ts";
-import { readJsonForUpdate, readJsonIfExists } from "./fsx.ts";
+import { readJsonForUpdate } from "./fsx.ts";
+import { readStudioRecord } from "./project-facts.ts";
 
 const STUDIO_JSON = "studio.json";
 
@@ -58,8 +59,7 @@ async function stillThere(project: string): Promise<boolean> {
 
 /** The engine record of the game in `dir`, or undefined when it is a web game or the record no longer holds. */
 export async function readEngineBinding(dir: string): Promise<EngineBinding | undefined> {
-  const meta = await readJsonIfExists<{ engine?: unknown }>(path.join(dir, STUDIO_JSON)).catch(() => null);
-  const binding = parseEngineBinding(meta?.engine);
+  const binding = parseEngineBinding((await readStudioRecord(dir))?.engine);
   if (!binding) return undefined;
   return (await stillThere(binding.project)) ? binding : undefined;
 }

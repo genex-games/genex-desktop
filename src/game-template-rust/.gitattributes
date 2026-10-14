@@ -1,0 +1,14 @@
+*.glb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.hdr binary
+*.exr binary
+*.ktx2 binary
+*.wav binary
+*.ogg binary
+*.mp3 binary
+*.flac binary
+*.ttf binary
+*.otf binary

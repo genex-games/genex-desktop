@@ -1,23 +1,22 @@
 # Genex: product overview
 
-Genex (formerly AI Game Studio) is a macOS Electron application for making games with AI:
-local browser games, and Unreal or other engines' projects. A person describes a game or a
-change, answers questions when needed, and reviews the running game and build results. The game
-is a real local project that can be opened, edited and exported.
+Genex (formerly AI Game Studio) is an Electron application for making games with AI: local
+games for the browser, desktop and phones, and Unreal or other engines' projects. A person
+describes a game or a change, answers questions when needed, and reviews the running game and
+build results. The game is a real local project that can be opened, edited and exported. New
+games are Three.js or Rust · wgpu; C++ · raylib games keep working.
 
 ## What the app contains
 
-The sidebar opens games, Plugins, Studio and Settings. Each game has one main conversation
-on the left and a stage on the right. The stage switches between **Live** (the playable
-game), **Builds** (work and results) and **Assets** (files and generated media).
+The sidebar opens games, Plugins, Studio and Settings. Each game pairs one conversation with a
+stage that switches between **Live** (the playable game), **Builds** (work and results) and
+**Assets** (files and generated media). The prompt bar chooses the model, mode and
+tools; chat shows replies, questions, work status and results.
 
-The prompt bar chooses the model, permissions, Auto or Loop mode, optional planning,
-references and tools. Chat shows replies, real questions, compact work status and results;
-details expand on demand.
-
-Studio pairs an assistant with Activity, for reviewing runs and instruction improvements. Plugins add tools, assets and integrations. Settings owns
-the games folder, appearance, provider/model setup and saved permissions. Accounts, local projects and installed harness edits
-must survive application changes.
+Studio pairs an assistant with Activity, for reviewing runs and instruction improvements.
+Plugins add tools, assets and integrations. Settings owns the games folder, appearance,
+providers, models and permissions. Accounts, local projects and installed harness edits must
+survive application changes.
 
 ## Read the part you are changing
 

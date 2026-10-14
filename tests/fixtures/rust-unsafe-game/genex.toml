@@ -1,0 +1,4 @@
+# A Rust · wgpu game that needs its person's trust flag (M7.2): an `unsafe` block in its own code
+# and a build script beside this manifest. Nothing here can trust it: only the person can, in Studio.
+[game]
+title = "Unsafe Pond"

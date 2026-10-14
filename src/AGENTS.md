@@ -2,8 +2,8 @@
 
 Notes for the external developer. Root rules are in [AGENTS.md](../AGENTS.md); house terms
 are in the [glossary](../docs/agent/glossary.md). Never add developer `AGENTS.md` or `CLAUDE.md`
-files inside `harness-seed/` or `game-template/`: `scripts/build.mjs` copies both trees into
-every user's workspace, where in-app engines read them.
+files inside `harness-seed/`, `game-template/`, `game-template-cpp/` or `game-template-rust/`:
+`scripts/build.mjs` copies these trees into every user's workspace, where in-app engines read them.
 `tests/conformance/agent-instructions.test.ts` enforces this.
 
 ## harness-seed
@@ -49,6 +49,37 @@ every user's workspace, where in-app engines read them.
 - A change affects every new game. Run `npm run test:shapes:e2e` when the contract or boot
   path changes.
 
+## game-template-cpp
+
+- The starting project of every C++ · raylib game: `CMakeLists.txt` calls `genex_add_game` from
+  the toolchain store's `genex.cmake`, `src/studio.*` is the C++ studio runtime (verbs mirror
+  `studio.d.ts`; never remove one) and `web/shell.html` binds it to `window.__studio`.
+  `CLAUDE.md`, `CLAUDE.own.md`, `NOTES*.md` and `docs/CONTRACT.md` are payload.
+- Its raylib-free units (`protocol`, `json`, `input`, `clock`, `session`, `paths`, `transport`)
+  are tested in `tests/cpp/` through `tests/conformance/cpp-runtime.test.ts`, which also drives
+  the runtime over a stub raylib (`tests/cpp/raylib_stub.h`) on fd 3; the raylib-including files
+  through `cpp-template.test.ts` and `scripts/toolchains/compile-check.sh`. The real web and Mac
+  builds are `cpp-lane-real.test.ts`; a `web/shell.html` change also regenerates
+  `tests/fixtures/raylib-wasm` (`scripts/toolchains/make-wasm-fixture.sh`).
+- `src/frames.*` is Live's frames ring (a Mac headless build's alone; `frames_wire.h` is a byte
+  copy of `native/genex-frames/include/gxf_wire.h`): `tests/cpp/frames_test.cpp`, and for real
+  through the addon `native-embed-real.test.ts`.
+- `native/raylib-platform/rcore_genex_headless.c` is Genex's headless raylib platform: the Mac
+  prewarm compiles it in place of raylib's `rcore_memory.c` (`headless-raylib.test.ts`).
+
+## game-template-rust
+
+- The starting project of every Rust · wgpu game, created by a development build and, in a
+  release build, where the Rust lane runs (the gate in `main/core/stack-gate.ts`). `genex.toml`
+  is its only build input: the host writes the cargo manifest, lock and configuration, so the
+  template ships none. `src/main.rs`
+  keeps one `FACET WIRING` block before `genex::install` for the union merge.
+  Keep `docs/GENEX_API.md` byte-equal to `native/genex-rust/docs/GENEX_API.md`; `CLAUDE.md`,
+  `CLAUDE.own.md`, `NOTES*.md` and `docs/CONTRACT.md` are payload.
+- `tests/conformance/rust-template.test.ts` copies, creates and type-checks it under the pinned
+  sysroot; the crates it builds against are `native/genex-rust/` (cargo only through
+  `scripts/toolchains/rust-env.ts`, see its README).
+
 ## main and substrate
 
 - IPC is registered per domain in `main/ipc/<domain>.ts` through `handle()`
@@ -61,11 +92,41 @@ every user's workspace, where in-app engines read them.
   and the behavior lives in services under `main/core/`. Follow the
   [RPC recipe](../docs/agent/recipes.md#harness-rpc-method). Smoke, selftest and acceptance
   drivers live in `main/smoke/`.
+- A game's stack is `stackOf(shape)`; compiled builds go only through the build-lane seam
+  (`main/game-build.ts` `GameBuildLanes`, the core's `x.gameBuilds`), never `CppBuilds` directly.
+  Follow the [stack recipe](../docs/agent/recipes.md#stack); `npm run test:area -- stack-identity`
+  runs its suites.
 - Path checks go through `substrate/paths.ts` (`isInside`, `isBelow`, `containedReal`) and
   atomic writes through `substrate/fsx.ts` (`atomicWriteText`).
 - Spawned processes go through `substrate/spawn.ts` (`ProcessSandbox`); quote shell arguments
-  with `shellQuote`. Validate path parameters from the harness by realpath inside the owned
-  root; their shape is checked first by `HARNESS_PARAM_SCHEMAS` at `HarnessHost`.
+  with `shellQuote`. A C++ game starts only through `spawnGame` (profile in
+  `substrate/game-sandbox-profile.ts`, admission and run folder in `substrate/native-bundle.ts`);
+  `main/core/native-runs.ts` is the run registry and `substrate/native-game-port.ts` the protocol
+  port. `tests/conformance/native-real.test.ts` drives them over a real Mac build.
+  `main/native-frames.ts` is the one place main loads native code (the `genex-frames` addon,
+  `native-frames-addon.test.ts` for real), gated by `main/electron-gate.ts`; Mac app exports are
+  `substrate/native-export.ts` behind `main/core/native-export-run.ts`. Validate path
+  parameters from the harness by realpath inside the owned root; their shape is checked first by
+  `HARNESS_PARAM_SCHEMAS` at `HarnessHost`.
+- The Windows and Linux destinations, cross-built with zig from a Mac (a Windows host refuses C++
+  builds, `unsupported-host`):
+  - `substrate/toolchain-store/cross-targets.ts`: the zig CMake toolchain files, raylib's cross
+    prebuild and the cross `genex.cmake`; `scripts/cross-build-smoke.ts` drives them for real in CI.
+  - `substrate/native-gate-pe.ts`, `substrate/native-gate-elf.ts`: the Windows and Linux bundle
+    gates; they read PE and ELF headers themselves, never through `llvm-readobj`.
+  - `substrate/bundle-walk.ts`: the one bounded, link-refusing walk of a build's output for both
+    gates and the cross run directory.
+  - `substrate/windows-names.ts`: the one rule for a name Windows can hold (PE gate and archives).
+  - `substrate/native-cross-admission.ts`: the lane's admission of a cross `out/` against the
+    lock's store ANGLE manifest.
+  - `substrate/native-rundir-cross.ts`: a Windows or Linux game's run directory on its own OS.
+  - `substrate/windows-game-launch.ts`: how a Windows host starts `genex-game-launcher.exe`
+    (`native/genex-game-launcher/`), which puts the game in an AppContainer.
+  - `substrate/linux-game-box.ts`, `substrate/linux-game-seccomp.ts`: the bubblewrap box a game
+    runs in on a Linux host, and the seccomp filter bubblewrap loads into it.
+  - `substrate/native-export-archive.ts`, `substrate/native-export-desktop.ts`: the Windows zip and
+    Linux tar.gz exports; `substrate/windows-sign.ts` is the optional `jsign` step with the
+    person's own certificate.
 
 ## renderer, shared and page
 

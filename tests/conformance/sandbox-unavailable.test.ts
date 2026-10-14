@@ -7,9 +7,25 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { PackageManager, SandboxProblemCode, SandboxTool, linuxInstallCommands } from "../../src/shared/boot.ts";
+import {
+  AppArmorBlockCode,
+  PackageManager,
+  SandboxProblemCode,
+  SandboxTool,
+  StudioPlatform,
+  linuxInstallCommands,
+} from "../../src/shared/boot.ts";
+import {
+  APPARMOR_LABEL_FILES,
+  USERNS_RESTRICTION_FILE,
+  appArmorProfile,
+  profileInstallCommand,
+  profileRemoveCommand,
+  type PathOwner,
+} from "../../src/substrate/linux-apparmor.ts";
 import {
   SandboxUnavailableError,
+  type UsernsCheck,
   missingLinuxTools,
   sandboxProblem,
   windowsSetupProblem,
@@ -193,5 +209,152 @@ describe("ProcessSandbox raises a typed error", () => {
       assert.equal(error.problem.code, SandboxProblemCode.NotProvisioned);
       return true;
     });
+  });
+});
+
+describe("Ubuntu's user-namespace restriction", () => {
+  const ready = { platform: StudioPlatform.Linux, supported: true, dependencyErrors: [], missingTools: [] };
+  const executable = "/home/ada/Genex portable/genex";
+  /** This copy, in the person's own folders, with no profile installed yet. */
+  const fresh: UsernsCheck = { executable, sharedPath: null, installed: null };
+
+  it("a Linux sandbox with every tool but under the restriction offers Genex's profile, and its removal", () => {
+    const problem = sandboxProblem({ ...ready, userns: fresh });
+    const profile = appArmorProfile(executable);
+    assert.ok(profile);
+    assert.equal(problem?.code, SandboxProblemCode.UsernsRestricted);
+    assert.equal(problem?.platform, StudioPlatform.Linux);
+    assert.deepEqual(problem?.apparmor, {
+      profile: profile.file,
+      command: profileInstallCommand(profile),
+      remove: profileRemoveCommand(profile),
+    });
+    assert.equal(problem?.apparmorBlock, undefined);
+    assert.deepEqual(problem?.missingTools, []);
+    assert.deepEqual(problem?.installCommands, []);
+    assert.ok(problem?.details.length, "Details say what was found");
+  });
+
+  it("missing tools come first: the restriction is only worth fixing once bubblewrap is there", () => {
+    const problem = sandboxProblem({
+      ...ready,
+      dependencyErrors: ["bubblewrap (bwrap) not installed"],
+      missingTools: [SandboxTool.Bubblewrap],
+      userns: { ...fresh, executable: "/usr/lib/genex/genex" },
+    });
+    assert.equal(problem?.code, SandboxProblemCode.MissingTools);
+    assert.equal(problem?.apparmor, undefined);
+  });
+
+  it("offers no profile, says why and names the path when Set up must not or cannot help", () => {
+    const profile = appArmorProfile(executable);
+    assert.ok(profile);
+    const cases: Array<[string, UsernsCheck, AppArmorBlockCode, string]> = [
+      [
+        "a folder a profile cannot name",
+        { ...fresh, executable: "/home/ada/Genex [old]/genex" },
+        AppArmorBlockCode.Unnamable,
+        "/home/ada/Genex [old]/genex",
+      ],
+      [
+        "a folder someone else can change",
+        { ...fresh, sharedPath: "/srv/team" },
+        AppArmorBlockCode.SharedFolder,
+        "/srv/team",
+      ],
+      [
+        "the same profile already installed, yet not attached (a second Set up would not help)",
+        { ...fresh, installed: `${profile.text}\n` },
+        AppArmorBlockCode.NotAttached,
+        profile.file,
+      ],
+    ];
+    for (const [name, userns, block, named] of cases) {
+      const problem = sandboxProblem({ ...ready, userns });
+      assert.equal(problem?.code, SandboxProblemCode.UsernsRestricted, name);
+      assert.equal(problem?.apparmor, undefined, name);
+      assert.equal(problem?.apparmorBlock, block, name);
+      assert.ok(
+        problem?.details.some((line) => line.includes(named)),
+        `${name}: Details name ${named}`,
+      );
+    }
+  });
+
+  it("a profile that names another copy is offered again, and Details say it moves", () => {
+    const other = appArmorProfile("/opt/Genex/genex");
+    assert.ok(other);
+    const problem = sandboxProblem({ ...ready, userns: { ...fresh, installed: other.text } });
+    assert.ok(problem?.apparmor);
+    assert.ok(problem.details.some((line) => line.includes("another copy")));
+  });
+
+  it("no restriction, or not Linux, is no problem", () => {
+    assert.equal(sandboxProblem(ready), null);
+    assert.equal(sandboxProblem({ ...ready, platform: StudioPlatform.Mac, userns: fresh }), null);
+  });
+});
+
+describe("ProcessSandbox under Ubuntu's restriction", () => {
+  const [AA_LABEL] = APPARMOR_LABEL_FILES;
+  const OWN = (): PathOwner => ({ uid: 1000, gid: 1000, mode: 0o040755 });
+  function linuxRuntime(counts: { initialized: number }): SandboxRuntime {
+    return {
+      isSupportedPlatform: () => true,
+      checkDependencies: () => ({ errors: [], warnings: [] }),
+      initialize: async () => {
+        counts.initialized++;
+      },
+      reset: async () => {},
+      updateConfig: () => {},
+      wrapWithSandboxArgv: (async () => ({ argv: ["/bin/true"], env: {} })) as never,
+      annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
+    } as SandboxRuntime;
+  }
+  async function create(runtime: SandboxRuntime, label: string | null): Promise<ProcessSandbox> {
+    const root = await tmpDir("sandbox-userns-");
+    const files: Record<string, string> = { [USERNS_RESTRICTION_FILE]: "1\n" };
+    if (label !== null) files[AA_LABEL] = `${label}\n`;
+    return ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      runtime,
+      platform: StudioPlatform.Linux,
+      linux:
+        label === null
+          ? undefined
+          : {
+              read: (file) => files[file] ?? null,
+              execPath: "/opt/Genex/genex",
+              inspect: OWN,
+              person: { uid: 1000, gid: 1000 },
+            },
+    });
+  }
+
+  it("refuses an unconfined process with the setup problem, before initializing anything", async () => {
+    const counts = { initialized: 0 };
+    await assert.rejects(create(linuxRuntime(counts), "unconfined"), (error: unknown) => {
+      assert.ok(error instanceof SandboxUnavailableError);
+      assert.equal(error.problem.code, SandboxProblemCode.UsernsRestricted);
+      assert.equal(error.problem.apparmor?.profile, "/etc/apparmor.d/genex-portable");
+      return true;
+    });
+    assert.equal(counts.initialized, 0);
+  });
+
+  it("starts under Genex's profile", async () => {
+    const counts = { initialized: 0 };
+    const sandbox = await create(linuxRuntime(counts), "genex-portable (unconfined)");
+    assert.equal(counts.initialized, 1);
+    await sandbox.dispose();
+  });
+
+  it("a fake runtime without a reader never reads the host's /proc, so an Ubuntu 24.04 host changes nothing", async () => {
+    const counts = { initialized: 0 };
+    const sandbox = await create(linuxRuntime(counts), null);
+    assert.equal(counts.initialized, 1);
+    await sandbox.dispose();
   });
 });

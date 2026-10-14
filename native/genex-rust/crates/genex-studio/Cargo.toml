@@ -1,0 +1,32 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.3 (transport, verbs, Stop), M2.4 (saves, complete). Dependencies come from
+# [workspace.dependencies] only.
+[package]
+name = "genex-studio"
+description = "Host transport (fd 3, the Windows named pipe), NDJSON verb dispatcher and Stop. Present in the dev flavour only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+genex-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+# The adopted descriptor is marked close-on-exec (`fcntl`), as transport.cpp does; the spike
+# example's stubborn test double also ignores SIGTERM with it (std has no signal API).
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# The Windows pipe is opened overlapped (a reader thread waits on a read while the main thread
+# writes, which a synchronous handle serializes); std has no overlapped I/O.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+

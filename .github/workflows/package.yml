@@ -2,10 +2,12 @@ name: Package
 # Unsigned packages on PRs into main and pushes to main (dev -> main is opened by hand; PRs into
 # dev skip this billed matrix): the same makers the release uses (dmg and zip on macOS; deb, rpm
 # and zip on Linux; the Squirrel installer on Windows), then the packaged smoke and the packaged
-# terminal against the result. No secrets: the macOS build is ad-hoc signed and the Windows build
-# unsigned. Signed builds come from release.yml. A dispatch with `only` builds one platform; one
-# with `test_sign` has SignPath sign the Windows build with its self-signed test certificate
-# (.github/actions/windows-signpath), the only use of a secret here.
+# terminal against the result (on macOS and Linux the packaged smoke also launches the Rust · wgpu
+# payload acceptance: template, lock line, no cargo or rustc, the release gate). No secrets: the
+# macOS build is ad-hoc signed and the Windows build unsigned. Signed builds come from release.yml.
+# A dispatch with `only` builds one platform; one with `test_sign` has SignPath sign the Windows
+# build with its self-signed test certificate (.github/actions/windows-signpath), the only use of a
+# secret here.
 on:
   pull_request:
     branches: [main]
@@ -41,7 +43,8 @@ jobs:
           ) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    # actions: read lets SignPath fetch the workflow artifacts it signs (a `test_sign` dispatch).
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds) and
+    # SignPath fetch the workflow artifacts it signs (a `test_sign` dispatch).
     permissions:
       contents: read
       actions: read
@@ -58,7 +61,7 @@ jobs:
           cache: npm
       - name: Linux desktop, sandbox and rpm prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 bubblewrap socat ripgrep rpm
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 bubblewrap socat ripgrep rpm rpm2cpio cpio xz-utils
       # Linux node-pty has no spawn-helper until rebuilt; the root postinstall checks it.
       - name: Install Linux dependencies before rebuilding the terminal
         if: runner.os == 'Linux'
@@ -74,6 +77,14 @@ jobs:
       - name: Check the Linux runtime after rebuilding the terminal
         if: runner.os == 'Linux'
         run: npm run runtime:check
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
       - name: Make (unsigned)
         if: ${{ !(runner.os == 'Windows' && inputs.test_sign) }}
         run: |
@@ -87,6 +98,36 @@ jobs:
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           signing-policy: test-signing
+      - name: Pinned ANGLE and sysroot bytes in the actual Linux RPM
+        if: runner.os == 'Linux'
+        run: |
+          mapfile -t rpms < <(find out/make/rpm -type f -name '*.rpm')
+          test "${#rpms[@]}" -eq 1
+          rpmPayload="$(mktemp -d "$RUNNER_TEMP/genex-rpm.XXXXXX")"
+          # The launcher is a link in the package's own file list; extract only the app tree it points into.
+          rpm -qplv "${rpms[0]}" | grep -E ' /usr/bin/genex( |$)'
+          rpm2cpio "${rpms[0]}" | (cd "$rpmPayload" && cpio -id --no-absolute-filenames --quiet './usr/lib/genex/*')
+          node --input-type=module - "$rpmPayload/usr/lib/genex/resources/app.asar.unpacked/dist/resources" "${rpms[0]}" <<'JS'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { createReadStream } from 'node:fs';
+          import { mkdir, writeFile } from 'node:fs/promises';
+          import path from 'node:path';
+          import { verifyAngleBundle } from './src/substrate/toolchain-store/bundled.ts';
+          import { bundledLinuxSysrootFolder, verifyLinuxSysrootFolder, LINUX_SYSROOT_BUNDLE_PIN } from './src/substrate/toolchain-store/linux-sysroot-bundle.ts';
+          const angle = await verifyAngleBundle(process.argv[2]);
+          assert.equal(angle.length, 3);
+          assert.ok(angle.every(check => check.ok), JSON.stringify(angle));
+          const checkedSysroot = await verifyLinuxSysrootFolder(bundledLinuxSysrootFolder(process.argv[2]));
+          assert.equal(checkedSysroot.manifest.files.length, LINUX_SYSROOT_BUNDLE_PIN.files);
+          const sysroot = { pin: LINUX_SYSROOT_BUNDLE_PIN, files: checkedSysroot.manifest.files.length };
+          const hash = createHash('sha256');
+          for await (const chunk of createReadStream(process.argv[3])) hash.update(chunk);
+          const report = { head: process.env.GITHUB_SHA, rpm: path.basename(process.argv[3]), sha256: hash.digest('hex'), angle, sysroot };
+          await mkdir('.studio-dev/evidence', { recursive: true });
+          await writeFile('.studio-dev/evidence/rpm-payload.json', JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report));
+          JS
       # A real per-user install of Genex-Setup.exe, its shortcuts, path lengths and uninstall.
       - name: Squirrel install and uninstall
         if: runner.os == 'Windows'
@@ -95,11 +136,16 @@ jobs:
       - name: Windows sandbox setup (srt-sandbox user and WFP filters)
         if: runner.os == 'Windows'
         run: node scripts/ci-windows-sandbox.mjs
-      - name: Packaged smoke and packaged terminal
+      # test:packaged includes the Rust payload checks and, on macOS and Linux, the packaged Rust
+      # acceptance (--studio-rust-acceptance); its report lands in .studio-dev/evidence/rust-packaged.
+      - name: Packaged smoke (with the Rust acceptance) and packaged terminal
         run: |
           if [ "$RUNNER_OS" = Linux ]; then run="xvfb-run -a"; else run=""; fi
           $run npm run test:packaged
           $run node tests/e2e/run-terminal-packaged.mjs
+      - name: Packaged Linux C++ creation
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node tests/e2e/run-cpp-packaged-ui.mjs
       # A whole fixture chat turn (model, tools, workspace, preview) in the installed-shape package,
       # with the harness inside the Windows sandbox.
       - name: Packaged chat turn

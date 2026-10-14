@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { CheckOrigin, CheckWeight, renderMilestones, type Check, type Milestone } from "../../spec.ts";
 import { checksFromDefects, craftForNewCheck } from "../../library.ts";
+import { stackOfShape, stampedStack } from "../../native-loop.ts";
 import { nextMove } from "../../replan.ts";
 import { facetNotes } from "../../repo.ts";
 import { RunEvent } from "../../run-events.ts";
@@ -25,6 +26,14 @@ import { isBuildBlock } from "../build-block.ts";
 
 /** The planner is asked for a move only with this much of the facet's clock left (or a slice of a short one). */
 const PLANNER_MOVE_MIN_MS = 8 * MINUTE_MS;
+
+/**
+ * A C++ · raylib facet's FIX names only a craft recipe written for its stack; a copy of this
+ * module kept from before native support would name a three.js one (native-contract.ts `servesNative`).
+ */
+export const SERVES_NATIVE = true;
+/** A Rust · wgpu facet's FIX names only a craft recipe written for Rust (`stampedStack`, `stackOfShape`). */
+export const SERVES_RUST = true;
 
 /** The move (§5): the director's ladder always; else identity first, then the pending move, the reviewer's, the critic's gap or the planner's. */
 export async function chooseRoundMove(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
@@ -286,7 +295,7 @@ function escalatedByPolish(move: AnyRecord, polishStreak: number, threshold: num
 
 /** THE FIX: a biggest gap the judge has repeated, named on its own and measured by its own check. */
 export async function nameTheFix(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
-  const { appendRun, emitLoopState, facet, policy, run } = loop;
+  const { appendRun, emitLoopState, facet, policy, run, shape } = loop;
   // ── THE FIX: a biggest gap the judge has repeated is not one ledger item among twenty ──
   // It is named in its own section, its vision check is on the board, and once it has stood
   // three verdicts a build that leaves it failing loses — the way a missing move loses.
@@ -307,9 +316,11 @@ export async function nameTheFix(loop: FacetLoop, round: FacetRound): Promise<Ro
     // library already knows how to close is named in THE FIX and injected below, so the
     // builder ports it instead of inventing a fourth way.
     const fixCheck = checksFromDefects([gap.text], { limit: 1 })[0] ?? null;
-    // Only a recipe for this kind of game: THE FIX's recipe keeps its sketch inline in BRIEF.md.
+    // Only a recipe for this kind of game, written for its stack (the run's stamp, else the
+    // folder's kind), never the other's: THE FIX's recipe keeps its sketch inline in BRIEF.md.
     const kind = typeof loop.game?.kind === "string" ? loop.game.kind : null;
-    fix.recipe = fixCheck ? (craftForNewCheck(loop.recipes, fixCheck, { kind })[0]?.recipe ?? null) : null;
+    const stack = stampedStack(run) ?? stackOfShape(shape);
+    fix.recipe = fixCheck ? (craftForNewCheck(loop.recipes, fixCheck, { kind, stack })[0]?.recipe ?? null) : null;
     loop.currentFix = fix;
     await appendRun(RunEvent.FacetFix, {
       runId: run.runId,

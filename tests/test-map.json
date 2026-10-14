@@ -1,5 +1,5 @@
 {
-  "about": "Explicit edges for scripts/affected-tests.mjs, for inputs no test imports or names by a literal path. Keys use knowledge-map glob semantics (dir/** also owns hidden files); values are test files. Tier follows the test: rig tests land in L3. Changes under src/harness-seed/** and src/game-template/** already select the harness gate; do not repeat that here.",
+  "about": "Explicit edges for scripts/affected-tests.mjs, for inputs no test imports or names by a literal path. Keys use knowledge-map glob semantics (dir/** also owns hidden files); values are test files. Tier follows the test: rig tests land in L3. Changes under src/harness-seed/**, src/game-template/**, src/game-template-cpp/** and src/game-template-rust/** already select the harness gate; do not repeat that here.",
   "map": {
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
@@ -11,12 +11,221 @@
     "package.json": ["tests/conformance/agent-context.test.ts", "tests/conformance/appdmg-image-size.test.ts"],
     "scripts/appdmg-image-size/**": ["tests/conformance/appdmg-image-size.test.ts"],
     "tsconfig.json": ["tests/conformance/architecture.test.ts"],
+    "THIRD-PARTY-NOTICES.md": ["tests/conformance/third-party-notices.test.ts"],
     "build/**": ["tests/conformance/package-signing.test.ts"],
     "tests/test-map.json": ["tests/conformance/affected-tests.test.ts"],
     "tests/test-style-allowlist.json": ["tests/conformance/test-style.test.ts"],
     ".agents/skills/**": ["tests/conformance/skills-sync.test.ts"],
     ".claude/skills/**": ["tests/conformance/skills-sync.test.ts"],
     ".claude/settings.json": ["tests/conformance/agent-settings.test.ts"],
-    "evals/**": ["tests/conformance/eval-contracts.test.ts"]
+    "src/game-template-cpp/**": [
+      "tests/conformance/cpp-runtime.test.ts",
+      "tests/conformance/cpp-template.test.ts",
+      "tests/conformance/cpp-lane-real.test.ts"
+    ],
+    "tests/cpp/**": ["tests/conformance/cpp-runtime.test.ts"],
+    "tests/cpp/sandbox_probe.c": [
+      "tests/conformance/game-sandbox-profile.test.ts",
+      "tests/conformance/sandbox.test.ts"
+    ],
+    "tests/cpp/bundle_fixtures/**": ["tests/conformance/native-bundle.test.ts"],
+    "tests/cpp/protocol_game.c": ["tests/conformance/native-real.test.ts"],
+    "tests/fixtures/native-fake-game.mjs": ["tests/conformance/native-game-port.test.ts"],
+    "native/raylib-platform/**": [
+      "tests/conformance/headless-raylib.test.ts",
+      "tests/conformance/cpp-template.test.ts",
+      "tests/conformance/mac-lane.test.ts"
+    ],
+    "scripts/toolchains/compile-check.sh": ["tests/conformance/cpp-template.test.ts"],
+    "src/shared/game-export-contract.ts": [
+      "tests/conformance/export-signing.test.ts",
+      "tests/conformance/mobile-contract.test.ts"
+    ],
+    "src/main/core/ios-export-run.ts": [
+      "tests/conformance/mobile-contract.test.ts",
+      "tests/conformance/export-ipc.test.ts"
+    ],
+    "src/main/core/android-export-run.ts": [
+      "tests/conformance/mobile-contract.test.ts",
+      "tests/conformance/export-ipc.test.ts"
+    ],
+    "src/preload/studio-bridge.ts": ["tests/conformance/native-frames-bridge.test.ts"],
+    "src/substrate/native-export.ts": ["tests/conformance/native-export.test.ts"],
+    "src/main/core/desktop-export-run.ts": [
+      "tests/conformance/native-export-desktop.test.ts",
+      "tests/conformance/export-signing.test.ts"
+    ],
+    "src/main/core/native-export-run.ts": [
+      "tests/conformance/native-export-desktop.test.ts",
+      "tests/conformance/native-export.test.ts",
+      "tests/conformance/export-ipc.test.ts"
+    ],
+    "src/main/native-frames.ts": [
+      "tests/conformance/native-frames.test.ts",
+      "tests/conformance/native-frames-addon.test.ts"
+    ],
+    "src/main/electron-gate.ts": [
+      "tests/conformance/native-frames.test.ts",
+      "tests/conformance/native-frames-addon.test.ts"
+    ],
+    "native/genex-frames/**": [
+      "tests/conformance/native-frames.test.ts",
+      "tests/conformance/native-frames-addon.test.ts",
+      "tests/conformance/native-embed-real.test.ts"
+    ],
+    "native/genex-frames/include/gxf_wire.h": ["tests/conformance/cpp-template.test.ts"],
+    "src/game-template-cpp/src/frames.cpp": ["tests/conformance/native-embed-real.test.ts"],
+    "src/game-template-cpp/src/frames.h": ["tests/conformance/native-embed-real.test.ts"],
+    "src/game-template-cpp/src/frames_wire.h": ["tests/conformance/native-embed-real.test.ts"],
+    "evals/**": ["tests/conformance/eval-contracts.test.ts"],
+    "scripts/toolchains/linux-sysroot.ts": [
+      "tests/conformance/toolchain-pins.test.ts",
+      "tests/conformance/toolchain-store.test.ts"
+    ],
+    "native/linux-sysroot/**": [
+      "tests/conformance/linux-sysroot-bundle.test.ts",
+      "tests/conformance/toolchain-pins.test.ts"
+    ],
+    "scripts/ci-cpp-linux-browser.cjs": ["tests/conformance/cpp-linux-acceptance.test.ts"],
+    ".github/workflows/cpp-linux-host.yml": ["tests/conformance/cpp-linux-acceptance.test.ts"],
+    "scripts/cross-build-smoke.ts": ["tests/conformance/cross-targets.test.ts"],
+    "scripts/spike/rust-wgpu/rust-env.sh": ["tests/conformance/rust-spike-env.test.ts"],
+    "scripts/spike/rust-wgpu/setup-toolchain.sh": ["tests/conformance/rust-spike-env.test.ts"],
+    "scripts/spike/rust-wgpu/pins.md": [
+      "tests/conformance/rust-spike-env.test.ts",
+      "tests/conformance/rust-env.test.ts"
+    ],
+    "scripts/toolchains/rust-env.ts": [
+      "tests/conformance/rust-env.test.ts",
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-frames-real.test.ts",
+      "tests/conformance/rust-web-spike.test.ts"
+    ],
+    "scripts/spike/rust-wgpu/vendor-allowlist.toml": ["tests/conformance/rust-spike-env.test.ts"],
+    "scripts/spike/rust-wgpu/vendor-allowlist.lock": ["tests/conformance/rust-spike-env.test.ts"],
+    "src/game-template-rust/**": [
+      "tests/conformance/rust-template.test.ts",
+      "tests/conformance/rust-template-docs.test.ts",
+      "tests/conformance/loop-merge.test.ts",
+      "tests/conformance/native-scaffold.test.ts",
+      "tests/conformance/core-rust-lane.test.ts",
+      "tests/conformance/fixture-rust.test.ts",
+      "tests/conformance/rust-lane-real.test.ts",
+      "tests/conformance/rust-end-to-end.test.ts",
+      "tests/conformance/rust-shell-boot.test.ts",
+      "tests/conformance/extension-ladder-docs.test.ts"
+    ],
+    "src/harness-seed/skills/rust-extension-ladder.md": ["tests/conformance/extension-ladder-docs.test.ts"],
+    "scripts/toolchains/rust-inventory.json": ["tests/conformance/rust-template.test.ts"],
+    "native/genex-rust/deny.toml": ["tests/conformance/rust-template.test.ts"],
+    "native/genex-rust/supply-chain/**": ["tests/conformance/rust-template.test.ts"],
+    "native/genex-rust/web/shell.html": ["tests/conformance/rust-template.test.ts"],
+    "native/genex-rust/docs/GENEX_API.md": [
+      "tests/conformance/rust-template.test.ts",
+      "tests/conformance/rust-template-docs.test.ts",
+      "tests/conformance/extension-ladder-docs.test.ts"
+    ],
+    "native/genex-rust/clippy.toml": [
+      "tests/conformance/rust-template-docs.test.ts",
+      "tests/conformance/core-rust-lane.test.ts",
+      "tests/conformance/fixture-rust.test.ts",
+      "tests/conformance/rust-lane-real.test.ts"
+    ],
+    ".github/workflows/rust-toolchain.yml": ["tests/conformance/rust-template.test.ts"],
+    "scripts/toolchains/rust-gate-workflow.ts": ["tests/conformance/rust-template.test.ts"],
+    "native/genex-rust/crates/genex-studio/**": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-lifecycle-real.test.ts",
+      "tests/conformance/rust-embed-real.test.ts",
+      "tests/conformance/rust-runtime.test.ts",
+      "tests/conformance/rust-end-to-end.test.ts"
+    ],
+    "native/genex-rust/crates/genex/**": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts",
+      "tests/conformance/rust-runtime.test.ts",
+      "tests/conformance/rust-lane-real.test.ts",
+      "tests/conformance/rust-end-to-end.test.ts",
+      "tests/conformance/rust-performance.test.ts"
+    ],
+    "native/genex-rust/crates/genex-core/**": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts",
+      "tests/conformance/rust-runtime.test.ts"
+    ],
+    "native/genex-rust/crates/genex-render/**": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts",
+      "tests/conformance/rust-performance.test.ts"
+    ],
+    "native/genex-rust/crates/genex-audio/**": [
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts"
+    ],
+    "native/genex-rust/Cargo.toml": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts"
+    ],
+    "native/genex-rust/Cargo.lock": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts",
+      "tests/conformance/core-rust-lane.test.ts",
+      "tests/conformance/fixture-rust.test.ts",
+      "tests/conformance/third-party-notices.test.ts",
+      "tests/conformance/rust-end-to-end.test.ts"
+    ],
+    "tests/fixtures/rust-fake-host.mjs": ["tests/conformance/rust-protocol-spike.test.ts"],
+    "native/genex-rust/crates/genex-frames/**": [
+      "tests/conformance/rust-frames-real.test.ts",
+      "tests/conformance/rust-embed-real.test.ts"
+    ],
+    "native/genex-rust/examples/pond/**": [
+      "tests/conformance/rust-protocol-spike.test.ts",
+      "tests/conformance/rust-web-spike.test.ts",
+      "tests/conformance/rust-spike-ci.test.ts",
+      "tests/conformance/rust-lifecycle-real.test.ts",
+      "tests/conformance/rust-embed-real.test.ts"
+    ],
+    "native/genex-rust/crates/genex-platform-web/**": ["tests/conformance/rust-web-spike.test.ts"],
+    "native/genex-rust/web/**": ["tests/conformance/rust-web-spike.test.ts"],
+    "scripts/spike/rust-wgpu/web.sh": ["tests/conformance/rust-web-spike.test.ts"],
+    "scripts/spike/rust-wgpu/authoring-*": ["tests/conformance/authoring-trial.test.ts"],
+    "tests/fixtures/authoring-trial/**": ["tests/conformance/authoring-trial.test.ts"],
+    "scripts/spike/rust-wgpu/seatbelt-measure.*": ["tests/conformance/game-sandbox-profile.test.ts"],
+    "scripts/spike/rust-wgpu/ios-app.sh": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "scripts/spike/rust-wgpu/android-apk.sh": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "scripts/spike/rust-wgpu/ios/**": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "scripts/spike/rust-wgpu/android/**": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "native/genex-rust/crates/genex-platform-ios/**": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "native/genex-rust/crates/genex-platform-android/**": ["tests/conformance/rust-spike-packaging.test.ts"],
+    "scripts/ci/rust-spike.ts": ["tests/conformance/rust-spike-ci.test.ts"],
+    ".github/workflows/rust-spike.yml": ["tests/conformance/rust-spike-ci.test.ts"],
+    "tests/fixtures/rust-protocol-game/**": ["tests/conformance/rust-runtime.test.ts"],
+    "tests/fixtures/rust-wasm/**": [
+      "tests/conformance/fixture-rust.test.ts",
+      "tests/conformance/core-rust-lane.test.ts"
+    ],
+    "scripts/toolchains/make-rust-wasm-fixture.sh": ["tests/conformance/fixture-rust.test.ts"],
+    "tests/fixtures/rust-fd3-stub-game.mjs": [
+      "tests/conformance/rust-end-to-end.test.ts",
+      "tests/conformance/fixture-rust.test.ts"
+    ],
+    "tests/fixtures/bench-scene/**": ["tests/conformance/rust-performance.test.ts"],
+    "tests/fixtures/rust-bundles/m2-binaries.json": [
+      "tests/conformance/native-gate-elf.test.ts",
+      "tests/conformance/native-gate-pe.test.ts",
+      "tests/conformance/native-gate-wasm.test.ts",
+      "tests/conformance/native-cross-admission.test.ts",
+      "tests/conformance/native-bundle.test.ts"
+    ],
+    "tests/fixtures/rust-gpu-hang/**": ["tests/conformance/rust-gpu-hang-real.test.ts"],
+    "src/harness-seed/judge/code-review-rust.md": ["tests/conformance/judge-rubrics.test.ts"],
+    "src/harness-seed/library/recipes/rust.*.json": ["tests/conformance/library.test.ts"],
+    "docs/tool-permissions.md": ["tests/conformance/device-launch.test.ts", "tests/conformance/harness-api.test.ts"]
   }
 }

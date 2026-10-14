@@ -19,7 +19,7 @@ import {
   workerStopWords,
 } from "../../run-steps.ts";
 import { stoppedWords, verdictSentence, WORKER_WORDS } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useStepPicture } from "../run-graph/use-builds-model.ts";
 import { type DetailRow, Details, Panel, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
 import { Single } from "./pictures.tsx";
@@ -95,8 +95,10 @@ function WorkerAbout({ step, worker }: { step: Step; worker: WorkerInfo }): JSX.
 export function SessionPanel(props: StepPanelProps): JSX.Element {
   const { graph, step } = props;
   const working = step.state === StepState.Building;
-  const src = useRoundStill(graph, step.facetId, 1, null, working && graph.active);
-  const screen = usePartScreen(props.project, runIdOf(graph), step.facetId, working && graph.active);
+  const runId = runIdOf(graph);
+  const src = useStepPicture(runId, step.picture, working && graph.active).src;
+  // The screen and captures of the worker on the part now, never those of an attempt a restart replaced.
+  const screen = usePartScreen(props.project, runId, step.builder, working && graph.active);
   return (
     <Panel
       id={step.id}

@@ -1,0 +1,41 @@
+{
+  "id": "rust.seeded-step",
+  "runtime": "rust-wgpu",
+  "title": "Seeded randomness, the fixed tick and a probe per mechanic, in Rust",
+  "tags": [
+    "rng",
+    "seed",
+    "deterministic",
+    "step",
+    "tick",
+    "probe",
+    "state",
+    "player",
+    "moved",
+    "demo",
+    "contract",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "probe",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "ctx.rng, ctx.tick and game.probe in Rust: what makes a Rust build measurable and the same on every destination.",
+  "intent": "The same seed must give the same game in the browser, on the Mac, Windows, Linux and the phones. Every random number comes from ctx.rng (or the rng on_reset receives), time comes only from ctx.dt and ctx.tick, and input only from ctx.keys, ctx.touches, ctx.pointer and ctx.pads inside on_update: the studio steps the game by hand and injects its input there, so anything read from a clock, std's random sources or winit is invisible to every judge (and the lane refuses Instant, SystemTime, thread_rng, HashMap and std's f32 transcendentals; use genex::math and genex::Map). A seed rebuilds the world from World::default() and every facet's state from its own default. Register one probe per mechanic that exists (a count, a phase, a position), a player that returns the real pose, and a demo that drives a mechanic a generic walk cannot reach to an end state a probe can verify.",
+  "sketch": "// src/facets/dash.rs — the facet's own module; src/main.rs adds two lines in FACET WIRING:\n//   #[path = \"facets/dash.rs\"] mod dash;   and   dash::wire(&mut game);\nuse super::World;\nuse genex::prelude::*;\n\n#[derive(Default)]\npub struct Dash { x: f32, cooldown: u32, dashes: u32 }\n\npub fn wire(game: &mut Game<World>) {\n    game.facet_state::<Dash>();\n    game.on_update(|sim, ctx| {\n        let dash = sim.facets.get_mut::<Dash>();\n        dash.cooldown = dash.cooldown.saturating_sub(1);\n        if (ctx.keys.pressed(Key::Space) || ctx.touches.tapped()) && dash.cooldown == 0 {\n            dash.x += ctx.rng.range_f32(2.0, 3.0); // the seeded stream, the same on every destination\n            dash.cooldown = 30; // ticks, never wall-clock time\n            dash.dashes += 1;\n        }\n    });\n    game.probe(\"dashes\", |sim| json!(sim.facets.get::<Dash>().dashes));\n}\n",
+  "port": "A facet owns src/facets/<slug>.rs and adds exactly its two lines inside the FACET WIRING block of src/main.rs; only the facet that owns the entry edits src/main.rs, src/game.rs or genex.toml, and docs/GENEX_API.md is read-only.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Determinism, Facets)",
+      "note": "Randomness only from ctx.rng; time from ctx.tick and ctx.dt; genex::math and genex::Map; a facet keeps its own state through game.facet_state::<T>()."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

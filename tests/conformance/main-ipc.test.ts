@@ -18,9 +18,55 @@ import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { createLoginControllers, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
 import type { CodexLoginState } from "../../src/shared/codex-login.ts";
-import type { UiEvent } from "../../src/shared/ui-events.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { Duplex, PassThrough } from "node:stream";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { registerGamesIpc, type GamesIpcDeps } from "../../src/main/ipc/games.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
+import { type CreateOptions, GameWorkspaces, ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
+import { registerNativeIpc } from "../../src/main/ipc/native.ts";
+import { fixtureNativeRuns } from "../../src/main/dev/fixture-native.ts";
+import { FixtureName } from "../../src/main/dev/fixture-kit.ts";
+import { FIXTURE_CPP_GAMES } from "../../src/main/dev/fixture-toolchains.ts";
+import {
+  type NativeEmbedRequest,
+  NativeRuns,
+  type NativeStartRequest,
+  type NativeSurfaceSize,
+  type PreparedRun,
+} from "../../src/main/core/native-runs.ts";
+import { assertOwnedProject } from "../../src/main/project-policy.ts";
+import {
+  initialNative,
+  nativeLogReceived,
+  nativeOf,
+  nativeStatusReceived,
+  nativeWatched,
+} from "../../src/renderer/state/native.ts";
+import { NativeGamePort } from "../../src/substrate/native-game-port.ts";
+import type { GameChild } from "../../src/substrate/spawn.ts";
+import { type BuildProblem, BuildProblemCode } from "../../src/shared/build-problem.ts";
+import {
+  NATIVE_GAMEPAD_AXES_MAX,
+  NATIVE_INPUT_ACTIONS_MAX,
+  NATIVE_NO_RUN_ID,
+  NATIVE_READY_TIMEOUT_MS,
+  type NativeInputAction,
+  type NativeLogBatch,
+  NativeError,
+  NativeRefusal,
+  NativeRunMode,
+  type NativeRunStatus,
+  NativeRunState,
+  type NativeTimers,
+  ringSizeFor,
+} from "../../src/shared/native-contract.ts";
+import { tmpDir } from "../helpers/tmp.ts";
 
 type Listener = (event: IpcSender, payload: unknown) => Promise<IpcResult>;
 const studio = { sender: "studio", senderFrame: "main-frame" };
@@ -652,6 +698,926 @@ it("model refresh validates provider identities before invoking discovery", asyn
   }
   assert.deepEqual(await invoke("studio:models.refresh", { provider: "codex" }), { ok: true, value: true });
   assert.equal(calls, 1);
+});
+
+/** A stand-in for `src/game-template-cpp` until the C++ template lands. */
+async function cppTemplate(dir: string): Promise<string> {
+  const files: Record<string, string> = {
+    "CMakeLists.txt": "cmake_minimum_required(VERSION 3.28)\nproject(game CXX C)\ngenex_add_game(SOURCES src/*.cpp)\n",
+    "src/main.cpp": '#include "studio.h"\nint main() {\n  studio::install({});\n}\n',
+    "CLAUDE.md": "# Rules for a C++ game\n",
+    "NOTES.md": "# __GAME_TITLE__\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await writeFile(path.join(dir, rel), text);
+  }
+  return dir;
+}
+
+/** `[first, <empty>, last]`: a list with an empty slot, which a renderer's structured clone carries as it is. */
+function gapped(first: string, last: string): string[] {
+  const list: string[] = [];
+  list[0] = first;
+  list[2] = last;
+  return list;
+}
+
+/** The games registrar over a real library: what the core was asked for, and where games land. */
+async function gamesIpc() {
+  const base = await tmpDir("studio-main-ipc-games-");
+  const root = path.join(base, "library");
+  const games = new GameWorkspaces({
+    root,
+    templateDir: path.resolve(import.meta.dirname, "../../src/game-template"),
+    cppTemplateDir: await cppTemplate(path.join(base, "game-template-cpp")),
+    vendorDir: path.join(base, "vendor"),
+    indexFile: path.join(base, "projects.json"),
+    userData: path.join(base, "userData"),
+    homeDir: base,
+    platform: StudioPlatform.Mac,
+  });
+  const asked: Array<[string, CreateOptions]> = [];
+  const core = {
+    createGame: (title: string, options: CreateOptions) => {
+      asked.push([title, options]);
+      return games.create(title, options);
+    },
+  };
+  const { handle, invoke } = registrar();
+  const deps = { core, runSummaryReader: {}, pushUiEvent: () => {} } as unknown as GamesIpcDeps;
+  registerGamesIpc(handle, deps);
+  return { invoke, asked, root };
+}
+
+/** Whether a game's folder holds a page at its root. */
+const hasPage = (dir: string) =>
+  readFile(path.join(dir, "index.html")).then(
+    () => true,
+    () => false,
+  );
+
+describe("Create game carries where people play", () => {
+  it("studio:game.create forwards stack and targets, and a game made without them stays a browser game", async () => {
+    const { invoke, asked } = await gamesIpc();
+    // Raylib creation is retired (M6.3; its refusal is native-scaffold's row), and this library's
+    // development gate is closed to Rust, so the stack forwarded here is the browser's, named.
+    const created = await invoke("studio:game.create", {
+      title: "Pong",
+      stack: GameStack.ThreeJs,
+      targets: [BuildTarget.Web],
+    });
+    assert.ok(created.ok, JSON.stringify(created));
+    const pong = created.value as { dir: string };
+    // Flipped (M6 review): the IPC names the person as the caller, so the library refuses raylib for it too.
+    assert.deepEqual(asked.at(-1), [
+      "Pong",
+      { stack: GameStack.ThreeJs, targets: [BuildTarget.Web], caller: ScaffoldCaller.Person },
+    ]);
+    // FLIPPED for empty new projects: the folder holds no page until its first message picks its
+    // kind, where it used to get the Three.js starter.
+    assert.equal(await hasPage(pong.dir), false);
+
+    const madePlain = await invoke("studio:game.create", { title: "Plain" });
+    assert.ok(madePlain.ok, JSON.stringify(madePlain));
+    const plain = madePlain.value as { dir: string };
+    assert.deepEqual(asked.at(-1), ["Plain", { caller: ScaffoldCaller.Person }]);
+    assert.equal(await hasPage(plain.dir), false);
+  });
+
+  it("refuses a stack or destinations it does not know before any folder is made", async () => {
+    const { invoke, asked, root } = await gamesIpc();
+    const hostile: Array<[string, Record<string, unknown>]> = [
+      ["a destination that is not a string", { targets: [BuildTarget.Web, 1] }],
+      ["destinations that are not a list", { targets: BuildTarget.Mac }],
+      ["no destination", { targets: [] }],
+      ["forty destinations", { targets: Array.from({ length: 40 }, () => BuildTarget.Web) }],
+      ["a prototype's name", { targets: ["__proto__"] }],
+      ["one destination twice", { targets: [BuildTarget.Web, BuildTarget.Web] }],
+      ["an unknown destination", { targets: ["playstation"] }],
+      ["an unknown stack", { stack: "unity" }],
+      ["a stack that is not a string", { stack: { toString: GameStack.RaylibCpp } }],
+      ["a null stack", { stack: null }],
+      ["an empty slot", { targets: new Array(1) }],
+      ["an empty slot in a C++ game", { stack: GameStack.RaylibCpp, targets: new Array(1) }],
+      ["a gap between destinations", { targets: gapped(BuildTarget.Web, BuildTarget.Mac) }],
+    ];
+    for (const [label, fields] of hostile) {
+      const reply = await invoke("studio:game.create", { title: "Pong", ...fields });
+      assert.equal(reply.ok, false, label);
+    }
+    assert.deepEqual(asked, [], "the core was never asked");
+    assert.deepEqual(await readdir(root).catch(() => []), [], "no folder was made");
+  });
+});
+
+/** What the native registrar asked the registry for, in order. */
+type NativeAsk = { call: "start" | "stop" | "state" | "front"; detail: unknown };
+
+/**
+ * The native registrar over a library of one game (`pong-mac`, in a real folder) and a recording
+ * registry whose window run of `pong-mac` is `running` (or none). `start` answers `start()`'s run,
+ * or throws what the row gives it.
+ */
+async function nativeIpc(
+  options: { fixture?: boolean; running?: NativeRunStatus | null; start?: () => Promise<NativeRunStatus> } = {},
+) {
+  const root = await tmpDir("studio-main-ipc-native-");
+  const game = { name: "pong-mac", dir: path.join(root, "pong-mac") };
+  await mkdir(game.dir);
+  const asked: NativeAsk[] = [];
+  const nativeRuns = {
+    async start(request: NativeStartRequest) {
+      asked.push({ call: "start", detail: { ...request } });
+      const status = options.start ? await options.start() : nativeStatus(request.project, NativeRunState.Ready);
+      return { status, port: null };
+    },
+    async stop(runId: string) {
+      asked.push({ call: "stop", detail: runId });
+    },
+    state(project: string, mode?: NativeRunMode) {
+      asked.push({ call: "state", detail: [project, mode] });
+      return project === game.name ? (options.running ?? null) : null;
+    },
+    async front(project: string) {
+      asked.push({ call: "front", detail: project });
+      return true;
+    },
+    onStatus: () => () => {},
+  };
+  const core = {
+    nativeRuns,
+    games: { list: async () => [game] },
+    assertProjectAllowed: async () => {},
+  } as unknown as Parameters<typeof registerNativeIpc>[1];
+  const listeners = new Map<string, Listener>();
+  const handle = createIpcHandle(
+    { handle: (channel, listener) => void listeners.set(channel, listener) },
+    { fixture: options.fixture === true, isStudioUi: () => true },
+  );
+  registerNativeIpc(handle, core, { now: () => Date.parse("2026-10-01T05:00:00.000Z") });
+  const invoke = (channel: string, payload?: unknown) => {
+    const listener = listeners.get(channel);
+    assert.ok(listener, `${channel} is not registered`);
+    return listener(studio, payload);
+  };
+  return { invoke, asked, root, game };
+}
+
+/** A window run of `project`, as the registry reports it. */
+function nativeStatus(project: string, state: NativeRunState, extra: Partial<NativeRunStatus> = {}): NativeRunStatus {
+  return {
+    project,
+    runId: "run-1",
+    target: BuildTarget.Mac,
+    state,
+    mode: NativeRunMode.Window,
+    pid: 4242,
+    backend: null,
+    refusal: null,
+    problem: null,
+    exit: null,
+    owner: null,
+    startedAt: "2026-10-01T04:59:00.000Z",
+    endedAt: null,
+    ...extra,
+  };
+}
+
+const NATIVE_CHANNELS = ["studio:native.run", "studio:native.stop", "studio:native.state", "studio:native.front"];
+
+describe("a C++ game's own window over IPC", () => {
+  it("Play on Mac starts the game's Mac build in a window and answers its status", async () => {
+    const { invoke, asked } = await nativeIpc();
+    const reply = await invoke("studio:native.run", { project: "pong-mac" });
+    assert.ok(reply.ok, JSON.stringify(reply));
+    assert.equal((reply.value as NativeRunStatus).state, NativeRunState.Ready);
+    assert.deepEqual(asked, [
+      { call: "start", detail: { project: "pong-mac", target: BuildTarget.Mac, mode: NativeRunMode.Window } },
+      // The run `start` registered at once: the answer is about it, should the start fail.
+      { call: "state", detail: ["pong-mac", NativeRunMode.Window] },
+    ]);
+  });
+
+  it("a refused run answers a refused status, with the build's problem, instead of an error", async () => {
+    const problem: BuildProblem = {
+      project: "pong-mac",
+      command: "",
+      code: null,
+      lines: [],
+      needsInstall: false,
+      install: null,
+      showingLastBuild: false,
+      at: "2026-10-01T05:00:00.000Z",
+      reason: BuildProblemCode.ToolchainMissing,
+      target: BuildTarget.Mac,
+    };
+    const { invoke } = await nativeIpc({
+      start: async () => {
+        throw new NativeError(NativeRefusal.BuildFailed, "the Mac build failed", problem);
+      },
+    });
+    const reply = await invoke("studio:native.run", { project: "pong-mac" });
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const status = reply.value as NativeRunStatus;
+    assert.deepEqual(
+      [status.project, status.target, status.mode, status.state, status.refusal, status.problem, status.pid],
+      [
+        "pong-mac",
+        BuildTarget.Mac,
+        NativeRunMode.Window,
+        NativeRunState.Refused,
+        NativeRefusal.BuildFailed,
+        problem,
+        null,
+      ],
+    );
+    assert.equal(status.startedAt, "2026-10-01T05:00:00.000Z");
+    const broken = await nativeIpc({
+      start: async () => {
+        throw new Error("the registry broke");
+      },
+    });
+    const failed = await broken.invoke("studio:native.run", { project: "pong-mac" });
+    assert.equal(failed.ok, false, "anything but a typed refusal stays an error");
+  });
+
+  it("Stop ends the window run, State reads it, Bring to front raises it", async () => {
+    const running = nativeStatus("pong-mac", NativeRunState.Ready);
+    const { invoke, asked } = await nativeIpc({ running });
+    assert.deepEqual(await invoke("studio:native.state", { project: "pong-mac" }), { ok: true, value: running });
+    assert.deepEqual(await invoke("studio:native.front", { project: "pong-mac" }), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:native.stop", { project: "pong-mac" }), { ok: true, value: true });
+    assert.deepEqual(asked, [
+      { call: "state", detail: ["pong-mac", NativeRunMode.Window] },
+      { call: "front", detail: "pong-mac" },
+      { call: "state", detail: ["pong-mac", NativeRunMode.Window] },
+      { call: "stop", detail: "run-1" },
+    ]);
+    const idle = await nativeIpc();
+    assert.deepEqual(await idle.invoke("studio:native.stop", { project: "pong-mac" }), { ok: true, value: false });
+  });
+
+  it("studio:native.run and front refuse in a fixture; stop and state do not", async () => {
+    const running = nativeStatus("pong-mac", NativeRunState.Ready);
+    const { invoke, asked } = await nativeIpc({ fixture: true, running });
+    for (const channel of ["studio:native.run", "studio:native.front"]) {
+      const reply = await invoke(channel, { project: "pong-mac" });
+      assert.equal(reply.ok, false, channel);
+      assert.match(reply.ok ? "" : reply.error, /unsupported-in-fixture/, channel);
+    }
+    assert.equal((await invoke("studio:native.state", { project: "pong-mac" })).ok, true);
+    assert.equal((await invoke("studio:native.stop", { project: "pong-mac" })).ok, true);
+    assert.deepEqual(
+      asked.map((ask) => ask.call),
+      ["state", "state", "stop"],
+      "nothing was started or raised",
+    );
+  });
+
+  it("refuses a game name that is not a listed game before anything runs, and writes nothing", async () => {
+    const { invoke, asked, root } = await nativeIpc({ running: nativeStatus("pong-mac", NativeRunState.Ready) });
+    const before = await readdir(root, { recursive: true });
+    const hostile: Array<[string, unknown]> = [
+      ["an empty name", { project: "" }],
+      ["a path out of the library", { project: "../x" }],
+      ["a path into the game", { project: "pong-mac/../../x" }],
+      ["ten kilobytes of name", { project: "p".repeat(10 * 1024) }],
+      ["a game that is not in the library", { project: "pong-pc" }],
+      ["a list", { project: ["pong-mac"] }],
+      ["a null name", { project: null }],
+      ["a number", { project: 7 }],
+      ["no name", {}],
+      ["no payload", undefined],
+      ["a null payload", null],
+    ];
+    for (const channel of NATIVE_CHANNELS)
+      for (const [label, payload] of hostile) {
+        const reply = await invoke(channel, payload);
+        assert.equal(reply.ok, false, `${channel}: ${label}`);
+      }
+    assert.deepEqual(asked, [], "the registry was never asked");
+    assert.deepEqual(await readdir(root, { recursive: true }), before, "nothing was written");
+  });
+
+  it("refuses a listed game whose folder is not inside the games root, before the registry is asked", async () => {
+    const base = await tmpDir("studio-main-ipc-native-root-");
+    const gamesRoot = path.join(base, "games");
+    const elsewhere = path.join(base, "elsewhere");
+    await mkdir(path.join(elsewhere, "pong-out"), { recursive: true });
+    await mkdir(path.join(gamesRoot, "real"), { recursive: true });
+    await writeFile(path.join(elsewhere, "pong-out", "CMakeLists.txt"), "project(pong)\n");
+    await symlink(path.join(elsewhere, "pong-out"), path.join(gamesRoot, "pong-link"));
+    await symlink(elsewhere, path.join(gamesRoot, "aliased"));
+    const listed = [
+      ["a game folder that is a link out of the root", { name: "pong-link", dir: path.join(gamesRoot, "pong-link") }],
+      ["a game folder outside the root", { name: "pong-out", dir: path.join(elsewhere, "pong-out") }],
+      [
+        "a game folder under a linked folder",
+        { name: "pong-aliased", dir: path.join(gamesRoot, "aliased", "pong-out") },
+      ],
+      [
+        "a game folder that climbs out of the root",
+        { name: "pong-climb", dir: path.join(gamesRoot, "real", "..", "..", "elsewhere", "pong-out") },
+      ],
+    ] as const;
+    const asked: string[] = [];
+    const nativeRuns = {
+      start: async () => void asked.push("start"),
+      stop: async () => void asked.push("stop"),
+      state: () => {
+        asked.push("state");
+        return null;
+      },
+      front: async () => {
+        asked.push("front");
+        return true;
+      },
+      onStatus: () => () => {},
+    };
+    const core = {
+      nativeRuns,
+      games: { list: async () => listed.map(([, game]) => game) },
+      assertProjectAllowed: (dir: string) => assertOwnedProject(gamesRoot, dir),
+    } as unknown as Parameters<typeof registerNativeIpc>[1];
+    const { handle, invoke } = registrar();
+    registerNativeIpc(handle, core);
+    const before = await readdir(base, { recursive: true });
+    for (const channel of NATIVE_CHANNELS)
+      for (const [label, game] of listed) {
+        const reply = await invoke(channel, { project: game.name });
+        assert.equal(reply.ok, false, `${channel}: ${label}`);
+      }
+    assert.deepEqual(asked, [], "the registry was never asked");
+    assert.deepEqual(await readdir(base, { recursive: true }), before, "nothing was written");
+  });
+});
+
+/**
+ * The embed registrar over a library of one game (`pong-mac`, in a real folder) and a registry that
+ * records what it is asked: its embedded run of `pong-mac` is `embedded` (or none); `embed`
+ * answers the row's `embed()`, or a Ready embedded run.
+ */
+async function embedIpc(
+  options: {
+    fixture?: boolean;
+    embedded?: NativeRunStatus | null;
+    embed?: () => Promise<NativeRunStatus>;
+    list?: (games: Array<{ name: string; dir: string }>) => Promise<Array<{ name: string; dir: string }>>;
+  } = {},
+) {
+  const root = await tmpDir("studio-main-ipc-embed-");
+  const game = { name: "pong-mac", dir: path.join(root, "pong-mac") };
+  await mkdir(game.dir);
+  const asked: Array<{ call: string; detail: unknown }> = [];
+  const nativeRuns = {
+    async embed(request: NativeEmbedRequest) {
+      asked.push({ call: "embed", detail: { ...request, surface: { ...request.surface } } });
+      if (options.embed) return options.embed();
+      return nativeStatus(request.project, NativeRunState.Ready, { mode: NativeRunMode.Embedded });
+    },
+    async stop(runId: string) {
+      asked.push({ call: "stop", detail: runId });
+    },
+    state(project: string, mode?: NativeRunMode) {
+      asked.push({ call: "state", detail: [project, mode] });
+      const ours = project === game.name && mode === NativeRunMode.Embedded;
+      return ours ? (options.embedded ?? null) : null;
+    },
+    resize(project: string, surface: NativeSurfaceSize) {
+      asked.push({ call: "resize", detail: [project, { ...surface }] });
+      return true;
+    },
+    async input(project: string, actions: NativeInputAction[]) {
+      asked.push({ call: "input", detail: [project, actions] });
+      return true;
+    },
+    onStatus: () => () => {},
+  };
+  const core = {
+    nativeRuns,
+    games: { list: async () => (options.list ? options.list([game]) : [game]) },
+    assertProjectAllowed: async () => {},
+  } as unknown as Parameters<typeof registerNativeIpc>[1];
+  const listeners = new Map<string, Listener>();
+  const handle = createIpcHandle(
+    { handle: (channel, listener) => void listeners.set(channel, listener) },
+    { fixture: options.fixture === true, isStudioUi: () => true },
+  );
+  registerNativeIpc(handle, core, { now: () => Date.parse("2026-10-01T05:00:00.000Z") });
+  const invoke = (channel: string, payload?: unknown) => {
+    const listener = listeners.get(channel);
+    assert.ok(listener, `${channel} is not registered`);
+    return listener(studio, payload);
+  };
+  return { invoke, asked, root };
+}
+
+const EMBED_SIZE = { width: 640, height: 360, dpr: 2 };
+
+describe("a C++ game's Mac build inside Live over IPC", () => {
+  it("embed starts the game in Live at its canvas's device pixels and answers the run's status", async () => {
+    const { invoke, asked } = await embedIpc();
+    const reply = await invoke("studio:native.embed", { project: "pong-mac", size: EMBED_SIZE });
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const status = reply.value as NativeRunStatus;
+    assert.deepEqual([status.mode, status.state], [NativeRunMode.Embedded, NativeRunState.Ready]);
+    assert.deepEqual(asked, [
+      {
+        call: "embed",
+        detail: { project: "pong-mac", target: BuildTarget.Mac, surface: { width: 1280, height: 720, dpr: 2 } },
+      },
+      { call: "state", detail: ["pong-mac", NativeRunMode.Embedded] },
+    ]);
+    const huge = await embedIpc();
+    await huge.invoke("studio:native.embed", { project: "pong-mac", size: { width: 4096, height: 2048, dpr: 4 } });
+    const capped = ringSizeFor({ width: 4096, height: 2048, dpr: 4 });
+    assert.deepEqual(huge.asked[0]?.detail, {
+      project: "pong-mac",
+      target: BuildTarget.Mac,
+      surface: { ...capped, dpr: 4 },
+    });
+  });
+
+  it("where Live cannot embed, embed answers a refused status with no run, and nothing runs", async () => {
+    for (const refusal of [NativeRefusal.EmbedUnsupported, NativeRefusal.ElectronUntested]) {
+      const { invoke } = await embedIpc({
+        embed: async () => {
+          throw new NativeError(refusal, "Live cannot show a Mac build here");
+        },
+      });
+      const reply = await invoke("studio:native.embed", { project: "pong-mac", size: EMBED_SIZE });
+      assert.ok(reply.ok, JSON.stringify(reply));
+      const status = reply.value as NativeRunStatus;
+      assert.deepEqual(
+        [status.project, status.runId, status.mode, status.state, status.refusal, status.pid, status.target],
+        ["pong-mac", NATIVE_NO_RUN_ID, NativeRunMode.Embedded, NativeRunState.Refused, refusal, null, BuildTarget.Mac],
+      );
+    }
+  });
+
+  it("unembed stops the game's embedded run; with none it answers false", async () => {
+    const embedded = nativeStatus("pong-mac", NativeRunState.Ready, { mode: NativeRunMode.Embedded, runId: "run-7" });
+    const { invoke, asked } = await embedIpc({ embedded });
+    assert.deepEqual(await invoke("studio:native.unembed", { project: "pong-mac" }), { ok: true, value: true });
+    assert.deepEqual(asked, [
+      { call: "state", detail: ["pong-mac", NativeRunMode.Embedded] },
+      { call: "stop", detail: "run-7" },
+    ]);
+    const idle = await embedIpc();
+    assert.deepEqual(await idle.invoke("studio:native.unembed", { project: "pong-mac" }), { ok: true, value: false });
+  });
+
+  it("input reaches the embedded run as checked actions; resize as the capped ring size", async () => {
+    const { invoke, asked } = await embedIpc();
+    const actions = [
+      { type: "click", x: 10, y: 20, px: true, extra: "dropped" },
+      { type: "gamepad", index: 0, buttons: [1, 0], axes: [0.5, -0.5] },
+      { type: "text", text: "héllo" },
+    ];
+    assert.deepEqual(await invoke("studio:native.input", { project: "pong-mac", actions }), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:native.resize", { project: "pong-mac", size: EMBED_SIZE }), {
+      ok: true,
+      value: true,
+    });
+    const [input, resize] = asked;
+    assert.ok(input?.call === "input" && Array.isArray(input.detail));
+    const sent: unknown = input.detail[1];
+    assert.ok(Array.isArray(sent));
+    assert.deepEqual(sent[0], {
+      type: "click",
+      x: 10,
+      y: 20,
+      button: undefined,
+      clicks: undefined,
+      modifiers: undefined,
+      px: true,
+      stepMs: undefined,
+    });
+    assert.equal(sent.length, 3);
+    assert.deepEqual(resize, { call: "resize", detail: ["pong-mac", { width: 1280, height: 720, dpr: 2 }] });
+  });
+
+  it("input and resize reach the game in the order they were sent, with no library listing per call", async () => {
+    // A large library lists slower than a frame, and listings can finish out of order: a key's
+    // up must never overtake its down.
+    const pending: Array<() => void> = [];
+    const { invoke, asked } = await embedIpc({
+      list: (games) => new Promise((resolve) => pending.push(() => resolve(games))),
+    });
+    const sent = [
+      invoke("studio:native.input", { project: "pong-mac", actions: [{ type: "down", keys: ["Space"] }] }),
+      invoke("studio:native.resize", { project: "pong-mac", size: EMBED_SIZE }),
+      invoke("studio:native.input", { project: "pong-mac", actions: [{ type: "up", keys: ["Space"] }] }),
+    ];
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+    const listings = pending.length;
+    for (const resolve of pending.reverse()) resolve();
+    await Promise.all(sent);
+    assert.equal(listings, 0, "no call listed the library");
+    assert.deepEqual(
+      asked.map((entry) => {
+        const [, detail] = entry.detail as [string, Array<{ type: string }> | object];
+        return Array.isArray(detail) ? `${entry.call} ${detail[0]?.type}` : entry.call;
+      }),
+      ["input down", "resize", "input up"],
+    );
+  });
+
+  it("refuses hostile payloads before the registry is asked, and writes nothing", async () => {
+    const { invoke, asked, root } = await embedIpc({
+      embedded: nativeStatus("pong-mac", NativeRunState.Ready, { mode: NativeRunMode.Embedded }),
+    });
+    const before = await readdir(root, { recursive: true });
+    const tap = { type: "tap", keys: ["Space"] };
+    const sized = (size: unknown) => ({ project: "pong-mac", size });
+    const acting = (actions: unknown) => ({ project: "pong-mac", actions });
+    const hostile: Array<[string, string, unknown]> = [
+      ["studio:native.embed", "a NaN side", sized({ ...EMBED_SIZE, width: Number.NaN })],
+      ["studio:native.embed", "a million pixels a side", sized({ ...EMBED_SIZE, width: 10 ** 6 })],
+      ["studio:native.embed", "a dpr of 9", sized({ ...EMBED_SIZE, dpr: 9 })],
+      ["studio:native.embed", "a fractional side", sized({ ...EMBED_SIZE, height: 360.5 })],
+      ["studio:native.embed", "no size", { project: "pong-mac" }],
+      ["studio:native.embed", "a size that is a list", sized([640, 360, 2])],
+      ["studio:native.embed", "a path for a project", { project: "../x", size: EMBED_SIZE }],
+      ["studio:native.embed", "a project that is no string", { project: 7, size: EMBED_SIZE }],
+      ["studio:native.resize", "a NaN dpr", sized({ ...EMBED_SIZE, dpr: Number.NaN })],
+      ["studio:native.resize", "a million pixels a side", sized({ ...EMBED_SIZE, height: 10 ** 6 })],
+      ["studio:native.resize", "a dpr of 9", sized({ ...EMBED_SIZE, dpr: 9 })],
+      ["studio:native.resize", "a path for a project", { project: "../x", size: EMBED_SIZE }],
+      [
+        "studio:native.input",
+        "one action too many",
+        acting(Array.from({ length: NATIVE_INPUT_ACTIONS_MAX + 1 }, () => tap)),
+      ],
+      ["studio:native.input", "an unknown action kind", acting([tap, { type: "teleport", x: 1 }])],
+      [
+        "studio:native.input",
+        "a gamepad with 50 axes",
+        acting([{ type: "gamepad", index: 0, buttons: [], axes: Array.from({ length: 50 }, () => 0) }]),
+      ],
+      [
+        "studio:native.input",
+        "a gamepad with one axis too many",
+        acting([
+          {
+            type: "gamepad",
+            index: 0,
+            buttons: [],
+            axes: Array.from({ length: NATIVE_GAMEPAD_AXES_MAX + 1 }, () => 0),
+          },
+        ]),
+      ],
+      ["studio:native.input", "a NaN position", acting([{ type: "move", x: Number.NaN, y: 1 }])],
+      ["studio:native.input", "257 units of text", acting([{ type: "text", text: "x".repeat(257) }])],
+      ["studio:native.input", "a fifth pad", acting([{ type: "gamepad", index: 4, buttons: [], axes: [] }])],
+      ["studio:native.input", "actions that are no list", acting({ 0: tap })],
+      ["studio:native.input", "a path for a project", { project: "../x", actions: [tap] }],
+      ["studio:native.unembed", "a path for a project", { project: "../x" }],
+      ["studio:native.unembed", "a project that is no string", { project: ["pong-mac"] }],
+      ["studio:native.unembed", "no payload", undefined],
+    ];
+    for (const [channel, label, payload] of hostile) {
+      const reply = await invoke(channel, payload);
+      assert.equal(reply.ok, false, `${channel}: ${label}`);
+    }
+    assert.deepEqual(asked, [], "the registry was never asked: nothing spawned, no port called");
+    assert.deepEqual(await readdir(root, { recursive: true }), before, "nothing was written");
+  });
+
+  it("the four embed channels run in a fixture profile: embedded play opens no desktop window", async () => {
+    const { invoke } = await embedIpc({ fixture: true });
+    for (const [channel, payload] of [
+      ["studio:native.embed", { project: "pong-mac", size: EMBED_SIZE }],
+      ["studio:native.unembed", { project: "pong-mac" }],
+      ["studio:native.input", { project: "pong-mac", actions: [] }],
+      ["studio:native.resize", { project: "pong-mac", size: EMBED_SIZE }],
+    ] as const) {
+      const reply = await invoke(channel, payload);
+      assert.ok(reply.ok, `${channel}: ${JSON.stringify(reply)}`);
+    }
+  });
+});
+
+/**
+ * A fake clock for the real registry and port: nothing fires until `advance` passes its time, and
+ * every step lets the game's streams and promises settle.
+ */
+function manualClock() {
+  let now = Date.parse("2026-10-01T05:00:00.000Z");
+  let seq = 0;
+  const due = new Map<number, { at: number; run: () => void }>();
+  const timers: NativeTimers = {
+    now: () => now,
+    setTimeout: (run, ms) => {
+      seq += 1;
+      due.set(seq, { at: now + ms, run });
+      return seq;
+    },
+    clearTimeout: (handle) => {
+      if (typeof handle === "number") due.delete(handle);
+    },
+  };
+  const settle = async () => {
+    for (let round = 0; round < 10; round++) await nextTurn();
+  };
+  /** Settles until `ready` holds (the run's build, its folders and its spawn take real I/O). */
+  const until = async (ready: () => boolean) => {
+    for (let round = 0; round < 200 && !ready(); round++) await settle();
+    assert.ok(ready(), "the run never got there");
+  };
+  const advance = async (ms: number) => {
+    const until = now + ms;
+    for (;;) {
+      await settle();
+      const first = [...due.entries()].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!first) break;
+      due.delete(first[0]);
+      now = first[1].at;
+      first[1].run();
+    }
+    now = until;
+    await settle();
+  };
+  return { timers, settle, until, advance };
+}
+
+/**
+ * A C++ game in memory that never says `ready`: it writes `lines` to stderr, then ends with `ends`
+ * when the row calls `end`, or when it is killed.
+ */
+function silentGame(lines: readonly string[]) {
+  const stderr = new PassThrough();
+  let reap: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void = () => {};
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
+    reap = done;
+  });
+  const child: GameChild = {
+    pid: 777_777,
+    fd3: Duplex.from({ readable: new PassThrough(), writable: new PassThrough() }),
+    stdout: new PassThrough(),
+    stderr,
+    exited,
+    kill: (signal) => {
+      if (signal === "SIGKILL") setImmediate(() => reap({ code: null, signal }));
+    },
+  };
+  return {
+    child,
+    say: () => stderr.write(lines.map((line) => `${line}\n`).join("")),
+    end: (exit: { code: number | null; signal: NodeJS.Signals | null }) => reap(exit),
+  };
+}
+
+/**
+ * The real registry and the real port under the native registrar, over a library of one game,
+ * `pong-mac`. `prepare` waits for the row (`build`); `spawn` hands over the row's game. What the
+ * registry announced is replayed into the renderer's native store, in order, before Play's answer.
+ */
+async function registryIpc(options: { build?: Promise<void>; game?: ReturnType<typeof silentGame> } = {}) {
+  const root = await tmpDir("studio-main-ipc-native-registry-");
+  const clock = manualClock();
+  const announced: Array<{ status: NativeRunStatus } | { log: NativeLogBatch }> = [];
+  const runs = new NativeRuns({
+    root,
+    timers: clock.timers,
+    prepare: async (request, signal): Promise<PreparedRun> => {
+      await options.build;
+      signal.throwIfAborted();
+      const runDir = path.join(root, request.runId);
+      await mkdir(path.join(runDir, "state"), { recursive: true });
+      return {
+        runId: request.runId,
+        runDir,
+        exe: "pong",
+        bundle: runDir,
+        state: path.join(runDir, "state"),
+        bundleId: "pong",
+      };
+    },
+    spawn: async () => {
+      if (!options.game) throw new Error("this row spawns no game");
+      return options.game.child;
+    },
+    connect: (child, io) => new NativeGamePort({ ...io, child, encodeJpeg: async () => Buffer.alloc(0) }),
+    emit: (event) => {
+      if (event.type === UiEvent.NativeStatus) announced.push({ status: event.payload });
+      if (event.type === UiEvent.NativeLog) announced.push({ log: event.payload });
+    },
+    sampleFootprint: async () => 1,
+    descendants: async () => [],
+    startedAt: async () => null,
+    signal: () => {},
+    log: () => {},
+  });
+  const core = {
+    nativeRuns: runs,
+    games: { list: async () => [{ name: "pong-mac", dir: root }] },
+    assertProjectAllowed: async () => {},
+  } as unknown as Parameters<typeof registerNativeIpc>[1];
+  const { handle, invoke } = registrar();
+  registerNativeIpc(handle, core, { now: clock.timers.now });
+  /** The card's store after everything announced so far, then `answer` as Play's answer. */
+  const card = (answer: NativeRunStatus | null) => {
+    let state = nativeWatched(initialNative(), "pong-mac");
+    for (const item of announced)
+      state = "status" in item ? nativeStatusReceived(state, item.status) : nativeLogReceived(state, item.log);
+    if (answer) state = nativeStatusReceived(state, answer);
+    return nativeOf(state, "pong-mac");
+  };
+  return { runs, invoke, clock, announced, card };
+}
+
+describe("Play on Mac through the real registry: the card keeps how the run ended", () => {
+  it("a game that crashes before it is ready: the answer is its run's, the card keeps Crashed and its stderr", async () => {
+    const game = silentGame(["INFO: Initializing raylib 6.0", "Segmentation fault in InitWindow"]);
+    const { runs, invoke, clock, card } = await registryIpc({ game });
+    const replying = invoke("studio:native.run", { project: "pong-mac" });
+    await clock.until(() => runs.portOf("pong-mac") !== null);
+    game.say();
+    await clock.settle();
+    game.end({ code: null, signal: "SIGSEGV" });
+    const reply = await replying;
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const answer = reply.value as NativeRunStatus;
+    const shown = card(answer);
+    assert.equal(answer.runId, shown.status?.runId, "the answer is about the run the registry started");
+    assert.deepEqual(
+      [shown.status?.state, shown.status?.exit, shown.status?.refusal],
+      [NativeRunState.Crashed, { code: null, signal: "SIGSEGV" }, null],
+    );
+    assert.deepEqual(shown.log, ["INFO: Initializing raylib 6.0", "Segmentation fault in InitWindow"]);
+  });
+
+  it("a start that already ended answers the run's own last status, exactly as it was announced", async () => {
+    const game = silentGame(["Segmentation fault in InitWindow"]);
+    const { runs, invoke, clock, announced } = await registryIpc({ game });
+    const replying = invoke("studio:native.run", { project: "pong-mac" });
+    await clock.until(() => runs.portOf("pong-mac") !== null);
+    game.end({ code: 1, signal: null });
+    const reply = await replying;
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const last = announced.filter((item) => "status" in item).at(-1);
+    assert.ok(last && "status" in last);
+    assert.deepEqual(reply.value, last.status);
+    assert.equal(last.status.state, NativeRunState.Crashed);
+  });
+
+  it("a game that never says ready is ended for it, and the card says so", async () => {
+    const game = silentGame(["INFO: Initializing raylib 6.0"]);
+    const { runs, invoke, clock, card } = await registryIpc({ game });
+    const replying = invoke("studio:native.run", { project: "pong-mac" });
+    await clock.until(() => runs.portOf("pong-mac") !== null);
+    game.say();
+    await clock.advance(NATIVE_READY_TIMEOUT_MS);
+    const reply = await replying;
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const shown = card(reply.value as NativeRunStatus);
+    assert.deepEqual(
+      [shown.status?.state, shown.status?.refusal, shown.status?.exit],
+      [NativeRunState.Killed, NativeRefusal.ReadyTimeout, { code: null, signal: "SIGKILL" }],
+    );
+    assert.deepEqual(shown.log, ["INFO: Initializing raylib 6.0"]);
+  });
+
+  it("Stop while the Mac build runs: the answer is no error, and the card says Stopped", async () => {
+    let finishBuild: () => void = () => {};
+    const build = new Promise<void>((done) => {
+      finishBuild = done;
+    });
+    const { runs, invoke, clock, announced, card } = await registryIpc({ build });
+    const replying = invoke("studio:native.run", { project: "pong-mac" });
+    await clock.until(() => runs.state("pong-mac") !== null);
+    const building = announced.find((item) => "status" in item);
+    assert.ok(building && "status" in building && building.status.state === NativeRunState.Building);
+    const stopped = invoke("studio:native.stop", { project: "pong-mac" });
+    finishBuild();
+    assert.deepEqual(await stopped, { ok: true, value: true });
+    const reply = await replying;
+    assert.ok(reply.ok, `Stop is not an error: ${JSON.stringify(reply)}`);
+    const answer = reply.value as NativeRunStatus;
+    assert.deepEqual([answer.state, answer.runId], [NativeRunState.Stopped, building.status.runId]);
+    assert.equal(card(answer).status?.state, NativeRunState.Stopped);
+    assert.equal(runs.state("pong-mac"), null);
+  });
+});
+
+describe("the native-game fixture's scripted registry", () => {
+  /** The registry the fixture profile stands in, over the IPC a fixture profile registers, with what it announced. */
+  async function fixtureRegistry() {
+    const factory = fixtureNativeRuns(FixtureName.NativeGame);
+    assert.ok(factory, "the native-game fixture stands a registry in");
+    const emitted: UiEvent[] = [];
+    let clock = Date.parse("2026-10-01T06:00:00.000Z");
+    const timers: NativeTimers = {
+      now: () => clock,
+      setTimeout: () => null,
+      clearTimeout: () => {},
+    };
+    const options = { root: "/nowhere", emit: (event: UiEvent) => emitted.push(event), timers };
+    const registry = factory(options as unknown as Parameters<typeof factory>[0]);
+    const root = await tmpDir("studio-main-ipc-native-fixture-");
+    const games = FIXTURE_CPP_GAMES.map((game) => ({ name: game.name, dir: path.join(root, game.name) }));
+    const core = {
+      nativeRuns: registry,
+      games: { list: async () => games },
+      assertProjectAllowed: async () => {},
+    } as unknown as Parameters<typeof registerNativeIpc>[1];
+    const listeners = new Map<string, Listener>();
+    const handle = createIpcHandle(
+      { handle: (channel, listener) => void listeners.set(channel, listener) },
+      { fixture: true, isStudioUi: () => true },
+    );
+    registerNativeIpc(handle, core);
+    const invoke = (channel: string, payload?: unknown) => {
+      const listener = listeners.get(channel);
+      assert.ok(listener, channel);
+      return listener(studio, payload);
+    };
+    const tick = (ms: number) => {
+      clock += ms;
+    };
+    return { registry, invoke, emitted, tick };
+  }
+
+  it("is only the native-game fixture's", () => {
+    assert.equal(fixtureNativeRuns(FixtureName.CppGame), undefined);
+    assert.equal(fixtureNativeRuns(undefined), undefined);
+  });
+
+  it("pong-mac's window already runs; pong-cpp has none; no process, no port", async () => {
+    const { registry, invoke } = await fixtureRegistry();
+    const reply = await invoke("studio:native.state", { project: "pong-mac" });
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const running = reply.value as NativeRunStatus;
+    assert.deepEqual(
+      [running.project, running.state, running.mode, running.target, running.owner],
+      ["pong-mac", NativeRunState.Ready, NativeRunMode.Window, BuildTarget.Mac, null],
+    );
+    assert.deepEqual(await invoke("studio:native.state", { project: "pong-cpp" }), { ok: true, value: null });
+    assert.equal(registry.portOf("pong-mac"), null);
+    assert.equal(await registry.sweepOrphans(), 0);
+  });
+
+  it("Stop ends the window and announces it as the real registry does: stopping, then stopped", async () => {
+    const { invoke, emitted, tick } = await fixtureRegistry();
+    tick(1000);
+    assert.deepEqual(await invoke("studio:native.stop", { project: "pong-mac" }), { ok: true, value: true });
+    const states = emitted
+      .filter((event) => event.type === UiEvent.NativeStatus)
+      .map((event) => (event.payload as NativeRunStatus).state);
+    assert.deepEqual(states.slice(-2), [NativeRunState.Stopping, NativeRunState.Stopped]);
+    const stopped = emitted.at(-1)?.payload as NativeRunStatus;
+    assert.deepEqual(
+      [stopped.pid, stopped.exit, stopped.endedAt],
+      [null, { code: 0, signal: null }, "2026-10-01T06:00:01.000Z"],
+    );
+    assert.deepEqual(await invoke("studio:native.state", { project: "pong-mac" }), { ok: true, value: null });
+    assert.deepEqual(await invoke("studio:native.stop", { project: "pong-mac" }), { ok: true, value: false });
+  });
+
+  it("embeds a game in Live, scripted: a ready embedded run, and its size, input, resizes and sight said in its log", async () => {
+    const { invoke, emitted, registry } = await fixtureRegistry();
+    const reply = await invoke("studio:native.embed", { project: "pong-cpp", size: EMBED_SIZE });
+    assert.ok(reply.ok, JSON.stringify(reply));
+    const status = reply.value as NativeRunStatus;
+    assert.deepEqual(
+      [status.project, status.mode, status.state, status.target],
+      ["pong-cpp", NativeRunMode.Embedded, NativeRunState.Ready, BuildTarget.Mac],
+    );
+    assert.equal(registry.state("pong-cpp", NativeRunMode.Embedded)?.runId, status.runId);
+    const input = { project: "pong-cpp", actions: [{ type: "tap", keys: ["Space"] }] };
+    assert.deepEqual(await invoke("studio:native.input", input), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:native.resize", { project: "pong-cpp", size: EMBED_SIZE }), {
+      ok: true,
+      value: true,
+    });
+    registry.showEmbedded("pong-cpp", false);
+    registry.showEmbedded("pong-cpp", true);
+    const said = emitted
+      .filter((event) => event.type === UiEvent.NativeLog)
+      .flatMap((event) => (event.payload as NativeLogBatch).lines);
+    assert.deepEqual(said, ["embed: 1280x720 @2", "input: tap", "resize: 1280x720 @2", "hidden", "shown"]);
+    assert.deepEqual(await invoke("studio:native.unembed", { project: "pong-cpp" }), { ok: true, value: true });
+    assert.equal(registry.state("pong-cpp", NativeRunMode.Embedded), null);
+    assert.deepEqual(await invoke("studio:native.input", input), { ok: true, value: false }, "no run takes input");
+    assert.deepEqual(await invoke("studio:native.resize", { project: "pong-cpp", size: EMBED_SIZE }), {
+      ok: true,
+      value: false,
+    });
+  });
+
+  it("Play on Mac and Bring to front stay refused in the fixture profile, and nothing starts", async () => {
+    const { registry, invoke, emitted } = await fixtureRegistry();
+    const before = emitted.length;
+    for (const channel of ["studio:native.run", "studio:native.front"]) {
+      const reply = await invoke(channel, { project: "pong-mac" });
+      assert.equal(reply.ok, false, channel);
+    }
+    assert.equal(emitted.length, before, "nothing changed");
+    await assert.rejects(registry.start({ project: "pong-cpp", target: BuildTarget.Mac, mode: NativeRunMode.Window }));
+    assert.equal(registry.state("pong-cpp"), null, "the fixture starts no game");
+  });
 });
 
 it("storage is measured and freed for one game named as one, or for every game", async () => {

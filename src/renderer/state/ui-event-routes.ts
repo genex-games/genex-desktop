@@ -1,8 +1,10 @@
 /**
  * What each UI event makes the renderer read again. The events announce; the log and main's
  * lists are the record, so most of them only say "read that again". The table is here, pure, so
- * it is one place to extend and can be tested without a window.
+ * it is one place to extend and can be tested without a window. A native run's status and stderr
+ * are the exception: they are the record, and go straight to the native run store.
  */
+import type { NativeLogBatch, NativeRunStatus } from "../../shared/native-contract.ts";
 import { isUiEventIn, UiEvent, type UiEventType } from "../../shared/ui-events.ts";
 
 export interface UiEventReads {
@@ -96,4 +98,14 @@ export function uiEventReads(event: UiEvent): UiEventReads {
     plugins: type === UiEvent.PluginsChanged,
     assets: assetsRead(event),
   };
+}
+
+/** What a UI event changes in the native run store (`state/native.ts`): one run's status, or its stderr. */
+export type NativeUpdate = { status: NativeRunStatus } | { log: NativeLogBatch };
+
+/** The native store's share of `event`: `native.status` and `native.log`; null for every other event. */
+export function nativeUpdate(event: UiEvent): NativeUpdate | null {
+  if (event.type === UiEvent.NativeStatus) return { status: event.payload };
+  if (event.type === UiEvent.NativeLog) return { log: event.payload };
+  return null;
 }

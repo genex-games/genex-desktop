@@ -66,7 +66,17 @@ Templates (one per request; `--request FILE` also works):
 {"method":"scroll","params":{"surface":"desktop","deltaX":0,"deltaY":600,"selector":"[data-chat-scroll]"}}
 {"method":"game.input","params":{"actions":[{"type":"tap","keys":["ArrowRight"]},{"type":"wait","ms":300}]}}
 {"method":"game.state","params":{}}
+{"method":"game.state","params":{"surface":"native"}}
+{"method":"game.renderSettings","params":{"surface":"native","set":{"preset":"low","frameBudgetMs":4}}}
 ```
+
+`game.input`, `game.state` and `game.renderSettings` act on Live's web game view by default;
+`"surface":"native"` sends them to the open game's native run instead (its Play window, else Live's
+Native view, else an agent's run), as `capture`/`logs --surface native` read it.
+`game.renderSettings` is the game's verb (no `set` reads it; a `frameBudgetMs` makes dynamic
+resolution hold that frame time, so a fast Mac shows the scale step). A native capture is the
+run's pinned capture profile, which ignores the person's preset and panel; to see what Live shows
+after a preset change, capture `--surface native --frame live` (the studio window's Native view).
 
 Hooks for the controls an unattended operator presses: `[data-run-resume="<runId>"]` (Resume on
 the result card and on the chat's paused line), `[data-onboarding-action="next|skip|start"]` (the

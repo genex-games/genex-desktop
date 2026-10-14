@@ -185,6 +185,20 @@ function importSpecifiers(node: ts.Node, dynamic: boolean, found: Array<[ts.Expr
  * literal `import()` or `require()`. Package imports are not edges.
  */
 export function runtimeImports(root: string, rel: string, options: ts.CompilerOptions, dynamic: boolean): ImportEdge[] {
+  return landedImports(root, rel, options, dynamic, false).filter((edge) => edge.to.startsWith("src/"));
+}
+
+/**
+ * Every runtime import of one source file with where it lands under the root. With `asWritten`, a
+ * relative specifier nothing resolves (a page, a missing file) still lands where its path points.
+ */
+function landedImports(
+  root: string,
+  rel: string,
+  options: ts.CompilerOptions,
+  dynamic: boolean,
+  asWritten: boolean,
+): ImportEdge[] {
   const file = path.join(root, rel);
   const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
   const found: Array<[ts.Expression, ts.Node]> = [];
@@ -192,10 +206,14 @@ export function runtimeImports(root: string, rel: string, options: ts.CompilerOp
   const edges: ImportEdge[] = [];
   for (const [spec, at] of found) {
     if (!ts.isStringLiteralLike(spec)) continue;
-    const target = importTarget(file, spec.text, options);
-    const to = target ? path.relative(root, target).replaceAll(path.sep, "/") : "";
-    if (to.startsWith("src/"))
-      edges.push({ from: rel, to, line: source.getLineAndCharacterOfPosition(at.getStart()).line + 1 });
+    const written = asWritten && spec.text.startsWith(".") ? path.resolve(path.dirname(file), spec.text) : undefined;
+    const target = importTarget(file, spec.text, options) ?? written;
+    if (target)
+      edges.push({
+        from: rel,
+        to: path.relative(root, target).replaceAll(path.sep, "/"),
+        line: source.getLineAndCharacterOfPosition(at.getStart()).line + 1,
+      });
   }
   return edges;
 }
@@ -214,6 +232,23 @@ export function seedEdges(root: string): ImportEdge[] {
     .flatMap((dir) => filesBelow(path.join(root, dir), dir).filter((f: string) => SCRIPT.test(f)))
     .flatMap((file: string) => runtimeImports(root, file, options, true))
     .filter((edge) => edge.to.startsWith("src/harness-seed/"));
+}
+
+/** The Rust runtime's sources and the M0a spike's scripts: cargo and developers run them, the app never loads them. */
+const RUST_RUNTIME_TREES = ["native/genex-rust/", "scripts/spike/rust-wgpu/"] as const;
+
+/**
+ * Every runtime import from anywhere under `src/` into the Rust runtime's tree or its spike
+ * scripts (static, or a literal dynamic import; a relative path counts where it points even when
+ * nothing resolves it, as a page or a crate file would not). The app reaches the runtime only
+ * through what the build ships (`resources/`), never by importing it.
+ */
+export function rustRuntimeEdges(root: string): ImportEdge[] {
+  const options = compilerOptions(root);
+  return filesBelow(path.join(root, "src"), "src")
+    .filter((f: string) => SCRIPT.test(f))
+    .flatMap((file: string) => landedImports(root, file, options, true, true))
+    .filter((edge: ImportEdge) => RUST_RUNTIME_TREES.some((tree) => edge.to.startsWith(tree)));
 }
 
 /** Tarjan's bookkeeping: each node's index and low-link, and the stack of the open component. */
@@ -285,8 +320,11 @@ function stronglyConnected(graph: Map<string, string[]>): string[][] {
   return t.out;
 }
 
+/** The game templates: games, not the app, so their scripts are left out of the app's import graph. */
+const GAME_TEMPLATE_TREES = ["src/game-template/", "src/game-template-cpp/", "src/game-template-rust/"] as const;
+
 /**
- * Import cycles among the app's own sources (`src/`, without the game template, which is a game):
+ * Import cycles among the app's own sources (`src/`, without the game templates, which are games):
  * each strongly connected component of the static runtime import graph with more than one file,
  * or a file that imports itself, as a sorted list of files. Dynamic imports are left out — they
  * run after every module has loaded, so they cannot order a load.
@@ -294,13 +332,118 @@ function stronglyConnected(graph: Map<string, string[]>): string[][] {
 export function importCycles(root: string): string[][] {
   const options = compilerOptions(root);
   const files = filesBelow(path.join(root, "src"), "src").filter(
-    (f: string) => SCRIPT.test(f) && !f.startsWith("src/game-template/"),
+    (f: string) => SCRIPT.test(f) && !GAME_TEMPLATE_TREES.some((tree) => f.startsWith(tree)),
   );
   const graph = new Map<string, string[]>(
     files.map((f: string) => [f, [...new Set(runtimeImports(root, f, options, false).map((e) => e.to))]]),
   );
   return stronglyConnected(graph).sort((a, b) => (a[0] ?? "").localeCompare(b[0] ?? ""));
 }
+/** Where the app's privileged code lives: the folders the native-load rule reads. */
+const PRIVILEGED = ["src/main", "src/substrate", "src/preload"];
+/** The one file that may load native code, and only the frames addon, by `process.dlopen`. */
+const NATIVE_LOADER = "src/main/native-frames.ts";
+/** A module specifier that names a native addon. */
+const NATIVE_MODULE = /\.node$/;
+/** The WebAssembly entry points that compile or instantiate code. */
+const WASM_LOADS: ReadonlySet<string> = new Set([
+  "instantiate",
+  "instantiateStreaming",
+  "compile",
+  "compileStreaming",
+  "Module",
+]);
+
+/** A call of `require`, of a `require` property (`module.require`), of a `createRequire` result held in a name, or `import()`. */
+function isRequireLike(call: ts.CallExpression, requires: ReadonlySet<string>): boolean {
+  const callee = call.expression;
+  if (callee.kind === ts.SyntaxKind.ImportKeyword) return true;
+  if (ts.isIdentifier(callee)) return callee.text === "require" || requires.has(callee.text);
+  return ts.isPropertyAccessExpression(callee) && callee.name.text === "require";
+}
+
+/** `createRequire(…)`. */
+function isCreateRequire(init: ts.Expression | undefined): boolean {
+  return (
+    !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === "createRequire"
+  );
+}
+
+/** The names a file binds to `createRequire(…)`: each is a `require` of its own. */
+function createdRequires(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && isCreateRequire(node.initializer))
+      names.add(node.name.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return names;
+}
+
+/** A static or dynamic module specifier naming a `.node` file, or null. */
+function nativeSpecifier(node: ts.Node, requires: ReadonlySet<string>): string | null {
+  let spec: ts.Expression | undefined;
+  if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) spec = node.moduleSpecifier;
+  else if (ts.isImportEqualsDeclaration(node)) spec = importEqualsTarget(node);
+  else if (ts.isCallExpression(node) && isRequireLike(node, requires)) spec = node.arguments[0];
+  const literal = spec && ts.isStringLiteralLike(spec) ? spec.text : null;
+  return literal !== null && NATIVE_MODULE.test(literal) ? literal : null;
+}
+
+/** `process.dlopen` reached in any spelling: a property, an element, or a name destructured from it. */
+function isDlopen(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text === "dlopen";
+  if (ts.isElementAccessExpression(node))
+    return ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === "dlopen";
+  if (!ts.isBindingElement(node)) return false;
+  const named = node.propertyName ?? node.name;
+  const spelled = ts.isIdentifier(named) || ts.isStringLiteralLike(named);
+  return spelled && named.text === "dlopen";
+}
+
+/** `WebAssembly.instantiate` (and the other compiling entry points), called, constructed or passed on. */
+function isWasmLoad(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node) || !WASM_LOADS.has(node.name.text)) return false;
+  return ts.isIdentifier(node.expression) && node.expression.text === "WebAssembly";
+}
+
+/** One file's native loads, as `file:line: why`; `process.dlopen` is allowed in the one loader. */
+function nativeLoads(root: string, rel: string): string[] {
+  const file = path.join(root, rel);
+  const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const requires = createdRequires(source);
+  const errors: string[] = [];
+  const at = (node: ts.Node) => `${rel}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+  const visit = (node: ts.Node): void => {
+    const spec = nativeSpecifier(node, requires);
+    if (spec)
+      errors.push(
+        `${at(node)}: loads the native module ${spec}; the app loads only the frames addon, by process.dlopen in ${NATIVE_LOADER}`,
+      );
+    if (isDlopen(node) && rel !== NATIVE_LOADER)
+      errors.push(`${at(node)}: process.dlopen outside ${NATIVE_LOADER}, the one native load the app has`);
+    if (isWasmLoad(node))
+      errors.push(`${at(node)}: compiles WebAssembly in privileged code; game wasm runs only in a game page`);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return errors;
+}
+
+/**
+ * Native code the app's privileged processes load (main, the substrate, the preload): a module
+ * specifier ending in `.node` (`import`, `export … from`, `require`, `import()`, `import = require`,
+ * a `createRequire` result), any `process.dlopen`, and WebAssembly compiled or instantiated there.
+ * The one exception is `process.dlopen` in `src/main/native-frames.ts`, which loads exactly
+ * `dist/resources/native/genex-frames.node`. Reading the AST, so a `.node` string comparison is no load.
+ */
+export function checkNativeLoads(root: string): string[] {
+  return PRIVILEGED.flatMap((dir) => filesBelow(path.join(root, dir), dir).filter((f: string) => SCRIPT.test(f)))
+    .sort()
+    .flatMap((file: string) => nativeLoads(root, file));
+}
+
 /**
  * Import cycles that exist today, frozen in `scripts/boundary-allowlist.json`. The list may only
  * shrink: a cycle it does not cover fails the check, and an entry the code no longer has is
@@ -320,6 +463,16 @@ export function checkSeedBoundary(root: string): CheckResult {
     errors: seedEdges(root).map(
       (edge) =>
         `${edge.from}:${edge.line}: runtime import of the harness seed ${edge.to} — the app must not load the agent's editable code; move what it needs to src/shared`,
+    ),
+    warnings: [],
+  };
+}
+
+export function checkRustRuntimeBoundary(root: string): CheckResult {
+  return {
+    errors: rustRuntimeEdges(root).map(
+      (edge) =>
+        `${edge.from}:${edge.line}: runtime import of ${edge.to} — the app never loads the Rust runtime's sources or the spike's scripts; ship what it needs through the build`,
     ),
     warnings: [],
   };
@@ -359,7 +512,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const allowed = JSON.parse(fs.readFileSync(path.join(root, ALLOWLIST), "utf8")) as BoundaryAllowlist;
   for (const [label, result] of [
     ["Harness-seed imports from the app", checkSeedBoundary(root)],
+    ["Rust runtime and spike imports from the app", checkRustRuntimeBoundary(root)],
     ["Import cycles in src", checkCycles(root, allowed)],
+    ["Native loads in main, substrate and preload", { errors: checkNativeLoads(root), warnings: [] }],
   ] as const) {
     // Allowlisted and stale entries are notes, on stdout: the edit hook treats anything on stderr as a failure.
     for (const warning of result.warnings) console.log(`note: ${warning}`);

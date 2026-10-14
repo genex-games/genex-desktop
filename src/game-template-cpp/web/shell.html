@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__GAME_TITLE__</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+      #canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+      #genex-start {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.55);
+        color: #f5f5f5;
+        font: 600 18px/1.4 system-ui, sans-serif;
+        cursor: pointer;
+        user-select: none;
+      }
+      #genex-start[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" tabindex="0"></canvas>
+    <div id="genex-start" hidden>Click to start</div>
+    <script id="genex-shell">
+      // The page emcc wraps around the game (`--shell-file`). It sizes the canvas to its box in
+      // device pixels, starts audio on the first click, and builds window.__studio from the
+      // runtime's EMSCRIPTEN_KEEPALIVE exports (src/studio.cpp) once the runtime reports the game
+      // up (`Module.genexReady`, after the first reset read the save folder back): each verb is
+      // bound only when its export exists, so a program without the studio runtime loads as a
+      // plain page. Everything lives on one global, GenexShell, because Emscripten's glue declares
+      // many top-level names.
+      window.GenexShell = {
+        /** [verb, export, the argument built from the verb's parameter, the answer read from the result] */
+        VERBS: [
+          ["seed", "studio_seed", (n) => ({ seed: n }), (r) => r.seed],
+          ["start", "studio_start", () => ({}), () => true],
+          ["pause", "studio_pause", () => ({}), () => true],
+          ["step", "studio_step", (ms) => ({ ms }), (r) => r],
+          ["state", "studio_state", () => ({}), (r) => r],
+          ["input", "studio_input", (arg) => arg ?? {}, (r) => r],
+          ["debugCamera", "studio_debug_camera", (name) => ({ camera: name ?? null }), (r) => r],
+          ["cameras", "studio_cameras", () => ({}), (r) => r.cameras],
+          ["eyes", "studio_eyes", () => ({}), (r) => r.eyes],
+          ["demos", "studio_demos", () => ({}), (r) => r.demos],
+          ["demo", "studio_demo", (name) => ({ name }), (r) => r],
+        ],
+
+        has: (page, name) => typeof page.module[`_${name}`] === "function",
+
+        /** One verb through its export: the argument goes in as JSON and the reply comes back as JSON. */
+        call(page, name, arg) {
+          const reply = JSON.parse(page.module.ccall(name, "string", ["string"], [JSON.stringify(arg)]));
+          if (reply?.ok === true) return reply.result;
+          console.warn(`${name}: ${reply?.error}`);
+          return undefined;
+        },
+
+        bind(page) {
+          const shell = window.GenexShell;
+          if (typeof page.module.ccall !== "function") return;
+          const api = { version: 1 };
+          for (const [verb, name, argument, answer] of shell.VERBS) {
+            if (!shell.has(page, name)) continue;
+            api[verb] = (value) => {
+              const result = shell.call(page, name, argument(value));
+              return result === undefined ? undefined : answer(result);
+            };
+          }
+          shell.bindPageShapes(page, api);
+          if (Object.keys(api).length > 1) window.__studio = api;
+        },
+
+        /** The verbs whose page-contract shape differs from the op's. */
+        bindPageShapes(page, api) {
+          const shell = window.GenexShell;
+          if (shell.has(page, "studio_input")) api.injectInput = (input) => shell.injectInput(page, input);
+          if (shell.has(page, "studio_debug_camera")) api.eye = (name) => api.debugCamera(name);
+          if (shell.has(page, "studio_state")) api.player = () => api.state()?.player ?? null;
+          if (shell.has(page, "studio_capture")) api.capture = (camera) => shell.capture(page, camera);
+          if (shell.has(page, "studio_audio")) api.audio = (arg) => shell.audio(page, arg);
+        },
+
+        /** Deltas arrive as {dx, dy}; the answer is {keys, look, wheel}, as the web template's is. */
+        injectInput(page, input) {
+          const look = { x: input?.look?.dx || 0, y: input?.look?.dy || 0 };
+          const wheel = { x: input?.wheel?.dx || 0, y: input?.wheel?.dy || 0 };
+          const arg = { down: input?.down ?? [], up: input?.up ?? [], look, wheel };
+          const result = window.GenexShell.call(page, "studio_input", arg);
+          return { keys: result?.held ?? [], look, wheel };
+        },
+
+        /** The page's own GL draw count so far (the studio's counters), or null without them. */
+        drawCalls: () => window.__studioDraw?.totals?.()?.drawCalls ?? null,
+
+        /**
+         * The export draws the frame and the canvas is read in the same turn, before it is
+         * composited away. The picture then goes through the studio's capture shim, as the web
+         * template's does: it paints the page's background under it and records the capture, so
+         * the studio never describes this shot with an older capture's record.
+         */
+        capture(page, camera) {
+          const shell = window.GenexShell;
+          const before = shell.drawCalls();
+          const result = shell.call(page, "studio_capture", camera ? { camera } : {});
+          if (result === undefined) return Promise.resolve(null);
+          const url = page.canvas.toDataURL("image/png");
+          const after = shell.drawCalls();
+          const counted = before !== null && after !== null ? after - before : null;
+          const record = {
+            reason: url ? null : "the game's own capture produced no image",
+            drawCalls: counted ?? result.drawCalls ?? null,
+            ladder: ["render"],
+          };
+          return shell.throughCaptureShim(url, record);
+        },
+
+        /** Hand a picture to the capture shim; an older shim only notes it, and without one it is returned as taken. */
+        async throughCaptureShim(url, record) {
+          const shim = window.__studioCapture;
+          if (typeof shim?.paint === "function") {
+            const painted = await Promise.resolve()
+              .then(() => shim.paint(url, record))
+              .catch(() => null);
+            return painted || url;
+          }
+          try {
+            shim?.note?.({ ...record, composited: false });
+          } catch {
+            /* an older shim has no note to take */
+          }
+          return url;
+        },
+
+        /** `audio({muted})` mutes; `audio()` is the level probe, which the web build does not measure. */
+        audio(page, arg) {
+          if (typeof arg?.muted !== "boolean") return { available: false, rms: 0, centroid: 0 };
+          return window.GenexShell.call(page, "studio_audio", { muted: arg.muted });
+        },
+
+        /** The canvas backing store follows its box in device pixels; the runtime letterboxes its world into it. */
+        resize(page, width, height) {
+          const shell = window.GenexShell;
+          if (!(width > 0 && height > 0)) return;
+          page.slot = { width, height };
+          if (!shell.has(page, "studio_resize")) {
+            page.canvas.width = width;
+            page.canvas.height = height;
+          } else if (page.ready) {
+            page.module._studio_resize(width, height);
+          }
+        },
+
+        observe(page) {
+          if (typeof ResizeObserver !== "function") return;
+          const observer = new ResizeObserver((entries) => {
+            const entry = entries[entries.length - 1];
+            const box = entry.devicePixelContentBoxSize?.[0];
+            const ratio = window.devicePixelRatio || 1;
+            const width = box ? box.inlineSize : Math.round(entry.contentRect.width * ratio);
+            const height = box ? box.blockSize : Math.round(entry.contentRect.height * ratio);
+            window.GenexShell.resize(page, width, height);
+          });
+          try {
+            observer.observe(page.canvas, { box: "device-pixel-content-box" });
+          } catch {
+            observer.observe(page.canvas);
+          }
+        },
+
+        /**
+         * Browsers start audio only after a click. Inside Genex the first click on the game does that,
+         * and a studio page shows no DOM of its own; a page on its own asks for the click.
+         */
+        offerStart(page, start) {
+          page.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+          page.canvas.addEventListener("mousedown", () => page.canvas.focus());
+          if (window.__studioClock) return;
+          start.hidden = false;
+          start.addEventListener("click", () => {
+            if (typeof window.miniaudio?.unlock === "function") window.miniaudio.unlock();
+            start.remove();
+            page.canvas.focus();
+          });
+        },
+
+        /** The Module object Emscripten's glue picks up. */
+        module(canvas, start) {
+          const shell = window.GenexShell;
+          const page = { canvas, ready: false, slot: null, module: null };
+          page.module = {
+            canvas,
+            print: (text) => console.log(text),
+            printErr: (text) => console.warn(text),
+            onAbort: (what) => {
+              window.__studio_error = String(what);
+            },
+            onRuntimeInitialized: () => {
+              page.ready = true;
+              if (page.slot && shell.has(page, "studio_resize")) {
+                page.module._studio_resize(page.slot.width, page.slot.height);
+              }
+            },
+            /** Called by the runtime (platform.cpp) once the first reset has run. */
+            genexReady: () => shell.bind(page),
+          };
+          shell.observe(page);
+          shell.offerStart(page, start);
+          return page.module;
+        },
+      };
+      window.Module = window.GenexShell.module(document.getElementById("canvas"), document.getElementById("genex-start"));
+    </script>
+    {{{ SCRIPT }}}
+  </body>
+</html>

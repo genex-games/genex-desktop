@@ -3,6 +3,7 @@
  * sentences it gets back instead of an action when the arguments do not add up. Written once,
  * for both engines; `computer-tool.ts` decides when each is used.
  */
+import { type CompiledStack, GameStack } from "../shared/game-project.ts";
 
 /** Who holds the tool, which changes whose build the window shows and whether it can reload. */
 export type ComputerToolRole = "builder" | "playtester" | "scout" | "director";
@@ -20,14 +21,34 @@ const WHOSE_BUILD: Record<ComputerToolRole, string> = {
 const RELOAD_LINE =
   " reload — rebuild and reload the window after you edit files (until you do, the window keeps running the build it last loaded).";
 
-/** The tool's description, for a role, a window size and the cameras the game names. */
+/**
+ * The reload sentence of a compiled game's session, by stack: its window shows the web build, which
+ * the studio rebuilds through the stack's own lane before it reloads.
+ */
+const COMPILED_RELOAD_LINE = {
+  [GameStack.RaylibCpp]:
+    " reload — rebuild and reload the window after you edit files (the studio rebuilds this C++ · raylib game through its own lane, and a failed build says so; until you reload, the window keeps running the build it last loaded).",
+  [GameStack.RustWgpu]:
+    " reload — rebuild and reload the window after you edit files (the studio rebuilds this Rust · wgpu game through its own lane, and a failed build says so; until you reload, the window keeps running the build it last loaded).",
+} as const satisfies Record<CompiledStack, string>;
+
+/**
+ * The tool's description, for a role, a window size and the cameras the game names; `stack` for a
+ * compiled game's session, whose reload rebuilds through that stack's lane (`cpp`, the older
+ * spelling, is a C++ · raylib game's).
+ */
 export function computerToolDescription(options: {
   role: ComputerToolRole;
   view: { width: number; height: number };
   cameras: string;
+  cpp?: boolean;
+  stack?: CompiledStack;
 }): string {
   const whose = WHOSE_BUILD[options.role];
-  const reload = options.role === "builder" || options.role === "director" ? RELOAD_LINE : "";
+  const edits = options.role === "builder" || options.role === "director";
+  const stack = options.stack ?? (options.cpp ? GameStack.RaylibCpp : null);
+  const reloadLine = stack ? COMPILED_RELOAD_LINE[stack] : RELOAD_LINE;
+  const reload = edits ? reloadLine : "";
   const clock = options.role === "playtester" ? PACED_CLOCK_LINE : RUNNING_CLOCK_LINE;
   return (
     `Your hands and eyes on ${whose}, running live in its own hidden ${options.view.width}×${options.view.height} window (Chromium, the same one the judges use). ` +

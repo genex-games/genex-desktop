@@ -98,7 +98,13 @@ import {
   STOPPED_BY_USER,
   CompletionStop,
 } from "./common.ts";
-import { StudioTool, studioToolName } from "./studio-tool-prompts.ts";
+import {
+  type CompiledShell,
+  compiledSessionOf,
+  compiledShellEnv,
+  StudioTool,
+  studioToolName,
+} from "./studio-tool-prompts.ts";
 import { limitResetMs } from "./limit-reset.ts";
 import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
@@ -733,7 +739,8 @@ export class CodexEngine implements Engine {
       : null;
     const metadata = this.#watchSessionMetadata(request, run, startedAt, model);
     try {
-      const argv = await this.#delegateArgv(request, model, runDir, stills.paths);
+      const compiledWrites = compiledWritesOf(request, scratch);
+      const argv = await this.#delegateArgv(request, model, runDir, compiledWrites, stills.paths);
       await this.#readStream(request, run, { argv, runDir, prompt, cwd, locks, model, signal: controller.signal });
       await metadata.refresh();
     } catch (err) {
@@ -879,6 +886,7 @@ export class CodexEngine implements Engine {
             request.director ? path.resolve(request.director.root) : null,
           ),
       offLimitsNote(offLimits),
+      compiledSessionOf(request)?.shellNote ?? "",
     ]
       .filter((part) => part?.trim())
       .join("\n\n");
@@ -889,6 +897,7 @@ export class CodexEngine implements Engine {
     request: DelegateRequest,
     model: string | undefined,
     runDir: string,
+    compiledWrites: readonly string[],
     imagePaths: string[],
   ): Promise<string[]> {
     return [
@@ -896,7 +905,7 @@ export class CodexEngine implements Engine {
       ...(request.resume ? ["resume", request.resume] : []),
       ...CODEX_EXEC_FLAGS,
       ...(model ? ["-m", model] : []),
-      ...sessionBox(request, runDir),
+      ...sessionBox(request, runDir, compiledWrites),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...imageArgs(imagePaths),
@@ -916,6 +925,7 @@ export class CodexEngine implements Engine {
       cwd: stream.runDir,
       prompt: stream.prompt,
       signal: stream.signal,
+      ...compiledShellOf(request),
       onStderr: (chunk) => {
         run.stderrTail = `${run.stderrTail}${chunk}`.slice(-STDERR_TAIL_CHARS);
         request.onEvent?.({ type: DelegateEventType.Stderr, payload: chunk });
@@ -1074,10 +1084,12 @@ export class CodexEngine implements Engine {
     cwd: string;
     prompt: string;
     signal: AbortSignal;
+    /** A compiled game's session: its shell builds with the lock's tools ahead of the login PATH. */
+    compiled?: CompiledShell;
     onStderr?: (chunk: string) => void;
     onInstallation?: (installation: CodexInstallation) => void;
   }): Promise<AsyncIterable<Record<string, unknown>>> {
-    const { home, env, installation } = await this.#cli(invocation.signal, Boolean(this.#execFn));
+    const { home, env, installation } = await this.#cli(invocation.signal, Boolean(this.#execFn), invocation.compiled);
     // --ignore-user-config must not make a keychain login fall back to file-only auth.
     // Codex discards root -c values when exec/resume has its own -c options.
     // All overrides must be in the leaf command, before the stdin prompt argument.
@@ -1102,13 +1114,17 @@ export class CodexEngine implements Engine {
   async #cli(
     signal: AbortSignal,
     injected: boolean,
+    compiled?: CompiledShell,
   ): Promise<{ home: string; env: Record<string, string>; installation: CodexInstallation | null }> {
     const login = await this.resolveLogin();
     const home = login.home ?? this.systemHome;
     signal.throwIfAborted();
     const installation = injected ? null : await requireCodingCli(EngineId.Codex, this.#executable, signal);
     signal.throwIfAborted();
-    return { home, env: subscriptionEnv({ ...installation?.env, CODEX_HOME: home }), installation };
+    // A compiled game's session builds with its lock's tools ahead of the login PATH.
+    const loginPath = installation?.env.PATH ?? process.env.PATH;
+    const compiledEnv = compiled ? compiledShellEnv(compiled, loginPath) : {};
+    return { home, env: subscriptionEnv({ ...installation?.env, ...compiledEnv, CODEX_HOME: home }), installation };
   }
 
   #classify(err: Error, extra = ""): EngineError {
@@ -1781,10 +1797,21 @@ function startsElsewhere(request: DelegateRequest): boolean {
   return readOnly || chatMode(request) === PermissionMode.Plan || request.worker?.mode === PermissionMode.Plan;
 }
 
+/**
+ * The folders a builder's box writes besides its own run folder: a compiled session's own, kept in
+ * the host's scratch (a web C++ session's Emscripten cache, a Rust session's target folder). A
+ * session with a scratch folder of its own (no folder it may touch) writes none of them.
+ */
+function compiledWritesOf(request: DelegateRequest, scratch: string | null | undefined): readonly string[] {
+  if (scratch) return [];
+  return compiledSessionOf(request)?.writes ?? [];
+}
+
 /** The session's box: the bypass flag only for the chat's own session in Bypass; a worker's own box; else one root. */
-function sessionBox(request: DelegateRequest, runDir: string): string[] {
-  if (request.worker) return [...workerBox(request, runDir), ...workerWebSearch(request)];
-  return chatMode(request) === PermissionMode.Bypass ? BYPASS_ARGS : sandboxArgs(runDir);
+function sessionBox(request: DelegateRequest, runDir: string, compiledWrites: readonly string[] = []): string[] {
+  if (request.worker) return [...workerBox(request, runDir, compiledWrites), ...workerWebSearch(request)];
+  if (chatMode(request) === PermissionMode.Bypass) return BYPASS_ARGS;
+  return sandboxArgs(runDir, [runDir, ...compiledWrites]);
 }
 
 /**
@@ -1803,7 +1830,7 @@ function workerWebSearch(request: DelegateRequest): string[] {
  * Bypass chat. Its box never stops reads, so the never-touch list holds for its writes (and is
  * named in its brief). Plan and a reader start elsewhere and write only the studio's bridge.
  */
-function workerBox(request: DelegateRequest, runDir: string): string[] {
+function workerBox(request: DelegateRequest, runDir: string, compiledWrites: readonly string[] = []): string[] {
   const seat = request.worker;
   if (!seat || startsElsewhere(request)) return sandboxArgs(runDir);
   // Its box cannot deny inside a writable folder: none that is, holds or sits in a never-touch root.
@@ -1811,7 +1838,7 @@ function workerBox(request: DelegateRequest, runDir: string): string[] {
     seat.writeRoots.map((dir) => path.resolve(dir)),
     seat.neverTouch,
   );
-  const roots = [...new Set([path.resolve(runDir), ...writes])];
+  const roots = [...new Set([path.resolve(runDir), ...compiledWrites, ...writes])];
   return sandboxArgs(runDir, roots, seat.mode === PermissionMode.Bypass);
 }
 
@@ -1834,8 +1861,9 @@ function sandboxArgs(runDir: string, roots: string[] = [runDir], network = false
     'sandbox_mode="workspace-write"',
     "-c",
     'approval_policy="never"',
-    // One writable place (a worker's write roots: `workerBox`). For a builder that is the workspace it was hired for; for a
-    // session that may look but never touch (the playtester) it is a scratch folder holding
+    // One writable place (a worker's write roots: `workerBox`; a compiled session's own folders
+    // besides: a C++ builder's Emscripten cache, a Rust session's target). For a builder that is the
+    // workspace it was hired for; for a session that may look but never touch (the playtester) it is a scratch folder holding
     // nothing but the studio's own bridge, which leaves the build under test read-only at the
     // OS boundary rather than by request. Read stays wide: stills the user named and the run's
     // own capture output have to be openable, and Codex grants disk reads either way.
@@ -1848,6 +1876,12 @@ function sandboxArgs(runDir: string, roots: string[] = [runDir], network = false
     "-c",
     `sandbox_workspace_write.network_access=${network}`,
   ];
+}
+
+/** A compiled session's shell, as the exec invocation takes it; nothing for a Three.js session. */
+function compiledShellOf(request: DelegateRequest): { compiled?: CompiledShell } {
+  const compiled = compiledSessionOf(request);
+  return compiled ? { compiled: compiled.shell } : {};
 }
 
 /** `undefined`/"auto" = the model's own default. Anything above this CLI's ceiling is clamped. */

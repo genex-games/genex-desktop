@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { ConversationRecord, GameProject, ProjectAssets } from "../../src/shared/studio-api.ts";
-import type { UiEvent } from "../../src/shared/ui-events.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { createRefresher } from "../../src/renderer/state/refresher.ts";
 import { UpdateAction } from "../../src/shared/app-update.ts";
 import {
@@ -58,7 +58,40 @@ import {
   stageViewChosen,
 } from "../../src/renderer/state/layout.ts";
 import { createModelPickerStore, pickerModelSet, pickerModelsReset } from "../../src/renderer/state/model-picker.ts";
-import { uiEventReads } from "../../src/renderer/state/ui-event-routes.ts";
+import { nativeUpdate, uiEventReads } from "../../src/renderer/state/ui-event-routes.ts";
+import {
+  createNativeStore,
+  initialNative,
+  NATIVE_LOG_KEPT,
+  nativeEmbedOf,
+  nativeEmbedReceived,
+  nativeLogReceived,
+  nativeOf,
+  nativeStateRead,
+  nativeStatusReceived,
+  NativeView,
+  nativeViewChosen,
+  nativeViewOf,
+  nativeWatched,
+} from "../../src/renderer/state/native.ts";
+import {
+  nativeCanvasShown,
+  Overlay,
+  type StageCover,
+  webViewBounds,
+} from "../../src/renderer/panels/stage/native-bounds.ts";
+import { nativeToggleShown } from "../../src/renderer/panels/stage/destinations.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, SHIPPED_STACK_DEFAULT_SWITCH, StackDefaultSwitch } from "../../src/shared/game-project.ts";
+import { DestinationBadge } from "../../src/shared/game-targets.ts";
+import {
+  NATIVE_NO_RUN_ID,
+  NativeBackend,
+  NativeRefusal,
+  type NativeRunStatus,
+  NativeRunMode,
+  NativeRunState,
+} from "../../src/shared/native-contract.ts";
 import { createStudio, EVENT_POLL_MS, type StudioTimers } from "../../src/renderer/state/studio.ts";
 import type { KeyValueStorage } from "../../src/renderer/storage.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
@@ -490,6 +523,38 @@ describe("the library store", () => {
   });
 });
 
+describe("the games list", () => {
+  it("a game's destination checks ride the games list: a new check is a new record, the same one keeps it", async () => {
+    const check = (badge: DestinationBadge, refusal?: NativeRefusal) => ({
+      badge,
+      lock: "0123456789ab",
+      at: "2026-10-01T00:00:00.000Z",
+      ...(refusal ? { refusal } : {}),
+    });
+    let listed = [gameProject("pond"), gameProject("rift")];
+    const fake = fakeStudioApi({ games: async () => listed });
+    const library = createLibraryStore(fake.api, manualTimers());
+    library.refreshGames();
+    await tick();
+    const before = library.getState().games;
+    const checked = {
+      [BuildTarget.Windows]: check(DestinationBadge.NotRunHere),
+      [BuildTarget.Linux]: check(DestinationBadge.Failed, NativeRefusal.ImportsLibGl),
+    };
+    listed = [gameProject("pond", { nativeChecks: checked }), gameProject("rift")];
+    library.refreshGames();
+    await tick();
+    const after = library.getState().games;
+    assert.deepEqual(after[0]?.nativeChecks, checked, "the stage reads the check the lane recorded");
+    assert.notEqual(after[0], before[0], "pond's badges redraw");
+    assert.equal(after[1], before[1], "rift's record is kept");
+    listed = [gameProject("pond", { nativeChecks: structuredClone(checked) }), gameProject("rift")];
+    library.refreshGames();
+    await tick();
+    assert.equal(library.getState().games, after, "the same checks read again change nothing");
+  });
+});
+
 describe("agent screens, toasts and layout", () => {
   const frame = (handle: string, label: string) =>
     ({
@@ -707,6 +772,29 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     await tick();
     assert.equal(developer.app.session.getState().developer, true);
     assert.equal(packaged.app.session.getState().developer, false);
+  });
+
+  it("offers Rust · wgpu creation only when main says its gate is open, packaged or not (M6.4)", async () => {
+    const empty = { threads: [studioThread], games: [], events: [] };
+    const released = started({ bootstrap: async () => boot({ ...empty, rustCreation: true }) as never });
+    const gated = started({ bootstrap: async () => boot({ ...empty, developer: true }) as never });
+    await tick();
+    assert.equal(released.app.session.getState().rustCreation, true);
+    assert.equal(released.app.session.getState().developer, false, "a packaged run that may make Rust games");
+    assert.equal(gated.app.session.getState().rustCreation, false, "main's gate, never the developer flag");
+  });
+
+  it("carries the stackDefault switch main read from the settings; absent or unknown is the shipped one (M6 review)", async () => {
+    const empty = { threads: [studioThread], games: [], events: [] };
+    const reverted = started({
+      bootstrap: async () => boot({ ...empty, stackDefault: StackDefaultSwitch.ThreeJs }) as never,
+    });
+    const shipped = started({ bootstrap: async () => boot(empty) as never });
+    const unknown = started({ bootstrap: async () => boot({ ...empty, stackDefault: "raylib-cpp" }) as never });
+    await tick();
+    assert.equal(reverted.app.session.getState().stackDefault, StackDefaultSwitch.ThreeJs);
+    assert.equal(shipped.app.session.getState().stackDefault, SHIPPED_STACK_DEFAULT_SWITCH);
+    assert.equal(unknown.app.session.getState().stackDefault, SHIPPED_STACK_DEFAULT_SWITCH);
   });
 
   it("a first launch is welcomed once, and home follows the welcome", async () => {
@@ -949,6 +1037,481 @@ function rendererFiles(): string[] {
     .filter((file) => /\.tsx?$/.test(file))
     .map((file) => path.join(root, file));
 }
+
+describe("a C++ game's own window: the native run store", () => {
+  const STARTED = "2026-10-01T00:00:00.000Z";
+  /** The person's window run of `project`, as the registry announces it. */
+  const windowRun = (
+    project: string,
+    state: NativeRunState,
+    extra: Partial<NativeRunStatus> = {},
+  ): NativeRunStatus => ({
+    project,
+    runId: "run-1",
+    target: BuildTarget.Mac,
+    state,
+    mode: NativeRunMode.Window,
+    pid: 4242,
+    backend: NativeBackend.MetalAngle,
+    refusal: null,
+    problem: null,
+    exit: null,
+    owner: null,
+    startedAt: STARTED,
+    endedAt: null,
+    ...extra,
+  });
+  const statusEvent = (status: NativeRunStatus): UiEvent => ({ type: UiEvent.NativeStatus, payload: status });
+  const logEvent = (project: string, lines: string[], runId = "run-1"): UiEvent => ({
+    type: UiEvent.NativeLog,
+    payload: { project, runId, lines, truncated: false },
+  });
+
+  it("routes native.status and native.log to the store, and nothing else", () => {
+    const ready = windowRun("pong-mac", NativeRunState.Ready);
+    assert.deepEqual(nativeUpdate(statusEvent(ready)), { status: ready });
+    const log = logEvent("pong-mac", ["INFO: ready"]);
+    assert.deepEqual(nativeUpdate(log), { log: log.payload });
+    assert.equal(nativeUpdate({ type: UiEvent.GameChanged, payload: { project: "pong-mac" } } as UiEvent), null);
+    const asked = Object.entries(uiEventReads(statusEvent(ready))).filter(([, value]) => value);
+    assert.deepEqual(asked, [], "a run's status asks no list to be read again");
+  });
+
+  it("a native.status event updates the project's card state; an unknown project is ignored", async () => {
+    const fake = fakeStudioApi();
+    const store = createNativeStore(fake.api);
+    const stop = store.start();
+    const release = store.watch("pong-mac");
+    await tick();
+    fake.emit(statusEvent(windowRun("pong-mac", NativeRunState.Starting)));
+    fake.emit(statusEvent(windowRun("pong-mac", NativeRunState.Ready)));
+    assert.equal(nativeOf(store.getState(), "pong-mac").status?.state, NativeRunState.Ready);
+    const before = store.getState();
+    fake.emit(statusEvent(windowRun("fixture-game", NativeRunState.Ready)));
+    assert.equal(store.getState(), before, "a game no card shows changes nothing");
+    assert.equal(nativeOf(store.getState(), "fixture-game").status, null);
+    fake.emit(
+      statusEvent(windowRun("pong-mac", NativeRunState.Ready, { runId: "agent", mode: NativeRunMode.Headless })),
+    );
+    assert.equal(store.getState(), before, "an agent's headless run is not the person's window");
+    stop();
+    fake.emit(statusEvent(windowRun("pong-mac", NativeRunState.Stopped)));
+    assert.equal(nativeOf(store.getState(), "pong-mac").status?.state, NativeRunState.Ready, "stopped listening");
+    release();
+  });
+
+  it("native.log keeps only the last lines of the window run, and drops another run's", () => {
+    let state = nativeWatched(initialNative(), "pong-mac");
+    state = nativeStatusReceived(state, windowRun("pong-mac", NativeRunState.Ready));
+    const lines = Array.from({ length: NATIVE_LOG_KEPT + 50 }, (_, index) => `line ${index}`);
+    state = nativeLogReceived(state, {
+      project: "pong-mac",
+      runId: "run-1",
+      lines: lines.slice(0, 120),
+      truncated: false,
+    });
+    state = nativeLogReceived(state, {
+      project: "pong-mac",
+      runId: "run-1",
+      lines: lines.slice(120),
+      truncated: false,
+    });
+    const game = nativeOf(state, "pong-mac");
+    assert.equal(game.log.length, NATIVE_LOG_KEPT);
+    assert.equal(game.log.at(-1), lines.at(-1));
+    assert.equal(game.log[0], lines[50]);
+    assert.equal(game.truncated, true, "older lines were dropped");
+    const kept = state;
+    assert.equal(
+      nativeLogReceived(state, { project: "pong-mac", runId: "agent", lines: ["x"], truncated: false }),
+      kept,
+    );
+    assert.equal(nativeLogReceived(state, { project: "other", runId: "run-1", lines: ["x"], truncated: false }), kept);
+  });
+
+  it("a newer run starts a fresh log; an older run's late word changes nothing", () => {
+    let state = nativeWatched(initialNative(), "pong-mac");
+    state = nativeStatusReceived(state, windowRun("pong-mac", NativeRunState.Crashed));
+    state = nativeLogReceived(state, { project: "pong-mac", runId: "run-1", lines: ["boom"], truncated: false });
+    const next = windowRun("pong-mac", NativeRunState.Starting, {
+      runId: "run-2",
+      startedAt: "2026-10-01T00:01:00.000Z",
+    });
+    state = nativeStatusReceived(state, next);
+    assert.deepEqual(nativeOf(state, "pong-mac").log, []);
+    const late = nativeStatusReceived(state, windowRun("pong-mac", NativeRunState.Killed));
+    assert.equal(late, state, "run-1 started before run-2: its end is old news");
+  });
+
+  it("a read that finds no run clears a live card and keeps an ended one", () => {
+    let state = nativeWatched(initialNative(), "pong-mac");
+    state = nativeStatusReceived(state, windowRun("pong-mac", NativeRunState.Ready));
+    assert.equal(nativeOf(nativeStateRead(state, "pong-mac", null), "pong-mac").status, null);
+    const refused = windowRun("pong-mac", NativeRunState.Refused, { refusal: NativeRefusal.LinksOpenGl });
+    state = nativeStatusReceived(state, refused);
+    assert.equal(nativeOf(nativeStateRead(state, "pong-mac", null), "pong-mac").status, refused);
+    assert.equal(nativeStateRead(state, "other", windowRun("other", NativeRunState.Ready)), state);
+  });
+
+  it("reads the window run once per watched game, and Play puts its answer, refusals too, on the card", async () => {
+    const refused = windowRun("pong-mac", NativeRunState.Refused, { refusal: NativeRefusal.BuildFailed });
+    const fake = fakeStudioApi({
+      nativeState: async (project) => (project === "pong-mac" ? windowRun(project, NativeRunState.Ready) : null),
+      nativeRun: async () => refused,
+    });
+    const store = createNativeStore(fake.api);
+    const first = store.watch("pong-mac");
+    const second = store.watch("pong-mac");
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeState"), [["pong-mac"]], "two watchers, one read");
+    assert.equal(nativeOf(store.getState(), "pong-mac").status?.state, NativeRunState.Ready);
+    assert.equal(await store.play("pong-mac"), refused);
+    assert.equal(nativeOf(store.getState(), "pong-mac").status, refused);
+    first();
+    second();
+    assert.equal(nativeOf(store.getState(), "pong-mac").status, null, "no watcher left: forgotten");
+    store.watch("pong-cpp");
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeState").at(-1), ["pong-cpp"], "another game is read when it is watched");
+  });
+
+  it("an ended run's last word is final: a later word about the same run changes nothing", () => {
+    let state = nativeWatched(initialNative(), "pong-mac");
+    state = nativeStatusReceived(state, windowRun("pong-mac", NativeRunState.Starting));
+    const crashed = windowRun("pong-mac", NativeRunState.Crashed, {
+      pid: null,
+      exit: { code: null, signal: "SIGSEGV" },
+      endedAt: "2026-10-01T00:00:02.000Z",
+    });
+    state = nativeStatusReceived(state, crashed);
+    state = nativeLogReceived(state, {
+      project: "pong-mac",
+      runId: "run-1",
+      lines: ["Segmentation fault in InitWindow"],
+      truncated: false,
+    });
+    for (const late of [
+      windowRun("pong-mac", NativeRunState.Refused, { refusal: NativeRefusal.BadHandshake, pid: null }),
+      windowRun("pong-mac", NativeRunState.Starting),
+    ])
+      assert.equal(nativeStatusReceived(state, late), state, late.state);
+    assert.deepEqual(nativeOf(state, "pong-mac").log, ["Segmentation fault in InitWindow"]);
+  });
+
+  it("Play's answer with no run id never hides a run that started after the click", async () => {
+    const AFTER = "2026-10-01T00:05:00.000Z";
+    const refusedBeforeAnyRun = windowRun("pong-mac", NativeRunState.Refused, {
+      runId: "",
+      refusal: NativeRefusal.BadHandshake,
+      pid: null,
+      startedAt: "2026-10-01T00:06:00.000Z",
+    });
+    const crashed = windowRun("pong-mac", NativeRunState.Crashed, {
+      runId: "run-2",
+      startedAt: AFTER,
+      pid: null,
+      exit: { code: null, signal: "SIGSEGV" },
+    });
+    const fake = fakeStudioApi({
+      nativeState: async () => null,
+      nativeRun: async () => {
+        // The registry announces the run as it goes; its answer comes last.
+        fake.emit(statusEvent(windowRun("pong-mac", NativeRunState.Building, { runId: "run-2", startedAt: AFTER })));
+        fake.emit(logEvent("pong-mac", ["INFO: Initializing raylib 6.0"], "run-2"));
+        fake.emit(statusEvent(crashed));
+        return refusedBeforeAnyRun;
+      },
+    });
+    const store = createNativeStore(fake.api);
+    const stop = store.start();
+    const release = store.watch("pong-mac");
+    await tick();
+    await store.play("pong-mac");
+    const game = nativeOf(store.getState(), "pong-mac");
+    assert.deepEqual(game.status, crashed, "the run's own end stays on the card");
+    assert.deepEqual(game.log, ["INFO: Initializing raylib 6.0"]);
+    release();
+    stop();
+
+    const quiet = fakeStudioApi({ nativeState: async () => null, nativeRun: async () => refusedBeforeAnyRun });
+    const refusing = createNativeStore(quiet.api);
+    const releaseQuiet = refusing.watch("pong-mac");
+    await tick();
+    await refusing.play("pong-mac");
+    assert.equal(
+      nativeOf(refusing.getState(), "pong-mac").status,
+      refusedBeforeAnyRun,
+      "with no run since the click, the refusal is the card's",
+    );
+    releaseQuiet();
+  });
+});
+
+/** When the embedded runs below started, and the slot size Live's canvas holds them at. */
+const EMBED_STARTED = "2026-10-01T00:00:00.000Z";
+const EMBED_SIZE = { width: 800, height: 450, dpr: 2 };
+/** The embedded run of `project`, as the registry announces or answers it. */
+const embedded = (project: string, state: NativeRunState, extra: Partial<NativeRunStatus> = {}): NativeRunStatus => ({
+  project,
+  runId: "embed-1",
+  target: BuildTarget.Mac,
+  state,
+  mode: NativeRunMode.Embedded,
+  pid: 4343,
+  backend: NativeBackend.MetalAngle,
+  refusal: null,
+  problem: null,
+  exit: null,
+  owner: null,
+  startedAt: EMBED_STARTED,
+  endedAt: null,
+  ...extra,
+});
+/** Time the store's deferred unembed runs on, advanced by hand. */
+function unembedTimers() {
+  const pending = new Map<number, () => void>();
+  let next = 0;
+  return {
+    setTimeout: (run: () => void) => {
+      next += 1;
+      pending.set(next, run);
+      return next;
+    },
+    clearTimeout: (handle: unknown) => void pending.delete(Number(handle)),
+    flush() {
+      const due = [...pending.values()];
+      pending.clear();
+      for (const run of due) run();
+    },
+  };
+}
+/** The stage's cover while a game shows in Live and nothing covers it. */
+const cover = (fields: Partial<StageCover> = {}): StageCover => ({
+  project: "pong-mac",
+  visible: true,
+  sidebarOverlay: false,
+  buildsOpen: false,
+  assetsOpen: false,
+  fileOpen: false,
+  showEmpty: false,
+  liveLoading: false,
+  toolbarOpen: false,
+  cardOnStage: false,
+  stillsOnStage: false,
+  stopped: false,
+  watching: true,
+  native: false,
+  ...fields,
+});
+const slot = { left: 400, top: 48, right: 1200, bottom: 498, width: 800, height: 450 };
+
+describe("Live's Web | Native view: the Mac build inside Live", () => {
+  const { Web, Mac } = BuildTarget;
+
+  it("Native selected reports zero web bounds and keeps the canvas", () => {
+    const web = webViewBounds(cover(), slot, []);
+    assert.deepEqual(web, { x: 400, y: 48, width: 800, height: 450 }, "Web: the page fills the slot");
+    assert.deepEqual(webViewBounds(cover({ native: true }), slot, []), { x: 0, y: 0, width: 0, height: 0 });
+    assert.equal(nativeCanvasShown(cover({ native: true })), true);
+    assert.equal(nativeCanvasShown(cover()), false, "Web shows no canvas");
+    // DOM overlays draw over a canvas by themselves: nothing over the slot ever takes the canvas away.
+    const popover = {
+      kind: Overlay.Floating,
+      rect: { left: 500, top: 100, right: 700, bottom: 300, width: 200, height: 200 },
+    };
+    const modal = { kind: Overlay.Modal, rect: { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } };
+    for (const covered of [cover({ native: true, buildsOpen: true }), cover({ native: true, toolbarOpen: true })])
+      assert.equal(nativeCanvasShown(covered), true, JSON.stringify(covered));
+    assert.deepEqual(
+      webViewBounds(cover(), slot, [popover]),
+      { x: 0, y: 0, width: 0, height: 0 },
+      "the web view still gives way",
+    );
+    assert.deepEqual(webViewBounds(cover(), slot, [modal]), { x: 0, y: 0, width: 0, height: 0 });
+    assert.equal(nativeCanvasShown(cover({ native: true, project: null })), false, "no game, no canvas");
+  });
+
+  it("Stop takes the canvas away, so its run ends, and Play brings it back", () => {
+    assert.equal(nativeCanvasShown(cover({ native: true, stopped: true })), false, "stopped: no canvas holds the run");
+    assert.equal(nativeCanvasShown(cover({ native: true, stopped: false })), true, "played again: the canvas holds it");
+  });
+
+  it("the toggle is hidden when embedding is unsupported", () => {
+    const game = [Web, Mac];
+    assert.equal(nativeToggleShown(game, StudioPlatform.Mac, true, null), true, "a Browser + Mac game on a Mac");
+    assert.equal(nativeToggleShown([Web], StudioPlatform.Mac, true, null), false, "no Mac build to show");
+    assert.equal(nativeToggleShown(game, StudioPlatform.Windows, false, null), false, "Mac builds play on a Mac");
+    assert.equal(nativeToggleShown(game, StudioPlatform.Mac, false, null), false, "no game box, no Mac build runs");
+    let state = nativeViewChosen(initialNative(), "pong-mac", NativeView.Native);
+    for (const refusal of [NativeRefusal.EmbedUnsupported, NativeRefusal.ElectronUntested]) {
+      const blocked = nativeEmbedReceived(
+        state,
+        embedded("pong-mac", NativeRunState.Refused, { runId: NATIVE_NO_RUN_ID, refusal, pid: null }),
+      );
+      assert.equal(blocked.embedBlocked, refusal, "kept for the session");
+      assert.equal(nativeToggleShown(game, StudioPlatform.Mac, true, blocked.embedBlocked), false, refusal);
+      assert.equal(nativeViewOf(blocked, "pong-mac", game), NativeView.Web, "the choice gives way to the web build");
+      assert.equal(nativeViewOf(blocked, "other-game", [Mac]), NativeView.Web, "and so does every other game's");
+    }
+    // A refusal of this one game (made before embedding) keeps the toggle for every game.
+    state = nativeEmbedReceived(
+      state,
+      embedded("pong-mac", NativeRunState.Refused, { refusal: NativeRefusal.GamePredatesEmbedding, pid: null }),
+    );
+    assert.equal(state.embedBlocked, null);
+    assert.equal(nativeViewOf(state, "pong-mac", game), NativeView.Native, "it says why, with Pop out, in Native");
+  });
+
+  it("a Mac-only game defaults to Native; a Browser + Mac game to Web; the person's choice wins", () => {
+    const state = initialNative();
+    assert.equal(nativeViewOf(state, "mac-only", [Mac]), NativeView.Native);
+    assert.equal(nativeViewOf(state, "pong-mac", [Web, Mac]), NativeView.Web);
+    assert.equal(nativeViewOf(nativeViewChosen(state, "mac-only", NativeView.Web), "mac-only", [Mac]), NativeView.Web);
+    assert.equal(
+      nativeViewOf(nativeViewChosen(state, "pong-mac", NativeView.Native), "pong-mac", [Web, Mac]),
+      NativeView.Native,
+    );
+    // Already playing in its own window: no second copy inside Live until the person asks for one.
+    const windowRun = { ...embedded("mac-only", NativeRunState.Ready), mode: NativeRunMode.Window, runId: "run-1" };
+    const playing = nativeStatusReceived(nativeWatched(state, "mac-only"), windowRun);
+    assert.equal(nativeViewOf(playing, "mac-only", [Mac]), NativeView.Web);
+    const ended = nativeStatusReceived(playing, { ...windowRun, state: NativeRunState.Stopped });
+    assert.equal(nativeViewOf(ended, "mac-only", [Mac]), NativeView.Native, "once the window is gone, Native again");
+    assert.equal(
+      nativeViewOf(nativeViewChosen(playing, "mac-only", NativeView.Native), "mac-only", [Mac]),
+      NativeView.Native,
+    );
+  });
+
+  it("an embedded run's word reaches only Live's view, never the window card; old news changes nothing", () => {
+    const watched = nativeWatched(initialNative(), "pong-mac");
+    const ready = embedded("pong-mac", NativeRunState.Ready);
+    assert.equal(nativeStatusReceived(watched, ready), watched, "the window card ignores embedded runs");
+    const fresh = initialNative();
+    assert.equal(nativeEmbedReceived(fresh, ready), fresh, "a game Live never asked to show: nothing to change");
+    let state = nativeViewChosen(initialNative(), "pong-mac", NativeView.Native);
+    state = nativeEmbedReceived(state, ready);
+    assert.equal(nativeEmbedOf(state, "pong-mac").status, ready);
+    const crashed = embedded("pong-mac", NativeRunState.Crashed, { pid: null });
+    state = nativeEmbedReceived(state, crashed);
+    assert.equal(
+      nativeEmbedReceived(state, embedded("pong-mac", NativeRunState.Ready)),
+      state,
+      "an ended run's last word is final",
+    );
+    const older = embedded("pong-mac", NativeRunState.Ready, {
+      runId: "embed-0",
+      startedAt: "2026-09-30T00:00:00.000Z",
+    });
+    assert.equal(nativeEmbedReceived(state, older), state);
+    assert.equal(
+      nativeEmbedReceived(state, { ...ready, mode: NativeRunMode.Window }),
+      state,
+      "a window run is the card's",
+    );
+    const unknown = nativeEmbedReceived(state, embedded("never-chosen", NativeRunState.Ready));
+    assert.equal(unknown, state, "a game Live never asked to show changes nothing");
+  });
+});
+
+describe("Live's Web | Native view: the embedded run the store holds", () => {
+  const { Web, Mac } = BuildTarget;
+
+  it("holds one embedded run per game, sized to the slot; letting go unembeds once, after a remount had its chance", async () => {
+    const timers = unembedTimers();
+    const fake = fakeStudioApi({
+      nativeEmbed: async (project) => embedded(project, NativeRunState.Building),
+      nativeUnembed: async () => true,
+    });
+    const store = createNativeStore(fake.api, timers);
+    const stop = store.start();
+    const release = store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeEmbed"), [["pong-mac", EMBED_SIZE]]);
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status?.state, NativeRunState.Building);
+    fake.emit({ type: UiEvent.NativeStatus, payload: embedded("pong-mac", NativeRunState.Ready) });
+    assert.equal(
+      nativeEmbedOf(store.getState(), "pong-mac").status?.state,
+      NativeRunState.Ready,
+      "events follow the run",
+    );
+    // React's development remount: let go, hold again before the deferred unembed runs.
+    release();
+    const again = store.hold("pong-mac", EMBED_SIZE);
+    timers.flush();
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeEmbed").length, 1, "the run kept through a remount");
+    assert.deepEqual(fake.callsOf("nativeUnembed"), []);
+    again();
+    again();
+    timers.flush();
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeUnembed"), [["pong-mac"]], "one unembed, however many times it is let go");
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status, null);
+    stop();
+  });
+
+  it("Pop out unembeds, then opens the Mac window, and shows Web in Live", async () => {
+    const order: string[] = [];
+    const fake = fakeStudioApi({
+      nativeEmbed: async (project) => embedded(project, NativeRunState.Ready),
+      nativeUnembed: async () => {
+        order.push("unembed");
+        return true;
+      },
+      nativeRun: async (project) => {
+        order.push("run");
+        return { ...embedded(project, NativeRunState.Building), mode: NativeRunMode.Window, runId: "run-1" };
+      },
+      nativeState: async () => null,
+    });
+    const timers = unembedTimers();
+    const store = createNativeStore(fake.api, timers);
+    store.choose("pong-mac", NativeView.Native);
+    const release = store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    const watch = store.watch("pong-mac");
+    await store.popOut("pong-mac");
+    assert.deepEqual(order, ["unembed", "run"]);
+    assert.equal(nativeViewOf(store.getState(), "pong-mac", [Web, Mac]), NativeView.Web);
+    assert.equal(
+      nativeOf(store.getState(), "pong-mac").status?.mode,
+      NativeRunMode.Window,
+      "the window card takes over",
+    );
+    release();
+    timers.flush();
+    await tick();
+    assert.deepEqual(fake.callsOf("nativeUnembed").length, 1, "the canvas letting go does not unembed again");
+    watch();
+  });
+
+  it("Try again starts a new embedded run after one ended or was refused", async () => {
+    let answer = embedded("pong-mac", NativeRunState.Refused, { refusal: NativeRefusal.FramesStalled, pid: null });
+    const fake = fakeStudioApi({ nativeEmbed: async () => answer, nativeUnembed: async () => true });
+    const store = createNativeStore(fake.api, unembedTimers());
+    store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status?.refusal, NativeRefusal.FramesStalled);
+    answer = embedded("pong-mac", NativeRunState.Building, { runId: "embed-2", startedAt: "2026-10-01T00:01:00.000Z" });
+    await store.retryEmbed("pong-mac", EMBED_SIZE);
+    assert.equal(fake.callsOf("nativeEmbed").length, 2);
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").status?.runId, "embed-2");
+  });
+
+  it("an embed call that fails says so on Live's view instead of waiting forever", async () => {
+    const fake = fakeStudioApi({
+      nativeEmbed: async () => {
+        throw new Error("ipc down");
+      },
+    });
+    const store = createNativeStore(fake.api, unembedTimers());
+    store.hold("pong-mac", EMBED_SIZE);
+    await tick();
+    await tick();
+    assert.equal(nativeEmbedOf(store.getState(), "pong-mac").failed, true);
+  });
+});
 
 describe("components read the stores through selectors", () => {
   it("never calls a store hook without one, and never reaches a store's whole state", () => {

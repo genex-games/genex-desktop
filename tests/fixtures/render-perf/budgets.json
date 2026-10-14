@@ -1,0 +1,102 @@
+{
+ "format": "genex-render-perf-budgets/1",
+ "about": "Feature GPU cost budgets (plan 2.10's table, whole), Apple M4 Max, 1920x1080. A budget applies to a profile row when every feature it lists is switched on and wired for that row, in the shapes it names (applied.featureShapes) if any.",
+ "resolution": [
+  1920,
+  1080
+ ],
+ "unit": "gpu-ms",
+ "entries": [
+  {
+   "id": "hdr-tonemap",
+   "features": [
+    "hdr",
+    "tonemap"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "auto-exposure",
+   "features": [
+    "exposure"
+   ],
+   "budgetMs": 0.1
+  },
+  {
+   "id": "sky",
+   "features": [
+    "sky"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "ibl",
+   "features": [
+    "ibl"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "shadows-pcss",
+   "features": [
+    "shadows"
+   ],
+   "budgetMs": 1.5
+  },
+  {
+   "id": "contact-shadows",
+   "features": [
+    "contact-shadows"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "bloom",
+   "features": [
+    "bloom"
+   ],
+   "budgetMs": 0.4
+  },
+  {
+   "id": "ao-half",
+   "features": [
+    "ao"
+   ],
+   "shapes": {
+    "ao": "half"
+   },
+   "budgetMs": 0.6
+  },
+  {
+   "id": "ao-full",
+   "features": [
+    "ao"
+   ],
+   "shapes": {
+    "ao": "full"
+   },
+   "budgetMs": 1.5
+  },
+  {
+   "id": "taa",
+   "features": [
+    "taa"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "easu-rcas",
+   "features": [
+    "upscaler"
+   ],
+   "budgetMs": 0.3
+  },
+  {
+   "id": "light-binning",
+   "features": [
+    "clustered"
+   ],
+   "budgetMs": 0.2
+  }
+ ]
+}

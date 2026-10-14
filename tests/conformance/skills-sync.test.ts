@@ -69,3 +69,44 @@ test("opt-in exploration skills stay out of automatic invocation for both agents
     );
   }
 });
+
+// The skills this repository wrote itself; the other directories are the pinned upstream design
+// skills `.agents/skills/SOURCES.md` records.
+const ENGINEERING_SKILLS = [
+  "add-event-type",
+  "add-genex-api",
+  "add-ipc-channel",
+  "add-plugin-tool",
+  "harness-incident-fix",
+  "run-area-tests",
+  "verify-ui-via-dev-control",
+] as const;
+
+// Design skills this repository wrote itself, named in SOURCES.md beside the engineering list.
+const LOCAL_DESIGN_SKILLS = ["wire-art"] as const;
+
+test("SOURCES.md names every engineering skill and every skill directory is engineering or upstream", () => {
+  const sources = fs.readFileSync(path.join(codex, "SOURCES.md"), "utf8");
+  const upstream = [...sources.matchAll(/^- `([a-z-]+)`$/gm)].map((m) => m[1] ?? "").sort();
+  assert.deepEqual(
+    skills(codex),
+    [...upstream, ...ENGINEERING_SKILLS, ...LOCAL_DESIGN_SKILLS].sort(),
+    "a skill directory is neither upstream (SOURCES.md list) nor a local engineering or design skill",
+  );
+  const engineeringLine = /The engineering skills\s*\(([^)]*)\)/.exec(sources)?.[1] ?? "";
+  const named = [...engineeringLine.matchAll(/`([a-z-]+)`/g)].map((m) => m[1] ?? "").sort();
+  assert.deepEqual(named, [...ENGINEERING_SKILLS].sort(), "SOURCES.md's engineering list is out of date");
+  for (const name of LOCAL_DESIGN_SKILLS) assert.match(sources, new RegExp(`design skill \`${name}\``), name);
+});
+
+test("every repository path an engineering skill names exists", () => {
+  const roots = /^(src|tests|docs|scripts|native|evals|\.github)\//;
+  for (const name of ENGINEERING_SKILLS) {
+    const text = fs.readFileSync(path.join(codex, name, "SKILL.md"), "utf8");
+    for (const [, token = ""] of text.matchAll(/`([^`\s]+)`/g)) {
+      const file = token.replace(/[:#].*$/, "").replace(/[.,;]$/, "");
+      if (!roots.test(file) || /[<*{}()$|]/.test(file) || file.endsWith("/")) continue;
+      assert.ok(fs.existsSync(path.join(root, file)), `${name}/SKILL.md names ${file}, which does not exist`);
+    }
+  }
+});

@@ -6,7 +6,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerPreviewIpc } from "../../src/main/ipc/preview.ts";
-import { liveAudible, type LiveSound } from "../../src/main/game-sound.ts";
+import {
+  gameWindowAudible,
+  gameWindowFocused,
+  type GameWindowFocus,
+  liveAudible,
+  type LiveSound,
+} from "../../src/main/game-sound.ts";
+import { NativeRunMode } from "../../src/shared/native-contract.ts";
 import type { StudioCore } from "../../src/main/studio-core.ts";
 import { storedGameSound, storeGameSound } from "../../src/renderer/panels/stage/game-sound.ts";
 import type { KeyValueStorage } from "../../src/renderer/storage.ts";
@@ -25,6 +32,64 @@ describe("when Live is heard", () => {
             const expected = on && shown && foreground && !lent;
             assert.equal(liveAudible(sound), expected, JSON.stringify(sound));
           }
+  });
+});
+
+/**
+ * A C++ game's own Play window (Play on Mac): focusing it blurs Genex, so Live's rule becomes
+ * "Genex or the game window is focused" for that game's window, and for that game only. A focus
+ * event is the game's own claim (untrusted): one from a headless or embedded run changes nothing.
+ */
+describe("when a game's own window is heard", () => {
+  const focus = (project: string, mode: NativeRunMode, focused = true): GameWindowFocus => ({ project, mode, focused });
+
+  it("the game's window in front counts as in front for that game only", () => {
+    const pongWindow = [focus("pong", NativeRunMode.Window)];
+    assert.equal(gameWindowFocused("pong", pongWindow), true);
+    assert.equal(gameWindowFocused("tetris", pongWindow), false, "another game's window is not this one's");
+    assert.equal(gameWindowFocused("pong", [focus("pong", NativeRunMode.Window, false)]), false);
+  });
+
+  it("a forged focus from a headless or embedded run changes nothing", () => {
+    for (const mode of [NativeRunMode.Headless, NativeRunMode.Embedded])
+      assert.equal(gameWindowFocused("pong", [focus("pong", mode)]), false, mode);
+  });
+
+  it("a Play window is heard with the switch on while Genex or the game window is in front", () => {
+    const flags = [false, true];
+    for (const on of flags)
+      for (const foreground of flags)
+        for (const focused of flags)
+          assert.equal(
+            gameWindowAudible({ on, foreground }, focused),
+            on && (foreground || focused),
+            JSON.stringify({ on, foreground, focused }),
+          );
+  });
+
+  it("a Browser and Mac game playing in Live and in its window is heard once: the window only when focused while Live plays it", () => {
+    const flags = [false, true];
+    for (const on of flags)
+      for (const foreground of flags)
+        for (const focused of flags)
+          assert.equal(
+            gameWindowAudible({ on, foreground }, focused, true),
+            on && focused,
+            JSON.stringify({ on, foreground, focused }),
+          );
+    // Genex in front with Live on the game: Live is the one heard.
+    const live: LiveSound = { on: true, shown: true, foreground: true, lent: false };
+    assert.deepEqual([liveAudible(live), gameWindowAudible(live, false, liveAudible(live))], [true, false]);
+    // The window focused: Genex is behind, so Live is muted and the window heard.
+    const behind = { ...live, foreground: false };
+    assert.deepEqual([liveAudible(behind), gameWindowAudible(behind, true, liveAudible(behind))], [false, true]);
+  });
+
+  it("Live itself is in front when its game's window is (gameWindowFocused), never lent", () => {
+    const sound: LiveSound = { on: true, shown: true, foreground: false, lent: false, gameWindowFocused: true };
+    assert.equal(liveAudible(sound), true);
+    assert.equal(liveAudible({ ...sound, lent: true }), false);
+    assert.equal(liveAudible({ ...sound, gameWindowFocused: false }), false);
   });
 });
 

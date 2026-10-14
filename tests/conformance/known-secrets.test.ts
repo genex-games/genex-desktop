@@ -4,15 +4,23 @@
  * append to the event log (review SEC-1) and every public export (SEC-6).
  */
 import assert from "node:assert/strict";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
+import { exportMacGame } from "../../src/main/core/native-export-run.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { ExportError, ExportRefusal, ExportSigning } from "../../src/shared/game-export-contract.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import type { EventData } from "../../src/shared/event-log.ts";
 import type { McpConnector } from "../../src/shared/mcp.ts";
 import { McpRegistry } from "../../src/substrate/mcp/registry.ts";
 import { memorySecretPort } from "../../src/substrate/mcp/store.ts";
 import { coreLite } from "../helpers/core-lite.ts";
+import { dylib, gameCommands, machO } from "../helpers/macho.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { raylibLanes } from "../helpers/game-lanes.ts";
+import { ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
 
 const ENV_NAME = "STUDIO_TEST_FAKE_API_TOKEN";
 const ENV_VALUE = "env-held-FAKE-value-4411";
@@ -166,4 +174,88 @@ test("a public export refuses a game file that holds a credential the core holds
   });
   await assert.rejects(lite.api()["game.export"]({ project: game.name }), /config\.js/);
   await assert.rejects(access(target), "nothing was published");
+});
+
+test("a Mac app export refuses an executable that holds a credential the core holds, publishing nothing (SEC-6)", {
+  skip: process.platform === "win32" && "POSIX modes",
+}, async () => {
+  const { core } = await coreLite();
+  const game = await core.games.scaffold("leaky-mac", {
+    title: "Leaky",
+    stack: GameStack.RaylibCpp,
+    caller: ScaffoldCaller.Internal,
+    targets: [BuildTarget.Web, BuildTarget.Mac],
+  });
+  const base = await realpath(await tmpDir("studio-known-secrets-mac-"));
+  // The lane's output: a window build whose bytes carry the value, and the store it was built with.
+  const out = path.join(base, "out");
+  await mkdir(out);
+  const executable = Buffer.concat([machO({ commands: gameCommands() }), Buffer.from(`key=${ENV_VALUE}`)]);
+  await writeFile(path.join(out, "game"), executable, { mode: 0o755 });
+  await writeFile(path.join(out, "game-headless"), machO({ commands: gameCommands() }), { mode: 0o755 });
+  const angleDir = path.join(base, "angle");
+  await mkdir(path.join(angleDir, "licenses"), { recursive: true });
+  const egl = dylib("@rpath/libEGL.dylib");
+  const gles = dylib("@rpath/libGLESv2.dylib");
+  await writeFile(path.join(angleDir, "libEGL.dylib"), egl);
+  await writeFile(path.join(angleDir, "libGLESv2.dylib"), gles);
+  const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const manifest = JSON.stringify({
+    files: {
+      "libEGL.dylib": { sha256: sha(egl), size: egl.length },
+      "libGLESv2.dylib": { sha256: sha(gles), size: gles.length },
+    },
+  });
+  await writeFile(path.join(angleDir, "manifest.json"), manifest);
+  const raylibSource = path.join(base, "raylib");
+  await mkdir(path.join(raylibSource, "src", "external", "glfw"), { recursive: true });
+  await writeFile(path.join(raylibSource, "LICENSE"), "zlib\n");
+  await writeFile(path.join(raylibSource, "src", "external", "glfw", "LICENSE.md"), "zlib\n");
+  await writeFile(path.join(raylibSource, "src", "external", "miniaudio.h"), "/*\nMIT-0\n*/\n");
+  const angle = {
+    dir: angleDir,
+    egl: path.join(angleDir, "libEGL.dylib"),
+    gles: path.join(angleDir, "libGLESv2.dylib"),
+    manifestSha256: sha(Buffer.from(manifest)),
+  };
+  const lock = { version: 1 as const, entries: {}, digest: "e".repeat(64) };
+  const signed: string[][] = [];
+  const target = path.join(core.layout.exports, "leaky-mac-mac");
+  await assert.rejects(
+    exportMacGame(
+      {
+        host: StudioPlatform.Mac,
+        games: core.games,
+        gameBuilds: raylibLanes({
+          ensure: async () => ({ ok: true, output: out, lastGood: out, problem: null, ran: true }),
+        }),
+        toolchains: {
+          currentLock: async () => lock,
+          locate: async () => ({
+            ok: true,
+            toolchain: { lock, cmake: "", ninja: "", emscripten: null, genexCmake: {}, raylibSource, angle },
+          }),
+        },
+        exec: async (file, args) => {
+          signed.push([file, ...args]);
+          return { code: 0, stdout: "", stderr: "" };
+        },
+        resources: base,
+        stagingRoot: core.layout.exportStaging,
+        exportsRoot: core.layout.exports,
+        secretValues: () => core.knownSecretValues(),
+        env: {},
+      },
+      { game, targetDir: target, signing: { kind: ExportSigning.AdHoc } },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ExportError);
+      assert.equal(error.code, ExportRefusal.SecretFound);
+      assert.match(error.message, /MacOS\/game/);
+      assert.equal(error.message.includes(ENV_VALUE), false, "the refusal names the file, never the value");
+      return true;
+    },
+  );
+  await assert.rejects(access(target), "nothing was published");
+  assert.deepEqual(signed, [], "nothing was signed");
 });

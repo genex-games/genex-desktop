@@ -1,16 +1,16 @@
 # Evaluating game judges
 
-Protocol tests prove the mechanics of judging. They do not establish that a model agrees with
-people about game quality. Use this procedure before claiming a judge, prompt or learned
-instruction improves games. Keep captures, labels and reports in ignored evidence directories;
-publish only an independently reviewed dataset with established redistribution rights.
+Protocol tests prove the mechanics of judging, not that a model agrees with people about game
+quality. Use this procedure before claiming a judge, prompt or learned
+instruction improves games. Publish only an independently reviewed dataset with established
+redistribution rights.
 
 ## Fixed comparisons
 
-Use owned disposable games. Freeze each game's starting commit, seed, camera, viewport, device
-pixel ratio, action sequence and evidence budget. Record the provider, model, prompt version,
-runtime context, permission mode, source revision and build identity. Change one variable per
-comparison. Start with these authored tasks; use the same inputs for every candidate:
+Use owned disposable games. Freeze each game's starting commit, seed, camera, viewport, pixel
+ratio, actions and evidence budget; record provider, model, prompt version, runtime context,
+permission mode, source revision and build. Change one variable per comparison and give every
+candidate the same inputs:
 
 | Task | Candidate difference | Required observations |
 | --- | --- | --- |
@@ -48,6 +48,28 @@ A new loop worker's first round is a build block ([harness runtime](harness-runt
 taste judge still looks at it, but its pick and veto decide nothing — only its notes reach the next
 round. Measure taste verdicts from round two on.
 
+A C++ · raylib game is judged by the same rubrics; its code review reads
+`judge/code-review-cpp.md` and its scene checks are unmeasured. A Mac-only game is judged on
+native captures (`loop/native-evidence.ts`); an uncaptured frame fails its vision and play checks.
+A Browser + Mac look carries the parity gate as one identity row, `native-parity`: host admission
+facts (beating the game's backend claim), ready, step witness, the web pass's cameras and frame
+verdicts, a seeded two-run replay, and `state()` agreement with the web build after 120 ticks
+(per-game tolerance, only tightened). Cross-target agreement excludes backend render statistics
+(`__render` and root `drawCalls`/`triangles`); gameplay and nested probes still compare. Native
+replay keeps render counters and compares asset claims by logical asset path, not the temporary
+bundle root. Frame similarity is unmeasured until PX10; unmeasured never
+passes; Windows or Linux builds on a Mac are `not-runnable-here`. Campaigns compare stacks only on
+tasks both measure.
+
+A Rust · wgpu game is judged the same way, with its own rubric (`judge/code-review-rust.md`:
+determinism, `ctx` input, tagged draws, no network, no build or dependency edits) and its own
+parity row. Scene checks are unmeasured; a look that captured nothing fails its vision and play
+checks. A web build refused `gpu-unsupported` (a preview without WebGPU) is unavailable, not
+failed, and the gate is weighed over the other destinations. Tolerance is kept per stack and
+target pair, so a Rust pair never inherits a raylib game's. Phone builds are built and admitted
+only: their rows are unmeasured, so gameplay is judged on the Mac or web build of the same code,
+and no judge starts a Simulator, emulator or phone.
+
 These are test cases, not human-labelled quality results. Begin without model calls by checking
 capture reproducibility, malformed responses, budget limits and blind-label handling through the
 existing conformance and harness suites. A real-model campaign requires its own authorized
@@ -61,21 +83,20 @@ baselines and per-release ledger exports under `evals/` are committed ([evals](e
 ## Human review and metrics
 
 Have at least two reviewers label each pair independently before seeing the model's answer.
-Shuffle left/right placement independently for humans and judges. Hide engine, author and
-incumbent identity; retain an internal mapping to the exact commits. Reviewers record A, B,
+Shuffle placement separately for humans and judges. Hide engine, author and incumbent; keep a
+mapping to the exact commits. Reviewers record A, B,
 tie or insufficient evidence, plus the decisive defect and whether the request was satisfied.
-Preserve disagreements and adjudicate them separately; do not manufacture a consensus label.
-For eval campaigns, `npm run eval -- review` serves this blind pair review and a grader-validation
-sample locally, and its labels stay in the local eval ledger ([evals](evals.md#human-review)).
+Adjudicate disagreements separately; never manufacture a consensus label.
+`npm run eval -- review` serves this blind review and a grader-validation sample locally; its
+labels stay in the local eval ledger ([evals](evals.md#human-review)).
 
-Report sample size and counts, human agreement, judge agreement with adjudicated labels,
-the full A/B/tie/insufficient confusion table, invalid/abstained responses, false acceptance of
-broken or regressed builds, and requested-change satisfaction. Reversing A/B must not alter
-the semantic choice. Show each task's result alongside the aggregate; report unlabelled pairs
-as unlabelled. Include calls, tokens, recorded spend, latency, cancellations and failures.
+Report sample size, human agreement, judge agreement with adjudicated labels, the full
+A/B/tie/insufficient confusion table, invalid or abstained responses, false acceptance of broken
+or regressed builds, and requested-change satisfaction. Swapping A/B must not change the choice.
+Show each task beside the aggregate; unlabelled pairs stay unlabelled. Include calls, tokens,
+spend, latency, cancellations and failures.
 
-Run a candidate in shadow mode on the frozen set before letting its decisions change games or
-automatically apply learning. Set acceptance thresholds and the campaign's budget before
-running it; retain the baseline and every failure. Wider acceptance needs fresh tasks and
-independent reviewers, not repeated tuning on the same examples. Keep automatic learning off
-until its own measured acceptance is established.
+Run a candidate in shadow mode on the frozen set before its decisions change games or apply
+learning. Set thresholds and budget first; keep the baseline and every failure. Wider acceptance
+needs fresh tasks and independent reviewers, not more tuning on the same examples. Automatic
+learning stays off until its own acceptance is measured.

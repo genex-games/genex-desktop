@@ -4,6 +4,7 @@
  * every value here is a wire value: never rename one.
  */
 import { z } from "zod";
+import { DeviceClass, QualityPreset, RenderFeature } from "../../shared/render-quality.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 
 const GRAPH_DRAG_MIN_MS = 100;
@@ -41,9 +42,17 @@ export type DevErrorCode = (typeof DevErrorCode)[keyof typeof DevErrorCode];
 export const DevReadiness = { Ready: "ready", NotReady: "not-ready" } as const;
 export type DevReadiness = (typeof DevReadiness)[keyof typeof DevReadiness];
 
-/** What an operation acts on: the studio window or the game view. */
-export const DevSurface = { Desktop: "desktop", Game: "game" } as const;
+/** What an operation acts on: the studio window, the game view, or a C++ game's own native run. */
+export const DevSurface = { Desktop: "desktop", Game: "game", Native: "native" } as const;
 export type DevSurface = (typeof DevSurface)[keyof typeof DevSurface];
+
+/**
+ * What a native capture shows: `pinned` is the run's own capture (the pinned capture profile, which
+ * ignores the person's preset and panel by design, so two boots capture the same picture); `live`
+ * is the studio window's Native view as composited, the frame the person sees.
+ */
+export const NativeCaptureFrame = { Pinned: "pinned", Live: "live" } as const;
+export type NativeCaptureFrame = (typeof NativeCaptureFrame)[keyof typeof NativeCaptureFrame];
 
 /** Where `logs` reads: a surface's console, the core's events, the harness or the launch's own streams. */
 export const DevLogSurface = {
@@ -69,6 +78,8 @@ export const DevMethod = {
   WindowResize: "window.resize",
   FixtureGraph: "fixture.graph",
   GameState: "game.state",
+  /** The game's `renderSettings` verb: a read, or a change held for this session (a preset, a class, a frame budget). */
+  GameRenderSettings: "game.renderSettings",
   Capture: "capture",
   Logs: "logs",
   Runs: "runs",
@@ -92,7 +103,19 @@ export const GraphFixtureAction = {
 export type GraphFixtureAction = (typeof GraphFixtureAction)[keyof typeof GraphFixtureAction];
 
 const surface = z.enum(DevSurface);
+/** Where `game.state` and `game.input` act: the game view (Live's web page, the default) or the open game's native run. */
+const gameSurface = z.enum([DevSurface.Game, DevSurface.Native]).optional();
 const selector = z.string().min(1).max(1000);
+/** A `renderSettings` change (`RenderSettingsChange`); the game refuses a value outside its range typed. */
+const renderSettingsSet = z
+  .object({
+    preset: z.enum(QualityPreset).nullable().optional(),
+    deviceClass: z.enum(DeviceClass).nullable().optional(),
+    features: z.partialRecord(z.enum(RenderFeature), z.boolean()).nullable().optional(),
+    renderScaleLock: z.number().nullable().optional(),
+    frameBudgetMs: z.number().nullable().optional(),
+  })
+  .strict();
 const name = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/)
@@ -152,6 +175,7 @@ export const operationSchema = z.discriminatedUnion("method", [
     scope: selector.optional(),
   }),
   operation(DevMethod.GameInput, {
+    surface: gameSurface,
     actions: z
       .array(input)
       .min(1)
@@ -173,8 +197,9 @@ export const operationSchema = z.discriminatedUnion("method", [
     durationMs: z.number().int().min(GRAPH_DRAG_MIN_MS).max(GRAPH_DRAG_MAX_MS),
   }),
   operation(DevMethod.FixtureGraph, { action: z.enum(GraphFixtureAction) }),
-  operation(DevMethod.GameState, {}),
-  operation(DevMethod.Capture, { surface, name }),
+  operation(DevMethod.GameState, { surface: gameSurface }),
+  operation(DevMethod.GameRenderSettings, { surface: gameSurface, set: renderSettingsSet.optional() }),
+  operation(DevMethod.Capture, { surface, name, frame: z.enum(NativeCaptureFrame).optional() }),
   operation(DevMethod.Logs, {
     surface: z.enum(DevLogSurface),
     cursor: z.number().int().min(0).default(0),

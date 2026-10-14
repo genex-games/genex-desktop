@@ -19,35 +19,75 @@
  * On Windows the backend is srt-win under Git Bash, with session-wide grants and the environment
  * in an env file; `windows-sandbox.ts` holds those rules and the one grant session.
  */
-import { type ChildProcess, type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  execFileSync,
+  type SpawnOptions,
+  spawn,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { Readable } from "node:stream";
+import { Duplex, type Readable } from "node:stream";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { StudioPlatform } from "../shared/boot.ts";
+import { BuildTarget, type CompiledStack } from "../shared/game-project.ts";
+import {
+  GameBoxProblem,
+  NATIVE_CROSS_EXECUTABLES,
+  NATIVE_GAME_MEMORY_MAX_BYTES,
+  NativeError,
+  NativeRefusal,
+  NativeRunMode,
+} from "../shared/native-contract.ts";
+import { prepareGameLaunch } from "./game-sandbox-profile.ts";
+import { LEAVE_GROUP_SYSCALLS } from "./plugins/native-process.ts";
+import { type ReadSystemFile, usernsRestricted } from "./linux-apparmor.ts";
 import { prepareSandbox } from "./sandbox-prepare.ts";
 import {
   SandboxLaunchCode,
   SandboxLaunchError,
   SandboxUnavailableError,
   gitMissingProblem,
+  type UsernsSeams,
   missingLinuxTools,
+  readSystemFile,
   sandboxProblem,
+  usernsCheck,
   windowsLaunchError,
   windowsSetupProblem,
 } from "./sandbox-unavailable.ts";
+import { shellQuote } from "./shell-quote.ts";
 import { childEnv, windowsBaseEnv } from "./child-env.ts";
 import {
   credentialHomes,
+  deviceToolDirs,
   HOME_SIGN_IN_STORES,
+  mobileCredentialHomes,
   openCodeServicePassword,
+  packagedDeviceTools,
   sandboxedCliHomes,
+  withoutDeviceTools,
 } from "./credential-homes.ts";
+import { writeNewFile } from "./fsx.ts";
+import {
+  LINUX_BOX_SYSTEM,
+  LinuxBoxAudio,
+  type LinuxBoxSystem,
+  type LinuxRunFolders,
+  launchLinuxGameBox,
+  linuxBoxError,
+  linuxGameBoxProblem,
+  linuxRunFolders,
+} from "./linux-game-box.ts";
+import { RunDirLayout } from "./native-bundle.ts";
+import { LinuxRuntimeFile } from "./native-runtime-files.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
 import {
@@ -70,6 +110,20 @@ import {
   writeCurlHome,
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
+import {
+  type LauncherFileStat,
+  type WindowsStartDeps,
+  launcherDesktopFor,
+  launcherGameExit,
+  launcherMayLeaveProfile,
+  launchRefusalError,
+  planProfileCleanup,
+  SYSTEM_ROOT,
+  startWindowsGame,
+  windowsGameBoxProblem,
+  windowsLaunchDeps,
+  WindowsLaunchRefusal,
+} from "./windows-game-launch.ts";
 
 // Linux launches this native helper through a shell, which cannot traverse Electron's asar.
 // The runtime's automatic lookup returns its virtual archive path even when the file is unpacked.
@@ -111,6 +165,14 @@ export interface RunRequest {
   label?: string;
   maxOutputBytes?: number;
   signal?: AbortSignal;
+  /**
+   * Once the command exits, end whatever it left running in its process group (POSIX): a C++
+   * build runs CMake files the agent wrote, and nothing they start may outlive the build and keep
+   * writing its folder. On macOS its descendants also cannot call setsid(2) or setpgid(2) to
+   * leave the group ({@link keepInGroup}). Agent commands leave it off: a dev server started
+   * with `&` is theirs.
+   */
+  reapGroup?: boolean;
 }
 
 export interface RunResult {
@@ -151,8 +213,13 @@ export interface SandboxOptions {
   ownHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
-  /** Extra always-readable roots (vendored toolchain, app resources). */
+  /** Extra always-readable roots (vendored toolchain, app resources); they win over {@link denyRead}. */
   readableRoots?: string[];
+  /**
+   * Never readable, on top of the base and secret denies, except under `readableRoots` (a build
+   * sandbox denies the user's home and re-allows its own folders). Writes are not affected.
+   */
+  denyRead?: string[];
   /**
    * PATH for every process started here. A Finder-launched app inherits launchd's PATH, which
    * has no Homebrew, nvm, Volta or Bun in it — so `npm run build` exited 127 and no build the
@@ -165,7 +232,109 @@ export interface SandboxOptions {
   platform?: NodeJS.Platform;
   /** Test seams for the Windows backend; production finds each of these itself. */
   windows?: WindowsSeams;
+  /**
+   * Test seams for Ubuntu's user-namespace check; production reads /proc, its own executable and
+   * its folders. With a fake `runtime` and no `read`, nothing reads the host's /proc.
+   */
+  linux?: UsernsSeams;
+  /**
+   * `layout.nativeRuns`: the only folder a game's run directory may be in. `spawnGame` refuses a
+   * `runDir` anywhere else. Absent, no game starts.
+   */
+  nativeRunsRoot?: string;
+  /**
+   * Windows: the AppContainer launcher (`<resources>/native/genex-game-launcher.exe`) every game
+   * starts through. Absent, or not there, a Windows game is refused `no-game-box` (`launcher-missing`).
+   */
+  gameLauncher?: string;
+  /** Test seams for the Windows and Linux game boxes; production finds each of these itself. */
+  gameBoxSeams?: GameBoxSeams;
 }
+
+/** What a test may hand the Windows and Linux game boxes instead of letting them look for themselves. */
+export interface GameBoxSeams {
+  /** Starts the launcher or bubblewrap (default: Node's `spawn`). */
+  spawn?: (file: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+  /** Windows: the launcher file's kind, never following a link; null when there is none (default: `lstatSync`). */
+  launcherStat?: (file: string) => LauncherFileStat | null;
+  /** Windows: planning's realpath, the run claim and the host environment (default: `windowsLaunchDeps`). */
+  windows?: Partial<Omit<WindowsStartDeps<ChildProcess>, "spawn" | "runsRoot">>;
+  /** Linux: bubblewrap's absolute path (default: {@link BWRAP}). */
+  bwrap?: string;
+  /** Linux: `bwrap --version`'s output, or null when it does not run (default: runs it, once). */
+  bwrapVersion?: () => string | null;
+  /** Linux: the session's environment (default: this process's). */
+  session?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Linux: the per-run Wayland socket the host made through the compositor's
+   * `wp_security_context_manager_v1`, or null when the compositor offers none (`wayland-unrestricted`).
+   * Absent, this build has no such helper and windowed play is refused `wayland-helper-missing`
+   * (today: no build ships one).
+   */
+  waylandContext?: (runId: string) => Promise<string | null>;
+  /** Linux: the render nodes a run is granted (default: `/dev/dri/renderD*`). */
+  renderNodes?: () => Promise<string[]>;
+  /** Linux: the file system and uid the box planner checks against (default: this process's). */
+  linuxSystem?: LinuxBoxSystem;
+}
+
+/** What `spawnGame` starts: one assembled, admitted bundle under a host-written game profile. */
+export interface GameSpawnRequest {
+  runId: string;
+  /** `<layout.nativeRuns>/<runId>`: host-only (0700); `profile.sb` is written here (0600). */
+  runDir: string;
+  /**
+   * `<runDir>/bundle/Game.app/Contents/MacOS/game`, realpath'd: the only program the profile lets
+   * start. A Windows or Linux run's is `<runDir>/bundle/game.exe` or `<runDir>/bundle/game`.
+   */
+  exe: string;
+  /** `<runDir>/bundle` (read-only to the game). */
+  bundle: string;
+  /** `<runDir>/state` (the only writable path). */
+  state: string;
+  mode: NativeRunMode;
+  nonce: string;
+  /**
+   * The frames service the host checked in for this run (`NATIVE_FRAMES_SERVICE_PREFIX` + `runId`):
+   * required for an embedded run, which may look up this one name, and refused for any other mode.
+   * The game reads it from `GENEX_FRAMES_SERVICE`.
+   */
+  frames?: string;
+  /** The admitted build's stack: how a Linux box draws and whether it has a headless build. Absent: C++ · raylib. */
+  stack?: CompiledStack;
+}
+
+/** How a started game ended. */
+export interface GameExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** The game box failed on its own (Windows: the launcher's own failure): the run is refused, not crashed. */
+  refused?: NativeError;
+}
+
+/**
+ * A started game: its own process group; fd 3 is the protocol pipe (stdio[3]); stdin is ignored. On
+ * Windows the child is the launcher, which relays fd 3 to the game's pipe and holds the game in a
+ * kill-on-close Job Object.
+ */
+export interface GameChild {
+  pid: number;
+  /** The protocol pipe, NDJSON both ways. */
+  fd3: Duplex;
+  stdout: Readable;
+  stderr: Readable;
+  /** Resolves once the process is reaped. */
+  exited: Promise<GameExit>;
+  /**
+   * Signal the game's process group; nothing once the game has been reaped. Windows: SIGTERM closes
+   * fd 3 (the launcher's own Stop ends the job), any other signal ends the launcher, whose job then
+   * ends the game; no process group is ever signalled.
+   */
+  kill(signal: NodeJS.Signals): void;
+}
+
+/** A test's fake runtime reads no host /proc: an Ubuntu 24.04 host would otherwise look restricted. */
+const NO_SYSTEM_FILES: ReadSystemFile = () => null;
 
 /** What a test may hand the Windows backend instead of letting it look for itself. */
 export interface WindowsSeams {
@@ -187,7 +356,8 @@ export type SandboxRuntime = Pick<
   | "updateConfig"
   | "wrapWithSandboxArgv"
   | "annotateStderrWithSandboxFailures"
->;
+> &
+  Partial<Pick<typeof import("@anthropic-ai/sandbox-runtime").SandboxManager, "getProxyPort">>;
 
 /** What an initialized Windows backend keeps for its launches. */
 interface WindowsBackend {
@@ -216,6 +386,8 @@ const SANDBOX_SHELL = "/bin/bash";
 const NESTED_SHELL_ENV = { SHLVL: "1" } as const;
 /** The shell a command runs under when the sandbox is off (tests of the fallback path only). */
 const UNSANDBOXED_SHELL = "/bin/sh";
+/** A write to a child's stdin after it closed its end: the child chose not to read, its exit decides. */
+const CLOSED_PIPE_CODES: ReadonlySet<string> = new Set(["EPIPE", "ECONNRESET"]);
 
 /** The enabled macOS and Linux sandboxes sharing one sandbox-runtime, and its reset in flight. */
 interface RuntimeHold {
@@ -242,23 +414,177 @@ function runtimeHold(runtime: SandboxRuntime): RuntimeHold {
 const MESSAGE = {
   NotInitialized: "sandbox-runtime is not initialized",
   EmptyArgv: "sandbox-runtime returned an empty command",
+  NoGameBox: (platform: string) => `this ${platform} computer has no game box yet: a native game cannot start here`,
+  NoRunsRoot: "this sandbox was given no native-runs folder, so no game starts",
+  NoProtocolPipe: "the game started without its protocol pipe",
+  GroupRuleUnplaced: "sandbox-runtime's Seatbelt profile was not where Genex adds its process-group rule",
+  BridgeRuleUnplaced: "sandbox-runtime's Seatbelt profile was not where Genex closes the device bridges",
+  NoGameBoxFor: (platform: string, box: GameBoxProblem) =>
+    `this ${platform} computer has no game box for this run (${box}): a native game cannot start here`,
+  NotTheGame: (exe: string) => `a Windows game starts only its bundle's own game.exe, not ${JSON.stringify(exe)}`,
 } as const;
+
+/** Where sandbox-runtime's macOS command passes its profile, and the line every profile starts with. */
+const SANDBOX_EXEC_PROFILE = "/usr/bin/sandbox-exec -p ";
+const PROFILE_HEAD = "(version 1)";
+/** The quote sandbox-runtime's own `quote` puts around the profile, and how a `'` inside it reads. */
+const PROFILE_QUOTE = "'";
+const QUOTED_QUOTE = `'"'"'`;
+/** sandbox-runtime's loopback grant under `allowLocalBinding`, and the same grant a port deny can narrow. */
+const LOOPBACK_OUTBOUND_RULE = '(allow network-outbound (remote ip "localhost:*"))';
+const LOOPBACK_RULE = '(allow network* (remote ip "localhost:*"))';
+/** The adb server's port. */
+const ADB_SERVER_PORT = 5037;
+/** The emulators' console and adb ports: a pair per instance, from the first to the sixteenth. */
+const EMULATOR_FIRST_PORT = 5554;
+const EMULATOR_LAST_PORT = 5585;
+/**
+ * The emulators' gRPC control endpoints (input, installs, screenshots): 8554 for the first and up,
+ * one per instance. Sized like the console range, so an instance a person moved stays covered.
+ */
+const EMULATOR_GRPC_FIRST_PORT = 8554;
+const EMULATOR_GRPC_LAST_PORT = 8585;
+/** Every port a device bridge answers on: no agent command connects to one (C1). */
+const DEVICE_BRIDGE_PORTS: readonly number[] = [
+  ADB_SERVER_PORT,
+  ...portRange(EMULATOR_FIRST_PORT, EMULATOR_LAST_PORT),
+  ...portRange(EMULATOR_GRPC_FIRST_PORT, EMULATOR_GRPC_LAST_PORT),
+];
+/** setsid(2) and setpgid(2) refused: a reaped run's descendants stay in the group it ends (as a game's do). */
+const KEEP_IN_GROUP_RULE = `(deny syscall-unix (syscall-number ${LEAVE_GROUP_SYSCALLS.join(" ")}))`;
+
+/**
+ * sandbox-runtime's macOS argv with {@link KEEP_IN_GROUP_RULE} added to its Seatbelt profile, for
+ * a run that reaps its group once it exits (`reapGroup`): killing the group alone misses a
+ * descendant that left it. Throws when the profile is not where 0.0.73 puts it, so a changed
+ * runtime refuses the build rather than running it without the rule.
+ */
+export function keepInGroup(argv: readonly string[]): string[] {
+  const slot = profileSlot(argv);
+  if (!slot) throw new Error(MESSAGE.GroupRuleUnplaced);
+  return withRules(argv, slot, [KEEP_IN_GROUP_RULE]);
+}
+
+/** `first` to `last`, both included. */
+function portRange(first: number, last: number): number[] {
+  return Array.from({ length: last - first + 1 }, (_, offset) => first + offset);
+}
+
+/**
+ * The argv slot holding sandbox-runtime's quoted Seatbelt profile, where the profile's head ends,
+ * and where its closing quote is (the command after it is the agent's, never the profile).
+ */
+interface ProfileSlot {
+  at: number;
+  headEnd: number;
+  end: number;
+}
+
+/** Where {@link SANDBOX_EXEC_PROFILE} passes the profile in `argv`, as 0.0.73 quotes it; null when it is not there. */
+function profileSlot(argv: readonly string[]): ProfileSlot | null {
+  const at = argv.findIndex((arg) => arg.includes(SANDBOX_EXEC_PROFILE));
+  const wrapped = argv[at] ?? "";
+  const start = wrapped.indexOf(SANDBOX_EXEC_PROFILE) + SANDBOX_EXEC_PROFILE.length;
+  const quoted = wrapped.startsWith(`${PROFILE_QUOTE}${PROFILE_HEAD}`, start);
+  if (at < 0 || !quoted) return null;
+  const headEnd = start + PROFILE_QUOTE.length + PROFILE_HEAD.length;
+  const end = closingQuote(wrapped, headEnd);
+  return end < 0 ? null : { at, headEnd, end };
+}
+
+/** The index of the `'` that closes a quoted profile, from `from`: a `'"'"'` is a quote inside it. */
+function closingQuote(wrapped: string, from: number): number {
+  let at = wrapped.indexOf(PROFILE_QUOTE, from);
+  while (at >= 0 && wrapped.startsWith(QUOTED_QUOTE, at)) at = wrapped.indexOf(PROFILE_QUOTE, at + QUOTED_QUOTE.length);
+  return at;
+}
+
+/**
+ * `argv` with `rules` added right after the profile's head, where a rule's place does not weaken
+ * it. Inside the single quotes every byte is literal, so only a `'` in a rule (a path holding one)
+ * is written as sandbox-runtime's own `quote` writes it.
+ */
+function withRules(argv: readonly string[], slot: ProfileSlot, rules: readonly string[]): string[] {
+  const wrapped = argv[slot.at] ?? "";
+  const text = rules.map((rule) => `\n${rule.replaceAll(PROFILE_QUOTE, QUOTED_QUOTE)}`).join("");
+  const ruled = `${wrapped.slice(0, slot.headEnd)}${text}${wrapped.slice(slot.headEnd)}`;
+  return argv.map((arg, index) => (index === slot.at ? ruled : arg));
+}
+
+/**
+ * sandbox-runtime's macOS argv with the device bridges closed (C1): no connection to the adb
+ * server's port or an emulator's console, adb or gRPC port on a loopback address (IPv4 or IPv6),
+ * whatever else localhost allows, and no program started from `toolDirs` (a read deny does not
+ * stop a compiled program: exec maps it without a file read). Measured on macOS 26 (2026-10-07):
+ * no later deny narrows sandbox-runtime's `network-outbound` grant to `localhost:*`, while the
+ * same grant written for `network*` yields to a port deny in either order. So that grant is
+ * rewritten inside the profile only (`loopback`: the run allows local binding, and the grant must
+ * be there), then the denies are added. Throws when the profile or the grant is not where 0.0.73
+ * puts them, so a changed runtime refuses every command rather than run one with the bridges open.
+ */
+export function closeDeviceBridges(
+  argv: readonly string[],
+  loopback: boolean,
+  toolDirs: readonly string[] = [],
+): string[] {
+  const slot = profileSlot(argv);
+  if (!slot) throw new Error(MESSAGE.BridgeRuleUnplaced);
+  const wrapped = argv[slot.at] ?? "";
+  const profile = wrapped.slice(slot.headEnd, slot.end);
+  if (loopback && !profile.includes(LOOPBACK_OUTBOUND_RULE)) throw new Error(MESSAGE.BridgeRuleUnplaced);
+  const rewritten = `${wrapped.slice(0, slot.headEnd)}${profile.replaceAll(LOOPBACK_OUTBOUND_RULE, LOOPBACK_RULE)}${wrapped.slice(slot.end)}`;
+  const opened = argv.map((arg, index) => (index === slot.at ? rewritten : arg));
+  return withRules(opened, slot, [...DEVICE_BRIDGE_PORTS.map(deviceBridgeDeny), ...toolDirs.map(deviceToolExecDeny)]);
+}
+
+/** The Seatbelt deny for one device-bridge port, on every loopback address (`localhost` is 127.0.0.1 and ::1). */
+function deviceBridgeDeny(port: number): string {
+  return `(deny network-outbound (remote ip "localhost:${port}"))`;
+}
+
+/** `dir` by its real path, as Seatbelt matches an exec; as given when it does not exist (yet). */
+function realPathOrSelf(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+/** The Seatbelt deny on starting any program under `dir`, a path as sandbox-runtime writes one. */
+function deviceToolExecDeny(dir: string): string {
+  return `(deny process-exec (subpath ${JSON.stringify(dir)}))`;
+}
+
+/** Where bubblewrap is on every distribution Genex supports. */
+const BWRAP = "/usr/bin/bwrap";
+/** How long `bwrap --version` may take. */
+const BWRAP_PROBE_TIMEOUT_MS = 5_000;
+/** The folder a Linux host's GPU render nodes are in, and their names. */
+const DRI_FOLDER = "/dev/dri";
+const RENDER_NODE_NAME = /^renderD[0-9]{1,3}$/;
 
 /**
  * Refuse, with the typed setup problem, a platform or machine the sandbox cannot run on: the
  * window then offers the fix instead of the app quitting. Missing Linux tools are looked up on
- * PATH only after sandbox-runtime's own check fails. On Windows the dependency check runs srt-win
- * probes of its own, so it is skipped: `initialize` reports a missing setup with a typed code.
+ * PATH only after sandbox-runtime's own check fails; with every tool there, Linux checks Ubuntu's
+ * user-namespace restriction, which sandbox-runtime does not. On Windows the dependency check runs
+ * srt-win probes of its own, so it is skipped: `initialize` reports a missing setup with a typed code.
  */
 function assertSandboxReady(
   runtime: Pick<SandboxRuntime, "isSupportedPlatform" | "checkDependencies">,
   platform: NodeJS.Platform = process.platform,
+  linux: UsernsSeams = {},
 ): void {
   const supported = runtime.isSupportedPlatform();
   const checked = supported && platform !== StudioPlatform.Windows;
   const dependencyErrors = checked ? runtime.checkDependencies().errors : [];
-  const missingTools = platform === StudioPlatform.Linux && dependencyErrors.length ? missingLinuxTools() : [];
-  const problem = sandboxProblem({ platform, supported, dependencyErrors, missingTools });
+  const onLinux = platform === StudioPlatform.Linux;
+  const missingTools = onLinux && dependencyErrors.length ? missingLinuxTools() : [];
+  const restricted =
+    onLinux && checked && dependencyErrors.length === 0 && usernsRestricted(linux.read ?? readSystemFile);
+  const userns = restricted ? usernsCheck(linux) : undefined;
+  const problem = sandboxProblem({ platform, supported, dependencyErrors, missingTools, userns });
   if (problem) throw new SandboxUnavailableError(problem);
 }
 
@@ -269,7 +595,7 @@ function asSetupProblem(error: unknown): unknown {
 }
 
 /** What a launch needs from a run or a long-lived start. */
-type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin">;
+type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "reapGroup">;
 
 /** How one process starts: the program, its arguments, its environment, and whether srt wraps it. */
 interface LaunchPlan {
@@ -348,6 +674,47 @@ export function baseDenyRead(
   ];
 }
 
+/**
+ * Windows' deny for one device-tool folder: every entry at its top (each file, and each subfolder
+ * with all it holds), or the folder itself when it is empty or unreadable. srt-win puts an
+ * inheritable deny on each target's parent and rewrites that parent's ACL for every target, which
+ * walks the parent's whole tree; for the folder itself that parent is the SDK root, whose NDKs and
+ * platforms outran srt-win's 60 s limit on every sandbox start (161 s for `platform-tools` on
+ * GitHub's runner in a CI run). Its entries put that walk on the tool folder (0.2 s and 5 s).
+ */
+function windowsDeviceToolDenies(dir: string): string[] {
+  try {
+    const entries = readdirSync(dir).map((name) => path.join(dir, name));
+    return entries.length > 0 ? entries : [dir];
+  } catch {
+    return [dir];
+  }
+}
+
+/**
+ * C1: the phone keys and sign-ins ({@link mobileCredentialHomes}) and the SDK folders that drive a
+ * device ({@link deviceToolDirs}), which no agent process reads. Beside {@link baseDenyRead}, not
+ * in it: that list also becomes Claude Code's permission rules, whose one settings argument must
+ * fit a Windows command line. On Windows only the ones that exist: srt-win would make a
+ * placeholder for a missing deny path; and a tool folder is denied by its entries
+ * ({@link windowsDeviceToolDenies}).
+ */
+export function phoneDenyRead(
+  home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const tools = deviceToolDirs(env, home, platform);
+  if (platform !== StudioPlatform.Windows)
+    return [...mobileCredentialHomes(env, home, platform), ...tools, ...packagedDeviceTools(platform)];
+  const phone = [
+    ...mobileCredentialHomes(env, home, platform),
+    ...tools.filter((dir) => existsSync(dir)).flatMap(windowsDeviceToolDenies),
+    ...packagedDeviceTools(platform),
+  ];
+  return phone.filter((p) => existsSync(p));
+}
+
 /** `.claude` in any case, as a sandbox glob: macOS's file system does not tell the cases apart. */
 const CLAUDE_FOLDER_GLOB = "[.][cC][lL][aA][uU][dD][eE]";
 /** What {@link literalGlob} rewrites character by character. */
@@ -355,14 +722,15 @@ const CLAUDE_FOLDER_GLOB = "[.][cC][lL][aA][uU][dD][eE]";
 const GLOB_OR_CONTROL = /[*?[\x00-\x1f]/g;
 
 /**
- * `dir` as the literal start of a macOS sandbox glob. sandbox-runtime reads any path holding `*`,
+ * `dir`, a path to deny, as the literal start of a macOS sandbox glob (never for an allow: it only
+ * widens). sandbox-runtime reads any path holding `*`,
  * `?`, `[` or `]` as a glob and has no escape (`globToRegex` doubles a backslash), so `[` becomes
  * the class `[[]`, a lone `]` is already literal, and `[_]` breaks `globToRegex`'s own
  * `__GLOBSTAR` placeholders. `*`, `?` and an ASCII control character (which the profile's JSON
  * string escapes into a form Seatbelt does not read back) become `?`: any one byte other than
  * `/`, which only widens a deny.
  */
-function literalGlob(dir: string): string {
+export function literalGlob(dir: string): string {
   const escaped = dir.replace(GLOB_OR_CONTROL, (character) => (character === "[" ? "[[]" : "?"));
   return escaped.replaceAll("__GLOBSTAR", "[_]_GLOBSTAR");
 }
@@ -428,7 +796,21 @@ export class ProcessSandbox {
   #resolvedToolPath: Promise<string> | null = null;
   readonly #platform: NodeJS.Platform;
   #seams: WindowsSeams = {};
+  #linux: UsernsSeams = {};
   #windows: WindowsBackend | null = null;
+  /** `layout.nativeRuns`, the only folder a game's run directory may be in; null starts no game. */
+  #nativeRunsRoot: string | null = null;
+  /** Games this sandbox started that have not exited: `dispose` kills their groups. */
+  readonly #games = new Set<ChildProcess>();
+  /** Windows: the AppContainer launcher every game starts through, when this build has one. */
+  #gameLauncher: string | null = null;
+  #boxSeams: GameBoxSeams = {};
+  /** Linux: `bwrap --version`'s output, asked once (undefined until asked). */
+  #bwrapVersion: string | null | undefined;
+  /** The Android SDK folders that drive a device: never on a child's PATH (C1). */
+  #deviceTools: string[] = [];
+  /** macOS: those folders and the packaged device tools, by real path, where no agent process starts a program (C1). */
+  #deviceToolExec: string[] = [];
 
   private constructor(policy: SandboxPolicy, enabled: boolean, scratchDir: string, platform: NodeJS.Platform) {
     this.policy = policy;
@@ -449,13 +831,24 @@ export class ProcessSandbox {
       allowLocalBinding: true,
       allowWrite: [...options.writableRoots, scratchDir, ...own],
       allowRead: options.readableRoots ?? [],
-      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
+      denyRead: [
+        ...baseDenyRead(os.homedir(), platform).filter(notOwn),
+        ...phoneDenyRead(os.homedir(), platform),
+        ...options.secretPaths,
+        ...(options.denyRead ?? []),
+      ],
       denyWrite: [...credentialHomes().filter(notOwn), ...options.secretPaths, ...(options.denyWrite ?? [])],
     };
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;
     sandbox.#runtime = options.runtime ?? null;
     sandbox.#seams = options.windows ?? {};
+    sandbox.#linux = { read: options.runtime ? NO_SYSTEM_FILES : undefined, ...options.linux };
+    sandbox.#nativeRunsRoot = options.nativeRunsRoot ?? null;
+    sandbox.#gameLauncher = options.gameLauncher ?? null;
+    sandbox.#boxSeams = options.gameBoxSeams ?? {};
+    sandbox.#deviceTools = deviceToolDirs(process.env, os.homedir(), platform);
+    sandbox.#deviceToolExec = [...sandbox.#deviceTools, ...packagedDeviceTools(platform)].map(realPathOrSelf);
     if (sandbox.enabled) await sandbox.#initialize();
     return sandbox;
   }
@@ -464,6 +857,13 @@ export class ProcessSandbox {
    * PATH for the processes this sandbox starts, resolved on first use and remembered. A caller
    * that passes its own `env.PATH` still wins — this is the floor, not a policy.
    */
+  networkProxy(): { host: string; port: number } | null {
+    const port = this.#manager?.getProxyPort?.();
+    return this.#initialized && port && Number.isInteger(port) && port > 0 && port <= 65535
+      ? { host: "127.0.0.1", port }
+      : null;
+  }
+
   async toolPath(): Promise<string | null> {
     if (!this.#toolPath) return null;
     this.#resolvedToolPath ??= this.#toolPath().catch(() => process.env.PATH ?? "");
@@ -472,6 +872,249 @@ export class ProcessSandbox {
 
   get initError(): Error | null {
     return this.#initError;
+  }
+
+  /**
+   * Start one admitted game bundle under its own host-written game profile, in a process group of
+   * its own, with fd 3 as the protocol pipe and nothing of this process's environment (an embedded
+   * run also gets its frames service). Refused with `NativeError(NoGameBox)` where this host has no
+   * game box, and `NativeError(Unsupported)` for a frames service that is not the run's own,
+   * spawning nothing.
+   */
+  async spawnGame(request: GameSpawnRequest): Promise<GameChild> {
+    const box = this.gameBox(request.mode, request.stack);
+    if (box) throw new NativeError(NativeRefusal.NoGameBox, MESSAGE.NoGameBoxFor(this.#platform, box), null, box);
+    if (!this.#nativeRunsRoot) throw new NativeError(NativeRefusal.Unsupported, MESSAGE.NoRunsRoot);
+    if (this.#platform === StudioPlatform.Windows) return this.#spawnWindowsGame(request, this.#nativeRunsRoot);
+    if (this.#platform === StudioPlatform.Linux) return this.#spawnLinuxGame(request, this.#nativeRunsRoot);
+    const launch = await prepareGameLaunch(request, this.#nativeRunsRoot);
+    // fd 3 is the fourth stdio slot; `detached` makes the game lead a process group of its own,
+    // which the profile keeps it in (setsid and setpgid are denied) and every stop signals whole.
+    const child = spawn(launch.file, launch.args, {
+      cwd: launch.cwd,
+      env: launch.env,
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      detached: true,
+    });
+    return this.#gameChild(child);
+  }
+
+  /**
+   * Windows: the AppContainer launcher (`windows-game-launch.ts`), planned and checked by realpath,
+   * the run claimed once, then spawned hidden with fd 3 as its relay to the game's pipe.
+   */
+  async #spawnWindowsGame(request: GameSpawnRequest, root: string): Promise<GameChild> {
+    const exe = NATIVE_CROSS_EXECUTABLES[BuildTarget.Windows];
+    if (request.exe !== path.win32.join(request.bundle, exe)) {
+      throw launchRefusalError({
+        ok: false,
+        refusal: WindowsLaunchRefusal.Exe,
+        detail: MESSAGE.NotTheGame(request.exe),
+      });
+    }
+    const boxSpawn = this.#boxSpawn();
+    const deps: WindowsStartDeps<ChildProcess> = {
+      ...windowsLaunchDeps(root),
+      ...this.#boxSeams.windows,
+      // Node takes a mutable stdio list; the plan's is a fixed tuple.
+      spawn: (command, args, options) => boxSpawn(command, args, { ...options, stdio: [...options.stdio] }),
+    };
+    const started = await startWindowsGame(
+      {
+        launcher: this.#gameLauncher ?? "",
+        runId: request.runId,
+        runDir: request.runDir,
+        bundle: request.bundle,
+        state: request.state,
+        exe,
+        desktop: launcherDesktopFor(request.mode),
+        nonce: request.nonce,
+        memoryBytes: NATIVE_GAME_MEMORY_MAX_BYTES,
+      },
+      deps,
+    );
+    if (!started.ok) throw launchRefusalError(started);
+    const cleanup = () => this.#deleteLauncherProfile(started.launch.command, request.runId, started.launch.env);
+    return this.#launcherChild(started.child, cleanup);
+  }
+
+  /**
+   * A launcher that was killed or crashed (not stopped through fd 3, `launcherMayLeaveProfile`)
+   * cannot delete its run's AppContainer profile: the launcher's own `--delete-profile` does, once,
+   * with only `SystemRoot`. Its outcome changes nothing (deleting an absent profile succeeds; a
+   * leftover profile holds no grants).
+   */
+  #deleteLauncherProfile(launcher: string, runId: string, env: Record<string, string>): void {
+    const plan = planProfileCleanup(launcher, runId);
+    if (!plan.ok) return;
+    const systemRoot = env[SYSTEM_ROOT];
+    const options: SpawnOptions = {
+      env: systemRoot ? { [SYSTEM_ROOT]: systemRoot } : {},
+      stdio: "ignore",
+      windowsHide: true,
+    };
+    try {
+      this.#boxSpawn()(plan.command, plan.args, options).on("error", () => {});
+    } catch {
+      /* the launcher is gone: nothing to clean up with */
+    }
+  }
+
+  /**
+   * The launcher as the game's child: its exit read through `launcherGameExit`, its stops through
+   * fd 3 and the job, and its profile deleted after any exit the launcher did not report itself.
+   */
+  async #launcherChild(child: ChildProcess, cleanup: () => void): Promise<GameChild> {
+    const game = await this.#gameChild(child);
+    const reaped = () => child.exitCode !== null || child.signalCode !== null;
+    const kill = (signal: NodeJS.Signals) => {
+      if (reaped()) return;
+      if (signal === "SIGTERM") {
+        game.fd3.end();
+        return;
+      }
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+    };
+    const exited = game.exited.then((exit) => {
+      if (launcherMayLeaveProfile(exit)) cleanup();
+      return launcherGameExit(exit);
+    });
+    return { ...game, exited, kill };
+  }
+
+  /**
+   * Linux: the run folders checked against the native-runs root, then the bubblewrap box planned
+   * (`linux-game-box.ts`), the run claimed once, and bubblewrap spawned with the seccomp program on fd 4.
+   */
+  async #spawnLinuxGame(request: GameSpawnRequest, root: string): Promise<GameChild> {
+    const seams = this.#boxSeams;
+    const system = seams.linuxSystem ?? LINUX_BOX_SYSTEM;
+    const checked = await linuxRunFolders(request, root, system);
+    if (!checked.ok) throw linuxBoxError(checked);
+    const { folders } = checked;
+    const windowed = request.mode === NativeRunMode.Window;
+    const waylandContext = windowed ? ((await seams.waylandContext?.(request.runId)) ?? null) : null;
+    const launched = await launchLinuxGameBox(
+      seams.bwrap ?? BWRAP,
+      {
+        mode: request.mode,
+        bundle: folders.bundle,
+        exe: folders.exe,
+        state: folders.state,
+        nonce: request.nonce,
+        renderNodes: await (seams.renderNodes ?? renderNodes)(),
+        softwareIcd: path.join(folders.bundle, LinuxRuntimeFile.SwiftShaderIcd),
+        waylandContext,
+        audio: LinuxBoxAudio.Muted,
+        session: seams.session ?? process.env,
+        ...(request.stack ? { stack: request.stack } : {}),
+      },
+      { system, spawn: this.#boxSpawn(), claim: () => claimLinuxRun(folders) },
+    );
+    if (!launched.ok) throw linuxBoxError(launched);
+    return this.#gameChild(launched.child);
+  }
+
+  /** The spawn the Windows and Linux boxes start their one process with. */
+  #boxSpawn(): (file: string, args: readonly string[], options: SpawnOptions) => ChildProcess {
+    return this.#boxSeams.spawn ?? ((file, args, options) => spawn(file, args, options));
+  }
+
+  /** A started game as its caller holds it, tracked until it exits so `dispose` can end it. */
+  async #gameChild(child: ChildProcess): Promise<GameChild> {
+    this.#games.add(child);
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      child.once("exit", (code, signal) => {
+        this.#games.delete(child);
+        resolve({ code, signal });
+      });
+    });
+    try {
+      await once(child, "spawn");
+    } catch (error) {
+      this.#games.delete(child);
+      throw error;
+    }
+    // Once started, a child reports an error only for a signal it could not deliver; the game's
+    // stops signal its group through `killTree`, which tolerates that, so it must not crash the host.
+    child.on("error", () => {});
+    const fd3 = child.stdio[3];
+    const { pid, stdout, stderr } = child;
+    if (!(fd3 instanceof Duplex) || pid === undefined || !stdout || !stderr) {
+      killTree(child.pid);
+      throw new Error(MESSAGE.NoProtocolPipe);
+    }
+    // Once the game is reaped its pid can be given to an unrelated process: a stop's later signal
+    // (SIGKILL after SIGTERM's grace) must then reach nothing, as Node's own `child.kill` does.
+    const kill = (signal: NodeJS.Signals) => {
+      if (child.exitCode === null && child.signalCode === null) killTree(pid, signal);
+    };
+    return { pid, fd3, stdout, stderr, exited, kill };
+  }
+
+  /**
+   * Kill every game this sandbox started that is still running, and wait for each to be reaped: a
+   * POSIX game's whole process group; on Windows the launcher through its own handle, whose Job
+   * Object ends the game (a kill by pid would read as the game's own exit 1).
+   */
+  async #stopGames(): Promise<void> {
+    const running = [...this.#games].filter((game) => game.exitCode === null && game.signalCode === null);
+    const reaped = running.map((game) => once(game, "exit").catch(() => {}));
+    for (const game of running) killChild(game, this.#platform);
+    await Promise.all(reaped);
+  }
+
+  /**
+   * Whether this host has a game box for its own OS for a `mode` run (Play's window by default): what
+   * Play and a judging target need. A Mac always has one; elsewhere `gameBox` says why not.
+   */
+  gameBoxAvailable(mode: NativeRunMode = NativeRunMode.Window): boolean {
+    return this.gameBox(mode) === null;
+  }
+
+  /**
+   * Why this host has no game box for a `mode` run, or null. A Mac always has one (the Seatbelt game
+   * profile). Windows needs the launcher in this build's resources; Linux needs bubblewrap 0.8 or
+   * newer, user namespaces, a Wayland session and a per-run security context. Neither has a
+   * windowless build, so an agent's headless run is `no-headless-build` there, except a Rust game's
+   * on Linux (`stack`; absent: C++ · raylib), whose one binary runs headless in the box.
+   */
+  gameBox(mode: NativeRunMode, stack?: CompiledStack): GameBoxProblem | null {
+    if (this.#platform === StudioPlatform.Mac) return null;
+    if (this.#platform === StudioPlatform.Windows) return windowsGameBoxProblem(mode, this.#launcherStat());
+    if (this.#platform !== StudioPlatform.Linux) return GameBoxProblem.BoxRefused;
+    return linuxGameBoxProblem({
+      mode,
+      bwrapVersion: () => this.#bubblewrapVersion(),
+      usernsRestricted: () => usernsRestricted(this.#linux.read ?? readSystemFile),
+      session: this.#boxSeams.session ?? process.env,
+      securityContext: this.#boxSeams.waylandContext !== undefined,
+      ...(stack ? { stack } : {}),
+    });
+  }
+
+  /** Windows: the launcher file's kind, never following a link; null when this build has none. */
+  #launcherStat(): LauncherFileStat | null {
+    const launcher = this.#gameLauncher;
+    if (!launcher) return null;
+    if (this.#boxSeams.launcherStat) return this.#boxSeams.launcherStat(launcher);
+    try {
+      return lstatSync(launcher);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Linux: `bwrap --version`'s output, asked once per sandbox (a host program, never a game). */
+  #bubblewrapVersion(): string | null {
+    if (this.#bwrapVersion !== undefined) return this.#bwrapVersion;
+    const probe = this.#boxSeams.bwrapVersion ?? (() => bubblewrapVersionText(this.#boxSeams.bwrap ?? BWRAP));
+    this.#bwrapVersion = probe();
+    return this.#bwrapVersion;
   }
 
   /**
@@ -504,9 +1147,10 @@ export class ProcessSandbox {
    * This instance is done: on Windows it leaves the shared grant session, which takes back the
    * folders only it needed. On macOS and Linux the last sandbox out resets sandbox-runtime; its
    * proxies, and on Linux its socat bridges, would otherwise outlive every sandbox and keep the
-   * process alive. Safe to call twice.
+   * process alive. Games it started are killed first (`#stopGames`). Safe to call twice.
    */
   async dispose(): Promise<void> {
+    await this.#stopGames();
     if (this.#windows) {
       this.#windows.session.leave(this);
       return;
@@ -525,7 +1169,7 @@ export class ProcessSandbox {
     if (this.#initialized) return;
     try {
       const SandboxManager = this.#runtime ?? (await import("@anthropic-ai/sandbox-runtime")).SandboxManager;
-      assertSandboxReady(SandboxManager, this.#platform);
+      assertSandboxReady(SandboxManager, this.#platform, this.#linux);
       if (this.#platform === StudioPlatform.Windows) await this.#initializeWindows(SandboxManager);
       else await this.#initializeRuntime(SandboxManager);
       this.#manager = SandboxManager;
@@ -708,10 +1352,22 @@ export class ProcessSandbox {
         ),
       { signal },
     );
-    const [file, ...args] = wrapped.argv;
+    const ruled = this.#bridgesClosed(wrapped.argv, request.policy ?? {});
+    const reaped = request.reapGroup && this.#platform === StudioPlatform.Mac;
+    const [file, ...args] = reaped ? keepInGroup(ruled) : ruled;
     if (!file) throw new Error(MESSAGE.EmptyArgv);
     const env = { ...(await this.#env(wrapped.env, request.env)), ...NESTED_SHELL_ENV };
     return { file, args, env, sandboxed: true, cwd: request.cwd };
+  }
+
+  /**
+   * macOS: `argv` with the device bridges closed ({@link closeDeviceBridges}). Required of the real
+   * runtime; a test's fake runtime gets the rules only when its argv carries a Seatbelt profile.
+   */
+  #bridgesClosed(argv: string[], patch: Partial<SandboxPolicy>): string[] {
+    if (this.#platform !== StudioPlatform.Mac) return argv;
+    if (this.#runtime && !argv.some((arg) => arg.includes(SANDBOX_EXEC_PROFILE))) return argv;
+    return closeDeviceBridges(argv, mergeOverlay(this.policy, patch).allowLocalBinding, this.#deviceToolExec);
   }
 
   /**
@@ -866,6 +1522,14 @@ export class ProcessSandbox {
     };
   }
 
+  /**
+   * Put this instance's policy, with every domain its runs in flight opened, back into the
+   * process-wide runtime: another instance's `initialize` (a prewarm's own sandbox) replaced it.
+   */
+  refreshConfig(): void {
+    if (this.enabled && this.#initialized) this.#pushConfig();
+  }
+
   /** This instance's policy, plus every domain a run in flight has opened, into the runtime. */
   #pushConfig(): void {
     if (this.#windows) {
@@ -904,6 +1568,9 @@ export class ProcessSandbox {
         reject(err);
       });
 
+      // On exit, not close: a process left in the group may hold the output pipes open.
+      if (request.reapGroup && this.#platform !== StudioPlatform.Windows) child.once("exit", () => killTree(child.pid));
+
       child.on("close", (code, signal) => {
         settle();
         const failure = this.#windowsExecFailure(plan, code, output.stderr);
@@ -925,6 +1592,14 @@ export class ProcessSandbox {
         });
       });
 
+      // A child that exits before reading its input closes the pipe under the write (EPIPE): the
+      // run still settles on its exit code and output. Any other stdin failure ends the run.
+      child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (CLOSED_PIPE_CODES.has(error.code ?? "")) return;
+        // The kill brings the close, which settles the run's timer and plan.
+        killChild(child, this.#platform);
+        reject(error);
+      });
       // The prelude swaps a Windows command's stdin for its file: input sent down the pipe as well
       // would race the swap and fail with EPIPE once the command's end of the pipe is closed.
       const piped = plan.stdinInFile ? undefined : request.stdin;
@@ -956,10 +1631,15 @@ export class ProcessSandbox {
    * down to the toolchain basics; the child's own variables are the caller's to pass.
    */
   async #env(parent: NodeJS.ProcessEnv, own: Record<string, string> | undefined): Promise<Record<string, string>> {
-    return childEnv(parent, {
+    const env = childEnv(parent, {
       base: "sandbox",
       set: { ...this.#tmpEnv(), ...(await this.#pathEnv()), ...(own ?? {}) },
     });
+    // C1: whoever set PATH (the floor or the caller), the device tools are not on it.
+    const delimiter = this.#platform === StudioPlatform.Windows ? ";" : ":";
+    for (const key of Object.keys(env))
+      if (key.toUpperCase() === "PATH") env[key] = withoutDeviceTools(env[key] ?? "", this.#deviceTools, delimiter);
+    return env;
   }
 
   /** The resolved toolchain PATH, or nothing when this sandbox was given no resolver. */
@@ -983,23 +1663,67 @@ export class ProcessSandbox {
   }
 
   #overlay(patch: Partial<SandboxPolicy>): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
-    return this.toRuntimeConfig({
-      ...this.policy,
-      ...patch,
-      allowedDomains: [...this.policy.allowedDomains, ...(patch.allowedDomains ?? [])],
-      allowWrite: [...this.policy.allowWrite, ...(patch.allowWrite ?? [])],
-      allowRead: [...this.policy.allowRead, ...(patch.allowRead ?? [])],
-      // Deny lists are never weakened by a per-run overlay.
-      denyRead: [...this.policy.denyRead, ...(patch.denyRead ?? [])],
-      denyWrite: [...this.policy.denyWrite, ...(patch.denyWrite ?? [])],
-    });
+    return this.toRuntimeConfig(mergeOverlay(this.policy, patch));
   }
 }
 
-/** Single-quote a value for POSIX shells. */
-export function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+/**
+ * A run's policy over the instance's: domains and allow lists added, deny lists a union, and every
+ * overlay `allowWrite` that is a write deny (the instance's or the run's own) or lies inside one
+ * dropped. Seatbelt lets a deny win whatever is allowed; bubblewrap mounts a writable folder inside
+ * a read-only one and the write goes through, so the merge makes the deny win on every platform.
+ */
+export function mergeOverlay(base: SandboxPolicy, patch: Partial<SandboxPolicy>): SandboxPolicy {
+  const denyWrite = [...base.denyWrite, ...(patch.denyWrite ?? [])];
+  const lifts = (dir: string) => denyWrite.some((deny) => isInside(deny, dir));
+  return {
+    ...base,
+    ...patch,
+    allowedDomains: [...base.allowedDomains, ...(patch.allowedDomains ?? [])],
+    allowWrite: [...base.allowWrite, ...(patch.allowWrite ?? []).filter((dir) => !lifts(dir))],
+    allowRead: [...base.allowRead, ...(patch.allowRead ?? [])],
+    // Deny lists are never weakened by a per-run overlay.
+    denyRead: [...base.denyRead, ...(patch.denyRead ?? [])],
+    denyWrite,
+  };
 }
+
+/** `bwrap --version`'s output, or null when it does not run. */
+function bubblewrapVersionText(bwrap: string): string | null {
+  try {
+    return execFileSync(bwrap, ["--version"], {
+      encoding: "utf8",
+      timeout: BWRAP_PROBE_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: {},
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** This host's GPU render nodes, `/dev/dri/renderD*`; none when the folder cannot be read. */
+async function renderNodes(): Promise<string[]> {
+  const names = await readdir(DRI_FOLDER).catch(() => [] as string[]);
+  return names.filter((name) => RENDER_NODE_NAME.test(name)).map((name) => path.posix.join(DRI_FOLDER, name));
+}
+
+/**
+ * Claims a Linux run for its one start: `launch.claim` created exclusively in the run folder (never
+ * through a link), then the game's HOME made in `state/`. False when a start claimed it before.
+ */
+async function claimLinuxRun(folders: LinuxRunFolders): Promise<boolean> {
+  if (!(await writeNewFile(path.join(folders.runDir, RunDirLayout.Claim), "", 0o600))) return false;
+  const home = path.join(folders.state, RunDirLayout.Home);
+  await mkdir(home, { mode: 0o700 }).catch(async (error: NodeJS.ErrnoException) => {
+    const info = error.code === "EEXIST" ? await lstat(home) : null;
+    if (!info?.isDirectory() || info.isSymbolicLink()) throw error;
+  });
+  return true;
+}
+
+/** POSIX quoting, kept where `ProcessSandbox`'s callers have always imported it from. */
+export { shellQuote };
 
 /**
  * End a sandboxed child and everything it started. On Windows killing the srt-win broker ends

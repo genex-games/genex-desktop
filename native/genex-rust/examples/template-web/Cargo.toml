@@ -1,0 +1,25 @@
+# The Rust template's own sources (src/game-template-rust/src/) built as the lane builds a game for
+# the web: `genex` is genex-platform-web, as the host-written manifest of a web build names it, so
+# the template's `genex::install(game)` hands the game to the web shell when the module is
+# instantiated. tests/conformance/rust-web.test.ts packages it with the lane's web branch and opens
+# it in Chromium; a native build of it is the facade's own `install`.
+[package]
+name = "template-web"
+description = "The Rust template built for the web with the web build's facade."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "template-web"
+path = "../../../../src/game-template-rust/src/main.rs"
+
+[dependencies]
+genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web" }
+
+# tests/template.rs writes the starter's per-preset captures as PNG evidence on the host GPU.
+[dev-dependencies]
+image = { workspace = true }

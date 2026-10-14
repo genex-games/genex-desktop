@@ -61,6 +61,7 @@ import { clip, CLIP_BRIEF, CLIP_GAME_TITLE } from "./text.ts";
 import { SECOND_MS, sleep } from "./time.ts";
 import { recordFirstPreview } from "./first-preview.ts";
 import { canFallBack, runToolLoop } from "./tool-loop.ts";
+import { scaffoldFor } from "./native-loop.ts";
 import { briefSummary, goesOn } from "./chat-continuity.ts";
 import { compactedSummary, endedByCompaction } from "./compaction-log.ts";
 import { TurnStop, sayInTurn } from "./turn-record.ts";
@@ -111,6 +112,14 @@ export const SERVES_AFTER_LOOP_RUN = true;
  * offers it (`servesReopen`): a kept copy from before would bridge the launch instead.
  */
 export const SERVES_REOPEN = true;
+
+/**
+ * A new chat's folder is the C++ template when the message chose a desktop destination
+ * (`targets`). chat-dispatch.ts refuses a raylib night on a kept copy without this mark.
+ */
+export const SERVES_NATIVE = true;
+/** A Rust · wgpu game's chat turn is briefed on its own shape (chat-session.ts's Rust rules) and scaffolds by the stack it names. */
+export const SERVES_RUST = true;
 
 /** "claude-code is throttled (usage limit reached)": an engine's outage, as a fallback names it. */
 function outageWords(engine: string, kind: string, detail: string | undefined): string {
@@ -642,6 +651,7 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
     name,
     title: chat.ask.slice(0, CLIP_GAME_TITLE) || name,
     threadId: options.threadId,
+    ...scaffoldFor(options.targets),
   });
   const project = created.name as string;
   const offer = await pluginOffer(ctx, project, created);

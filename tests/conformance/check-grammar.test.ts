@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import * as pathMod from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,6 +25,7 @@ import { DIRECTOR_TOOLS } from "../../src/harness-seed/loop/director.ts";
 
 const seedDir = pathMod.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
 const templateDir = pathMod.resolve(fileURLToPath(new URL("../../src/game-template", import.meta.url)));
+const cppTemplateDir = pathMod.resolve(fileURLToPath(new URL("../../src/game-template-cpp", import.meta.url)));
 
 function skill(): string {
   return readFileSync(pathMod.join(seedDir, "skills", "facet-decomposition.md"), "utf8");
@@ -151,6 +153,15 @@ describe("the pages a builder is handed", () => {
     assert.deepEqual(rules, ["1. ", "2. ", "3. ", "4. ", "5. "]);
   });
 
+  it("keeps the C++ CLAUDE.md to six rules on one screen", () => {
+    // Rules 1-5 are the web page's five in C++ terms; rule 6 is the portability rule a native
+    // build adds. A seventh rule is a page nobody reads.
+    const text = readFileSync(pathMod.join(cppTemplateDir, "CLAUDE.md"), "utf8");
+    assert.ok(text.split("\n").length <= 40, `the C++ CLAUDE.md is ${text.split("\n").length} lines`);
+    const rules = text.match(/^\d+\. /gm) ?? [];
+    assert.deepEqual(rules, ["1. ", "2. ", "3. ", "4. ", "5. ", "6. "]);
+  });
+
   it("keeps CONTRACT.md to the tables, including the one written for a game the studio did not write", () => {
     const text = page("docs/CONTRACT.md");
     // 121 after M4.8a's diet; 127 once the three harness-owned modules became real `###`
@@ -184,9 +195,36 @@ describe("the pages a builder is handed", () => {
     );
   });
 
-  it("ships exactly the two skills the run code reads", () => {
+  it("leaves the Three.js template's prompt pages byte for byte as they were before C++ games", () => {
+    // A C++ game reads the pages of its own template (src/game-template-cpp); a C++ rule that
+    // leaked into these would reach every Three.js game. sha256 at origin/dev cf4b2c56, before the
+    // compiled stacks were ported to it.
+    const PRE_NATIVE = {
+      "CLAUDE.md": "1b6849a0ca188babbcea75b52fb1c71dcd457c9683b5755721fb706998539fd8",
+      "CLAUDE.own.md": "23299e919408e4149e17f8a8d8cac45ed125078a868691526f51e597154b7d98",
+      "docs/CONTRACT.md": "50f69a4e8a16e3e2f658aa01f3cbd573a31a4de02e0f768ea17bf404ccf07f18",
+      "NOTES.md": "d29179017b5a5a5b3093fa7888a3a489063a4c1865267cec85f91362293fd167",
+      "NOTES.own.md": "03bfcddcca36dad3c106dce717a19af8ecd6ec13de96afe3145b5060876be3fa",
+    };
+    for (const [rel, digest] of Object.entries(PRE_NATIVE))
+      assert.equal(
+        createHash("sha256")
+          .update(readFileSync(pathMod.join(templateDir, rel)))
+          .digest("hex"),
+        digest,
+        rel,
+      );
+  });
+
+  it("ships exactly the two skills the run code reads, and the Rust extension ladder's", () => {
     // director.md and facet-decomposition.md are read by name; four more used to ship and were
-    // read by nothing, which is what RETIRED_SEED_PATHS now takes off an install.
-    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), ["director.md", "facet-decomposition.md"]);
+    // read by nothing, which is what RETIRED_SEED_PATHS now takes off an install. Flipped (M7.3):
+    // rust-extension-ladder.md ships for the chat's skill index (`read_skill`), the guidance a
+    // Rust game's lead reads before reaching past the facade.
+    assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), [
+      "director.md",
+      "facet-decomposition.md",
+      "rust-extension-ladder.md",
+    ]);
   });
 });

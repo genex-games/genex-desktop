@@ -6,7 +6,7 @@
 import type { ConnectionSnapshot } from "../../shared/connections.ts";
 import { CustomEvent, customEvent } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
-import type { GameProject } from "../../shared/game-project.ts";
+import { type GameProject, ProjectKind, stackOf } from "../../shared/game-project.ts";
 import { mcpScopeCovers, type McpConnectorView } from "../../shared/mcp.ts";
 import { McpAuthState } from "../../substrate/mcp/oauth.ts";
 import { isAgentTool, type PluginAppliedSet, type PluginInfo, pluginReach } from "../../shared/plugins.ts";
@@ -33,7 +33,7 @@ const sessionKey = (engine: string, session: string): string => JSON.stringify([
  * to the template's, so a new empty game, a Godot or an Unreal project never claims it.
  */
 const usesStudioTemplate = (game: Pick<GameProject, "shape" | "facts"> | undefined): boolean =>
-  game?.shape.kind === "studio-template" && hasFact(game.facts, CoreFact.WebGame, ".");
+  game?.shape.kind === ProjectKind.StudioTemplate && hasFact(game.facts, CoreFact.WebGame, ".");
 
 /** The session and the set a delivered record carries; none for a record without a well-formed one. */
 function deliveredSetOf(event: EventEnvelope): [string, PluginAppliedSet] | undefined {
@@ -124,9 +124,13 @@ export class ConnectionService {
       this.#core.plugins.list(),
       connections,
       connectors,
+      // The template's vendored Three.js is the Studio template's alone: never a compiled game's,
+      // which reads its own stack's sentence, Genex's JavaScript packages refused by name.
       usesStudioTemplate(game),
       audience,
       kind,
+      // A game's facts name only the skills its builders are handed (`PluginRegistry.snapshot`).
+      game ? stackOf(game.shape) : null,
     );
     if (audience === CapabilityAudience.Conversation)
       await this.#core.append(

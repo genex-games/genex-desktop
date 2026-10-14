@@ -1,0 +1,91 @@
+{
+  "schema": "genex-authoring-asks/1",
+  "note": "M0a.14a: the facet asks the authoring trial sends to both stacks, in this order. The M0a.14 owner gate may adjust build/web commands for the machine it runs on; the asks themselves stay identical across stacks.",
+  "maxRepairTurns": 3,
+  "repairTemplate": "The build failed. These are the compiler's errors:\n\n{diagnostics}\n\nFix the build. Keep the feature you were asked for; change nothing else.",
+  "stacks": {
+    "rust": {
+      "label": "Rust (genex facade)",
+      "baseline": false,
+      "game": "Copy of the native/genex-rust workspace (the pond sample at examples/pond) with docs/GENEX_API.md beside it.",
+      "preamble": "This is the pond, a Rust game on the genex facade (crate `genex`, `use genex::prelude::*;`). Its API contract is docs/GENEX_API.md: read it first and use nothing outside it. Edit only examples/pond/src/. Do not run cargo; the build is run for you after your reply.",
+      "touch": "examples/pond/src/pond.rs",
+      "editable": ["examples/pond/src/"],
+      "build": {
+        "argv": [
+          "bash",
+          "{repo}/scripts/spike/rust-wgpu/rust-env.sh",
+          "cargo",
+          "build",
+          "-p",
+          "pond",
+          "--offline",
+          "--locked",
+          "--message-format=json"
+        ],
+        "cwd": "{game}",
+        "env": {
+          "GENEX_SPIKE_WORKSPACE": "{game}"
+        }
+      },
+      "web": {
+        "argv": ["bash", "{repo}/scripts/spike/rust-wgpu/web.sh", "--out", "{webOut}"],
+        "cwd": "{game}",
+        "env": {
+          "GENEX_SPIKE_WORKSPACE": "{game}"
+        }
+      }
+    },
+    "raylib": {
+      "label": "raylib-cpp (baseline)",
+      "baseline": true,
+      "game": "Copy of the checkout-B fishing game (C++ / raylib-cpp), configured once with the same toolchain Studio's C++ lane uses.",
+      "preamble": "This is a fishing game in C++ with raylib-cpp. Edit only its source files under src/. Do not run the build; it is run for you after your reply.",
+      "touch": "src/main.cpp",
+      "editable": ["src/"],
+      "configure": {
+        "argv": ["cmake", "-S", "{game}", "-B", "{buildDir}", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug"],
+        "cwd": "{game}",
+        "env": {}
+      },
+      "build": {
+        "argv": ["cmake", "--build", "{buildDir}"],
+        "cwd": "{game}",
+        "env": {}
+      },
+      "web": null
+    }
+  },
+  "asks": [
+    {
+      "id": "second-species",
+      "facet": "gameplay",
+      "text": "Add a second kind of fish. It bites half as often as the current one, but a catch is worth three points. Show which kind was caught for a moment after each catch."
+    },
+    {
+      "id": "bite-ripple",
+      "facet": "visuals",
+      "text": "When a fish bites, draw an expanding ripple ring on the water around the bobber that fades out over about one second."
+    },
+    {
+      "id": "round-timer",
+      "facet": "rules",
+      "text": "Make the game a 60-second round: show the time left in the HUD, stop casting when it reaches zero, and show the final score with a key or tap to start a new round."
+    },
+    {
+      "id": "wind-cast",
+      "facet": "gameplay",
+      "text": "Add wind that changes every 10 seconds and pushes each cast sideways. Show its direction and strength as an arrow in the HUD."
+    },
+    {
+      "id": "better-rod",
+      "facet": "economy",
+      "text": "Add a shop item: a better rod that costs 5 points and shortens the wait for a bite by a third. It can be bought once; show it as owned afterwards."
+    },
+    {
+      "id": "catch-combo",
+      "facet": "scoring",
+      "text": "Add a combo: catches less than 10 seconds apart raise a multiplier (x2, x3, up to x5) that applies to the points of each catch. Show the multiplier in the HUD and reset it when the window passes."
+    }
+  ]
+}

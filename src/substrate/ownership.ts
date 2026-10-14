@@ -3,7 +3,8 @@
  * hook (Claude Code `PreToolUse`, which blocks a stray Write before it lands) and the after-
  * the-fact code review (`harness-seed/loop/review.ts`, which stays advisory once the hook
  * exists). A facet may touch its own modules, its notes, the studio scratch folder, and —
- * when it does not own `src/main.js` — that file only for its wiring line.
+ * when it does not own `src/main.js` (`src/main.cpp`, `src/main.rs`) — that file only for its
+ * wiring line.
  *
  * The rule has two readings, because a worker builds in one of two worlds (M4.6). Inside the
  * studio's own template a facet is a module under `src/` and the entry carries a FACET WIRING
@@ -15,6 +16,7 @@
  */
 import path from "node:path";
 import { StudioPlatform } from "../shared/boot.ts";
+import { RUST_ENGINE_FOLDER } from "./genex-toml.ts";
 import { toPosixRelative } from "./paths.ts";
 
 export interface OwnershipSpec {
@@ -46,6 +48,43 @@ export interface Ownership {
    * belongs here: locking it turns `npm run build` into a permissions error nobody can read.
    */
   neverLock?: string[];
+}
+
+/** The C++ template's entry: a raylib facet adds its FACET WIRING line here, as a three.js one does in `src/main.js`. */
+const CPP_TEMPLATE_MAIN = "src/main.cpp";
+/**
+ * The C++ template's build file and runtime: the entry owner's, as the contract is. The seed's
+ * reviewer holds the same list (`loop/native-review.ts`); `harness-incidents.test.ts` drives
+ * every template file through both copies.
+ */
+const CPP_OWNER_FILES: ReadonlySet<string> = new Set(
+  ["studio", "platform", "clock", "session", "input", "protocol", "transport", "hud", "paths", "json", "frames"]
+    .flatMap((name) => [`src/${name}.cpp`, `src/${name}.h`])
+    .concat(["src/digest.h", "src/rng.h", "src/frames_wire.h", "CMakeLists.txt", CPP_TEMPLATE_MAIN]),
+);
+
+/** The Rust template's entry: a Rust facet adds its two FACET WIRING lines here (M3.14). */
+const RUST_TEMPLATE_MAIN = "src/main.rs";
+/**
+ * The Rust template's files only the entry owner may edit: the entry (apart from the FACET WIRING
+ * block), the game's build input and the read-only API page. A facet owns `src/facets/<slug>.rs`.
+ * The seed's reviewer holds the same list (`loop/native-review.ts` `RUST_OWNER_FILES`);
+ * `tests/conformance/ownership.test.ts` holds the two equal.
+ */
+export const RUST_OWNER_FILES: readonly string[] = [RUST_TEMPLATE_MAIN, "genex.toml", "docs/GENEX_API.md"];
+
+/**
+ * A file of a Rust game's ejected engine (`engine/**`, extension ladder level 5): the entry
+ * owner's alone, whatever a facet's seam or name says. The seed's reviewer holds the same rule
+ * (`loop/review.ts` `isEngineFile`).
+ */
+export function isEngineFile(file: string): boolean {
+  return file === RUST_ENGINE_FOLDER || file.startsWith(`${RUST_ENGINE_FOLDER}/`);
+}
+
+/** A compiled template's file only the entry owner may edit: the C++ entry, runtime and build file, or Rust's. */
+function isCompiledOwnerFile(file: string): boolean {
+  return CPP_OWNER_FILES.has(file) || RUST_OWNER_FILES.includes(file);
 }
 
 /** The two files the rule singles out, for this project's shape. */
@@ -139,8 +178,21 @@ function isEntryOwnersFile(file: string, entry: ReturnType<typeof entryFiles>): 
   // The contract's declaration and the compiler config belong to whoever owns the entry: a
   // TypeScript game whose build is `tsc -b && vite build` cannot import ./studio.js until they
   // agree, and the brief that tells the builder to fix that must not also forbid the edit.
-  if (file === declarationFor(entry.studio) || isTypeConfig(file)) return true;
+  // A C++ game's entry, runtime and CMakeLists.txt are the entry owner's, as the contract is; so
+  // are a Rust game's entry, genex.toml and API page.
+  if (file === declarationFor(entry.studio) || isTypeConfig(file) || isCompiledOwnerFile(file)) return true;
   return file === entry.main || file === entry.studio || file === hudFor(entry.studio) || file === "index.html";
+}
+
+/**
+ * The template's entry, where a facet that does not own it adds only its FACET WIRING line: the
+ * shape's own entry, or (for a caller that names none, as a director worker on a template does)
+ * the C++ and Rust templates' as well as the three.js template's, since a raylib game's facets
+ * wire into `src/main.cpp` and a Rust game's into `src/main.rs`.
+ */
+function isTemplateEntry(file: string, spec: OwnershipSpec): boolean {
+  const compiledEntry = file === CPP_TEMPLATE_MAIN || file === RUST_TEMPLATE_MAIN;
+  return file === entryFiles(spec).main || (!spec.main && compiledEntry);
 }
 
 /**
@@ -160,10 +212,12 @@ export function allowedFile(file: string, spec: OwnershipSpec, ownsMain: boolean
   const template = spec.template !== false;
   const entry = entryFiles(spec);
   if (isSharedFile(file, spec)) return true;
+  // An ejected engine is the entry owner's: no seam, wiring block or facet name reaches it.
+  if (template && isEngineFile(file)) return ownsMain;
   if (ownsMain && isEntryOwnersFile(file, entry)) return true;
   // The FACET WIRING block — reviewed by content. There is no such block in a game the user
   // brought, so a worker that does not own the entry there does not get to open it at all.
-  if (template && file === entry.main) return true;
+  if (template && isTemplateEntry(file, spec)) return true;
   if (spec.owns?.length) {
     // `file.includes(spec.id)` is the template's escape hatch for a facet whose modules grew
     // past what the planner named. In a real repository it is a trap: a worker called "core"
@@ -171,7 +225,8 @@ export function allowedFile(file: string, spec: OwnershipSpec, ownsMain: boolean
     return spec.owns.some((own) => ownMatches(file, own)) || (template && file.includes(spec.id));
   }
   if (!template) return outsideEntry(file, entry);
-  const contractFile = file === entry.studio || file === hudFor(entry.studio);
+  // A worker with no seam in a compiled template still leaves the entry owner's files alone.
+  const contractFile = file === entry.studio || file === hudFor(entry.studio) || isCompiledOwnerFile(file);
   return file.startsWith("src/") && !contractFile;
 }
 
@@ -220,5 +275,18 @@ export function ownershipReason(file: string, ownership: Ownership): string {
     return `${file} is outside worker "${ownership.facetId}"'s seam — this game is the user's own, so keep this work in ${seam} (and docs/notes/NOTES.${ownership.facetId}.md)${ownership.ownsMain ? "" : `; ${entry.main}, ${entry.studio} and index.html belong to whoever owns the entry`}. If the work genuinely needs another file, say so in your summary instead of editing it.`;
   }
   const where = ownership.owns.length ? ownership.owns.join(", ") : `src/${ownership.facetId}.js`;
-  return `${file} is outside facet "${ownership.facetId}"'s ownership — keep this facet's work in ${where} (and docs/notes/NOTES.${ownership.facetId}.md); ${entry.main} only for the FACET WIRING line${ownership.ownsMain ? "" : `; ${entry.studio} and index.html belong to the main owner`}.`;
+  // A caller that names no entry may be on any template: name the compiled ones too.
+  const wiring = ownership.main
+    ? entry.main
+    : `${entry.main} (${CPP_TEMPLATE_MAIN} in a C++ game, ${RUST_TEMPLATE_MAIN} in a Rust game)`;
+  const owners = entryOwnersOf(file, entry, ownership.ownsMain);
+  return `${file} is outside facet "${ownership.facetId}"'s ownership — keep this facet's work in ${where} (and docs/notes/NOTES.${ownership.facetId}.md); ${wiring} only for the FACET WIRING line${owners}.`;
+}
+
+/** Whose files the reason names last: the refused file itself when it is the entry owner's, else the contract and page. */
+function entryOwnersOf(file: string, entry: ReturnType<typeof entryFiles>, ownsMain: boolean): string {
+  if (ownsMain) return "";
+  const ownersFile = (isCompiledOwnerFile(file) && file !== entry.main) || isEngineFile(file);
+  if (ownersFile) return `; ${file} belongs to the facet that owns the entry`;
+  return `; ${entry.studio} and index.html belong to the main owner`;
 }

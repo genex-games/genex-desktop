@@ -5,7 +5,7 @@ import type { EventData } from "../../substrate/types.ts";
 
 const MESSAGE = {
   hostOnly:
-    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume and finish check rows are written by the studio only",
+    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check and extension-ladder rows are written by the studio only",
 } as const;
 const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolPermission,
@@ -16,6 +16,15 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.SelfEdit,
   CustomEvent.SkillEdited,
   CustomEvent.ToolInstalled,
+  // The extension ladder's records (M3.15, M7): the conformance gate opens on a `conformance_run`
+  // and the escape report counts ejects and trust, so only the host that ran or decided them writes one.
+  CustomEvent.ConformanceRun,
+  CustomEvent.EngineEjected,
+  CustomEvent.GameTrust,
+  CustomEvent.CrateRequest,
+  CustomEvent.CrateDecision,
+  CustomEvent.DeviceLaunch,
+  CustomEvent.SeedRetake,
   // A turn-it-on card is shown by `plugins_suggest` only, after its checks: its button turns a plugin on.
   CustomEvent.PluginSuggested,
   // Files too large to save are reported by the host that took the checkpoint or the rewind.

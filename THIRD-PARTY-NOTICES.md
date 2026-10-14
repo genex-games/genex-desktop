@@ -112,6 +112,265 @@ The film in `src/renderer/media` is made by Genex with Remotion, which is not bu
 recordings of genex.games. One clip, `village-game.mp4`, was generated through fal.ai with Nano
 Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
 
+## Downloaded components
+
+C++ · raylib games are built with toolchains, and Rust games' crate requests are checked with a
+crate checker, that the toolchain store downloads onto the user's machine, each pinned by version
+and sha256. None of them is copied into this repository or shipped inside Genex.app; each archive
+keeps its own licence files where the store unpacks it. ANGLE and Linux build headers are the
+exceptions: Genex ships them (below).
+
+- raylib 6.0 (zlib), compiled into every C++ game, with the libraries it bundles under their own
+  headers: GLFW (zlib), miniaudio (public domain or MIT-0), and raylib's `src/external` single-file
+  libraries (stb, cgltf, par_shapes, dr_libs, jar_xm/jar_mod, m3d, qoi, qoa and others).
+- Emscripten (MIT or University of Illinois/NCSA), with LLVM (Apache-2.0 with LLVM exception),
+  Binaryen (Apache-2.0), Node.js (MIT) and Python (PSF-2.0) in the managed emsdk installation.
+  On Linux, Python is the portable CPython 3.13.3 build from Astral's
+  `python-build-standalone` release `20250529`; its Python, Tcl/Tk and pip licence files remain
+  in the installed archive. The managed Python replaces emsdk's upstream system-Python fallback.
+- CMake (BSD-3-Clause) and Ninja (Apache-2.0).
+- zig (MIT) for the Windows and Linux cross-builds, and llvm-mingw (LLVM under Apache-2.0 with
+  LLVM exception; the mingw-w64 runtime and headers under ZPL-2.1 and public-domain terms) as its
+  pinned fallback.
+- The Rust crate checker, installed on the first crate approval: cargo-deny (MIT OR Apache-2.0)
+  and cargo-vet (MIT OR Apache-2.0) from their official GitHub releases, and the RustSec
+  advisory-db (CC0-1.0) at the commit `native/genex-rust/crate-policy.json` pins. The trusted
+  sources' cargo-vet audit lists that policy names (Bytecode Alliance, Embark, Google, Mozilla,
+  Zcash) are read under their repositories' own licences, and only once the policy pins a list's
+  sha256.
+
+## Bundled ANGLE
+
+Every Genex build ships ANGLE (https://chromium.googlesource.com/angle/angle, BSD-3-Clause), built
+by Genex's `angle.yml` from commit c5bf49e78850a5335a8fa2a7bfb53b559fbfc927 for macOS (Metal),
+Windows (Direct3D 11) and Linux (Vulkan with SwiftShader), in `resources/angle/<target>/<commit>/`.
+It is loaded only into C++ games' processes and copied into the apps they export. Each build's
+`licenses/` folder holds the texts of what is compiled in: in all three, abseil-cpp, astc-encoder
+(Apache-2.0), libc++, libc++abi and llvm-libc (Apache-2.0 with LLVM exception), zlib (Zlib),
+Vulkan-Headers (Apache-2.0), volk and ceval (MIT) and libXNVCtrl (X11-style); the Khronos EGL
+and GLES headers (Apache-2.0 or MIT-style, in the headers themselves, which the builds' manifests
+list as missing from staging); on Linux, SwiftShader with marl (Apache-2.0), Vulkan-Loader,
+Vulkan-Tools, SPIRV-Tools and SPIRV-Headers (Apache-2.0, SPIRV-Headers MIT-style),
+VulkanMemoryAllocator, expat and wayland (MIT). The Windows build carries Microsoft's
+`d3dcompiler_47.dll`, redistributable under the Windows SDK's redistribution terms (the SDK
+version's redist list is still to be confirmed).
+
+Genex also ships the Linux build's software Vulkan on its own, for Rust · wgpu games, which use
+no ANGLE: the Vulkan loader, SwiftShader and its ICD manifest with their licence files, split
+byte for byte from the Linux build into `resources/swiftshader/linux-x64-swiftshader/<commit>/`
+and pinned beside the ANGLE builds in `native/angle/bundle-lock.json` (`swiftshader`). A Rust
+Linux export copies these files and their licences (see "Rust toolchain runtime" below).
+
+## Bundled Linux build headers
+
+`native/linux-sysroot/linux-sysroot-x64.tar.gz` contains the X11, Wayland and xkbcommon build
+headers and link-time libraries from AlmaLinux 8.10, and GLFW's generated Wayland protocol code.
+Genex includes them in `resources/linux-sysroot/` so cross-building Linux games needs no X11/Wayland
+development package installation. `native/linux-sysroot/bundle-lock.json` pins both the archive and its manifest;
+the manifest records the source image digest and exact RPM package versions. Every copied
+header and protocol file preserves its copyright and permission notices, including MIT/X11-style
+terms from The Open Group, Silicon Graphics, Wayland and xkbcommon contributors. These are
+build inputs; exported Linux games carry the generated protocol code's notices in their own
+third-party notices, and load desktop X11/Wayland libraries from the player's system.
+
+## raylib's platform template
+
+`native/raylib-platform/rcore_genex_headless.c` is an altered copy of raylib 6.0's
+`src/platforms/rcore_template.c` (zlib/libpng, Copyright (c) 2013-2026 Ramon Santamaria
+(@raysan5) and contributors). Its header marks what Genex changed and keeps raylib's licence
+notice; the toolchain store compiles it into the headless raylib library on the user's machine.
+
+## Rust runtime crates
+
+The `genex` workspace in `native/genex-rust` (Genex's own code, MIT) builds offline from a vendored
+crate set: `scripts/spike/rust-wgpu/vendor-allowlist.toml` names the direct dependencies,
+`setup-toolchain.sh` vendors their resolved closure (468 crates) into the project-local toolchain
+folder, and `native/genex-rust/Cargo.lock` pins what the workspace uses. No crate source is copied
+into this repository or shipped inside Genex.app; each vendored crate keeps its licence files in
+its own folder. A Rust game or a `genex` release links only the subset its targets and features
+resolve, together with the Rust standard library (MIT OR Apache-2.0). Where a crate offers a
+choice of licences, Genex uses it under the first one listed.
+
+Notable terms in the closure:
+
+- egui's default fonts, compiled into the HUD through `epaint_default_fonts` 0.36.2: Ubuntu Light
+  (Ubuntu Font Licence 1.0), Hack Regular (MIT; its Bitstream Vera glyphs under the Bitstream
+  Vera License with the reserved font names "Bitstream" and "Vera"), Noto Emoji (SIL Open Font
+  License 1.1) and emoji-icon-font (MIT). The licence texts are in the crate's `fonts/` folder.
+- MPL-2.0: the symphonia 0.6.1 crates (audio decoding) and triple_buffer 9.0.0, used unmodified;
+  their source is the published crate on crates.io.
+- `self_cell` 1.3.0 is offered under Apache-2.0 OR GPL-2.0-only and `r-efi` under MIT OR
+  Apache-2.0 OR LGPL-2.1-or-later; Genex uses Apache-2.0 and MIT respectively.
+
+| Licence (as the crate declares it) | Crates | Crates and versions |
+| --- | --- | --- |
+| MIT OR Apache-2.0 | 248 | accesskit 0.24.1, ahash 0.8.12, allocator-api2 0.2.21, android-activity 0.6.1, android_log-sys 0.3.2, android_logger 0.15.1, android_system_properties 0.1.6, arboard 3.6.1, arrayvec 0.7.8, as-raw-xcb-connection 1.0.1, ash 0.38.0+1.3.281, async-trait 0.1.92, atomic-arena 0.1.2, atomic-polyfill 1.0.3, base64 0.13.1, bitflags 1.3.2, bitflags 2.13.2, bumpalo 3.20.3, cast 0.3.0, cc 1.6.0, cfg-if 1.0.5, cobs 0.3.0, core-foundation 0.9.4, core-foundation-sys 0.8.7, core-graphics 0.23.2, core-graphics-types 0.1.3, coreaudio-rs 0.14.2, crc32fast 1.5.2, critical-section 1.2.0, crossbeam-utils 0.8.23, dasp_sample 0.11.0, document-features 0.2.12, downcast-rs 1.2.1, downcast-rs 2.0.2, ecolor 0.36.2, egui 0.36.2, egui-wgpu 0.36.2, egui-winit 0.36.2, either 1.18.0, emath 0.36.2, embedded-io 0.4.0, embedded-io 0.6.1, ena 0.14.4, env_filter 0.1.4, epaint 0.36.2, errno 0.3.14, euclid 0.22.14, fdeflate 0.3.7, find-msvc-tools 0.1.14, flate2 1.1.10, font-types 0.12.6, foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1, futures-channel 0.3.34, futures-core 0.3.34, futures-task 0.3.34, futures-util 0.3.34, getrandom 0.3.4, getrandom 0.4.3, gif 0.14.2, glam 0.30.10, glam 0.31.1, glam 0.32.1, glam 0.33.12, glamx 0.3.1, glob 0.3.4, gltf 1.4.1, gltf-derive 1.4.1, gltf-json 1.4.1, gpu-allocator 0.28.0, guillotiere 0.7.0, half 2.7.1, hash32 0.2.1, hash32 0.3.1, hashbrown 0.16.1, hashbrown 0.17.1, heapless 0.7.17, heapless 0.8.0, hermit-abi 0.5.3, image 0.25.10, image-webp 0.2.4, itertools 0.15.0, itoa 1.0.18, jni 0.21.1, jni 0.22.4, jni-macros 0.22.4, jni-sys 0.3.1, jni-sys 0.4.1, jni-sys-macros 0.4.1, jobserver 0.1.35, js-sys 0.3.106, kira 0.12.5, lazy_static 1.5.1, libc 0.2.190, litrs 1.0.0, lock_api 0.4.14, log 0.4.34, matrixmultiply 0.3.11, memmap2 0.9.11, naga 30.0.1, naga-types 30.0.1, ndk 0.9.0, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-derive 0.5.1, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, paste 1.0.15, pastey 0.2.3, percent-encoding 2.3.2, pkg-config 0.3.34, plain 0.2.3, png 0.18.1, polycool 0.4.0, postcard 1.1.3, presser 0.3.1, proc-macro-crate 3.5.0, proc-macro2 1.0.107, profiling 1.0.18, profiling-procmacros 1.0.18, qoi 0.4.1, quick-error 2.0.1, quote 1.0.47, rand 0.8.8, rand_core 0.6.4, rand_xorshift 0.3.0, range-alloc 0.1.5, raw-window-metal 1.1.0, rawpointer 0.2.1, read-fonts 0.41.0, regex 1.13.1, regex-automata 0.4.18, regex-lite 0.1.9, regex-syntax 0.8.11, renderdoc-sys 1.1.0, robust 1.2.0, rstar 0.13.0, rtrb 0.4.0, rustc_version 0.4.1, rustversion 1.0.23, scoped-tls 1.0.1, scopeguard 1.2.0, semver 1.0.28, send_wrapper 0.6.0, serde 1.0.229, serde_arrays 0.2.0, serde_core 1.0.229, serde_derive 1.0.229, serde_json 1.0.151, serde_spanned 1.1.1, shlex 2.0.1, simdutf8 0.1.5, skrifa 0.44.0, smallvec 1.16.2, smol_str 0.2.2, spade 2.15.1, stable_deref_trait 1.2.1, static_assertions 1.1.0, syn 2.0.119, syn 3.0.6, target-tuple 1.0.2, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, toml 1.1.6+spec-1.1.0, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.15+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0, toml_writer 1.1.2+spec-1.1.0, trybuild 1.0.121, ttf-parser 0.25.1, type-map 0.5.1, typenum 1.20.1, unicode-segmentation 1.13.3, unicode-width 0.2.2, vec_map 0.8.2, version_check 0.9.5, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129, wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, wasm-bindgen-test 0.3.79, wasm-bindgen-test-macro 0.3.79, wasm-bindgen-test-shared 0.2.129, web-sys 0.3.106, web-time 1.1.0, weezl 0.1.12, wgpu 30.0.1, wgpu-core 30.0.1, wgpu-core-deps-apple 30.0.1, wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1, wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_gnullvm 0.53.1, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_aarch64_msvc 0.53.1, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnu 0.53.1, windows_i686_gnullvm 0.52.6, windows_i686_gnullvm 0.53.1, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_i686_msvc 0.53.1, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_gnullvm 0.53.1, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, x11rb 0.13.2, x11rb-protocol 0.13.2 |
+| MIT | 84 | alsa-sys 0.4.0, android-properties 0.2.2, block2 0.5.1, block2 0.6.2, bytes 1.12.1, calloop 0.13.0, calloop 0.14.5, calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1, cfg_aliases 0.2.2, color_quant 1.1.0, combine 4.6.8, crunchy 0.2.4, dispatch 0.2.0, dlib 0.5.3, extended 0.1.0, fax 0.2.7, harfrust 0.12.0, inflections 1.1.1, libm 0.2.16, libredox 0.1.25, libudev-sys 0.1.4, mint 0.5.9, nix 0.31.3, nu-ansi-term 0.50.3, objc-sys 0.3.5, objc2 0.5.3, objc2 0.6.5, objc2-app-kit 0.2.2, objc2-cloud-kit 0.2.2, objc2-contacts 0.2.2, objc2-core-data 0.2.2, objc2-core-image 0.2.2, objc2-core-location 0.2.2, objc2-encode 4.1.0, objc2-foundation 0.2.2, objc2-foundation 0.3.2, objc2-link-presentation 0.2.2, objc2-metal 0.2.2, objc2-quartz-core 0.2.2, objc2-symbols 0.2.2, objc2-ui-kit 0.2.2, objc2-uniform-type-identifiers 0.2.2, objc2-user-notifications 0.2.2, oorandom 11.1.5, orbclient 0.3.55, ordered-float 5.5.0, pulp 0.22.3, pulp-wasm-simd-flag 0.1.1, quick-xml 0.41.0, raw-cpuid 11.6.0, reborrow 0.5.5, redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4, sctk-adwaita 0.10.1, simd-adler32 0.3.10, slab 0.4.12, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0, smithay-clipboard 0.7.3, spin 0.9.9, strict-num 0.1.1, tiff 0.11.3, tokio 1.53.2, tracing 0.1.44, tracing-core 0.1.36, urlencoding 2.1.3, wayland-backend 0.3.17, wayland-client 0.31.15, wayland-csd-frame 0.3.0, wayland-cursor 0.31.14, wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1, wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12, wayland-protocols-wlr 0.3.12, wayland-scanner 0.31.11, wayland-sys 0.31.11, winnow 1.0.4, x11-dl 2.21.0, xcursor 0.3.11, xkbcommon-dl 0.4.2, zmij 1.0.23 |
+| Apache-2.0 OR MIT | 37 | alsa 0.11.0, atomic-waker 1.1.2, autocfg 1.5.1, bit-set 0.10.0, bit-vec 0.9.1, bit_field 0.10.3, cesu8 1.1.0, color 0.3.3, concurrent-queue 2.5.0, console_error_panic_hook 0.1.7, equivalent 1.0.2, fastrand 2.5.0, fearless_simd 0.4.1, fnv 1.0.7, gilrs 0.11.2, gilrs-core 0.6.8, glifo 0.2.0, indexmap 2.14.2, kurbo 0.13.1, linebender_resource_handle 0.1.1, minicov 0.3.8, nohash-hasher 0.2.0, noise 0.9.0, peniko 0.6.1, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, polling 3.11.0, pollster 0.4.0, portable-atomic 1.15.0, portable-atomic-util 0.2.8, rustc-hash 1.1.0, rustc-hash 2.1.3, simd_cesu8 1.2.0, uuid 1.27.0, vello_common 0.1.0, vello_cpu 0.1.0 |
+| Zlib OR Apache-2.0 OR MIT | 24 | bytemuck 1.25.2, bytemuck_derive 1.12.1, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-avf-audio 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-io-kit 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, safe_arch 1.2.0, wide 1.7.1 |
+| Apache-2.0 | 15 | ab_glyph 0.2.32, ab_glyph_rasterizer 0.1.10, approx 0.5.1, codespan-reporting 0.13.1, cpal 0.18.2, gethostname 1.1.0, nalgebra 0.35.0, nalgebra-macros 0.3.0, owned_ttf_parser 0.25.1, parry3d 0.31.1, rapier3d 0.36.0, simba 0.10.2, spirv 0.4.0+sdk-1.4.341.0, unicode-general-category 1.1.0, winit 0.30.13 |
+| MPL-2.0 | 11 | symphonia 0.6.1, symphonia-bundle-flac 0.6.1, symphonia-bundle-mp3 0.6.1, symphonia-codec-pcm 0.6.1, symphonia-codec-vorbis 0.6.1, symphonia-common 0.6.1, symphonia-core 0.6.1, symphonia-format-ogg 0.6.1, symphonia-format-riff 0.6.1, symphonia-metadata 0.6.1, triple_buffer 9.0.0 |
+| Unlicense OR MIT | 8 | aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11 |
+| Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 6 | linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, rustix 0.38.44, rustix 1.1.5, wasip2 1.0.4+wasi-0.2.12, wit-bindgen 0.57.1 |
+| MIT OR Apache-2.0 OR Zlib | 6 | cursor-icon 1.2.0, raw-window-handle 0.6.2, xkeysym 0.2.1, zune-core 0.5.3, zune-inflate 0.2.54, zune-jpeg 0.5.15 |
+| BSD-3-Clause | 4 | exr 1.74.2, lebe 0.5.3, tiny-skia 0.11.4, tiny-skia-path 0.11.4 |
+| ISC | 3 | inotify 0.11.5, inotify-sys 0.1.8, libloading 0.8.9 |
+| BSD-2-Clause OR Apache-2.0 OR MIT | 2 | zerocopy 0.8.59, zerocopy-derive 0.8.59 |
+| BSD-2-Clause OR MIT OR Apache-2.0 | 2 | mach2 0.4.3, mach2 0.6.0 |
+| BSD-3-Clause OR Apache-2.0 | 2 | moxcms 0.8.1, pxfm 0.1.30 |
+| BSD-3-Clause OR MIT OR Apache-2.0 | 2 | num_enum 0.7.6, num_enum_derive 0.7.6 |
+| BSL-1.0 | 2 | clipboard-win 5.4.1, error-code 3.4.0 |
+| MIT OR Apache-2.0 OR LGPL-2.1-or-later | 2 | r-efi 5.3.0, r-efi 6.0.0 |
+| MIT OR Zlib OR Apache-2.0 | 2 | miniz_oxide 0.8.9, miniz_oxide 0.9.1 |
+| Zlib | 2 | foldhash 0.2.0, zlib-rs 0.6.8 |
+| (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | 1 | epaint_default_fonts 0.36.2 |
+| (MIT OR Apache-2.0) AND Unicode-3.0 | 1 | unicode-ident 1.0.26 |
+| 0BSD OR MIT OR Apache-2.0 | 1 | adler2 2.0.1 |
+| Apache-2.0 AND MIT | 1 | dpi 0.1.2 |
+| Apache-2.0 OR GPL-2.0-only | 1 | self_cell 1.3.0 |
+| BSD-2-Clause | 1 | arrayref 0.3.9 |
+
+The spike's Android packaging (`scripts/spike/rust-wgpu/android-apk.sh`, developer tool only)
+fetches games-activity 4.4.0 (androidx.games), and its AppCompat closure from androidx: activity 1.0.0, annotation 1.2.0, appcompat 1.2.0, appcompat-resources 1.2.0, arch.core core-common 2.1.0 and core-runtime 2.0.0, collection 1.1.0, core 1.5.0, cursoradapter 1.0.0, customview 1.0.0, drawerlayout 1.0.0, fragment 1.1.0, interpolator 1.0.0, lifecycle-common 2.1.0, lifecycle-livedata 2.0.0, lifecycle-livedata-core 2.0.0, lifecycle-runtime 2.1.0, lifecycle-viewmodel 2.1.0, loader 1.0.0, savedstate 1.0.0, vectordrawable 1.1.0, vectordrawable-animated 1.1.0, versionedparcelable 1.1.1 and viewpager 1.0.0 from Google Maven (Apache-2.0), each pinned by sha256 in the script. They are
+not in this repository and nothing Genex ships contains them yet; the owner has not yet
+ratified Google Maven as their source.
+
+## Rust renderer shader ports
+
+The Rust renderer (`native/genex-rust/crates/genex-render`, Genex's own code, MIT) ports these
+shader functions into its WGSL; it ships inside every Rust game and its ejected source. Each file
+credits its source in a comment.
+
+| Genex files | What | Source | Upstream authors | Licence |
+| --- | --- | --- | --- | --- |
+| `shaders/post/tonemap.wgsl`, `src/post/tonemap.rs` (its CPU reference) | Tonemapping curves: Khronos PBR Neutral, AgX, ACES fit | three.js 0.185.1, `src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js` | three.js authors; Khronos PBR Neutral by the Khronos Group (Emmett Lalish); AgX by Troy Sobotka, the minimal fit by Benjamin Wrensch (iolite) and Filament's Rec. 2020 port; the ACES fit by Stephen Hill after the Academy's ACES RRT and ODT | MIT (three.js, see [Vendored three.js](#vendored-threejs)) |
+| `shaders/post/gtao.wgsl`, `shaders/post/ao_denoise.wgsl` (the raw term's packing) | Ground-truth ambient occlusion: the depth prefilter and its MIP filter, the horizon search with its falloff, the Hilbert-curve R2 noise, the bent normal and the fast arc cosine | XeGTAO (https://github.com/GameTechDev/XeGTAO), `Source/Rendering/Shaders/XeGTAO.hlsli` | Intel Corporation (Filip Strugar), after Jimenez, Wu, Pesce and Jarabo 2016, "Practical Real-Time Strategies for Accurate Indirect Occlusion" | MIT (see [XeGTAO](#xegtao)) |
+| `shaders/lighting/ambient.wgsl` (`gx_caps_intersection`, `gx_specular_occlusion_bent`, `gx_ao_multibounce`) | Cone-cone specular occlusion from a bent normal and the multi-bounce AO fit | Filament (https://github.com/google/filament), `shaders/src/surface_ambient_occlusion.fs` (`sphericalCapsIntersection`, `specularAO_Cones`, `gtaoMultiBounce`) | The Android Open Source Project; the methods by Jimenez et al. 2016 and Oat and Sander 2007 | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/post/easu.wgsl`, `shaders/post/rcas.wgsl`, `src/post/fsr.rs` (the constants) | FSR1 upscaler: edge-adaptive spatial upsampling (EASU) with its 12-tap kernel, direction and length estimate, and robust contrast-adaptive sharpening (RCAS) with its per-channel lobe limiters | AMD FidelityFX Super Resolution 1.0 (https://github.com/GPUOpen-Effects/FidelityFX-FSR), `ffx-fsr/ffx_fsr1.h` (`FsrEasuCon`, `FsrEasuF`, `FsrRcasCon`, `FsrRcasF`) | Advanced Micro Devices, Inc. | MIT (see [FidelityFX FSR1](#fidelityfx-fsr1)) |
+
+### XeGTAO
+
+The licence of the XeGTAO code the GTAO shaders port (table above).
+
+```
+Copyright (C) 2016-2021, Intel Corporation
+
+SPDX-License-Identifier: MIT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### FidelityFX FSR1
+
+The licence of the AMD FidelityFX FSR1 code the upscaler shaders port (table above).
+
+```
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## Rust showcase environment map
+
+The Rust renderer's showcase game ships one sample HDR environment map. It is a development and
+demonstration asset: the renderer never depends on it, and the renderer's tests use maps their own
+code writes.
+
+| Genex file | What | Source | Author | Licence | Size | sha256 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `native/genex-rust/examples/showcase/game/assets/env/kloofendal_43d_clear_puresky_1k.hdr` | "Kloofendal 43d Clear (Pure Sky)", 1k (1024 x 512) Radiance HDR | https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_43d_clear_puresky_1k.hdr (page https://polyhaven.com/a/kloofendal_43d_clear_puresky) | Greg Zaal, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,184,531 bytes | `de7ba9d0b070470dbb70d0144294c8708068df353537b26ab59c394707e84377` |
+
+## Rust showcase fetched assets
+
+The lakeside showcase's remaster can draw photo-scanned CC0 textures and a golden-hour sky map that
+are not in the repository: `node scripts/showcase-assets.ts fetch` downloads them from the pinned
+official URLs in `native/genex-rust/examples/showcase/assets-manifest.json` (which records every
+file's URL, size and sha256 and refuses any byte that does not match) into a local cache, and the
+scene draws its procedural stand-ins without them. They are demonstration assets: the renderer and
+its tests never depend on them. Every one is CC0 from Poly Haven; the credits are given anyway.
+
+| Asset | Used for | Source | Authors | Licence | Size |
+| --- | --- | --- | --- | --- | --- |
+| `forrest_ground_01` | terrain grass layer (atlas tile 0) | https://polyhaven.com/a/forrest_ground_01 (`forrest_ground_01_diff_1k.jpg`, `forrest_ground_01_nor_gl_1k.jpg`, `forrest_ground_01_arm_1k.jpg`, `forrest_ground_01_disp_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,880,670 bytes |
+| `dirt` | terrain soil layer: the path and the yard (atlas tile 1) | https://polyhaven.com/a/dirt (`dirt_diff_1k.jpg`, `dirt_nor_gl_1k.jpg`, `dirt_arm_1k.jpg`, `dirt_disp_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Charlotte Baglioni, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,005,661 bytes |
+| `coast_sand_01` | terrain sand layer: the beach and the lake bed (atlas tile 2) | https://polyhaven.com/a/coast_sand_01 (`coast_sand_01_diff_1k.jpg`, `coast_sand_01_nor_gl_1k.jpg`, `coast_sand_01_arm_1k.jpg`, `coast_sand_01_disp_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,095,130 bytes |
+| `rock_face` | terrain rock layer: steep slopes (atlas tile 3) | https://polyhaven.com/a/rock_face (`rock_face_diff_1k.jpg`, `rock_face_nor_gl_1k.jpg`, `rock_face_arm_1k.jpg`, `rock_face_disp_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dario Barresi, Greg Zaal, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,635,276 bytes |
+| `bark_brown_02` | broadleaf bark | https://polyhaven.com/a/bark_brown_02 (`bark_brown_02_diff_1k.jpg`, `bark_brown_02_nor_gl_1k.jpg`, `bark_brown_02_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,907,957 bytes |
+| `pine_bark` | pine bark | https://polyhaven.com/a/pine_bark (`pine_bark_diff_1k.jpg`, `pine_bark_nor_gl_1k.jpg`, `pine_bark_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,826,181 bytes |
+| `mossy_rock` | rocks and boulders | https://polyhaven.com/a/mossy_rock (`mossy_rock_diff_1k.jpg`, `mossy_rock_nor_gl_1k.jpg`, `mossy_rock_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,047,106 bytes |
+| `dark_wooden_planks` | the dock deck, the porch, the bench and the boat | https://polyhaven.com/a/dark_wooden_planks (`dark_wooden_planks_diff_1k.jpg`, `dark_wooden_planks_nor_gl_1k.jpg`, `dark_wooden_planks_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Amal Kumar, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,137,495 bytes |
+| `raw_plank_wall` | the cabin logs, the posts and the woodpile | https://polyhaven.com/a/raw_plank_wall (`raw_plank_wall_diff_1k.jpg`, `raw_plank_wall_nor_gl_1k.jpg`, `raw_plank_wall_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,961,411 bytes |
+| `roof_slates_02` | the cabin roof | https://polyhaven.com/a/roof_slates_02 (`roof_slates_02_diff_1k.jpg`, `roof_slates_02_nor_gl_1k.jpg`, `roof_slates_02_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,503,066 bytes |
+| `rustic_stone_wall` | the cabin footing and the chimney | https://polyhaven.com/a/rustic_stone_wall (`rustic_stone_wall_diff_1k.jpg`, `rustic_stone_wall_nor_gl_1k.jpg`, `rustic_stone_wall_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,779,719 bytes |
+| `kloppenheim_06_puresky` | the golden-hour sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_06_puresky (`kloppenheim_06_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 4,434,394 bytes |
+
+## Rust toolchain runtime
+
+Besides its crates (above), a Rust game links what the pinned toolchains compile into every
+binary for its destination, and a Linux export ships a software Vulkan beside the game. The
+toolchain store installs the toolchains on the user's computer; an exported game carries the
+linked parts inside its executable or module, and a Linux export carries the Vulkan loader,
+SwiftShader and its ICD manifest next to its executable, split from Genex's bundled Linux ANGLE
+build (see "Bundled ANGLE" above). `scripts/third-party-notices.mjs` (`RUST_TOOLCHAIN_RUNTIME`)
+holds this table to every part a destination's export notices name (`RUST_NOTICE_ROWS` in
+`src/substrate/rust-notices.ts`), and each export's `notices/` folder carries the texts.
+Libraries a destination's operating system provides (libSystem on Apple platforms, `libgcc_s`
+and glibc on Linux, the Universal CRT on Windows, Bionic on Android) are the system's and are
+not shipped.
+
+| Component | Linked into | License |
+| --- | --- | --- |
+| `std` | every destination: the Rust standard library (`std`, `core`, `alloc`, and the crates it builds in: hashbrown, libc, addr2line, gimli, object, miniz_oxide, rustc-demangle, memchr, cfg-if, adler2, dlmalloc on the web), each used under MIT among the licences it offers | MIT OR Apache-2.0 |
+| `compiler_builtins` | every destination: the Rust crate of compiler intrinsics | MIT OR Apache-2.0 |
+| `compiler-rt` | every destination: the LLVM compiler-rt builtins `compiler_builtins` ports and, on some targets, compiles in | Apache-2.0 WITH LLVM-exception |
+| `libunwind` | Windows, Android: LLVM's unwinder (llvm-mingw's for `x86_64-pc-windows-gnullvm`, the NDK's for Android) | Apache-2.0 WITH LLVM-exception |
+| `mingw-w64-crt` | Windows: the mingw-w64 C runtime startup and support objects llvm-mingw links into a `gnullvm` executable (a few files are in the public domain) | ZPL-2.1 |
+| `winpthreads` | Windows: mingw-w64's POSIX threads library, linked by the `gnullvm` target | MIT |
+| `zig-runtime` | Linux: zig's compiler-rt and C start-up code, which cargo-zigbuild's link against glibc 2.28 adds | MIT |
+| `swiftshader` | Linux: [SwiftShader](https://swiftshader.googlesource.com/SwiftShader) (`libvk_swiftshader.so` and its ICD manifest) with marl, SPIRV-Tools and SPIRV-Headers and Chromium's libc++, libc++abi and llvm-libc compiled in, shipped beside the game | Apache-2.0 (SPIRV-Headers MIT-style; libc++, libc++abi and llvm-libc Apache-2.0 WITH LLVM-exception) |
+| `vulkan-loader` | Linux: the Khronos [Vulkan loader](https://github.com/KhronosGroup/Vulkan-Loader) (`libvulkan.so.1`), shipped beside the game | Apache-2.0 |
+
+## Asset importer decoders
+
+The Rust · wgpu asset import step (`src/substrate/asset-import/`) runs four WebAssembly modules
+in its own sandbox: three decoders and meshoptimizer's meshlet clusterizer. They are the builds
+three.js 0.185.1 ships in `examples/jsm/libs`, read from the pinned `three` package (paths below
+are under it). Their licence and notice texts are in the three.js add-on library sections below. The packaged app does not carry the importer yet; when it does,
+this page ships beside the decoders.
+
+| File | Project | License |
+| --- | --- | --- |
+| `examples/jsm/libs/basis/` | [Basis Universal](https://github.com/BinomialLLC/basis_universal) v1.50 transcoder, with its embedded [Zstandard](https://github.com/facebook/zstd) decoder | Apache-2.0; embedded Zstandard BSD-3-Clause |
+| `examples/jsm/libs/draco/gltf/` | [Draco](https://github.com/google/draco) 1.5.6 glTF decoder | Apache-2.0 |
+| `examples/jsm/libs/meshopt_decoder.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) 1.1.1 decoder | MIT |
+| `examples/jsm/libs/meshopt_clusterizer.module.js` | [meshoptimizer](https://github.com/zeux/meshoptimizer) meshlet clusterizer (a development build between 1.1.1 and 1.2.0); the importer stores its meshlets in glTF `extras` | MIT |
+
 ## Components under other terms
 
 - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) ships in the package. It is not open
@@ -131,6 +390,8 @@ These need an owner decision before public distribution; see
   logo identify the product; the code license does not grant trademark rights.
 - The Genex guide https://genex.games/SKILL.md, vendored as `src/plugins/genex/skills/genex`:
   its license and terms are not recorded.
+- The GameActivity AppCompat closure the spike's Android packaging fetches from Google Maven
+  (see Rust runtime crates): the owner has not yet ratified that source.
 - An unlicensed third-party canvas-editor reference has been excluded from the current tree.
   Its historical copies still need review before repository publication.
 
@@ -512,11 +773,11 @@ NOTICE
 
 Basis Universal™ Supercompressed GPU Texture Compression Library
 
-Copyright © 2016–2026 Binomial LLC. 
+Copyright © 2016–2026 Binomial LLC.
 All rights reserved except as granted under the [Apache 2.0 license](https://github.com/BinomialLLC/basis_universal/blob/master/LICENSE).
 "Basis Universal" is a trademark of Binomial LLC.
 
-The documents in the Basis Universal wiki, and the Basis Universal library, example, and tool source code, fall under the Apache 2.0 license, unless otherwise explicitly indicated. 
+The documents in the Basis Universal wiki, and the Basis Universal library, example, and tool source code, fall under the Apache 2.0 license, unless otherwise explicitly indicated.
 
 Redistributions or derivative works must include a readable copy of the attribution notices from this NOTICE file (see Apache License 2.0 §4(d)).
 
@@ -1151,7 +1412,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Apache License 2.0
 
-Applies to Basis Universal, Draco, Chevrotain and the pdf.js JPEG decoder. Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
+Applies to Basis Universal, Draco, Chevrotain, the pdf.js JPEG decoder and the Filament functions the Rust renderer ports ([Rust renderer shader ports](#rust-renderer-shader-ports); Copyright (C) The Android Open Source Project). Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
 
 ```
                                  Apache License

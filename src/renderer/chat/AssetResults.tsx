@@ -1,8 +1,7 @@
 import { withoutGenexSources } from "../../shared/genex.ts";
 import type { JSX } from "react";
 import { memo, useMemo, useState } from "react";
-import type { AssetDeliveredPayload, ProjectAsset } from "../../shared/game-assets.ts";
-import { assetPreviewMode } from "../../shared/asset-preview.ts";
+import type { AssetDeliveredPayload, AssetRefusal, ProjectAsset } from "../../shared/game-assets.ts";
 import type { ModelRig } from "../../shared/model-rig.ts";
 import { assetTitle, clipTitles } from "../asset-names.ts";
 import { foldAssets, ownerInGame, useModelRigs } from "../model-rigs.ts";
@@ -12,6 +11,7 @@ import { Icon } from "../ui/icons.tsx";
 import { ResultButton } from "../ui/ResultButton.tsx";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import { AudioStrip } from "./AudioStrip.tsx";
+import { deliveredPage, isAudioAsset, isRefusedAsset, isVisualAsset, refusalLine } from "./asset-refusal.ts";
 import { hostPlatform } from "../platform.ts";
 import { ASSET_WORDS, animationCountWords, fileManagerWords, modelAnimationsWords } from "../words.ts";
 
@@ -24,9 +24,18 @@ const PRESENCE_CAP = 2000;
 /** Results shown at first, and added by each "Show more assets". */
 const PAGE_SIZE = 6;
 const presenceKey = (project: string, file: string) => `${project}\n${file}`;
-const VISUAL = new Set(["image", "model", "texture", "video"]);
-const isVisual = (asset: ProjectAsset): boolean => VISUAL.has(assetPreviewMode(asset.file));
-const isAudio = (asset: ProjectAsset): boolean => assetPreviewMode(asset.file) === "audio";
+
+/** A delivered file, with why the game's stack cannot load it when the host said so. */
+type DeliveredAsset = ProjectAsset & { refused?: AssetRefusal };
+
+/**
+ * The files the page is cut from: every one, except that beside animation files (their own row)
+ * buffers, material and atlas files get no row of their own; media and refused files still do.
+ */
+function pageable(shown: DeliveredAsset[], loose: readonly ProjectAsset[]): DeliveredAsset[] {
+  if (loose.length === 0) return shown;
+  return shown.filter((asset) => isVisualAsset(asset) || isAudioAsset(asset) || isRefusedAsset(asset));
+}
 
 /** Remember what the folder holds, forgetting the oldest entry past the cap. */
 function rememberPresence(project: string, asked: readonly string[], here: ReadonlySet<string>): void {
@@ -38,7 +47,7 @@ function rememberPresence(project: string, asked: readonly string[], here: Reado
 }
 
 /** Each delivered file once, with the delivery it came in. */
-function deliveredAssets(deliveries: AssetDeliveredPayload[]): ProjectAsset[] {
+function deliveredAssets(deliveries: AssetDeliveredPayload[]): DeliveredAsset[] {
   const seen = new Set<string>();
   return deliveries
     .flatMap((delivery) =>
@@ -133,26 +142,44 @@ function OpenInAssets({ onClick }: { onClick: () => void }): JSX.Element {
   );
 }
 
-/** A file with no picture of its own: its name opens the preview; Open in Assets waits at the row's end. */
+/**
+ * A file with no picture of its own, or one the game cannot load: its name opens the preview; Open
+ * in Assets waits at the row's end. A refused file says why under its name.
+ */
 function AssetRow({
   asset,
   onSelect,
   onOpenAssets,
 }: {
-  asset: ProjectAsset;
+  asset: DeliveredAsset;
   onSelect: () => void;
   onOpenAssets?: () => void;
 }): JSX.Element {
+  const refusal = refusalLine(asset);
+  const name = (
+    <button
+      type="button"
+      title={asset.file}
+      onClick={onSelect}
+      className="min-w-0 flex-1 cursor-pointer truncate text-left text-chat-sub text-ink-2 hover:text-control-text-hover"
+    >
+      {asset.file.split("/").at(-1)}
+    </button>
+  );
   return (
-    <div data-asset-file={asset.file} className="asset-row flex h-11 min-w-0 items-center gap-2 rounded-xl pr-2 pl-3">
-      <button
-        type="button"
-        title={asset.file}
-        onClick={onSelect}
-        className="min-w-0 flex-1 cursor-pointer truncate text-left text-chat-sub text-ink-2 hover:text-control-text-hover"
-      >
-        {asset.file.split("/").at(-1)}
-      </button>
+    <div
+      data-asset-file={asset.file}
+      data-asset-refused={refusal ? asset.refused : undefined}
+      className={`asset-row flex min-w-0 items-center gap-2 rounded-xl pr-2 pl-3 ${refusal ? "py-2" : "h-11"}`}
+    >
+      {refusal ? (
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {name}
+          <p className="m-0 text-xs leading-snug text-ink-3">{refusal}</p>
+        </div>
+      ) : (
+        name
+      )}
       {onOpenAssets && <OpenInAssets onClick={onOpenAssets} />}
     </div>
   );
@@ -218,7 +245,7 @@ function TileGroup({ tiles, render }: { tiles: ProjectAsset[]; render: (asset: P
 }
 
 /** What the game folder holds of the delivered files, read once: present files, their rigs, and a lone clip's model. */
-function useDelivered(project: string, assets: ProjectAsset[], revision: number) {
+function useDelivered(project: string, assets: DeliveredAsset[], revision: number) {
   const files = useMemo(() => assets.map((asset) => asset.file), [assets]);
   const present = usePresentFiles(project, files, revision);
   const available = useMemo(
@@ -263,13 +290,11 @@ export const AssetResults = memo(function AssetResults({
   const loose = available.filter((asset) => folded.loose.includes(asset.file));
   const clipsOf = (asset: ProjectAsset) =>
     available.filter((clip) => folded.clipsOf.get(asset.file)?.includes(clip.file));
-  const visual = shown.filter(isVisual);
-  const audio = shown.filter(isAudio);
-  // Buffers, material and atlas files belong to the media beside them; alone they still get a row.
-  const ordered = visual.length || audio.length || loose.length ? [...visual, ...audio] : shown;
-  if (ordered.length === 0 && loose.length === 0) return null;
-  const page = ordered.slice(0, limit);
-  const rows = page.filter((asset) => !isVisual(asset));
+  // A page of media, and every file the game cannot load, outside the page: its reason is never
+  // behind "Show more assets" (`deliveredPage`).
+  const page = deliveredPage(pageable(shown, loose), limit);
+  if (page.media.length === 0 && page.refused.length === 0 && loose.length === 0) return null;
+  const rows = [...page.media.filter((asset) => !isVisualAsset(asset)), ...page.refused];
   const tile = (asset: ProjectAsset) => (
     <div key={asset.file} className="h-full min-w-0">
       <AssetTile
@@ -284,14 +309,14 @@ export const AssetResults = memo(function AssetResults({
   );
   return (
     <section data-chat-assets className="w-full max-w-[26rem] min-w-0 space-y-2" aria-label="Generated assets">
-      <TileGroup tiles={page.filter(isVisual)} render={tile} />
+      <TileGroup tiles={page.media.filter(isVisualAsset)} render={tile} />
       {(loose.length > 0 || rows.length > 0) && (
         <div className="flex flex-col gap-1.5">
           {loose.length > 0 && (
             <AnimationRow clips={loose} owner={owner} onOpen={(model) => setSelected({ asset: model, clips: loose })} />
           )}
           {rows.map((asset) =>
-            isAudio(asset) ? (
+            isAudioAsset(asset) ? (
               <AudioStrip key={asset.file} project={project} asset={asset} onOpenAssets={onOpenAssets} />
             ) : (
               <AssetRow
@@ -304,9 +329,7 @@ export const AssetResults = memo(function AssetResults({
           )}
         </div>
       )}
-      {ordered.length > limit && (
-        <ResultButton onClick={() => setLimit((n) => n + PAGE_SIZE)}>Show more assets</ResultButton>
-      )}
+      {page.more && <ResultButton onClick={() => setLimit((n) => n + PAGE_SIZE)}>Show more assets</ResultButton>}
       {error && (
         <p role="alert" className="text-chat-sub text-ink-3">
           {error}

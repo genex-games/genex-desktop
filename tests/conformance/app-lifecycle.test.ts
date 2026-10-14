@@ -14,6 +14,7 @@ import {
   quitQuestion,
   runShutdown,
   settleWithin,
+  shutdownSteps,
   type ShutdownTimers,
 } from "../../src/main/app-lifecycle.ts";
 
@@ -218,6 +219,30 @@ describe("the quit sequence", () => {
     };
     await runShutdown([{ name: "a", timeoutMs: 100, run: async () => {} }], { log: () => {}, timers });
     assert.equal(cleared, 1);
+  });
+});
+
+describe("what quitting stops, in order", () => {
+  it("the harness first, native games on a bound of their own before the core, and what is left of the harness last", () => {
+    const idle = { release() {}, dismiss() {}, cancel() {}, dispose() {}, stopAll: async () => {} };
+    const names = shutdownSteps({
+      keepAwake: idle,
+      codexLogin: idle,
+      claudeLogin: idle,
+      terminals: idle,
+      core: null,
+      native: idle,
+    }).map((step) => step.name);
+    assert.deepEqual(names, [
+      "stop the harness",
+      "release keep-awake",
+      "dismiss Codex sign-in",
+      "cancel Claude sign-in",
+      "close terminals",
+      "stop native games",
+      "stop the studio core",
+      "kill what is left of the harness",
+    ]);
   });
 });
 

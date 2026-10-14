@@ -21,7 +21,17 @@ import { ignoreLine } from "../shared/project-workspace.ts";
 import { DEFAULT_BUILDERS, LEAD_WINDOWS } from "../shared/builders.ts";
 import type { ConnectionSnapshot } from "../shared/connections.ts";
 import type { BackdropShaderRequest, BackdropShaderResult } from "../shared/backdrop-shader.ts";
-import type { GameLocation, GameName, GameNameRequest } from "../shared/game-project.ts";
+import {
+  BuildTarget,
+  destinationsOf,
+  type GameLocation,
+  type GameName,
+  type GameNameRequest,
+  GameStack,
+  isCompiledStack,
+  stackOf,
+} from "../shared/game-project.ts";
+import { ExportError, ExportRefusal, type ExportSigningChoice } from "../shared/game-export-contract.ts";
 import type { GameSoundRequest } from "../shared/game-sound.ts";
 import { latestRun } from "../shared/coordinator.ts";
 import { validateCoverSurface } from "../shared/cover-shader.ts";
@@ -31,9 +41,12 @@ import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
-import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
+import { assetKind, isAudioFile, stackAcceptsAsset, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
+import type { NativeTimers } from "../shared/native-contract.ts";
+import { hostOf } from "../shared/game-targets.ts";
+import { StudioPlatform } from "../shared/boot.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -60,6 +73,7 @@ import { EngineId } from "../shared/providers.ts";
 import { ExecutionStatus, isExecutionEvent, JournalPhase, RunState } from "../shared/run-state.ts";
 import { credentialEnvValues, redactTokens, secretRedactor } from "../shared/redact.ts";
 import { ActivityIndex, feedsActivity, type StudioActivityItem } from "../shared/studio-activity.ts";
+import { servedToolchainHost, type ToolchainLock } from "../shared/toolchain.ts";
 import {
   harnessUiEvent,
   isHostOnlyUiEvent,
@@ -71,6 +85,7 @@ import {
 import { observeMediaPlayback } from "../substrate/audio-observation.ts";
 import { BudgetLedger } from "../substrate/budget.ts";
 import { latestBuildPreview } from "../substrate/build-preview.ts";
+import { NativeGamePort, type NativePortIo } from "../substrate/native-game-port.ts";
 import { ContextPreferences } from "../substrate/context-settings.ts";
 import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
@@ -95,6 +110,7 @@ import {
   type CreateOptions,
   type FolderInspection,
   type GameProject,
+  ScaffoldCaller,
 } from "../substrate/game-workspace.ts";
 import { HarnessHost, UpdateJournal, type UpdateRecord } from "../substrate/harness-host.ts";
 import { shortId } from "../substrate/ids.ts";
@@ -123,6 +139,7 @@ import { AssetCheckpoints } from "./asset-checkpoints.ts";
 import { AssetService } from "./core/assets.ts";
 import { ChatPermissionService } from "./core/chat-permissions.ts";
 import { ConnectionService } from "./core/connections.ts";
+import { developmentStacksOpen } from "./core/stack-gate.ts";
 import { ConversationService } from "./core/conversation.ts";
 import { DelegationService } from "./core/delegation.ts";
 import { GameFileService } from "./core/game-files.ts";
@@ -134,12 +151,32 @@ import { assertPublishable } from "./core/genex-publish.ts";
 import { GameThreadService } from "./core/game-threads.ts";
 import {
   type CoreInternals,
+  coreGameBuilds,
   freshImprovementState,
   idleWork,
   type RunPreview,
+  rustTargetBuilders,
   unservedPreviews,
 } from "./core/internals.ts";
-import { layoutFor, type StudioLayout } from "./core/layout.ts";
+import { layoutFor, prewarmDenyWrites, type StudioLayout, studioBaseDenyWrites } from "./core/layout.ts";
+import { nativeOnComposerStop, nativeOnHarnessGone } from "./core/native-lifecycle.ts";
+import {
+  type DesktopExportGameDeps,
+  type ExportRunners,
+  exportDesktopGame,
+  exportMacGame,
+  type NativeExportDeps,
+  runExport,
+} from "./core/native-export-run.ts";
+import { type NativePrepareDeps, prepareNativeRun } from "./core/native-prepare.ts";
+import { checkConformanceGate, exportConformanceGate, storeConformanceRuns } from "./core/game-conformance-gate.ts";
+import type { NativeFramesHost } from "./native-frames.ts";
+import {
+  NativeRuns,
+  type NativeRunsHost,
+  type NativeRunsOptions,
+  type NativeSupervisorClient,
+} from "./core/native-runs.ts";
 import { createPlanReviews } from "./core/plan-drafts.ts";
 import { CONSENT_TIMEOUT_MS, PluginToolService } from "./core/plugin-tools.ts";
 import { LockService, type LockServiceOptions } from "./core/plugin-locks.ts";
@@ -151,6 +188,16 @@ import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
+import {
+  createCoreRustBuilds,
+  isFixtureStore,
+  RUST_EXPORT_NOTICES,
+  rustExportNotices,
+  storeRustAdmit,
+} from "./core/rust-lane.ts";
+import { crateRequestsFor } from "./crate-requests.ts";
+import { engineEjectionsFor } from "./rust-eject.ts";
+import { engineTrustFor } from "./rust-trust.ts";
 import { StorageSpaceService } from "./core/storage-space.ts";
 import type { StorageFreed, StorageSpace } from "../shared/storage-space.ts";
 import { SelfEditGateService } from "./core/self-edit-gate.ts";
@@ -161,13 +208,26 @@ import {
   clampBuilders,
   LEGACY_DEFAULT_BUILDERS,
   LEGACY_DEFAULT_POOL,
+  savedStackDefault,
   type StudioSettings,
 } from "./core/settings.ts";
 import { SUBSCRIPTION_ENGINES } from "./core/subscription-engines.ts";
+import {
+  createPrewarmSandbox,
+  execHost,
+  probeCommandLineTools,
+  ToolchainService,
+  type ToolchainServiceOptions,
+} from "./core/toolchains.ts";
+import { GAME_PREWARM_RUSTFLAGS, type RustSeedFrom, shippedWarmProject } from "./core/rust-dev-seed.ts";
+import { CppBuildPurpose, CppBuilds } from "./cpp-build.ts";
 import { GameBuilds } from "./game-build.ts";
 import { engineRpc } from "./harness-rpc/engine.ts";
 import { eventsRpc } from "./harness-rpc/events.ts";
 import { gameRpc } from "./harness-rpc/game.ts";
+import { nativeRpc } from "./harness-rpc/native.ts";
+import { cratesRpc } from "./harness-rpc/crates.ts";
+import { conformanceRpc } from "./harness-rpc/conformance.ts";
 import { jobsRpc } from "./harness-rpc/jobs.ts";
 import { optimizationRpc } from "./harness-rpc/optimization.ts";
 import { pluginsRpc } from "./harness-rpc/plugins.ts";
@@ -181,8 +241,26 @@ import { studioRpc } from "./harness-rpc/studio.ts";
 import type { PlanReviewController } from "./plan-review.ts";
 import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
+import { admittedBuildLock, type RustBuilds, rustBuildSandboxes } from "./rust-build.ts";
+import { webExportWarnings } from "./rust-build-web.ts";
+import { type MacNotice, writeNoticesFolder } from "../substrate/native-export.ts";
+import { MobileBuild, mobileTargetSettings, RUST_MOBILE_BUILDERS } from "./rust-build-mobile.ts";
+import { exportAndroidGame } from "./core/android-export-run.ts";
+import { exportIosGame } from "./core/ios-export-run.ts";
+import { type PhonePackageStore, phonePackageStore } from "./core/device-launch.ts";
+import {
+  androidExportDeps,
+  hostAndroidSdk,
+  hostPhoneProbes,
+  iosExportDeps,
+  type MobileExportServices,
+} from "./core/mobile-export-deps.ts";
+import { SIGNING_KEYS_FOLDER } from "../substrate/mobile-sign.ts";
+import { rustTargetSettings } from "./core/rust-cross-lane.ts";
 import { seedUpgradedPayload } from "./seed-upgrade-notice.ts";
 import { SeedUpgradeMode } from "../substrate/seed-upgrade.ts";
+import { crateCheckSandboxes } from "../substrate/toolchain-store/crate-check.ts";
+import { execXcode } from "../substrate/toolchain-store/locate.ts";
 
 export type { PreviewInputAction };
 export type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort };
@@ -197,6 +275,12 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** How long after a boot the first full read of the log (for Activity) waits. */
 const ACTIVITY_WARMUP_DELAY_MS = 5 * SECOND_MS;
+/** The Windows game launcher's file name under `<resources>/native/`. */
+const GAME_LAUNCHER_EXE = "genex-game-launcher.exe";
+/** The Rust lane's iPhone Simulator builds' folder, inside the lane's own root (no project folder's name). */
+const RUST_SIMULATOR_FOLDER = "ios-simulator";
+/** Studio's per-profile Android debug key's folder inside `<userData>/signing-keys`. */
+const ANDROID_DEBUG_KEY_FOLDER = "android-debug";
 
 /** What the core itself writes for people: thread titles, journal reasons, errors. */
 const MESSAGE = {
@@ -210,6 +294,9 @@ const MESSAGE = {
   buildStillRunning: "Stop this game's build before removing it.",
   gameNotFound: "Game not found",
   exportBuildFailed: "Current build failed; no stale output was exported",
+  rustLaneNotStarted: "The Rust build lane starts with the studio; nothing was built",
+  exportLaneMissing: "This build of Genex has no build lane for the game's stack yet, so nothing was built or exported",
+  exportNotADestination: "This game isn’t made for the browser, so it has no web build to export",
   coverWrongGame: "Cover tool is bound to this conversation’s game.",
   notEnginePlugin: "That plugin doesn't link games to an engine.",
   noCoverRenderer: "GPU cover rendering is unavailable.",
@@ -303,6 +390,22 @@ function updateFailure(ok: boolean, rewound: boolean): string | undefined {
 function loadedFilesScript(files: string[]): string {
   return `(()=>{const loaded=new Set(performance.getEntriesByType('resource').filter(e=>e.responseStatus===200||e.responseStatus===304).map(e=>e.name));return ${JSON.stringify(files)}.filter(file=>loaded.has(new URL(file,location.href).href));})()`;
 }
+
+const MESSAGE_NATIVE = {
+  noImageEncoder: "this studio has no image encoder for native captures",
+} as const;
+
+/** The clock every native run and Live's frames time themselves by: the real one (tests inject their own). */
+export const NATIVE_TIMERS: NativeTimers = {
+  now: () => Date.now(),
+  setTimeout: (run, ms) => setTimeout(run, ms),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+/** Without an injected encoder (plain node), a native capture cannot become a JPEG. */
+const noImageEncoder: NativePortIo["encodeJpeg"] = async () => {
+  throw new Error(MESSAGE_NATIVE.noImageEncoder);
+};
 
 export interface StudioPaths {
   userData: string;
@@ -400,6 +503,29 @@ export interface StudioCoreOptions {
   onAutoResumePending?: (pending: boolean) => void;
   onUiEvent?: (event: UiEvent) => void;
   onLog?: (line: string, stream: "stdout" | "stderr") => void;
+  /** BGRA → JPEG for native captures: Electron's `nativeImage` in the app; absent under plain node. */
+  nativeImages?: { encodeJpeg: NativePortIo["encodeJpeg"] };
+  /** The native run registry's factory: a fixture profile stands a scripted registry in (default: `NativeRuns`). */
+  createNativeRuns?: (options: NativeRunsOptions) => NativeRunsHost;
+  /** The native supervisor utility process, when the app forked one. */
+  nativeSupervisor?: NativeSupervisorClient;
+  /** Live's embedded frames (`main/native-frames.ts`); absent or null where no game can be embedded. */
+  nativeFrames?: NativeFramesHost | null;
+  /** The clock native runs and a builder's wait for a Mac run go by (default: the real one, `NATIVE_TIMERS`). */
+  nativeTimers?: NativeTimers;
+  /**
+   * Whether stacks behind the development gate (Rust · wgpu until its release) may be made here
+   * (`core/stack-gate.ts`). Default: every build but a release build, which refuses them
+   * `stack-gated`.
+   */
+  developmentStacks?: boolean;
+  /**
+   * An owned live developer profile only (`main/index.ts`): the local Rust store and lock its Rust ·
+   * wgpu stack is seeded from at startup, in the background (`ToolchainService.seedRust`), so Rust
+   * games build before any genex release is published. Never set for the normal profile, a fixture
+   * profile or a test run; a release build refuses it.
+   */
+  rustSeedFrom?: RustSeedFrom;
 }
 
 export type { CoreInternals };
@@ -435,6 +561,42 @@ export class StudioCore {
   readonly screenAccess: ScreenAccess | null;
   /** Builds a game that builds itself — never inside the folder the user owns. */
   builds!: GameBuilds;
+  /** The C++ · raylib build lane (`cpp-build.ts`). */
+  cppBuilds!: CppBuilds;
+  /** The Rust · wgpu build lane (`rust-build.ts`, built by `core/rust-lane.ts`), reached only through the seam. */
+  #rustBuilds: RustBuilds | null = null;
+  /**
+   * The Rust lane's iPhone Simulator builds, the export's alone (`mobile-export-deps.ts`): the same
+   * lane with the iPhone built for `aarch64-apple-ios-sim`, in its own folder of the lane's root.
+   */
+  #rustSimulatorBuilds: RustBuilds | null = null;
+  /**
+   * The build-lane seam (`x.gameBuilds`): every compiled build goes through it. Each stack's lane is
+   * whichever lane the core holds when a build is asked for, so a replaced lane is the one that runs.
+   */
+  readonly #gameBuilds = coreGameBuilds({
+    cppBuilds: {
+      ensure: (input, options) => this.cppBuilds.ensure(input, options),
+      cancelAll: () => this.cppBuilds?.cancelAll(),
+      sweep: () => this.cppBuilds.sweep(),
+    },
+    rustBuilds: {
+      ensure: (game, target, purpose, options) => this.#rustLane().ensure(game, target, purpose, options),
+      cancelAll: () => {
+        this.#rustBuilds?.cancelAll();
+        this.#rustSimulatorBuilds?.cancelAll();
+      },
+      sweep: async () => {
+        const lanes = [this.#rustBuilds, this.#rustSimulatorBuilds].filter((lane) => lane !== null);
+        const removed = await Promise.all(lanes.map((lane) => lane.sweep()));
+        return removed.reduce((sum, count) => sum + count, 0);
+      },
+    },
+  });
+  /** The managed C++ toolchain store's service (`core/toolchains.ts`). */
+  toolchains!: ToolchainService;
+  /** Every C++ · raylib game the studio started: the Play window, agents' headless runs, embedded ones (`core/native-runs.ts`). */
+  nativeRuns!: NativeRunsHost;
   plugins!: PluginRegistry;
   pluginServices!: PluginServices;
   /** Each game's link to an engine project, kept for `game-engine` plugins (`game.engine.*`, Undo, the first call's link). */
@@ -525,6 +687,9 @@ export class StudioCore {
     this.games = new GameWorkspaces({
       root: this.layout.gamesRoot,
       templateDir: path.join(options.paths.resources, "game-template"),
+      cppTemplateDir: path.join(options.paths.resources, "game-template-cpp"),
+      rustTemplateDir: path.join(options.paths.resources, "game-template-rust"),
+      rustCreation: developmentStacksOpen(options),
       vendorDir: path.join(options.paths.resources, "vendor"),
       indexFile: path.join(options.paths.userData, "projects.json"),
       userData: options.paths.userData,
@@ -652,6 +817,9 @@ export class StudioCore {
       get mcpSecrets() {
         return core.#mcpSecrets;
       },
+      get nativeTimers() {
+        return core.options.nativeTimers ?? NATIVE_TIMERS;
+      },
       readyProject: (...args) => core.#readyProject(...args),
       recordToolRevision: (...args) => core.#connections.recordApplied(...args),
       recordDeliveredTools: (...args) => core.#connections.recordDelivered(...args),
@@ -709,6 +877,18 @@ export class StudioCore {
       get permissions() {
         return core.#permissions;
       },
+      get cppBuilds() {
+        return core.cppBuilds;
+      },
+      get gameBuilds() {
+        return core.#gameBuilds;
+      },
+      get toolchains() {
+        return core.toolchains;
+      },
+      get nativeRuns() {
+        return core.nativeRuns;
+      },
       planning: (threadId) => core.#permissions.planning(threadId),
       chatMode: (threadId) => core.#permissions.modeOf(threadId),
     };
@@ -752,6 +932,19 @@ export class StudioCore {
       throw error;
     });
     this.sandbox = sandbox;
+    this.toolchains = this.#createToolchains();
+    this.#seedRustInBackground();
+    this.cppBuilds = this.#createCppBuilds();
+    this.#rustBuilds = this.#createRustBuilds();
+    this.#rustSimulatorBuilds = this.#createRustBuilds(MobileBuild.IosSimulator);
+    this.nativeRuns = this.#createNativeRuns();
+    // A game an earlier run of the app left behind (a crash, a force quit) is ended now.
+    void this.nativeRuns.sweepOrphans().catch(() => {});
+    // Build folders nothing builds again (a removed worktree's, an old lock's) each hold an
+    // em-cache clone: swept now, and after every worktree removal.
+    const sweepBuilds = () => void this.#gameBuilds.sweep().catch(() => {});
+    this.snapshots.afterWorktreeRemoved = sweepBuilds;
+    sweepBuilds();
     await this.#openJobs();
     mark("jobs");
     await this.#wireMcp();
@@ -914,9 +1107,23 @@ export class StudioCore {
     return listed;
   }
 
-  /** What no agent process may read: the studio's secrets, the engines' homes and the Genex login. */
+  /**
+   * What no agent process may read: the studio's secrets, the engines' homes, the Genex login and
+   * the native runs (a game's bundle and state are the host's and that game's, never an agent's).
+   */
   #protectedPaths(): string[] {
-    return [this.layout.secrets, this.layout.engineHomes, path.join(os.homedir(), ".genex")];
+    return [
+      this.layout.secrets,
+      this.layout.engineHomes,
+      path.join(os.homedir(), ".genex"),
+      this.layout.nativeRuns,
+      this.#androidDebugKeyHome(),
+    ];
+  }
+
+  /** Studio's per-profile Android debug key folder: a protected path of its own, read only by `apksigner`'s sandbox. */
+  #androidDebugKeyHome(): string {
+    return path.join(this.options.paths.userData, SIGNING_KEYS_FOLDER, ANDROID_DEBUG_KEY_FOLDER);
   }
 
   #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
@@ -932,23 +1139,237 @@ export class StudioCore {
       secretPaths: this.#protectedPaths(),
       // R4 enforced: the judge rubrics are readable but frozen — no agent process, however
       // evolved, rewrites the yardstick it is measured by. Nor does one plant Claude Code's
-      // settings or hooks in a game, which the person's own session there would load.
+      // settings or hooks in a game, which the person's own session there would load, or touch
+      // the toolchain store or a native run (`studioBaseDenyWrites`).
       // B7: prompts and skills are the agent's operating rules; it changes them only through
       // the host (`guardian.write_self`), which tries, snapshots and records every change.
       denyWrite: [
-        path.join(this.layout.harnessWs, "judge"),
-        path.join(this.layout.harnessWs, "prompts"),
-        path.join(this.layout.harnessWs, "skills"),
-        ...claudeFolderDenyWrites(
-          this.layout.gamesRoot,
+        ...studioBaseDenyWrites(
+          this.layout,
           games.map((game) => game.dir),
         ),
+        path.join(this.layout.harnessWs, "prompts"),
+        path.join(this.layout.harnessWs, "skills"),
       ],
       readableRoots: [this.options.paths.resources],
       enabled: this.options.sandbox ?? true,
       // A Finder-launched app has no npm on its PATH; every build the studio ever ran exited 127.
       toolPath: async () => (await toolchain()).path,
+      // The only folder a native game's run directory may be in.
+      nativeRunsRoot: this.layout.nativeRuns,
+      ...this.#gameLauncher(),
     });
+  }
+
+  /**
+   * Windows: the AppContainer launcher every game starts through, from this build's resources. No
+   * build ships it yet (it needs Windows signing), so `spawnGame` refuses with `launcher-missing`.
+   */
+  #gameLauncher(): { gameLauncher?: string } {
+    if (process.platform !== StudioPlatform.Windows) return {};
+    return { gameLauncher: path.join(this.options.paths.resources, "native", GAME_LAUNCHER_EXE) };
+  }
+
+  /**
+   * The toolchain store's service. Its Command Line Tools probe runs only `xcode-select -p` and
+   * `pkgutil`; each prewarm runs in a sandbox of its own, which can write only the store's staging.
+   */
+  #createToolchains(): ToolchainService {
+    return new ToolchainService({
+      store: this.layout.toolchains,
+      // A release build prewarms with its shipped headless platform file and installs the bundled ANGLE from here.
+      resources: this.options.paths.resources,
+      host: servedToolchainHost(process.platform, process.arch),
+      emit: (job) => this.emit(UiEvent.ToolchainInstall, job),
+      run: (request) => this.sandbox.run(request),
+      exec: execHost,
+      probeClt: () => probeCommandLineTools(execHost, process.platform),
+      prewarmSandbox: () =>
+        createPrewarmSandbox({
+          scratchDir: path.join(this.layout.scratch, "toolchain-prewarm"),
+          secretPaths: this.#protectedPaths(),
+          readableRoots: [this.options.paths.resources],
+          enabled: this.options.sandbox ?? true,
+          toolPath: async () => (await toolchain()).path,
+          alongside: this.sandbox,
+        }),
+      prewarmDenyWrite: prewarmDenyWrites(this.layout),
+      recordedLock: async (project) => (await this.games.presentation(project)).native?.lock,
+      // The crate checker (crate requests): writes only its job's check folder, reads none of the person's files.
+      crateCheckSandbox: crateCheckSandboxes({
+        secretPaths: this.#protectedPaths(),
+        denyRead: process.platform === StudioPlatform.Windows ? [] : [os.homedir(), this.layout.gamesRoot],
+        enabled: this.options.sandbox ?? true,
+        alongside: this.sandbox,
+      }),
+      ...this.#rustSeed(),
+    });
+  }
+
+  /** The Rust seed a developer profile names (`rustSeedFrom`), with the shipped payload's warm project and the games' flags. */
+  #rustSeed(): Pick<ToolchainServiceOptions, "rustSeed"> {
+    const from = this.options.rustSeedFrom;
+    if (!from) return {};
+    const resources = this.options.paths.resources;
+    return {
+      rustSeed: { ...from, warmProject: () => shippedWarmProject(resources), rustflags: GAME_PREWARM_RUSTFLAGS },
+    };
+  }
+
+  /** Starts a developer profile's Rust seed without holding the boot; its outcome is one log line. */
+  #seedRustInBackground(): void {
+    if (!this.options.rustSeedFrom) return;
+    void this.toolchains.seedRust().then(
+      (outcome) => this.options.onLog?.(`[core] rust dev seed: ${JSON.stringify(outcome)}`, "stderr"),
+      (err) => this.options.onLog?.(`[core] rust dev seed failed: ${errorMessage(err)}`, "stderr"),
+    );
+  }
+
+  /**
+   * The C++ build lane: out-of-source builds in the host's own `cpp-builds` folder (outside every
+   * writable root), never writing the store or a native run.
+   */
+  #createCppBuilds(): CppBuilds {
+    return new CppBuilds({
+      root: this.layout.cppBuilds,
+      run: (request) => this.sandbox.run(request),
+      locate: (lock, targets) => this.toolchains.locate(lock, targets),
+      currentLock: () => this.toolchains.currentLock(),
+      emit: (progress) => this.emit(UiEvent.BuildProgress, progress),
+      platform: process.platform,
+      cores: os.availableParallelism(),
+      denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
+      writeLock: (project, digest) => this.games.writeNativeLock(project, digest),
+      writeCheck: async (project, target, check) => {
+        await this.games.writeNativeCheck(project, target, check);
+        this.emit(UiEvent.GameChanged, { project });
+      },
+    });
+  }
+
+  /** The Rust lane, once `init` built it. */
+  #rustLane(): RustBuilds {
+    if (!this.#rustBuilds) throw new Error(MESSAGE.rustLaneNotStarted);
+    return this.#rustBuilds;
+  }
+
+  /**
+   * The Rust build lane: build folders in the host's own `rust-builds` folder (outside every
+   * writable root), each build in a sandbox of its own that writes only its folder and opens no
+   * domain, over the store's Rust toolchain and the shipped payload's genex release and gate. With
+   * `ios` the Simulator's, the iPhone export's alone: its own folder, the Simulator's triple and SDK.
+   */
+  #createRustBuilds(ios: typeof MobileBuild.IosSimulator | null = null): RustBuilds {
+    const simulator = ios === null ? {} : { [BuildTarget.Ios]: RUST_MOBILE_BUILDERS[ios].lane };
+    const ndk = async () => (await hostAndroidSdk(this.#phoneHost())())?.ndk?.dir ?? null;
+    return createCoreRustBuilds({
+      root: ios === null ? this.layout.rustBuilds : path.join(this.layout.rustBuilds, RUST_SIMULATOR_FOLDER),
+      store: this.layout.toolchains,
+      resources: this.options.paths.resources,
+      sandbox: rustBuildSandboxes({
+        secretPaths: this.#protectedPaths(),
+        // A build reads only its own folders and the toolchain: never the user's home or another game.
+        denyRead: process.platform === StudioPlatform.Windows ? [] : [os.homedir(), this.layout.gamesRoot],
+        enabled: this.options.sandbox ?? true,
+        alongside: this.sandbox,
+      }),
+      emit: (progress) => this.emit(UiEvent.BuildProgress, progress),
+      platform: process.platform,
+      cores: os.availableParallelism(),
+      denyWrite: [this.layout.toolchains, this.layout.nativeRuns],
+      writeLock: (project, digest) => this.games.writeNativeLock(project, digest),
+      // A game kept on an older Rust lock after an update keeps its build folders through the sweep.
+      retainedLocks: () => this.games.nativeLocks(),
+      builders: { ...rustTargetBuilders(), ...simulator },
+      // The phones' settings (the pinned NDK from the person's SDK), then Windows' and Linux's over
+      // the store at the build's lock (M4.6).
+      targetSettings: rustTargetSettings({
+        store: this.layout.toolchains,
+        mobile: mobileTargetSettings(process.platform, execXcode, { ndk, ...(ios === null ? {} : { ios }) }),
+      }),
+      // A crate off the reviewed list builds only for the game the person approved it for (M3.15).
+      crateGrant: (project) => crateRequestsFor(this).grantFor(project),
+      // The person's trust flag (M7.2) lifts `-F unsafe_code` and allows build scripts; never the sandbox.
+      trust: (game) => engineTrustFor(this).trustOf(game),
+      // The person's eject (M7.1), as the profile records it: a game's own `[engine]` row links no fork.
+      ejection: (project) => engineEjectionsFor(this).ejectedFrom(project),
+      // Every destination's executable passes its policy and the transport scan before it is out/ (M3.5).
+      admit: storeRustAdmit(this.layout.toolchains),
+    });
+  }
+
+  /**
+   * The native run registry: each run built and admitted by `prepareNativeRun`, started under the
+   * game profile (`ProcessSandbox.spawnGame`) and spoken to through a `NativeGamePort`. A fixture
+   * profile stands a scripted registry in (`createNativeRuns`).
+   */
+  #createNativeRuns(): NativeRunsHost {
+    const encodeJpeg = this.options.nativeImages?.encodeJpeg ?? noImageEncoder;
+    const options: NativeRunsOptions = {
+      root: this.layout.nativeRuns,
+      prepare: (request, signal) => prepareNativeRun(this.#nativePrepareDeps(), request, signal),
+      spawn: (request) => this.sandbox.spawnGame(request),
+      connect: (child, io) => new NativeGamePort({ ...io, child, encodeJpeg }),
+      emit: (event) => this.options.onUiEvent?.(event),
+      timers: this.#x.nativeTimers,
+      ...(this.options.nativeSupervisor ? { supervisor: this.options.nativeSupervisor } : {}),
+      frames: this.options.nativeFrames ?? null,
+    };
+    return this.options.createNativeRuns ? this.options.createNativeRuns(options) : new NativeRuns(options);
+  }
+
+  /** What a Mac app export reaches: the core's own services (`core/native-export-run.ts`). */
+  #nativeExportDeps(): NativeExportDeps {
+    return {
+      host: hostOf(process.platform),
+      games: this.games,
+      gameBuilds: this.#gameBuilds,
+      toolchains: this.toolchains,
+      exec: execHost,
+      resources: this.options.paths.resources,
+      stagingRoot: this.layout.exportStaging,
+      exportsRoot: this.layout.exports,
+      secretValues: () => this.knownSecretValues(),
+    };
+  }
+
+  /** What a Windows or Linux archive export reaches: the core's own services (`core/native-export-run.ts`). */
+  #desktopExportDeps(): DesktopExportGameDeps {
+    const { layout } = this;
+    return {
+      host: hostOf(process.platform),
+      games: this.games,
+      gameBuilds: this.#gameBuilds,
+      toolchains: this.toolchains,
+      stagingRoot: layout.exportStaging,
+      signingRoot: layout.signing,
+      secretPaths: this.#protectedPaths(),
+      exportsRoot: layout.exports,
+      secretValues: () => this.knownSecretValues(),
+      forbiddenRoots: this.#signerForbiddenRoots(),
+      sandboxFor: (options) => ProcessSandbox.create(options),
+      env: process.env,
+    };
+  }
+
+  /** What preparing a native run reaches: the core's own services. */
+  #nativePrepareDeps(): NativePrepareDeps {
+    return {
+      root: this.layout.nativeRuns,
+      host: hostOf(process.platform),
+      gameBox: () => this.sandbox.gameBoxAvailable(),
+      gameBoxProblem: (mode) => this.sandbox.gameBox(mode),
+      games: this.games,
+      gameBuilds: this.#gameBuilds,
+      toolchains: this.toolchains,
+      exec: execHost,
+      conformance: (built) =>
+        checkConformanceGate({
+          ...built,
+          ejectedFrom: (project) => engineEjectionsFor(this).ejectedFrom(project),
+          runs: storeConformanceRuns(this.store),
+        }),
+    };
   }
 
   /** The plugin registry and the host services its plugins call, wired to the core and started. */
@@ -1109,11 +1530,14 @@ export class StudioCore {
   ): Promise<void> {
     const root = binding.directory;
     await this.assetCheckpoints.record(binding.project, root, id, jobId, files);
+    // The file lands either way (the plugin wrote it); a format the game's stack cannot load says so.
+    const stack = await readProjectShape(root).then(stackOf, () => GameStack.ThreeJs);
     const landed: AssetDeliveredPayload["files"] = [];
     for (const raw of files) {
       const file = raw.split(path.sep).join("/");
       const size = (await stat(path.join(root, ...file.split("/"))).catch(() => null))?.size ?? 0;
-      landed.push({ file, bytes: size, kind: assetKind(file) });
+      const refused = stackAcceptsAsset(stack, file);
+      landed.push({ file, bytes: size, kind: assetKind(file), ...(refused ? { refused } : {}) });
     }
     const asked = this.#x.pluginCallAttribution.get(binding);
     // A Loop run delivers into its own worktree; those files reach the game only when it lands.
@@ -1259,6 +1683,19 @@ export class StudioCore {
     ];
   }
 
+  /**
+   * The harness died unexpectedly: the recovery service settles its runs and leases, and the native
+   * runs its leases started end too (the owner is the boot that just died, as its leases name it).
+   */
+  async #onHarnessDied(): Promise<{ openRuns: string[] }> {
+    const owner = `harness:${this.#x.harnessBoot}`;
+    try {
+      return await this.#recovery.onHarnessDied();
+    } finally {
+      await nativeOnHarnessGone(this.nativeRuns, owner).catch(() => {});
+    }
+  }
+
   #createHarnessHost(): HarnessHost {
     return new HarnessHost({
       workspace: this.layout.harnessWs,
@@ -1283,7 +1720,7 @@ export class StudioCore {
         this.emit(UiEvent.HarnessState, { state });
       },
       onUnexpectedExit: async () => {
-        const died = await this.#recovery.onHarnessDied();
+        const died = await this.#onHarnessDied();
         // A pause the reborn loop writes for one of these runs came from this crash.
         this.#autoResume.noteCrash(died.openRuns);
         return died;
@@ -1392,13 +1829,16 @@ export class StudioCore {
 
   async stop(): Promise<void> {
     this.#planReviews?.stop();
+    // No compiled build outlives the studio; they run in the sandbox disposed below.
+    this.#gameBuilds.cancelAll();
     // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
     // awake that it asked for, end with the core either way.
     this.#autoResume.dispose();
     // `init()` opened the sandbox and the job registry, so a core that never started still stops
-    // the jobs it was handed and gives the sandbox back.
+    // the jobs and native runs it was handed and gives the sandbox back.
     if (!this.#started) {
       await this.#stopJobs();
+      await this.nativeRuns?.stopAll().catch(() => {});
       return this.sandbox?.dispose();
     }
     this.#started = false;
@@ -1427,6 +1867,8 @@ export class StudioCore {
         this.options.onLog?.(`[core] plugin lease release failed on stop: ${errorMessage(error)}`, "stderr"),
       );
     this.#x.pluginTurnLeases.clear();
+    // No native game outlives the studio, and none is left drawing into a preview about to close.
+    await this.nativeRuns?.stopAll().catch(() => {});
     await this.#x.previewPool?.disposeAll().catch(() => {});
     // A connector's child process belongs to this studio, not to the Mac: it goes when we go.
     await this.mcp?.close().catch(() => {});
@@ -1706,6 +2148,7 @@ export class StudioCore {
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
         autoResume: parsed.autoResume !== false,
+        ...savedStackDefault(parsed.stackDefault),
       };
     } catch {
       /* first launch — defaults stand */
@@ -1738,12 +2181,21 @@ export class StudioCore {
   }
 
   // ── games ────────────────────────────────────────────────────────────────────────────────
+  /**
+   * The person's Create game: the library checks the stack, destinations and chosen folder, and
+   * refuses a new C++ · raylib game to this caller (the person, unless the host names itself).
+   */
   async createGame(title: string, options: CreateOptions = {}): Promise<GameProject> {
     // The library root is host-configured. The reserved child is checked by #readyProject;
     // the root itself is intentionally not an adoptable project in fixture profiles. A chosen
     // folder is checked before the library writes, so a refused one is left with nothing in it.
     const allowed = (real: string) => this.#assertLocationAllowed(real);
-    const where = options.parent === undefined ? {} : { parent: options.parent, allowed };
+    const destinations = {
+      ...(options.stack === undefined ? {} : { stack: options.stack }),
+      ...(options.targets === undefined ? {} : { targets: options.targets }),
+      caller: options.caller ?? ScaffoldCaller.Person,
+    };
+    const where = options.parent === undefined ? destinations : { ...destinations, parent: options.parent, allowed };
     const waiting = options.provisional === true ? { provisional: true } : {};
     const ready = await this.#readyProject(await this.games.create(title, { ...where, ...waiting }));
     // The folder as it was made, once its repository exists: the chat's first build reads
@@ -1940,18 +2392,157 @@ export class StudioCore {
 
   /**
    * The public copy of a game: built first when its shape builds, then staged into `targetDir`
-   * by the same audited exporter the Export button uses. Plugins reach it as `export.stage`.
+   * by the same audited exporter the Export button uses. Plugins reach it as `export.stage`, which
+   * is always the web folder. `destination: macos` exports a C++ game's Mac app (signed ad hoc
+   * unless `signing` says otherwise); `windows` and `linux` its zip or tarball (unsigned unless the
+   * person chose their own certificate for Windows).
    */
-  async exportPublicCopy(project: string, targetDir: string): Promise<ExportResult> {
+  async exportPublicCopy(
+    project: string,
+    targetDir: string,
+    options: { destination?: BuildTarget; signing?: ExportSigningChoice; person?: boolean } = {},
+  ): Promise<ExportResult> {
     const game = (await this.games.list()).find((g) => g.name === project);
     if (!game) throw new Error(MESSAGE.gameNotFound);
+    const destination = options.destination ?? BuildTarget.Web;
+    const request = { game, destination, targetDir, signing: options.signing, person: options.person === true };
+    return runExport(this.#exportRunners(), request);
+  }
+
+  /** The export steps `EXPORT_RUNS` dispatches to (`core/native-export-run.ts`), over the core's own services. */
+  #exportRunners(): ExportRunners {
+    return {
+      browserFolder: (game, targetDir) => this.#exportBrowserFolder(game, targetDir),
+      compiledWeb: (game, targetDir) => this.#exportCompiledWeb(game, targetDir),
+      macApp: (request) => exportMacGame(this.#nativeExportDeps(), request),
+      desktopArchive: (request) => exportDesktopGame(this.#desktopExportDeps(), request),
+      iosApp: (request) => exportIosGame(request, iosExportDeps(this.#mobileExportServices())),
+      androidPackage: (request) => exportAndroidGame(request, androidExportDeps(this.#mobileExportServices())),
+      conformance: (game) =>
+        exportConformanceGate(
+          {
+            gameBuilds: this.#gameBuilds,
+            toolchains: this.toolchains,
+            ejectedFrom: (project) => engineEjectionsFor(this).ejectedFrom(project),
+            runs: storeConformanceRuns(this.store),
+          },
+          game,
+        ),
+    };
+  }
+
+  /** The person's home and environment, this platform and Studio's protected paths, as the phone probes read them. */
+  #phoneHost() {
+    return { platform: process.platform, home: os.homedir(), env: process.env, protectedPaths: this.#protectedPaths() };
+  }
+
+  /** The folders no keystore, profile or password file the person names may come from: the games, scratch, Studio's data and resources. */
+  #signerForbiddenRoots(): string[] {
+    const { layout } = this;
+    return [layout.gamesRoot, layout.scratch, this.options.paths.userData, this.options.paths.resources];
+  }
+
+  /**
+   * Where an export refusal's redaction may read a password file from: nowhere a signer would
+   * refuse one (`signerPasswordFile`), nor any of Studio's protected paths.
+   */
+  redactionForbiddenRoots(): string[] {
+    return [...this.#signerForbiddenRoots(), ...this.#protectedPaths()];
+  }
+
+  /** What no agent process may read (`~/.genex`, the secrets, the debug key folder): no Android SDK is taken from one. */
+  protectedPaths(): string[] {
+    return this.#protectedPaths();
+  }
+
+  /** The host's store of admitted phone packages: the phone exports add to it, the person's device launch installs from it. */
+  get phonePackages(): PhonePackageStore {
+    return phonePackageStore(this.layout.phonePackages);
+  }
+
+  /**
+   * What the phone exports reach (`mobile-export-deps.ts`): the seam's Rust lane and the Simulator
+   * lane, the person's Xcode and Android SDK, the store's phone tools, Studio's debug key and a
+   * sandbox per tool. Nothing launches a Simulator, an emulator or a device.
+   */
+  #mobileExportServices(): MobileExportServices {
+    const { layout } = this;
+    const currentLock = () => this.toolchains.currentLock(GameStack.RustWgpu);
+    const simulator = () => {
+      if (!this.#rustSimulatorBuilds) throw new Error(MESSAGE.rustLaneNotStarted);
+      return this.#rustSimulatorBuilds;
+    };
+    return {
+      ...hostPhoneProbes({ store: layout.toolchains, exec: execXcode, currentLock, ...this.#phoneHost() }),
+      host: hostOf(process.platform),
+      games: this.games,
+      gameBuilds: this.#gameBuilds,
+      simulatorLane: { ensure: (game, target, purpose, options) => simulator().ensure(game, target, purpose, options) },
+      toolchains: this.toolchains,
+      sandboxFor: (options) => ProcessSandbox.create(options),
+      exportsRoot: layout.exports,
+      stagingRoot: layout.exportStaging,
+      signingRoot: layout.signing,
+      secretPaths: this.#protectedPaths(),
+      forbiddenRoots: this.#signerForbiddenRoots(),
+      keyHome: this.#androidDebugKeyHome(),
+      home: os.homedir(),
+      env: process.env,
+      secretValues: () => this.knownSecretValues(),
+      phonePackages: this.phonePackages,
+    };
+  }
+
+  /** A three.js game's browser folder: built first when its shape builds. */
+  async #exportBrowserFolder(game: GameProject, targetDir: string): Promise<ExportResult> {
     let output: string | undefined;
     if (game.shape?.build) {
       const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
       if (!built.ok || !built.output) throw new Error(MESSAGE.exportBuildFailed);
       output = built.output;
     }
-    return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
+    return this.games.export(game.name, targetDir, output, { secretValues: this.knownSecretValues() });
+  }
+
+  /**
+   * A compiled game's browser folder: its lane's web build (purpose `export`) through the seam,
+   * exported as any web folder. A game whose stack has no lane yet is `lane-missing`: no build.
+   */
+  async #exportCompiledWeb(game: GameProject, targetDir: string): Promise<ExportResult> {
+    // A web build of a game without Browser is the judges' only: never exported or published.
+    if (!destinationsOf(game).targets.includes(BuildTarget.Web))
+      throw new ExportError(ExportRefusal.NotADestination, MESSAGE.exportNotADestination);
+    const { name: project, dir, shape } = game;
+    const stack = stackOf(shape);
+    // A Rust game's own retained lock; another compiled stack's current lock, as before.
+    const lock = isCompiledStack(stack) ? await this.toolchains.currentLock(stack, project) : null;
+    const asked = { project, dir, shape, destinations: destinationsOf(game), lock };
+    const receipt = await this.#gameBuilds.ensure(asked, BuildTarget.Web, CppBuildPurpose.Export);
+    if (receipt.refusal !== null) throw new ExportError(receipt.refusal, MESSAGE.exportLaneMissing);
+    const built = receipt.outcome;
+    if (!built.ok || !built.output) throw new ExportError(ExportRefusal.BuildFailed, MESSAGE.exportBuildFailed);
+    const notices = await this.#rustWebNotices(game, built.output, lock);
+    const exported = await this.games.export(game.name, targetDir, built.output, {
+      secretValues: this.knownSecretValues(),
+    });
+    if (notices) await writeNoticesFolder(path.join(targetDir, RUST_EXPORT_NOTICES), game.title ?? game.name, notices);
+    const warnings = webExportWarnings(built.rust?.receipt?.web);
+    return warnings.length ? { ...exported, warnings } : exported;
+  }
+
+  /**
+   * A Rust game's web export notices (M3.5): every crate of the admitted build's lock and the
+   * runtime parts, refused `missing-notice` before anything is exported; none for another stack,
+   * and none over a development fixture's stand-in store, which holds no licence texts.
+   */
+  async #rustWebNotices(game: GameProject, output: string, lock: ToolchainLock | null): Promise<MacNotice[] | null> {
+    if (stackOf(game.shape) !== GameStack.RustWgpu) return null;
+    const store = this.layout.toolchains;
+    if (await isFixtureStore(store)) return null;
+    const buildLock = admittedBuildLock(output);
+    const notices = await rustExportNotices({ store, buildLock, target: BuildTarget.Web, ...(lock ? { lock } : {}) });
+    if (!notices.ok) throw new ExportError(ExportRefusal.MissingNotice, `${notices.refusal}: ${notices.detail}`);
+    return notices.notices;
   }
 
   async #setGameCoverShader(
@@ -2045,6 +2636,9 @@ export class StudioCore {
       ...engineRpc(this, this.#x),
       ...studioRpc(this, this.#x),
       ...previewRpc(this, this.#x),
+      ...nativeRpc(this, this.#x),
+      ...cratesRpc(this, this.#x),
+      ...conformanceRpc(this, this.#x),
     };
     return table;
   }
@@ -2456,6 +3050,10 @@ export class StudioCore {
 
   stopThread(...args: Parameters<ConversationService["stopThread"]>): ReturnType<ConversationService["stopThread"]> {
     this.#autoResume.userStopped(args[0]);
+    // Composer Stop ends every C++ build in flight too (nobody waits for one any more), then every
+    // agent's native run; the person's own Play window keeps running.
+    if (this.nativeRuns) void nativeOnComposerStop(this.#gameBuilds, this.nativeRuns).catch(() => {});
+    else this.#gameBuilds.cancelAll();
     return this.#conversation.stopThread(...args);
   }
 

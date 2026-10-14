@@ -34,6 +34,34 @@ screen on `git-missing`). What differs from macOS:
 - `killChild` kills the srt-win broker, whose job ends the tree; `HarnessHost.stop()` sends
   `shutdown` and kills only after the grace.
 
+## Game launcher
+
+A C++ · raylib game never runs under srt-win: `ProcessSandbox.spawnGame` starts it through
+`genex-game-launcher.exe` ([`native/genex-game-launcher`](../native/genex-game-launcher/README.md),
+planned by [`windows-game-launch.ts`](../src/substrate/windows-game-launch.ts)). The launcher puts
+the game in a per-run AppContainer with no capabilities (no network), grants it the run's
+`bundle\` (read and execute) and `state\` (read and write) and nothing else, holds it in a
+kill-on-close Job Object with the memory cap, and relays the protocol between its own fd 3 and
+the run's pipe `\\.\pipe\genex-game-<run id>` (`GENEX_STUDIO_PIPE`). The host checks the run
+folder by realpath and claims it once (`launch.claim`). Stop closes fd 3, then ends the launcher;
+no process group is signalled. Neither Windows nor Linux has a headless build, so an agent's run is
+refused (`no-headless-build`) and judged on the web build.
+
+No build ships the launcher yet (it needs Genex's Windows signing), so Play answers
+`no-game-box` with `launcher-missing`.
+
+A Rust · wgpu game's Windows build is cross-built on a Mac
+([`rust-build-windows.ts`](../src/main/rust-build-windows.ts): `x86_64-pc-windows-gnullvm` with
+llvm-mingw, a static C runtime, one `game.exe`); its builder registers only once the Rust recipe
+pins the cross components, and until then the build is refused `target-unbuilt`. It draws through D3D12 alone with FXC
+(`d3dcompiler_47.dll`) chosen explicitly, and its PE policy refuses desktop OpenGL, a DXC compiler
+or a shipped runtime DLL. wgpu loads `d3dcompiler_47.dll`, `d3d12.dll` and `dxgi.dll` by bare
+name, and none is a KnownDLL, so Windows' default search order looks in the executable's folder
+before System32: a Rust run bundle or export must never put a DLL beside `game.exe`. No Windows
+host runs one: it would start through the same launcher, whose shipping is a separate decision.
+Its export (a zip with the exe alone signed, only with the person's own certificate, labelled
+untested on real GPUs) is refused `lane-missing` until the export run routes a Rust game to it.
+
 ## Denied reads
 
 `ProcessSandbox`'s base deny list (`baseDenyRead` in `spawn.ts`) is macOS and Linux's. Windows has its own list
@@ -73,3 +101,10 @@ through the folders the others keep in `%TEMP%`: tests remove theirs with `remov
 `WindowsSandboxSession` over fake ancestor grants.
 A dispatch with `files` runs only those files after the sandbox setup
 (`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`). `.gitattributes` keeps every checkout LF.
+
+The Rust WARP row is separate and billed (`gh workflow run windows.yml --ref <branch> -f
+rust_warp=true`, or the `windows-smoke` label on a PR into `main`): `rust-warp-build` cross-builds
+the gnullvm pond and a decoy `dxcompiler.dll` on Linux, and `rust-warp` runs it on `windows-2025`
+under D3D12 WARP with the decoy first on PATH. The adapter must be WebGPU-compliant and FXC, never
+the decoy, must compile the shaders. Until a real GPU runs a Windows row, every Rust Windows
+export stays labelled untested.

@@ -13,7 +13,7 @@ import { PermissionMode } from "../../src/shared/permissions.ts";
 import type { JobSpawn } from "../../src/substrate/jobs.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { running } from "../helpers/processes.ts";
-import { startRig } from "../helpers/studio-rig.ts";
+import { makeFakePreview, startRig } from "../helpers/studio-rig.ts";
 
 const alive = (pid: number) => {
   try {
@@ -81,7 +81,14 @@ it("quitting kills a harness that will not stop, as the last step before the app
     };
     const idle = { release() {}, dismiss() {}, cancel() {}, dispose() {} };
     const failed = await runShutdown(
-      shutdownSteps({ keepAwake: idle, codexLogin: idle, claudeLogin: idle, terminals: idle, core: rig.core }),
+      shutdownSteps({
+        keepAwake: idle,
+        codexLogin: idle,
+        claudeLogin: idle,
+        terminals: idle,
+        core: rig.core,
+        native: rig.core.nativeRuns,
+      }),
       { log: () => {}, timers: quick },
     );
     assert.deepEqual(failed, ["stop the harness", "stop the studio core"]);
@@ -89,6 +96,29 @@ it("quitting kills a harness that will not stop, as the last step before the app
   } finally {
     rig.core.host.stop = stop;
     await stop().catch(() => {});
+    await rig.stop().catch(() => {});
+  }
+});
+
+it("stopping the core ends native games before it closes the preview windows", async () => {
+  const order: string[] = [];
+  const rig = await startRig(
+    {},
+    {
+      createHeadlessPreview: async () => ({
+        ...makeFakePreview(),
+        dispose: async () => void order.push("previews"),
+      }),
+    },
+  );
+  try {
+    rig.core.nativeRuns = Object.assign(Object.create(rig.core.nativeRuns), {
+      stopAll: async () => void order.push("native games"),
+    });
+    await rig.core.api()["preview.acquire"]({ label: "probe" });
+    await rig.core.stop();
+    assert.deepEqual(order, ["native games", "previews"]);
+  } finally {
     await rig.stop().catch(() => {});
   }
 });

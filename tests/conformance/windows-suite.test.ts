@@ -27,6 +27,30 @@ test("the checked-in Windows suite names only real, sorted, non-rig test files",
   assert.ok(suite.includes("tests/conformance/sandbox-prepare.test.ts"));
 });
 
+test("the suite runs the Windows and Linux destinations' host-side tests, but not the Linux game box", () => {
+  const suite = readWindowsSuite(repo);
+  const onWindows = [
+    "tests/conformance/bundle-walk.test.ts",
+    "tests/conformance/host-matrix.test.ts",
+    "tests/conformance/native-cross-admission.test.ts",
+    "tests/conformance/native-export-archive.test.ts",
+    "tests/conformance/native-export-desktop.test.ts",
+    "tests/conformance/native-gate-pe.test.ts",
+    "tests/conformance/native-rundir-cross.test.ts",
+    "tests/conformance/windows-game-launch.test.ts",
+    "tests/conformance/windows-names.test.ts",
+    "tests/conformance/windows-sign.test.ts",
+  ];
+  for (const file of onWindows) assert.ok(suite.includes(file), `${file} is meaningful on Windows`);
+  // Bubblewrap and a seccomp filter exist only on Linux: these never run on Windows.
+  const linuxOnly = [
+    "tests/conformance/host-game-box.test.ts",
+    "tests/conformance/linux-game-box.test.ts",
+    "tests/conformance/linux-game-seccomp.test.ts",
+  ];
+  for (const file of linuxOnly) assert.ok(!suite.includes(file), `${file} is Linux-only`);
+});
+
 test("a curated suite entry that is not a runnable fast test is refused with its reason", () => {
   const rows = [
     { entries: ["tests/missing.test.ts"], problem: SuiteProblem.NotATest },

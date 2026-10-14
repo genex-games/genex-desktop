@@ -2,6 +2,7 @@
  * Taking a picture of a preview for an agent: the surface asked for and the one the port says it
  * took, in the words the model was given.
  */
+import type { CaptureProvenance } from "../../shared/build-preview.ts";
 import type { PreviewPixelStats, PreviewPort } from "../../substrate/preview-port.ts";
 import { CaptureSurface, StillMimeType } from "../../shared/preview-contract.ts";
 
@@ -45,14 +46,21 @@ export async function captureSurface(
   port: PreviewPort,
   quality: number,
   surface: CaptureSurface,
-): Promise<{ jpeg: Buffer; stats: PreviewPixelStats | null; surface: CaptureSurface | null }> {
-  if (!port.screenshotWithStats) return { jpeg: await port.screenshot(quality), stats: null, surface: null };
+): Promise<{
+  jpeg: Buffer;
+  stats: PreviewPixelStats | null;
+  surface: CaptureSurface | null;
+  provenance: CaptureProvenance | null;
+}> {
+  if (!port.screenshotWithStats)
+    return { jpeg: await port.screenshot(quality), stats: null, surface: null, provenance: null };
   const shot = await port.screenshotWithStats(quality, {
     surface,
     ...(surface === CaptureSurface.Page ? { page: true } : {}),
   });
   const took = shot.surface ?? (surface === CaptureSurface.Auto ? null : surface);
-  return { jpeg: shot.jpeg, stats: shot.stats ?? null, surface: took };
+  // Where the frame came from rides along when the port knows it, never guessed where it does not.
+  return { jpeg: shot.jpeg, stats: shot.stats ?? null, surface: took, provenance: shot.provenance ?? null };
 }
 
 /**

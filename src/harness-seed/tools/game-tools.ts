@@ -13,13 +13,37 @@ import { REFERENCE_MIN_STILLS, ReferenceKind, RunMode } from "../loop/run-events
 import { MINUTE_MS } from "../loop/time.ts";
 import { TurnStop } from "../loop/turn-record.ts";
 import { isRecord } from "../loop/json.ts";
+import { BuildTarget, GameStack } from "../loop/native-contract.ts";
+import { nightStack, scaffoldFor } from "../loop/native-loop.ts";
 import { LoopProfile, loopProfileOf, ProjectStarter, ProjectTool } from "../loop/folder-facts.ts";
 import { OPEN_LAUNCH_WORDS } from "../loop/open-loop-prompts.ts";
 import { UNTIL_DONE_WORDS } from "../loop/until-done-prompts.ts";
 import { scopeItems } from "../loop/scope.ts";
 
-/** How long `run_command` lets a command run when the call names no timeout. */
-const COMMAND_TIMEOUT_MS = 2 * MINUTE_MS;
+/**
+ * These tools give an existing C++ · raylib game's builds their time and never ask for a new one
+ * (raylib creation is retired). run-dispatch.ts and chat-dispatch.ts refuse a raylib night on a
+ * kept copy without this mark.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * These tools make a Rust · wgpu game for any desktop or phone destination (`targets`), read a
+ * Rust game's stack by its kind and give its cargo builds their time (`COMMAND_TIMEOUT_MS`):
+ * run-dispatch.ts refuses a Rust night on a kept copy without this mark.
+ */
+export const SERVES_RUST = true;
+
+/**
+ * How long `run_command` lets a command run when the call names no timeout: a compiled build takes
+ * longer. The app's copy is `src/shared/toolchain.ts` (seed-contracts.test.ts holds the two equal).
+ */
+export const COMMAND_TIMEOUT_MS: Readonly<Record<GameStack, number>> = {
+  [GameStack.ThreeJs]: 2 * MINUTE_MS,
+  [GameStack.RaylibCpp]: 10 * MINUTE_MS,
+  // A cargo build is a compiled build too: it gets the C++ build's time until the Rust lane measures its own.
+  [GameStack.RustWgpu]: 10 * MINUTE_MS,
+};
 /** Bytes in the kilobyte an attached picture's size is said in. */
 const KB = 1024;
 /** How many words of the ask a new folder's name keeps, and how long that name may be. */
@@ -50,6 +74,29 @@ const SLUG_STOP = new Set([
 ]);
 
 const str = (description: string) => ({ type: "string", description });
+/** Where people will play, as a tool parameter: any of the studio's destinations. */
+const targetsParam = (description: string) => ({
+  type: "array",
+  items: { type: "string", enum: Object.values(BuildTarget) },
+  description,
+});
+/** What a launch tool says about `targets`. */
+const LAUNCH_TARGETS =
+  "only for a game this chat has no folder for yet: where people will play it. Leave it out for the browser (three.js); any of macos, windows, linux, ios or android makes it a Rust · wgpu game (add web to build it for the browser too)";
+
+/** What a launch tool's run carries of `targets`: the destinations a compiled game's intake chose, nothing for the browser. */
+function launchTargets(targets: unknown): { targets?: BuildTarget[] } {
+  const asked = scaffoldFor(targets);
+  return asked.targets ? { targets: asked.targets } : {};
+}
+
+/** The time a command gets in `project` when the call names none, by the game's stack. */
+async function commandTimeout(ctx: ToolCtx, project: string | null | undefined): Promise<number> {
+  if (!project) return COMMAND_TIMEOUT_MS[GameStack.ThreeJs];
+  const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
+  return COMMAND_TIMEOUT_MS[nightStack(games.find((g) => g.name === project) ?? null)];
+}
+
 /**
  * A list parameter. Engines that declare intake fields as strings (claude-code.ts `intakeTool`) send
  * it as a JSON array in a string or one item per line: the registry lets that text through
@@ -113,13 +160,16 @@ export const tools: HarnessTool[] = [
   {
     name: "new_game",
     description:
-      "Create a new game project. With kind 'web' Genex writes its three.js starter, which already satisfies the studio contract (window.__studio), so the first screenshot works immediately. Leave kind out for an empty folder you fill yourself.",
+      "Create a new game project. With kind 'web' Genex writes its three.js starter, which already satisfies the studio contract (window.__studio), so the first screenshot works immediately. Leave kind out for an empty folder you fill yourself. With a desktop or phone destination in targets (macos, windows, linux, ios, android) it is a Rust · wgpu game from the Rust template, built by the studio for each destination; add web to targets to build it for the browser too.",
     parameters: {
       type: "object",
       properties: {
         name: str("lowercase project id, e.g. 'pong'"),
         title: str("human title"),
         kind: { type: "string", enum: [ProjectStarter.Web], description: "'web' for the three.js starter" },
+        targets: targetsParam(
+          "where people will play it — leave it out for a browser game; name a desktop destination only when the user asked for one",
+        ),
       },
       required: ["name"],
     },
@@ -128,12 +178,15 @@ export const tools: HarnessTool[] = [
         return `This chat is already working in "${ctx.project}". Do not create another folder. Write files here with write_file.`;
       }
       const web = args.kind === ProjectStarter.Web;
+      // A desktop or phone destination asks for the Rust template, whatever kind says.
+      const compiled = scaffoldFor(args.targets);
       const project = await ctx.call(HostMethod.GameScaffold, {
         name: args.name,
         title: args.title ?? args.name,
         ...(web ? { kind: ProjectStarter.Web } : {}),
+        ...compiled,
       });
-      if (!web) return `Created ${project.name} at ${project.dir}: an empty folder, yours to fill.`;
+      if (!web && !compiled.kind) return `Created ${project.name} at ${project.dir}: an empty folder, yours to fill.`;
       await ctx.call(HostMethod.PreviewLoad, { project: args.name });
       return `Created ${project.name} at ${project.dir} and loaded it in the preview.`;
     },
@@ -270,6 +323,78 @@ export const tools: HarnessTool[] = [
   },
 
   {
+    name: "request_crate",
+    description:
+      "Rust games only: ask the person for one extra crate at one exact version (extension ladder level 4). " +
+      "Only the person approves, in Studio's window; the answer is pending, vendored or refused with a typed code " +
+      "(crate-declined, crate-advisory, crate-licence, crate-banned, crate-build-script, crate-proc-macro, …); " +
+      "a known security advisory, a licence off the list or a banned crate refuses it even after the person approves. " +
+      'Once vendored, name it in genex.toml under [crates] at that exact version (tidy = "=1.0.0"). ' +
+      "Prefer the facade and the reviewed crates (noise, fastrand) first.",
+    parameters: {
+      type: "object",
+      properties: {
+        project: str("project id; defaults to this chat's folder"),
+        name: str("the crate's registry name"),
+        version: str("one exact version, MAJOR.MINOR.PATCH"),
+        reason: str("one sentence for the person: what the game needs it for"),
+      },
+      required: ["name", "version", "reason"],
+    },
+    async execute(args, ctx) {
+      const pin = pinProject(args, ctx);
+      if (pin.error) return { ok: false, content: pin.error };
+      const answer = await ctx.call(HostMethod.CratesRequest, {
+        project: pin.project!,
+        name: String(args.name ?? ""),
+        version: String(args.version ?? ""),
+        ...(typeof args.reason === "string" ? { reason: args.reason } : {}),
+      });
+      const refused = answer.refusal ? ` (${answer.refusal})` : "";
+      return {
+        ok: !answer.refusal,
+        content: `Crate request ${answer.requestId} for ${args.name} ${args.version}: ${answer.state}${refused}.`,
+      };
+    },
+  },
+
+  {
+    name: "check_conformance",
+    description:
+      "Rust games only: run the game conformance suite on the game's current Mac build (every verb, seed determinism, " +
+      "the capture digest, Stop and reap) and record the answer for that build. Read-only for the game: it builds, " +
+      "starts and stops its own headless copies. An ejected game's Live, capture and export wait for a passing run " +
+      "on each new build (conformance-required): run this after every engine/ change, and fix the check it names. " +
+      "Working in a playable worktree, pass its root: a worktree's build is judged on its own.",
+    parameters: {
+      type: "object",
+      properties: {
+        project: str("project id; defaults to this chat's folder"),
+        root: str("a playable worktree of the game to judge instead of its folder; omit for the folder"),
+        demo: str("the demo the determinism check plays; the game's first demo when omitted"),
+      },
+      required: [],
+    },
+    async execute(args, ctx) {
+      const pin = pinProject(args, ctx);
+      if (pin.error || !pin.project) return { ok: false, content: pin.error ?? "No project is open in this chat." };
+      const report = await ctx.call(HostMethod.GameConformance, {
+        project: pin.project,
+        ...(typeof args.root === "string" && args.root ? { root: args.root } : {}),
+        ...(typeof args.demo === "string" && args.demo ? { demo: args.demo } : {}),
+      });
+      const build = report.buildDigest ? ` on build ${report.buildDigest.slice(0, 12)}` : "";
+      const lines = report.checks.map(
+        (c) => `- ${c.check}: ${c.outcome}${c.code ? ` (${c.code})` : ""}${c.detail ? ` — ${c.detail}` : ""}`,
+      );
+      return {
+        ok: report.passed,
+        content: [`Conformance ${report.passed ? "passed" : "failed"}${build}.`, ...lines].join("\n"),
+      };
+    },
+  },
+
+  {
     name: "delegate_to_contractor",
     description:
       "Hand a well-specified build task to a vendor harness (Claude Code or Codex, whichever subscription is signed in) working in the game workspace. Use for large, mechanical work. Write the brief carefully: the brief is the part you control and improve.",
@@ -309,7 +434,10 @@ export const tools: HarnessTool[] = [
       properties: {
         command: str("shell command"),
         project: str("run inside this project's directory (optional)"),
-        timeoutMs: { type: "number", description: "default 120000" },
+        timeoutMs: {
+          type: "number",
+          description: `default ${COMMAND_TIMEOUT_MS[GameStack.ThreeJs]} (${COMMAND_TIMEOUT_MS[GameStack.RaylibCpp]} in a C++ · raylib game, ${COMMAND_TIMEOUT_MS[GameStack.RustWgpu]} in a Rust · wgpu game)`,
+        },
       },
       required: ["command"],
     },
@@ -324,7 +452,7 @@ export const tools: HarnessTool[] = [
       const result = await ctx.call(HostMethod.RunExec, {
         command: args.command,
         ...(project ? { project } : {}),
-        timeoutMs: args.timeoutMs ?? COMMAND_TIMEOUT_MS,
+        timeoutMs: args.timeoutMs ?? (await commandTimeout(ctx, project)),
       });
       const body = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
       return {
@@ -347,6 +475,7 @@ export const tools: HarnessTool[] = [
         notes: str("optional extra for the critic"),
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
+        targets: targetsParam(LAUNCH_TARGETS),
       },
       required: ["goal", "direction"],
     },
@@ -382,6 +511,8 @@ export const tools: HarnessTool[] = [
         engine: builderEngine,
         ...(builderModel ? { model: builderModel } : {}),
         ...scopeArgs(args),
+        // Where people will play a game this chat has no folder for yet (a desktop or phone one is Rust · wgpu).
+        ...launchTargets(args.targets),
       };
       return {
         ok: true,
@@ -406,6 +537,7 @@ export const tools: HarnessTool[] = [
         textual_reference: str("if the user had no images: the game/film they named as the vibe"),
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
+        targets: targetsParam(LAUNCH_TARGETS),
       },
       required: ["goal", "direction"],
     },
@@ -454,6 +586,8 @@ export const tools: HarnessTool[] = [
         ...(autopilot.roles && typeof autopilot.roles === "object" ? { roles: autopilot.roles } : {}),
         ...(autopilot.reviewPlan === true ? { reviewPlan: true } : {}),
         ...scopeArgs(args),
+        // Where people will play a game this chat has no folder for yet (a desktop or phone one is Rust · wgpu).
+        ...launchTargets(args.targets),
       };
       const clock = capped ? `Building for up to ${hours} h` : await untilDoneWords(ctx, ctx.project ?? project);
       return {

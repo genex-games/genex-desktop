@@ -21,13 +21,15 @@ import { Against, againstWords, observedFrom, VerdictPass, verdictRecord, Verdic
 import { StopCode, stopWith } from "./outcomes.ts";
 import { appendRun, EventKind, REFERENCE_MIN_STILLS, ReferenceKind, RunEvent, RunMode } from "./run-events.ts";
 import { HostMethod } from "./host-methods.ts";
-import { ProjectStarter } from "./folder-facts.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS, sleepUnlessCancelled } from "./time.ts";
 import { BriefPhase, buildBrief } from "./gauntlet-prompts.ts";
-import { gatherEvidence, observationOnlyFailure, withObservationPatience } from "./evidence.ts";
+import { gatherEvidence, observationOnlyFailure, withLease, withObservationPatience } from "./evidence.ts";
 import { RoundFlow } from "./facet/flow.ts";
 import { PAGE_SEED } from "./config.ts";
 import { clip, CLIP_REASON } from "./text.ts";
+import { stackOfShape } from "./native-loop.ts";
+import { runScaffoldAsk } from "./run-scaffold.ts";
+import { GameStack } from "./native-contract.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { Evidence, Shot } from "./evidence.ts";
 
@@ -99,6 +101,43 @@ export interface GauntletOptions {
   onProgress?: ((progress: AnyRecord) => unknown) | null;
 }
 
+/**
+ * A classic night scaffolds the C++ template when its intake chose a desktop destination
+ * (`run.targets`), and looks at a raylib game through its judging target (`lookAt`).
+ * run-dispatch.ts and chat-dispatch.ts refuse a raylib night on a kept copy without this mark
+ * (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * A classic night looks at a Rust · wgpu game through its judging target as at a raylib one
+ * (`LEASED_LOOK`): a copy kept from before Rust games looks at the live stand-in, which a Rust
+ * game is not, so a Rust night refuses it (`servesRust`, native-contract.ts).
+ */
+export const SERVES_RUST = true;
+
+/**
+ * Whether a night of each stack looks through a lease naming the game's judging target: a
+ * compiled game (C++ · raylib, Rust · wgpu) is judged on the build its destinations name, a
+ * three.js night on the live stand-in, as the classic run always has.
+ */
+const LEASED_LOOK = {
+  [GameStack.ThreeJs]: false,
+  [GameStack.RaylibCpp]: true,
+  [GameStack.RustWgpu]: true,
+} as const satisfies Record<GameStack, boolean>;
+
+/** Whether this night's game (`run.stack`, stamped where it learned its game) is looked at through a lease. */
+function looksThroughLease(run: Run): boolean {
+  const stack: unknown = run.stack;
+  return isGameStack(stack) && LEASED_LOOK[stack];
+}
+
+/** Whether `value` is a stack this seed knows (native-contract.ts `GameStack`). */
+function isGameStack(value: unknown): value is GameStack {
+  return typeof value === "string" && Object.hasOwn(LEASED_LOOK, value);
+}
+
 /** A classic run's wall clock when its budget names none: shorter than a director's or autopilot's day. */
 const CLASSIC_WALL_CLOCK_MS = 4 * HOUR_MS;
 /** A classic run's iteration budget when its budget names none. */
@@ -121,11 +160,16 @@ export async function runGauntlet(ctx: HarnessCtx, options: GauntletOptions): Pr
 
   await announceRunStart(ctx, threadId, run, origin);
   // Ensure the project exists and is on screen before anything is judged.
-  await ctx.call(HostMethod.GameScaffold, {
+  // A game the library already lists keeps its own folder and stack (a raylib run resumed after the
+  // update); a new one is the compiled template its destinations ask for, else the web starter.
+  const listed = await ctx.call(HostMethod.GameList, {}).catch(() => []);
+  const game = await ctx.call(HostMethod.GameScaffold, {
     name: run.project as string,
     title: run.project,
-    kind: ProjectStarter.Web,
+    ...runScaffoldAsk(listed, run.project, run.targets),
   });
+  // Every evidence pass copies it, so a C++ · raylib game is scored on what its page can measure.
+  run.stack = stackOfShape(game?.shape);
   await ctx.call(HostMethod.PreviewLoad, { project: run.project });
 
   // A named bar without pixels is the hollow comparison the first run already suffered.
@@ -273,10 +317,31 @@ async function openGauntletLoop(
   return loop;
 }
 
+/**
+ * One look at the build. A compiled game's night (`LEASED_LOOK`) looks through a lease naming the
+ * game's judging target, so a Mac-only game is judged on native captures; every other night looks
+ * at the live stand-in, as the classic run always has.
+ */
+export async function lookAt(
+  ctx: HarnessCtx,
+  run: Run,
+  pass: { iterationId: string; seed: number },
+): Promise<Evidence> {
+  if (!looksThroughLease(run)) return gatherEvidence(ctx, { run, ...pass });
+  const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
+  const game = (Array.isArray(games) ? games : []).find((entry) => entry?.name === run.project);
+  const look = (handle: string | null) => gatherEvidence(ctx, { run, ...pass, ...(handle ? { handle } : {}) });
+  const looked = await withLease(ctx, `gauntlet:${run.runId}`, look, {
+    borrow: true,
+    game: game?.destinations ? { destinations: game.destinations } : {},
+  });
+  return "noWindow" in looked ? look(null) : looked;
+}
+
 /** The starting build's evidence, or null when it could not be looked at. */
 async function startingEvidenceOf(ctx: HarnessCtx, run: Run): Promise<Evidence | null> {
   try {
-    const evidence = await gatherEvidence(ctx, { run, iterationId: "000", seed: PAGE_SEED });
+    const evidence = await lookAt(ctx, run, { iterationId: "000", seed: PAGE_SEED });
     return evidence.ok ? evidence : null;
   } catch {
     /* an unprobeable starting state just means iteration 1 argues against nothing — honestly */
@@ -456,7 +521,7 @@ async function challengerEvidence(loop: GauntletLoop, round: GauntletRound): Pro
     ctx,
     async () => {
       try {
-        return await gatherEvidence(ctx, { run, iterationId: round.iterationId, seed });
+        return await lookAt(ctx, run, { iterationId: round.iterationId, seed });
       } catch (err: any) {
         return {
           ok: false,

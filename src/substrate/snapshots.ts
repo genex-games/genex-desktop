@@ -265,6 +265,8 @@ export class SnapshotEngine {
   readonly workspaces: Map<string, string>;
   /** Optional hook for dependency restore; no-op by design (see file header). */
   afterRestore?: (workspace: WorkspaceSpec) => Promise<void>;
+  /** Told after each worktree removal (the C++ lane sweeps the build folders of a source that is gone). */
+  afterWorktreeRemoved?: (targetDir: string) => void;
   /**
    * Called before the engine commits a game folder (never the harness's): its owner tops up the
    * folder's ignore rules for what it holds now and may answer those rules' lines (a string
@@ -604,6 +606,7 @@ export class SnapshotEngine {
 
   async removeWorktree(workspace: string, targetDir: string): Promise<void> {
     await gitOrNull(this.dirFor(workspace), ["worktree", "remove", "--force", targetDir]);
+    this.afterWorktreeRemoved?.(targetDir);
   }
 
   /** Unified diff between two snapshots — or, with no `toCommit`, out to the working tree. */

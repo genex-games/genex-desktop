@@ -9,7 +9,7 @@ import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
 import { keptContractWords } from "../contract-kept.ts";
 import { HostMethod } from "../host-methods.ts";
-import { factsOfGame, LoopProfile, ProjectStarter } from "../folder-facts.ts";
+import { factsOfGame, LoopProfile } from "../folder-facts.ts";
 import { AttachedContract, StudioContract } from "../page-contract.ts";
 import { readDeclaredGame } from "../kinds.ts";
 import { appendLedger, ledgerFromEvents, loadGameLessons, readLedger } from "../ledger.ts";
@@ -23,6 +23,8 @@ import { EventKind, JournalPhase, RunEvent, RunMode } from "../run-events.ts";
 import { createRunInbox } from "../run-inbox.ts";
 import { isCommit } from "../shell.ts";
 import { MINUTE_MS } from "../time.ts";
+import { stackOfShape, templateShapeFor } from "../native-loop.ts";
+import { runScaffoldAsk } from "../run-scaffold.ts";
 import { bindLoopRun, BuildTarget, WindowLease } from "./loop-run.ts";
 import path from "node:path";
 import { preparationBudgetMs } from "./budgets.ts";
@@ -52,6 +54,7 @@ import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
 import type { ProjectShape, ReferenceFrame } from "../../types/host-api.d.ts";
 import type { Evidence } from "../evidence.ts";
 import type { LedgerRecord } from "../ledger.ts";
+import type { LeaseGame } from "../native-contract.ts";
 import type { LoopRun, LoopRunData, LoopRunShape, LoopRunState } from "./loop-run.ts";
 
 /**
@@ -59,6 +62,15 @@ import type { LoopRun, LoopRunData, LoopRunShape, LoopRunState } from "./loop-ru
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
+
+/**
+ * A director's run scaffolds a compiled template when its intake chose a destination beyond the
+ * browser (`run.targets`), and plans with that template's shape before the folder exists.
+ * run-dispatch.ts and chat-dispatch.ts refuse a raylib run on a kept copy without this mark.
+ */
+export const SERVES_NATIVE = true;
+/** A director's run on a Rust · wgpu game reads its stack from the folder the create dialog made (`stackOfShape`), so it plans with the Rust template's shape and rules. */
+export const SERVES_RUST = true;
 
 /** A wiring job is minutes of work, not a stage of the run: it never takes more than this. */
 const CONTRACT_SESSION_MAX_MS = 20 * MINUTE_MS;
@@ -257,11 +269,19 @@ async function announceRunStart(
 
 /**
  * The game, ready: scaffolded if new, on the current contract, loaded in the studio window. Answers
- * its folder, and keeps what the folder holds on the run for the brief (`gameFacts`).
+ * its folder, and keeps on the run what the folder holds for the brief (`gameFacts`) and the game
+ * its windows judge (`leaseGame`: its destinations, from the library).
  */
 async function readyTheGame(loopRun: LoopRun): Promise<string> {
   const { ctx, decision, note, run } = loopRun;
-  await ctx.call(HostMethod.GameScaffold, { name: run.project, title: run.project, kind: ProjectStarter.Web });
+  // A game the library already lists keeps its own folder and stack (a raylib run resumed after the
+  // update); a new one is the compiled template its destinations ask for, else the web starter.
+  const listed = await ctx.call(HostMethod.GameList, {}).catch(() => []);
+  await ctx.call(HostMethod.GameScaffold, {
+    name: run.project,
+    title: run.project,
+    ...runScaffoldAsk(listed, run.project, run.targets),
+  });
   const upgraded = await ctx.call(HostMethod.GameUpgradeContract, { project: run.project }).catch(() => null);
   if (upgraded?.upgraded)
     await decision(
@@ -285,7 +305,13 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   loopRun.gameFacts = factsOfGame(game);
   // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
   loopRun.game = { hookEvents: game?.hookEvents };
+  loopRun.leaseGame = leaseGameOf(game);
   return projectDir;
+}
+
+/** The game a run's windows judge: its destinations, as the library lists them (a browser game names none). */
+function leaseGameOf(game: AnyRecord | undefined): LeaseGame {
+  return game?.destinations ? { destinations: game.destinations } : {};
 }
 
 /**
@@ -476,7 +502,7 @@ async function gameAtStart(ctx: HarnessCtx, run: Run) {
   const descriptor =
     (await ctx.call(HostMethod.GameList, {}).catch(() => [])).find((g) => g.name === run.project) ?? null;
   const ownShape = descriptor?.built === true;
-  const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+  const shape = descriptor?.shape ?? templateShapeFor(run.targets) ?? TEMPLATE_SHAPE;
   /** What kind of game this is, for the ledger: a check that never measures on a Phaser game may measure fine on the template. */
   const gameKind =
     (shape as Partial<ProjectShape>)?.kind ?? (ownShape ? GameShapeKind.OwnScript : GameShapeKind.StudioTemplate);
@@ -595,6 +621,8 @@ export async function prepareLoopRun(
   });
   const { started, softDeadline, finalDeadline } = clock;
   const { ownShape, shape, gameKind } = await gameAtStart(ctx, run);
+  // Every evidence pass copies it, so a C++ · raylib game is scored on what its page can measure.
+  run.stack = stackOfShape(shape);
   await declareRunGame(ctx, run, ownShape, priorJournal);
   const capacity = await ctx.call(HostMethod.PreviewCapacity, {}).catch(() => null);
   const contractMissing = await contractIsMissing(ctx, run, ownShape);

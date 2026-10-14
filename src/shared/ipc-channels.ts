@@ -15,6 +15,9 @@
  * validating the fields it acts on.
  */
 import type { StudioApi } from "./studio-api.ts";
+import type { BuildTarget } from "./game-project.ts";
+import type { AndroidLicence, MobileBuildTarget } from "./toolchain.ts";
+import type { SigningReference } from "./game-export-contract.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 
 type Arg<M extends keyof StudioApi, I extends number> = Parameters<StudioApi[M]>[I];
@@ -191,10 +194,34 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:skillopt.accept": "acceptProposal",
   "studio:skillopt.discard": "discardProposal",
   "studio:export": "exportGame",
+  "studio:export.signingReference": "exportSigningReference",
   "studio:cancel-model-download": "cancelModelDownload",
   "studio:model-install.status": "modelInstallStatus",
   "studio:cli-install.start": "cliInstall",
   "studio:cli-install.status": "cliInstallStatus",
+  "studio:toolchain.status": "toolchainStatus",
+  "studio:toolchain.install": "toolchainInstall",
+  "studio:toolchain.cancel": "toolchainCancel",
+  "studio:toolchain.prune": "toolchainPrune",
+  "studio:toolchain.installClt": "toolchainInstallClt",
+  "studio:toolchain.installMobile": "toolchainInstallMobile",
+  "studio:toolchain.acceptAndroidLicence": "toolchainAcceptAndroidLicence",
+  "studio:native.run": "nativeRun",
+  "studio:native.stop": "nativeStop",
+  "studio:native.state": "nativeState",
+  "studio:native.front": "nativeFront",
+  "studio:native.embed": "nativeEmbed",
+  "studio:native.unembed": "nativeUnembed",
+  "studio:native.input": "nativeInput",
+  "studio:native.resize": "nativeResize",
+  "studio:native.launchDevice": "nativeLaunchDevice",
+  "studio:seed.retake": "retakeSeedModule",
+  "studio:crates.list": "cratesList",
+  "studio:crates.decide": "cratesDecide",
+  "studio:engine.eject": "engineEject",
+  "studio:engine.uneject": "engineUneject",
+  "studio:engine.setTrust": "engineSetTrust",
+  "studio:engine.state": "engineState",
   "studio:pull-model": "pullModel",
   "studio:models.lookup": "lookupModel",
   "studio:models.remove": "removeModel",
@@ -389,11 +416,43 @@ export interface StudioInvokePayloads {
   "studio:skillopt.start": undefined;
   "studio:skillopt.accept": { index: number } & NonNullable<Arg<"acceptProposal", 1>>;
   "studio:skillopt.discard": { index: number; reason?: string } & NonNullable<Arg<"discardProposal", 2>>;
-  "studio:export": { project: string };
+  "studio:export": { project: string } & NonNullable<Arg<"exportGame", 1>>;
+  /** Main checks the kind with `parseSigningReference` before the dialog opens. */
+  "studio:export.signingReference": { kind: SigningReference };
   "studio:cancel-model-download": Record<string, never>;
   "studio:model-install.status": undefined;
   "studio:cli-install.start": { provider: string };
   "studio:cli-install.status": undefined;
+  "studio:toolchain.status": undefined;
+  /** No `targets`: main installs what Browser and this computer's own OS need. */
+  "studio:toolchain.install": { targets?: BuildTarget[] };
+  "studio:toolchain.cancel": undefined;
+  "studio:toolchain.prune": undefined;
+  "studio:toolchain.installClt": undefined;
+  /** Main checks the phone before anything is downloaded. */
+  "studio:toolchain.installMobile": { target: MobileBuildTarget };
+  /** Main checks the licence with `parseAndroidLicence` before anything is recorded. */
+  "studio:toolchain.acceptAndroidLicence": { licence: AndroidLicence };
+  "studio:native.run": { project: string };
+  "studio:native.stop": { project: string };
+  "studio:native.state": { project: string };
+  "studio:native.front": { project: string };
+  /** Live's canvas size: main checks it with `parseNativeEmbedSize`. */
+  "studio:native.embed": { project: string; size: Arg<"nativeEmbed", 1> };
+  "studio:native.unembed": { project: string };
+  /** Main checks the actions with `parseNativeInput`. */
+  "studio:native.input": { project: string; actions: Arg<"nativeInput", 1> };
+  "studio:native.resize": { project: string; size: Arg<"nativeResize", 1> };
+  /** Main checks the game and the request before anything reaches a device. */
+  "studio:native.launchDevice": { project: string; request: Arg<"nativeLaunchDevice", 1> };
+  "studio:seed.retake": { module: string };
+  /** No `project`: every game's requests. */
+  "studio:crates.list": { project?: string };
+  "studio:crates.decide": Arg<"cratesDecide", 0>;
+  "studio:engine.eject": { project: string };
+  "studio:engine.uneject": { project: string };
+  "studio:engine.setTrust": { project: string; trusted: boolean };
+  "studio:engine.state": { project: string };
   "studio:pull-model": { model: string };
   "studio:models.lookup": { model: string };
   "studio:models.remove": { model: string };

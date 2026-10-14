@@ -1,0 +1,66 @@
+# The lane's determinism gate for game code (plan "The game API agents write", M0a.9). The store
+# owns this file; the lane points clippy at it (`CLIPPY_CONF_DIR`) for a game crate and runs
+# `cargo clippy -- -D warnings -F unsafe_code`, so every entry below is an error in game code.
+#
+# A simulation replays bit for bit from its seed on every destination only when it reads no wall
+# clock, never iterates in a per-process random order, draws randomness only from `ctx.rng`, runs
+# on one thread and takes every transcendental from `genex::math` (libm, the same bits on every
+# target). `f32::sqrt`, `mul_add`, `abs`, `floor` and friends stay allowed: IEEE 754 defines them
+# exactly. The f64 forms are not listed because game code works in f32 (the facade's types).
+#
+# Inside this workspace the file is also the default for every crate. A host crate that has to
+# read a clock or start a thread (studio transport, desktop shell, frame sender, renderer) carries
+# its own `clippy.toml` saying why; genex-core carries its own copy with the f64 forms added (M0a.2, M0a review).
+# `scripts/spike/rust-wgpu/parity.sh lint` proves each entry refuses a fixture and the pond passes.
+
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use genex::Map" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use genex::Set" },
+  { path = "std::time::Instant", reason = "a simulation never reads a wall clock: use ctx.tick and ctx.dt" },
+  { path = "std::time::SystemTime", reason = "a simulation never reads a wall clock: use ctx.tick and ctx.dt" },
+]
+
+disallowed-methods = [
+  { path = "f32::sin", reason = "platform libm: use genex::math::sin" },
+  { path = "f32::cos", reason = "platform libm: use genex::math::cos" },
+  { path = "f32::sin_cos", reason = "platform libm: use genex::math::sin_cos" },
+  { path = "f32::tan", reason = "platform libm: use genex::math::tan" },
+  { path = "f32::asin", reason = "platform libm: use genex::math::asin" },
+  { path = "f32::acos", reason = "platform libm: use genex::math::acos" },
+  { path = "f32::atan", reason = "platform libm: use genex::math::atan" },
+  { path = "f32::atan2", reason = "platform libm: use genex::math::atan2" },
+  { path = "f32::sinh", reason = "platform libm: use genex::math::sinh" },
+  { path = "f32::cosh", reason = "platform libm: use genex::math::cosh" },
+  { path = "f32::tanh", reason = "platform libm: use genex::math::tanh" },
+  { path = "f32::asinh", reason = "platform libm: use genex::math::asinh" },
+  { path = "f32::acosh", reason = "platform libm: use genex::math::acosh" },
+  { path = "f32::atanh", reason = "platform libm: use genex::math::atanh" },
+  { path = "f32::exp", reason = "platform libm: use genex::math::exp" },
+  { path = "f32::exp2", reason = "platform libm: use genex::math::exp2" },
+  { path = "f32::exp_m1", reason = "platform libm: use genex::math::exp_m1" },
+  { path = "f32::ln", reason = "platform libm: use genex::math::ln" },
+  { path = "f32::log", reason = "platform libm: use genex::math::ln" },
+  { path = "f32::log2", reason = "platform libm: use genex::math::log2" },
+  { path = "f32::log10", reason = "platform libm: use genex::math::log10" },
+  { path = "f32::ln_1p", reason = "platform libm: use genex::math::ln_1p" },
+  { path = "f32::powf", reason = "platform libm: use genex::math::pow" },
+  { path = "f32::powi", reason = "unspecified precision per target: multiply, or use genex::math::pow" },
+  { path = "f32::cbrt", reason = "platform libm: use genex::math::cbrt" },
+  { path = "f32::hypot", reason = "platform libm: use genex::math::hypot" },
+  { path = "std::thread::spawn", reason = "a simulation runs on one thread: threads reorder its work" },
+  { path = "rand::thread_rng", reason = "seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "rand::rng", reason = "seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "rand::random", reason = "seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "getrandom::getrandom", reason = "operating-system entropy: use ctx.rng", allow-invalid = true },
+  { path = "getrandom::fill", reason = "operating-system entropy: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::Rng::new", reason = "seeded per process: use fastrand::Rng::with_seed from ctx.rng", allow-invalid = true },
+  { path = "fastrand::u32", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::u64", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::usize", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::i32", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::f32", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::f64", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::bool", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::shuffle", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+  { path = "fastrand::choice", reason = "the global generator is seeded per process: use ctx.rng", allow-invalid = true },
+]

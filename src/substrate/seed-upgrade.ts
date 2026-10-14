@@ -27,11 +27,23 @@
  * treats the whole workspace as untouched: the new seed is applied file by file and the
  * manifest written. From then on every install has one.
  */
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { atomicWriteJson, pathExists, readJsonIfExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
-import { containedReal, isBelow } from "./paths.ts";
+import { promisify } from "node:util";
+import { GameStack } from "../shared/game-project.ts";
+import {
+  atomicWriteJson,
+  pathExists,
+  readJsonIfExists,
+  readRegularFile,
+  realpathNearest,
+  writeFileNoFollow,
+} from "./fsx.ts";
+import { HOST_GIT_CONFIG, hostGitArgs, hostGitEnv } from "./git-policy.ts";
+import { assertRelativePath, containedReal, isBelow } from "./paths.ts";
 import { RENAMED_SEED_FILES, renameInSource } from "./seed-renames.ts";
 
 /** What a boot's seed pass did: first launch, something changed, or nothing to do. Read by the boot notice. */
@@ -52,6 +64,12 @@ const MAX_RENAMED_MODULE_BYTES = 4_000_000;
 const LAYOUT_ERROR_MAX_CHARS = 500;
 /** The format `writeCatalogue` writes. */
 const CATALOGUE_VERSION = 2;
+/** The largest patch a seed re-take reads back from git. */
+const PATCH_MAX_BYTES = 16 * 1024 * 1024;
+/** The largest workspace copy of a seed module the host reads; a larger one is read as the agent's and never opened. */
+const SEED_MODULE_MAX_BYTES = 4 * 1024 * 1024;
+
+const execFileAsync = promisify(execFile);
 
 export interface SeedUpgradeReport {
   /** "seeded" = first launch; "upgraded" = something changed; "unchanged" = nothing to do. */
@@ -135,6 +153,8 @@ export const SEED_MOVES: readonly SeedMove[] = [
     ],
   },
   { from: "loop/gauntlet.ts", to: "loop/git.ts", names: ["unversionedNested"] },
+  // The refusal vocabularies moved to a module that imports nothing: play-script.ts reads them at load.
+  { from: "loop/native-contract.ts", to: "loop/native-refusal.ts", names: ["NativeRefusal", "TargetRefusal"] },
   { from: "loop/autopilot.ts", to: "loop/prompts-build.ts", names: ["baseBrief", "contractWiringAsk"] },
   { from: "loop/autopilot.ts", to: "loop/config.ts", names: ["PLAN_REVIEW_WAIT_MS"] },
   {
@@ -240,6 +260,12 @@ export const SEED_MOVES: readonly SeedMove[] = [
   },
   { from: "loop/gauntlet.ts", to: "loop/gauntlet-prompts.ts", names: ["buildBrief"] },
   { from: "loop/kinds.ts", to: "loop/config.ts", names: ["MAX_PLAY_SCRIPT"] },
+  // The frame verdicts, so the native evidence pass runs the very same functions on native shots.
+  {
+    from: "loop/evidence.ts",
+    to: "loop/frame-verdicts.ts",
+    names: ["weighDraws", "weighBlackness", "weighDuplicates", "sameFrameEverywhere"],
+  },
   // The Unreal Loop's step machine gave way to one lead (loop/unreal/lead.ts).
   { from: "loop/unreal/live-journal.ts", to: "loop/unreal/lead-journal.ts", names: ["unrealTool"] },
   // The runner's plugin steps moved to a module of their own, which an older kept journal can't lack.
@@ -301,9 +327,11 @@ export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
   { file: "tools/index.ts", marker: "HostMethod.PluginsTools, { project" },
   { file: "loop/chat-dispatch.ts", marker: "kind: ProjectStarter.Web" },
   { file: "loop/run-dispatch.ts", marker: "startWebIfPending(" },
-  { file: "loop/autopilot.ts", marker: "kind: ProjectStarter.Web" },
-  { file: "loop/director/setup.ts", marker: "kind: ProjectStarter.Web" },
-  { file: "loop/gauntlet.ts", marker: "kind: ProjectStarter.Web" },
+  // A run's own scaffold asks through `runScaffoldAsk` (loop/run-scaffold.ts): the web starter for a
+  // web game, a compiled template for a new compiled one, nothing for a compiled game it already has.
+  { file: "loop/autopilot.ts", marker: "runScaffoldAsk(" },
+  { file: "loop/director/setup.ts", marker: "runScaffoldAsk(" },
+  { file: "loop/gauntlet.ts", marker: "runScaffoldAsk(" },
   { file: "tools/game-tools.ts", marker: "HostMethod.GameStart" },
   // Not host calls: the web rules moved to their own file, which a kept local prompt never reads
   // and kept rules still repeat for every turn; and a kept brief tells an empty new game nothing of
@@ -1678,6 +1706,350 @@ function refreshCheckDefinition(entry: Record<string, unknown>, shipped: Record<
   return changed;
 }
 
+/**
+ * Every harness module a Rust night runs: the parts a raylib night runs (run-dispatch.ts
+ * `NATIVE_PARTS`, the start itself included), the native loop, evidence and review, and the chat
+ * launcher (chat-dispatch.ts). Before Rust games the seed routed by binary raylib checks, so a
+ * copy the agent kept from then would read a Rust game as three.js without a word. A module that
+ * serves Rust nights says so with `SERVES_RUST`; a kept one without it refuses the night by name
+ * (`seedNightRefusal`), and the person may re-take the seed copy (`retakeSeedModule`). The seed's
+ * own list is run-dispatch.ts `RUST_PARTS` (this one adds the chat launcher), held equal by
+ * seed-contracts.test.ts.
+ */
+export const RUST_NIGHT_PARTS: readonly string[] = [
+  "loop/run-dispatch.ts",
+  "loop/chat-dispatch.ts",
+  "loop/chat-session.ts",
+  "loop/delegated-turn.ts",
+  "loop/gauntlet.ts",
+  "loop/autopilot.ts",
+  "loop/checks.ts",
+  "loop/spec.ts",
+  "loop/review.ts",
+  "loop/merge.ts",
+  "loop/evidence.ts",
+  "loop/judge.ts",
+  "loop/prompts-build.ts",
+  "loop/spike.ts",
+  "loop/director/setup.ts",
+  "loop/director/integrate.ts",
+  "loop/director/briefs.ts",
+  "loop/director/rules.ts",
+  "loop/director/workers.ts",
+  "loop/optimization.ts",
+  "loop/facet/phases/gate.ts",
+  "loop/facet/prompt.ts",
+  "loop/facet/phases/brief.ts",
+  "loop/facet/phases/plan.ts",
+  "loop/library.ts",
+  "tools/game-tools.ts",
+  "tools/preview-tools.ts",
+  "loop/native-loop.ts",
+  "loop/native-evidence.ts",
+  "loop/native-review.ts",
+  "loop/play-script.ts",
+];
+
+/**
+ * The mark of a module that serves Rust nights, `export const SERVES_RUST = true`, at the start
+ * of a line (a commented-out mark, or one set false, does not count). It is read from the source,
+ * never by importing the module: the host does not run the agent's code.
+ */
+const SERVES_RUST_MARK =
+  /^export\s+const\s+SERVES_RUST\s*(?::\s*(?:true|boolean)\s*)?=\s*true(?:\s+as\s+const)?\s*;?\s*(?:\/\/.*)?$/m;
+
+/** Why the host refuses a night on this harness workspace. Carried in refusals: never rename a value. */
+export const SeedRefusalCode = {
+  /** A part the night runs is the agent's copy of a module from before Rust games. */
+  KeptPreRust: "kept-pre-rust",
+} as const;
+export type SeedRefusalCode = (typeof SeedRefusalCode)[keyof typeof SeedRefusalCode];
+
+/** A night the harness workspace refuses: why, and the workspace modules that caused it. */
+export interface SeedRefusal {
+  code: SeedRefusalCode;
+  modules: string[];
+}
+
+/** Where a night's harness is read: the seed the app ships, and the agent's workspace copy of it. */
+export interface SeedDirs {
+  seedDir: string;
+  workspaceDir: string;
+}
+
+/**
+ * The parts a Rust night runs that the agent kept from before Rust games: its copy differs from
+ * the shipped one (an edit, or a deletion) and carries no `SERVES_RUST`. A copy equal to the
+ * shipped one is the app's, and whether the seed serves Rust is the seed's own business. A link,
+ * a FIFO or anything but a plain file there (or one too large to read) is kept and carries
+ * nothing, and is never opened: the agent writes this folder while the host reads it.
+ */
+export async function keptPreRustParts(dirs: SeedDirs): Promise<string[]> {
+  const parts: string[] = [];
+  for (const rel of RUST_NIGHT_PARTS) {
+    const copy = await workspaceCopy(path.join(dirs.workspaceDir, rel));
+    if (copy === null) {
+      parts.push(rel);
+      continue;
+    }
+    const shipped = await readFile(path.join(dirs.seedDir, rel)).catch(() => null);
+    if (shipped?.equals(copy)) continue;
+    if (!SERVES_RUST_MARK.test(copy.toString("utf8"))) parts.push(rel);
+  }
+  return parts.sort();
+}
+
+/**
+ * The bytes of the agent's copy at `file`, read as a plain file only (never through a link, never
+ * waiting on a FIFO, never past {@link SEED_MODULE_MAX_BYTES}); null when there is no such file.
+ */
+async function workspaceCopy(file: string): Promise<Buffer | null> {
+  const entry = await lstat(file).catch(() => null);
+  if (!entry?.isFile()) return null;
+  return readRegularFile(file, SEED_MODULE_MAX_BYTES).catch(() => null);
+}
+
+/** What a night on each stack asks of the harness workspace before it starts. */
+const SEED_NIGHT_GUARDS: Record<GameStack, (dirs: SeedDirs) => Promise<SeedRefusal | null>> = {
+  // Every seed vintage has run three.js nights.
+  [GameStack.ThreeJs]: () => Promise.resolve(null),
+  // The seed refuses a raylib night on a part kept from before it itself (`SERVES_NATIVE`).
+  [GameStack.RaylibCpp]: () => Promise.resolve(null),
+  [GameStack.RustWgpu]: async (dirs) => {
+    const modules = await keptPreRustParts(dirs);
+    return modules.length > 0 ? { code: SeedRefusalCode.KeptPreRust, modules } : null;
+  },
+};
+
+/**
+ * The refusal a night on `stack` meets from the harness workspace, or null. Exhaustive over the
+ * stacks, so a Rust game never falls to a row written for three.js.
+ */
+export function seedNightRefusal(stack: GameStack, dirs: SeedDirs): Promise<SeedRefusal | null> {
+  return SEED_NIGHT_GUARDS[stack](dirs);
+}
+
+/** Why a re-take of the seed copy was refused. Carried by `studio:seed.retake` (M3.0): never rename a value. */
+export const RetakeRefusalCode = {
+  /** Not a plain `/`-separated relative path (an escape, an absolute path, a backslash, a control character). */
+  InvalidPath: "invalid-path",
+  /** The seed ships no file there: there is no seed copy to re-take. */
+  NotSeedFile: "not-seed-file",
+  /** A link, or something other than a file, on the way to the workspace copy. */
+  NotPlainFile: "not-plain-file",
+  /** The workspace copy is the seed's already: no edit to keep. */
+  NotKept: "not-kept",
+  /** An earlier re-take's patch is where this one would go. */
+  PatchExists: "patch-exists",
+} as const;
+export type RetakeRefusalCode = (typeof RetakeRefusalCode)[keyof typeof RetakeRefusalCode];
+
+/** Which seed copy a re-take's patch is the agent's diff from. */
+export const RetakeBase = {
+  /** The seed content last applied there, which is the copy the agent edited (the manifest's hash). */
+  LastApplied: "last-applied",
+  /** The shipped copy, because the vintage the agent edited is nowhere left to read. */
+  Shipped: "shipped",
+} as const;
+export type RetakeBase = (typeof RetakeBase)[keyof typeof RetakeBase];
+
+export interface RetakeSeedOptions extends SeedDirs {
+  manifestFile: string;
+  /** The workspace-relative module, `/`-separated, as the refusal named it. */
+  rel: string;
+  /** The folder of this re-take: the patch goes to `<rel>.patch` there, the agent's whole copy to `<rel>`. */
+  patchDir: string;
+  /** The updates folder whose `seed-backup-*` vintages may hold the copy the agent edited. */
+  updatesDir?: string;
+}
+
+/** A module whose seed copy was re-taken: where the agent's diff and its whole copy were kept. */
+export interface SeedRetaken {
+  ok: true;
+  rel: string;
+  patchFile: string;
+  /** The agent's whole copy; null when its edit was deleting the module. */
+  keptFile: string | null;
+  base: RetakeBase;
+}
+
+export type RetakeResult = SeedRetaken | { ok: false; code: RetakeRefusalCode };
+
+/**
+ * Re-take the seed copy of one kept module: the agent's diff is kept as a patch (and its whole
+ * copy beside it), then the shipped copy is laid down and recorded as the app's, so later
+ * upgrades reach it again. Refused, typed and with no side effect, for a path that is not a plain
+ * seed file in the workspace, a module the agent did not change, or a patch already there.
+ */
+export async function retakeSeedModule(options: RetakeSeedOptions): Promise<RetakeResult> {
+  const refused = await retakeRefusal(options);
+  if (refused) return { ok: false, code: refused };
+  const { rel, patchDir } = options;
+  const target = path.join(options.workspaceDir, rel);
+  const seedFile = path.join(options.seedDir, rel);
+  // Read again as a plain file only: the agent may have swapped a link or a FIFO in since the check.
+  const agentCopy = await agentCopyOf(target);
+  if (agentCopy === undefined) return { ok: false, code: RetakeRefusalCode.NotPlainFile };
+  if (!(await insideWorkspace(options.workspaceDir, path.dirname(target)))) {
+    return { ok: false, code: RetakeRefusalCode.NotPlainFile };
+  }
+  const body = await readManifest(options.manifestFile);
+  const base = await editedBase(options, body?.files[rel] ?? null);
+  const patchFile = path.join(patchDir, `${rel}.patch`);
+  await mkdir(path.dirname(patchFile), { recursive: true });
+  await writeFile(patchFile, await agentDiff(rel, base.bytes, agentCopy), { flag: "wx" });
+  const keptFile = agentCopy === null ? null : path.join(patchDir, rel);
+  if (keptFile !== null && agentCopy !== null) await writeFile(keptFile, agentCopy, { flag: "wx" });
+  await mkdir(path.dirname(target), { recursive: true });
+  // The folder the seed copy lands in is checked on its real path again after it exists, and the
+  // copy is written without following a link at its name.
+  if (!(await insideWorkspace(options.workspaceDir, path.dirname(target)))) {
+    await rm(patchFile, { force: true });
+    if (keptFile !== null) await rm(keptFile, { force: true });
+    return { ok: false, code: RetakeRefusalCode.NotPlainFile };
+  }
+  await writeFileNoFollow(target, await readFile(seedFile));
+  // A pre-manifest install is the app's throughout already: a manifest of one entry would make
+  // the next boot read every other file as the agent's.
+  if (body)
+    await writeManifest(
+      options.manifestFile,
+      new Map(Object.entries(body.files)).set(rel, await hashFile(seedFile)),
+      extrasOf(body),
+    );
+  return { ok: true, rel, patchFile, keptFile, base: base.base };
+}
+
+/**
+ * The agent's copy at `target` as a plain file: its bytes, null when nothing is there (the agent
+ * deleted the module), undefined when something other than a plain file is (a link, a FIFO, a
+ * folder) or it is too large to read.
+ */
+async function agentCopyOf(target: string): Promise<Buffer | null | undefined> {
+  const entry = await lstat(target).catch(() => null);
+  if (!entry) return null;
+  if (!entry.isFile()) return undefined;
+  return readRegularFile(target, SEED_MODULE_MAX_BYTES).catch(() => undefined);
+}
+
+/** Whether `dir` (or the nearest folder of it that exists) is really inside the workspace. */
+async function insideWorkspace(workspaceDir: string, dir: string): Promise<boolean> {
+  const root = await realpath(workspaceDir).catch(() => null);
+  if (root === null) return false;
+  const real = await realpathNearest(dir).catch(() => null);
+  return real !== null && (real === root || isBelow(root, real));
+}
+
+/** The reason `retakeSeedModule` refuses, checked before anything is written; null when it may proceed. */
+async function retakeRefusal(options: RetakeSeedOptions): Promise<RetakeRefusalCode | null> {
+  const { rel } = options;
+  if (!isPlainRelative(rel)) return RetakeRefusalCode.InvalidPath;
+  const seedFile = await containedReal(options.seedDir, rel).catch(() => null);
+  const shipped = seedFile !== null && (await lstat(seedFile)).isFile();
+  if (!shipped) return RetakeRefusalCode.NotSeedFile;
+  if (await notPlainOnTheWay(options.workspaceDir, rel)) return RetakeRefusalCode.NotPlainFile;
+  const copy = await agentCopyOf(path.join(options.workspaceDir, rel));
+  if (copy === undefined) return RetakeRefusalCode.NotPlainFile;
+  if (copy?.equals(await readFile(seedFile))) return RetakeRefusalCode.NotKept;
+  if (await pathExists(path.join(options.patchDir, `${rel}.patch`))) return RetakeRefusalCode.PatchExists;
+  return null;
+}
+
+/** The shape `assertRelativePath` accepts, as a yes or no. */
+function isPlainRelative(rel: string): boolean {
+  try {
+    assertRelativePath(rel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A link anywhere from the workspace down to `rel`, or something other than a file at `rel`:
+ * a re-take writes only plain files inside the workspace. A missing tail is fine (the agent
+ * deleted the module), and the folders laid down for it are new and plain.
+ */
+async function notPlainOnTheWay(workspaceDir: string, rel: string): Promise<boolean> {
+  const segments = rel.split("/");
+  let at = workspaceDir;
+  for (const [index, segment] of segments.entries()) {
+    at = path.join(at, segment);
+    const entry = await lstat(at).catch(() => null);
+    if (!entry) return false;
+    if (entry.isSymbolicLink()) return true;
+    const last = index === segments.length - 1;
+    if (last ? !entry.isFile() : !entry.isDirectory()) return true;
+  }
+  return false;
+}
+
+/**
+ * The seed copy the agent edited: the content last applied at `rel` (by its manifest hash),
+ * found in the shipped seed or a backed-up vintage; the shipped copy when it is in neither.
+ */
+async function editedBase(
+  options: RetakeSeedOptions,
+  lastApplied: string | null,
+): Promise<{ bytes: Buffer; base: RetakeBase }> {
+  const shippedFile = path.join(options.seedDir, options.rel);
+  const vintages = (await seedBackupDirs(options.updatesDir)).map((dir) => path.join(dir, options.rel));
+  for (const file of lastApplied === null ? [] : [shippedFile, ...vintages]) {
+    if (!(await pathExists(file))) continue;
+    const bytes = await readFile(file);
+    if (hashBytes(bytes) === lastApplied) return { bytes, base: RetakeBase.LastApplied };
+  }
+  return { bytes: await readFile(shippedFile), base: RetakeBase.Shipped };
+}
+
+/**
+ * The agent's diff of `rel` as a patch `git apply` takes from the folder holding the base copy:
+ * `base` to `agent`, or the module's deletion when `agent` is null. Written by git from a staging
+ * folder of its own, with the host's git policy (no external diff, no repository config).
+ */
+async function agentDiff(rel: string, base: Buffer, agent: Buffer | null): Promise<string> {
+  const stage = await mkdtemp(path.join(tmpdir(), "seed-retake-"));
+  try {
+    const before = `a/${rel}`;
+    const after = agent === null ? "/dev/null" : `b/${rel}`;
+    await writeStaged(stage, before, base);
+    if (agent !== null) await writeStaged(stage, after, agent);
+    return await gitNoIndexDiff(stage, before, after);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+
+/** Write `bytes` at the staging folder's `rel`, making its folders. */
+async function writeStaged(stage: string, rel: string, bytes: Buffer): Promise<void> {
+  const file = path.join(stage, rel);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, bytes);
+}
+
+/** `git diff --no-index` of two staged paths, `--no-prefix` so the patch reads `a/<rel>` and `b/<rel>`. */
+async function gitNoIndexDiff(cwd: string, before: string, after: string): Promise<string> {
+  const args = [
+    ...HOST_GIT_CONFIG,
+    ...hostGitArgs(["diff", "--no-index", "--no-prefix", "--no-color", "--", before, after]),
+  ];
+  const env = hostGitEnv({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" });
+  try {
+    await execFileAsync("git", args, { cwd, env, windowsHide: true, maxBuffer: PATCH_MAX_BYTES });
+    return "";
+  } catch (err) {
+    // `git diff` exits 1 when the files differ: its output is the patch.
+    if (isDiffExit(err)) return err.stdout;
+    throw err;
+  }
+}
+
+/** A `git diff` that exited 1 because the files differ, with the patch on its stdout. */
+function isDiffExit(err: unknown): err is { code: 1; stdout: string } {
+  if (typeof err !== "object" || err === null) return false;
+  return "code" in err && err.code === 1 && "stdout" in err && typeof err.stdout === "string";
+}
+
 /** Copy the workspace's current `rel` into the backup dir, before anything rewrites it. */
 async function backUp(options: ApplySeedOptions, rel: string): Promise<void> {
   if (!options.backupDir) return;
@@ -1725,7 +2097,10 @@ async function walk(dir: string, prefix = ""): Promise<string[]> {
 }
 
 async function hashFile(file: string): Promise<string> {
-  return createHash("sha256")
-    .update(await readFile(file))
-    .digest("hex");
+  return hashBytes(await readFile(file));
+}
+
+/** sha256 of `bytes`, as the manifest records it. */
+function hashBytes(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }

@@ -1,0 +1,25 @@
+# The rust-game fixture's web build (scripts/toolchains/make-rust-wasm-fixture.sh): a tiny
+# wasm-bindgen module answering the Rust web shell's page contract without wgpu, so the committed
+# output stays small. Not a workspace member; built offline from the vendored crates.
+[package]
+name = "genex-fixture-web"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+wasm-bindgen = "=0.2.129"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+
+[workspace]

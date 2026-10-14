@@ -1,12 +1,15 @@
 /** Folders on this Mac: picking, inspecting, adopting and opening a game, and showing its files. */
+import os from "node:os";
 import path from "node:path";
 import { dialog, shell, type BrowserWindow } from "electron";
+import { signerPasswordFile } from "../../substrate/mobile-sign.ts";
 import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
 import { gameLocationPickerOptions, projectPickerOptions } from "../project-picker.ts";
 import type { StudioCore } from "../studio-core.ts";
+import { exportForWindow, pickSigningReference } from "../export-window.ts";
 import type { IpcHandle } from "./registrar.ts";
 
 /** Why a project request from the renderer is refused. */
@@ -34,10 +37,22 @@ export function registerProjectsIpc(
     await shell.openExternal(tagGenexLink(payload.url));
     return true;
   });
-  handle("studio:export", async (payload) => {
-    const result = await core.exportPublicCopy(payload.project, path.join(core.layout.exports, payload.project));
-    await shell.openPath(result.dir);
-    return result;
+  // Destination and signing are checked before the core is asked; a Mac app is shown in Finder,
+  // never opened (opening an .app launches it), and the browser folder opens as before. A refusal
+  // reaches the window with no signing password or known secret in its words.
+  handle("studio:export", async (payload) =>
+    exportForWindow(core, payload, shell, {
+      env: process.env,
+      secretValues: () => core.knownSecretValues(),
+      passwordFile: (file) => signerPasswordFile(file, core.redactionForbiddenRoots(), os.homedir()),
+    }),
+  );
+  // The person picks a keystore, a provisioning profile or a password file; main answers its path
+  // and never reads it, so a password file's contents never reach the window.
+  handle("studio:export.signingReference", async (payload) => {
+    const window = currentWindow();
+    if (!window) throw new Error(MESSAGE.noWindow);
+    return pickSigningReference(payload, (options) => dialog.showOpenDialog(window, options));
   });
 
   // The renderer names a project and, at most, a file inside it; main resolves the folder and

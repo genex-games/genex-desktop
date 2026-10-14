@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# The Linux sysroot's pkg-config (scripts/toolchains/linux-sysroot.ts copies it to bin/pkg-config):
+# the subset the pkg-config crate uses, for hosts without a pkg-config of their own (a Mac).
+# --libs, --cflags and --modversion read the .pc files on PKG_CONFIG_PATH; -L and -I paths get the
+# PKG_CONFIG_SYSROOT_DIR prefix as the real one adds it; other flags are ignored. A module with no
+# .pc file exits 1 with pkg-config's own message. Promoted from the M0a spike's cross-linux.sh.
+set -euo pipefail
+want_libs=0 want_cflags=0 want_version=0 modules=""
+for arg in "$@"; do
+  case $arg in
+    --libs) want_libs=1 ;;
+    --cflags) want_cflags=1 ;;
+    --modversion) want_version=1 ;;
+    --version) echo 0.29.2; exit 0 ;;
+    --*) ;;
+    *) modules="$modules $arg" ;;
+  esac
+done
+find_pc() {
+  local dir old_ifs=$IFS
+  IFS=:
+  for dir in ${PKG_CONFIG_PATH:-}; do
+    if [ -f "$dir/$1.pc" ]; then IFS=$old_ifs; printf '%s\n' "$dir/$1.pc"; return 0; fi
+  done
+  IFS=$old_ifs
+  return 1
+}
+field() {
+  awk -v key="$2" -v sysroot="${PKG_CONFIG_SYSROOT_DIR:-}" '
+    /^[A-Za-z_]+=/ { split($0, kv, "="); name = kv[1]; value = substr($0, length(name) + 2)
+      for (v in vars) gsub("\\$\\{" v "\\}", vars[v], value); vars[name] = value; next }
+    index($0, key ": ") == 1 { value = substr($0, length(key) + 3)
+      for (v in vars) gsub("\\$\\{" v "\\}", vars[v], value)
+      n = split(value, word, " "); out = ""
+      for (i = 1; i <= n; i++) { w = word[i]
+        if (sysroot != "" && (w ~ /^-L\// || w ~ /^-I\//)) w = substr(w, 1, 2) sysroot substr(w, 3)
+        out = out (out == "" ? "" : " ") w }
+      print out }' "$1"
+}
+out=""
+for module in $modules; do
+  pc=$(find_pc "$module") || { echo "Package $module was not found in the pkg-config search path." >&2; exit 1; }
+  if [ "$want_version" = 1 ]; then field "$pc" Version; fi
+  if [ "$want_cflags" = 1 ]; then out="$out $(field "$pc" Cflags)"; fi
+  if [ "$want_libs" = 1 ]; then out="$out $(field "$pc" Libs)"; fi
+done
+if [ -n "${out// /}" ]; then echo "${out# }"; fi
+exit 0

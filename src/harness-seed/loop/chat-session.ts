@@ -9,6 +9,14 @@ import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { GameEngine } from "./game-engine.ts";
 import { handoverSection } from "./session-compact-prompts.ts";
 import { toolCall } from "./model-roles.ts";
+import {
+  CPP_FRESH_WORKSPACE,
+  CPP_TEMPLATE_RULE,
+  cppOwnShapeChatRules,
+  intakeGuidance,
+  isNativeShape,
+} from "./native-briefs.ts";
+import { isRustShape, RUST_FRESH_WORKSPACE, RUST_TEMPLATE_RULE, rustOwnShapeChatRules } from "./rust-briefs.ts";
 import { EventKind, InterviewMode, RunEvent } from "./run-events.ts";
 import { engineChoiceRule, unrealRules, unrealWorkHere, unrealWorkspaceRule } from "./unreal-prompts.ts";
 import { TRANSCRIPT_CHARS, TRANSCRIPT_MESSAGES } from "./brief-window.ts";
@@ -40,11 +48,12 @@ import type { PluginKindOffer } from "../types/host-api.d.ts";
 const NAME_WORDS = 3;
 /** How much of the original ask a contractor's brief quotes. */
 const ORIGINAL_ASK_CHARS = 4_000;
-/** A game's shape as a brief reads it: its page, its entry module and its build. */
+/** A game's shape as a brief reads it: its page, its entry module, its build and what kind of folder it is. */
 export interface BriefShape {
   entry?: string;
   main?: string;
   build?: string | null;
+  kind?: string;
 }
 
 /** A message as a brief quotes it. */
@@ -413,12 +422,22 @@ function factRules(
 ): string[] {
   if (kindUnknown(game)) return unknownKindRules(engine, game.holds);
   if (kindPending(game)) return [...pendingKindRule(engine, offered, null, game.holds, asked), TEMPLATE_RULE];
+  // A compiled game (C++ · raylib, Rust · wgpu) reads its own template's rules, or its own shape's.
+  const compiled = compiledShapeRules(folder);
+  if (compiled) return compiled;
   const several = game.facts.length > 1;
   return game.facts.flatMap((fact) => {
     const rules = rulesOfFact(engine, fact, game, folder);
     const prefix = several ? factPrefix(fact) : "";
     return rules.map((rule) => `${prefix}${rule}`);
   });
+}
+
+/** A compiled game's rules, in C++ or Rust terms (the template's, or its own shape's); null for any other game. */
+function compiledShapeRules({ ownShape, shape, contractMissing }: FolderShape): string[] | null {
+  if (isNativeShape(shape)) return ownShape ? cppOwnShapeChatRules(shape, contractMissing) : [CPP_TEMPLATE_RULE];
+  if (isRustShape(shape)) return ownShape ? rustOwnShapeChatRules(shape, contractMissing) : [RUST_TEMPLATE_RULE];
+  return null;
 }
 
 /**
@@ -458,6 +477,16 @@ function stillsBlock(extraReads: unknown): string {
  */
 export const SERVES_AFTER_LOOP_RUN = true;
 
+/**
+ * A C++ · raylib game's chat build reads its rules here (`native-briefs.ts`), a Rust · wgpu game's
+ * its own (`rust-briefs.ts`), and a new game's chat the intake guidance. A copy kept from before C++ games has neither, and lacks this mark
+ * (`servesNative`, native-contract.ts): a chat build is not a run, so no run's parts list
+ * reads it, and only a caller that checks it can tell such a copy from this one.
+ */
+export const SERVES_NATIVE = true;
+/** A Rust · wgpu game's chat build reads the Rust template's rules, never the three.js ones. */
+export const SERVES_RUST = true;
+
 /** How a resumed build is told to go on; a Loop chat reads the message instead (`RESUME_LOOP_CHAT`). */
 const RESUME_BUILD =
   "You are resuming your own session in this workspace — your context is restored. Pick up exactly where you left off and finish the remaining work.";
@@ -494,6 +523,7 @@ const RESUME_BUILD =
  *   pluginsOff?: boolean,
  *   holds?: FolderHolds | null,
  *   workers?: boolean,
+ *   intake?: boolean,
  * }} [opts]
  */
 export function buildContractorBrief({
@@ -532,6 +562,8 @@ export function buildContractorBrief({
   holds = null,
   /** This turn's session may start workers (workers/chat-workers.ts): its brief says so in one line. */
   workers = false,
+  /** A new game whose destinations nobody chose yet: the chat proposes them and asks once (`intakeGuidance`). */
+  intake = false,
 }: {
   ask?: string;
   messages?: readonly BriefMessage[];
@@ -557,6 +589,7 @@ export function buildContractorBrief({
   pluginsOff?: boolean;
   holds?: FolderHolds | null;
   workers?: boolean;
+  intake?: boolean;
 } = {}): string {
   const game = gameBuild(facts, { gameEngine, engineProject, pluginsOff, holds });
   const identity = appIdentity({ folderLabel, facts: game.facts, holds: game.holds });
@@ -584,6 +617,7 @@ export function buildContractorBrief({
     fresh: fresh || scaffolded,
     pending: !game.legacy && kindPending(game),
     notes: game.holds === FolderHolds.Notes,
+    shape,
   });
 
   const recent = messages
@@ -601,6 +635,7 @@ export function buildContractorBrief({
     CONVERSATION_RULE,
     ...rules,
     ...launchBlock,
+    ...(intake && launchBlock.length ? intakeGuidance(engine) : []),
     ...(afterLoopRun ? [afterLoopRun] : []),
     workersLine,
     workHere,
@@ -646,7 +681,7 @@ function workHereLine(game: GameBuild, folderLabel: string): string {
 function briefHead(
   ask: string | undefined,
   messages: readonly BriefMessage[],
-  start: { compacted: string | null; fresh: boolean; pending: boolean; notes: boolean },
+  start: { compacted: string | null; fresh: boolean; pending: boolean; notes: boolean; shape: BriefShape | null },
 ): { head: Array<string | undefined>; followUp: boolean } {
   const { compacted } = start;
   const original = compacted ? "" : originalAsk(messages);
@@ -667,13 +702,29 @@ function briefHead(
  * Where a first brief's game stands: a folder with no kind yet (empty, or notes only), the studio's
  * template as made, or code to continue.
  */
-function firstOrigin({ fresh, pending, notes }: { fresh: boolean; pending: boolean; notes: boolean }): string {
+function firstOrigin({
+  fresh,
+  pending,
+  notes,
+  shape,
+}: {
+  fresh: boolean;
+  pending: boolean;
+  notes: boolean;
+  shape: BriefShape | null;
+}): string {
   if (pending && notes)
     return "This project is brand new: its folder holds notes but no game yet, so read the notes before you start.";
   if (pending) return "This project is brand new and its folder is empty: there is nothing to inspect yet.";
-  if (fresh)
-    return "This game is brand new: nothing has been built in it yet, so there is nothing to inspect. It starts from the studio's empty template.";
+  if (fresh) return freshOrigin(shape);
   return "Continue from the existing code in this workspace.";
+}
+
+/** A brand-new game's start: the studio's empty template, or the C++ or Rust template it was scaffolded from. */
+function freshOrigin(shape: BriefShape | null): string {
+  if (isNativeShape(shape)) return CPP_FRESH_WORKSPACE;
+  if (isRustShape(shape)) return RUST_FRESH_WORKSPACE;
+  return "This game is brand new: nothing has been built in it yet, so there is nothing to inspect. It starts from the studio's empty template.";
 }
 
 /** How a resumed session goes on: after a run it led, that run's note; else a build's or a Loop chat's pickup. */

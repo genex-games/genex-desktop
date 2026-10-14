@@ -52,7 +52,7 @@ function listOf(value: unknown, min: number, max: number, valid: (entry: unknown
 
 /** The section as a record with only its own keys, refusing anything else and any API but 3. */
 function sectionRecord(m: Pick<PluginManifest, "apiVersion">, section: Section, raw: unknown): Record<string, unknown> {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3(section));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3(section));
   const known = isRecord(raw) && Object.keys(raw).every((key) => SECTION_KEYS[section].includes(key));
   if (!known) throw new Error(MESSAGE.NotObject(section));
   return raw;

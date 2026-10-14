@@ -33,8 +33,51 @@ import { type ActiveRun, RunnerKind, type RunStart, type Studio, heldRuns } from
 import { passCtx } from "./live-chat.ts";
 import { resumeStopped } from "./after-loop-run.ts";
 import { forgetProviderLosses } from "./provider-loss.ts";
+import {
+  GameStack,
+  NativeNightRefusal,
+  nativeNightRefused,
+  ProjectKind,
+  STACK_OF_KIND,
+  serveStacksFrom,
+  servesNative,
+  servesRust,
+  stacksServed,
+} from "./native-contract.ts";
+import { type NativeDescriptor, nativeNightRefusal, refusingProblems } from "./native-loop.ts";
+// The parts a C++ · raylib run runs (`NATIVE_PARTS`): each says it serves one (`SERVES_NATIVE`).
+import * as gauntletParts from "./gauntlet.ts";
+import * as autopilotParts from "./autopilot.ts";
+import * as checksParts from "./checks.ts";
+import * as specParts from "./spec.ts";
+import * as reviewParts from "./review.ts";
+import * as mergeParts from "./merge.ts";
+import * as evidenceParts from "./evidence.ts";
+import * as judgeParts from "./judge.ts";
+import * as promptsBuildParts from "./prompts-build.ts";
+import * as spikeParts from "./spike.ts";
+import * as directorSetupParts from "./director/setup.ts";
+import * as directorIntegrateParts from "./director/integrate.ts";
+import * as directorBriefsParts from "./director/briefs.ts";
+import * as directorRulesParts from "./director/rules.ts";
+import * as directorWorkersParts from "./director/workers.ts";
+import * as optimizationParts from "./optimization.ts";
+import * as facetGateParts from "./facet/phases/gate.ts";
+import * as facetPromptParts from "./facet/prompt.ts";
+import * as facetBriefParts from "./facet/phases/brief.ts";
+import * as facetPlanParts from "./facet/phases/plan.ts";
+import * as libraryParts from "./library.ts";
+import * as gameToolsParts from "../tools/game-tools.ts";
+import * as previewToolsParts from "../tools/preview-tools.ts";
+import * as chatSessionParts from "./chat-session.ts";
+import * as delegatedTurnParts from "./delegated-turn.ts";
+// …and the parts only a Rust · wgpu run runs beside them (`RUST_PARTS`).
+import * as nativeLoopParts from "./native-loop.ts";
+import * as nativeEvidenceParts from "./native-evidence.ts";
+import * as nativeReviewParts from "./native-review.ts";
+import * as playScriptParts from "./play-script.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall, Run } from "../types/harness.d.ts";
-import type { EngineDescriptor, GameProject } from "../types/host-api.d.ts";
+import type { EngineDescriptor, GameProject, GameValidationCode } from "../types/host-api.d.ts";
 
 /**
  * This start reads a reopened run's inbox from its ask (`RunStart.reopen`), and closes a crashed
@@ -45,6 +88,88 @@ export const SERVES_REOPEN = true;
 
 /** This start leads a Loop on a project of any kind: the chat's launch reads it by namespace (`open-loop-parts.ts`). */
 export const SERVES_OPEN_LOOP = true;
+
+/**
+ * This start refuses a C++ · raylib night, by its code, when a part the night runs was kept from
+ * before native support (`NATIVE_PARTS`), and reads `game.validate` codes rather than its words.
+ * chat-dispatch.ts asks the same of this module before it launches a night here.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * This start refuses a Rust · wgpu night, by its code, when a part the night runs was kept from
+ * before Rust games (`RUST_PARTS`), and declares Rust on its leases only when every part serves it.
+ */
+export const SERVES_RUST = true;
+
+/**
+ * Every part a C++ · raylib night runs, by its seed path, this start included (its own marks, read
+ * here rather than through an import of itself, which would be an import cycle): a copy an agent
+ * kept from before native support lacks `SERVES_NATIVE`, and the night is refused instead of judged
+ * by rules for web pages (native-contract.ts `servesNative`).
+ */
+const NATIVE_PART_MODULES = {
+  "loop/run-dispatch.ts": { SERVES_NATIVE, SERVES_RUST },
+  "loop/chat-session.ts": chatSessionParts,
+  "loop/delegated-turn.ts": delegatedTurnParts,
+  "loop/gauntlet.ts": gauntletParts,
+  "loop/autopilot.ts": autopilotParts,
+  "loop/checks.ts": checksParts,
+  "loop/spec.ts": specParts,
+  "loop/review.ts": reviewParts,
+  "loop/merge.ts": mergeParts,
+  "loop/evidence.ts": evidenceParts,
+  "loop/judge.ts": judgeParts,
+  "loop/prompts-build.ts": promptsBuildParts,
+  "loop/spike.ts": spikeParts,
+  "loop/director/setup.ts": directorSetupParts,
+  "loop/director/integrate.ts": directorIntegrateParts,
+  "loop/director/briefs.ts": directorBriefsParts,
+  "loop/director/rules.ts": directorRulesParts,
+  "loop/director/workers.ts": directorWorkersParts,
+  "loop/optimization.ts": optimizationParts,
+  "loop/facet/phases/gate.ts": facetGateParts,
+  "loop/facet/prompt.ts": facetPromptParts,
+  "loop/facet/phases/brief.ts": facetBriefParts,
+  "loop/facet/phases/plan.ts": facetPlanParts,
+  "loop/library.ts": libraryParts,
+  "tools/game-tools.ts": gameToolsParts,
+  "tools/preview-tools.ts": previewToolsParts,
+} as const satisfies Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+/** The parts a raylib night runs, as `servesNative` reads them. */
+const NATIVE_PARTS: readonly Readonly<Record<string, unknown>>[] = Object.values(NATIVE_PART_MODULES);
+
+/**
+ * Every part a Rust · wgpu night runs, by its seed path: every part a raylib night runs, the
+ * native loop, evidence and review, whose binary raylib checks a Rust game would otherwise fall
+ * through, and the play script, which plays a Rust game's touch controls. Before Rust games the seed routed by those checks, so a copy an agent kept from then
+ * lacks `SERVES_RUST`, and the night is refused by its code instead of built as three.js
+ * (native-contract.ts `servesRust`). The host reads the same modules' sources for the mark
+ * (substrate/seed-upgrade.ts `RUST_NIGHT_PARTS`, which adds the chat launcher), held equal by
+ * seed-contracts.test.ts.
+ */
+export const RUST_PARTS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  ...NATIVE_PART_MODULES,
+  "loop/native-loop.ts": nativeLoopParts,
+  "loop/native-evidence.ts": nativeEvidenceParts,
+  "loop/native-review.ts": nativeReviewParts,
+  "loop/play-script.ts": playScriptParts,
+};
+
+/** The parts a Rust night runs that were kept from before Rust games (no `SERVES_RUST`), by seed path. */
+function partsWithoutRust(): string[] {
+  return Object.entries(RUST_PARTS)
+    .filter(([, part]) => part.SERVES_RUST !== true)
+    .map(([rel]) => rel);
+}
+
+/** Whether every part a Rust night runs serves one: read when it is asked, never at load. */
+const rustServed = (): boolean => servesRust(Object.values(RUST_PARTS));
+
+// Every lease this harness acquires declares the stacks it serves, read from the parts' marks when
+// the lease is asked for: a part may still be loading while this module is.
+serveStacksFrom(() => stacksServed({ native: servesNative(NATIVE_PARTS), rust: rustServed() }));
 
 /** Where the post-run self-improvement pass stands (`run_learning`). Persisted: never rename a value. */
 const LearningState = {
@@ -63,6 +188,10 @@ const MESSAGE = {
   engineExport: (name: string | undefined) =>
     `${name} was exported from a game engine, so the studio cannot edit or judge it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
   stoppedBeforeStart: "Stopped before the build started — nothing was built.",
+  notReady: (name: string, problems: readonly string[]) =>
+    `${name} is not ready for a run: ${problems.join("; ")}. Fix that first (a chat build can), then start again.`,
+  rustPartsMissing: (name: string, modules: readonly string[]) =>
+    `${name} is a Rust game, and ${modules.length === 1 ? "a part" : "parts"} of the studio's own harness it would run ${modules.length === 1 ? "was" : "were"} kept from before Rust games (${modules.join(", ")}), so it cannot build or judge one. Re-take the seed copy of ${modules.length === 1 ? "that module" : "those modules"}, then start again.`,
 } as const;
 
 /** How a runner is called: the thread the run tells its story in, the run, whether it resumes, and the folder's profile. */
@@ -401,17 +530,7 @@ async function startReservedRun(
   const games = await host.call(HostMethod.GameList, {}).catch(() => []);
   const listed = games.find((g) => g.name === action.run.project) ?? null;
   const missing = launched && action.resume !== true ? await missingFiles(host, listed) : undefined;
-  const refused = loopRunRefusal(listed, [], missing);
-  if (refused) {
-    await host.call(HostMethod.EventsAppend, {
-      threadId,
-      batch: [
-        customEvent(RunEvent.RunStartBlocked, { requestedRunId: action.run.runId, reason: refused }),
-        assistantSays(refused),
-      ],
-    });
-    return;
-  }
+  if (await refusedStart(host, action, listed, missing)) return;
   // One pick, three jobs: the spec arrives with the composer's model and leaves here with
   // its planner, builders and critics resolved (model-roles.ts). A resumed run keeps the
   // roles it was launched with; a reopened one arrives with them already resolved — its
@@ -450,6 +569,39 @@ async function startReservedRun(
     // holds the Mac awake until this — releasing at run.finished would let it nap mid-pass.
     host.notify("run.settled", { runId: run.runId });
   }
+}
+
+/**
+ * Refuse the start when its folder refuses (`loopRunRefusal`): the record and the chat's word, and
+ * true. A raylib or Rust run on a part kept from before its stack is refused by its code, a Rust
+ * one naming each kept part. False when the run may start.
+ */
+async function refusedStart(
+  host: Host,
+  action: RunStart,
+  listed: GameProject | null,
+  missing: unknown,
+): Promise<boolean> {
+  const served = servesNative(NATIVE_PARTS);
+  const servedRust = rustServed();
+  const refused = loopRunRefusal(listed, [], missing, { servesNative: served, servesRust: servedRust });
+  if (!refused) return false;
+  const rust = rustNightRefusal(listed, servedRust);
+  const typed = nativeNightRefusal(listed, served) ?? rust;
+  const modules = rust && typed === rust ? rust.modules : null;
+  await host.call(HostMethod.EventsAppend, {
+    threadId: action.threadId,
+    batch: [
+      customEvent(RunEvent.RunStartBlocked, {
+        requestedRunId: action.run.runId,
+        reason: refused,
+        ...(typed?.code ? { code: typed.code } : {}),
+        ...(modules?.length ? { modules } : {}),
+      }),
+      assistantSays(refused),
+    ],
+  });
+  return true;
 }
 
 /**
@@ -735,6 +887,16 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
 }
 
 /**
+ * The `game.validate` codes that refuse a run on any game, a three.js one included: a game a newer
+ * Genex made (read-only here), and a studio.json whose stack its files contradict.
+ */
+const FolderRefusalCode = {
+  KindUnsupported: "kind-unsupported",
+  StackContradictsKind: "stack-contradicts-kind",
+} as const satisfies Record<string, GameValidationCode>;
+const FOLDER_REFUSAL_CODES: readonly string[] = Object.values(FolderRefusalCode);
+
+/**
  * Why this folder cannot have a run spent on it — a sentence for the chat, or null to launch.
  *
  * Two refusals, and both are about the folder rather than the model. An engine export is already
@@ -746,12 +908,78 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
  * `missing` (an older copy of the launch) meets no missing-file refusal, and its run's base builder
  * still owes the page. A missing studio contract is *not* a refusal: installing it is the base
  * builder's first job.
+ *
+ * A C++ · raylib run is refused as well when a part it runs predates native support (`servesNative`
+ * false), and a Rust · wgpu run when one predates Rust games (`servesRust` false); absent, the
+ * caller checked nothing. A compiled game has no page whose files `missing` could name: its folder
+ * is read by `game.validate`'s typed `codes` instead (`codedRefusal`); a caller that hands none
+ * checked nothing.
  */
 export function loopRunRefusal(
-  descriptor: (FactsOfDescriptor & { name?: string; shape?: { kind?: string } | null }) | null | undefined,
-  _problems: readonly string[] | null | undefined,
+  descriptor: (FactsOfDescriptor & NativeDescriptor) | null | undefined,
+  problems: readonly string[] | null | undefined,
   missing?: unknown,
+  {
+    servesNative = true,
+    servesRust = true,
+    codes,
+  }: { servesNative?: boolean; servesRust?: boolean; codes?: readonly string[] | null } = {},
 ): string | null {
-  if (descriptor?.shape?.kind === "engine-export") return MESSAGE.engineExport(descriptor.name);
+  if (descriptor?.shape?.kind === ProjectKind.EngineExport) return MESSAGE.engineExport(descriptor.name);
+  const native = nativeNightRefusal(descriptor, servesNative) ?? rustNightRefusal(descriptor, servesRust);
+  if (native) return native.message;
+  const coded = codedRefusal(descriptor, problems ?? [], codes);
+  if (coded) return coded;
   return fireGates(HookEvent.RunPrepare, { game: descriptor, missing }).blocked?.reason ?? null;
+}
+
+/**
+ * Why the folder leaves a run nothing to build on, read by `game.validate`'s typed `codes`
+ * (native-loop.ts `refusingProblems`), never by the problems' words: every refusing code for a
+ * C++ · raylib or Rust · wgpu game (a missing `CMakeLists.txt`, `genex.toml` or entry), and for a
+ * three.js game only `FOLDER_REFUSAL_CODES`, since its missing files are the `web.ready` gate's, by
+ * name. Null when nothing refuses, and for a caller that handed no codes.
+ */
+function codedRefusal(
+  descriptor: NativeDescriptor | null | undefined,
+  problems: readonly string[],
+  codes: readonly string[] | null | undefined,
+): string | null {
+  if (!Array.isArray(codes)) return null;
+  const compiled = stackOfKind(descriptor?.shape?.kind) !== GameStack.ThreeJs;
+  if (!compiled && !codes.some((code) => FOLDER_REFUSAL_CODES.includes(code))) return null;
+  const named = refusingProblems(problems, codes);
+  return named.length ? MESSAGE.notReady(descriptor?.name ?? "this game", named) : null;
+}
+
+/**
+ * The refusal a Rust · wgpu night meets when a part it runs predates Rust games (`served` is
+ * native-contract.ts `servesRust` over `RUST_PARTS`), typed `rust-parts-missing` and naming each
+ * kept part by its seed path (`modules`, default: the parts without `SERVES_RUST`); null for every
+ * other game, and for a Rust game whose parts all serve it. The game's stack is read from the
+ * contract's own table, never through native-loop.ts: a kept pre-Rust copy of that module reads a
+ * Rust game as three.js, and the night would go on without a word.
+ */
+export function rustNightRefusal(
+  descriptor: NativeDescriptor | null | undefined,
+  served: boolean,
+  modules: readonly string[] = partsWithoutRust(),
+): (Error & { code: NativeNightRefusal; modules: string[] }) | null {
+  if (served || stackOfKind(descriptor?.shape?.kind) !== GameStack.RustWgpu) return null;
+  const named = [...modules];
+  const refused = nativeNightRefused(
+    NativeNightRefusal.RustPartsMissing,
+    MESSAGE.rustPartsMissing(descriptor?.name ?? "this game", named),
+  );
+  return Object.assign(refused, { modules: named });
+}
+
+/** The stack a folder's kind is (native-contract.ts `STACK_OF_KIND`); a kind this seed does not know is three.js. */
+function stackOfKind(kind: string | undefined): GameStack {
+  return isKnownKind(kind) ? STACK_OF_KIND[kind] : GameStack.ThreeJs;
+}
+
+/** Whether `kind` is one this seed knows (native-contract.ts `ProjectKind`). */
+function isKnownKind(kind: string | undefined): kind is ProjectKind {
+  return kind !== undefined && Object.hasOwn(STACK_OF_KIND, kind);
 }

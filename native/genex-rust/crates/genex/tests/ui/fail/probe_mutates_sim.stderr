@@ -1,0 +1,5 @@
+error[E0594]: cannot assign to `sim.world.score`, which is behind a `&` reference
+  --> tests/ui/fail/probe_mutates_sim.rs:12:9
+   |
+12 |         sim.world.score += 1;
+   |         ^^^^^^^^^^^^^^^^^^^^ `sim` is a `&` reference, so it cannot be written to

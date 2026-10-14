@@ -1,0 +1,71 @@
+{
+ "unit": "protocol",
+ "cases": {
+  "framing": [
+   {"name":"chunks","chunks":["{\"id\":1}\n{\"id\"",":2}\r\n\n","{\"id\":3}","\n","tail-without-newline"],"lines":[{"status":"line","hex":"7b226964223a317d"},{"status":"line","hex":"7b226964223a327d"},{"status":"line","hex":"7b226964223a337d"},{"status":"line","hex":"7461696c2d776974686f75742d6e65776c696e65"}],"endStays":true},
+   {"name":"cap","chunks":[[{"repeat":"a","count":1048576},"\n"],{"repeat":"b","count":1000},[{"repeat":"b","count":1047577},"\n{\"id\":9}\n"]],"lines":[{"status":"line","length":1048576,"digest":"509a9b97ff722325"},{"status":"too-long"},{"status":"line","hex":"7b226964223a397d"}],"endStays":true},
+   {"name":"small-cap","chunks":["abcd\nabcde\nab\r\nabcd\r\n\r\n\n\nabcdef","gh\nz"],"cap":4,"lines":[{"status":"line","hex":"61626364"},{"status":"too-long"},{"status":"line","hex":"6162"},{"status":"line","hex":"61626364"},{"status":"too-long"},{"status":"line","hex":"7a"}],"endStays":true},
+   {"name":"cap-with-cr","chunks":["abcd\r","\nxy"],"cap":4,"lines":[{"status":"line","hex":"61626364"},{"status":"line","hex":"7879"}],"endStays":true},
+   {"name":"too-long-tail-at-end","chunks":["abcdefgh"],"cap":4,"lines":[{"status":"too-long"}],"endStays":true},
+   {"name":"too-long-at-end-no-newline","chunks":["abcde"],"cap":4,"lines":[{"status":"too-long"}],"endStays":true},
+   {"name":"only-cr","chunks":["\r\n\r","\n","\r"],"lines":[],"endStays":true},
+   {"name":"empty","chunks":[],"lines":[],"endStays":true},
+   {"name":"empty-chunks","chunks":["","","x","","\n"],"lines":[{"status":"line","hex":"78"}],"endStays":true},
+   {"name":"many-small","chunks":["{","\"","a","\"",":","1","}","\n","{","\"","b","\"",":","2","}","\r","\n"],"lines":[{"status":"line","hex":"7b2261223a317d"},{"status":"line","hex":"7b2262223a327d"}],"endStays":true},
+   {"name":"huge-dropped-over-many-chunks","chunks":[{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},{"repeat":"c","count":70000},"\nok\n"],"lines":[{"status":"too-long"},{"status":"line","hex":"6f6b"}],"endStays":true},
+   {"name":"huge-cap-plus-one-with-cr","chunks":[[{"repeat":"d","count":1048576},"\r\n"],[{"repeat":"e","count":1048577},"\r\n"],"end"],"lines":[{"status":"line","length":1048576,"digest":"e7715555e5a22325"},{"status":"too-long"},{"status":"line","hex":"656e64"}],"endStays":true},
+   {"name":"invalid-utf8-line","chunks":[{"hex":"7b7d0aff0a"}],"lines":[{"status":"line","hex":"7b7d"},{"status":"line","hex":"ff"}],"endStays":true}
+  ],
+  "handle": [
+   {"line":"{\"id\":1,\"op\":\"state\"}","reply":"7b226964223a312c226f6b223a747275652c226f70223a227374617465222c22726573756c74223a7b7d7d"},
+   {"line":"[1,2]","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226e6f742d616e2d6f626a656374227d"},
+   {"line":"\"state\"","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226e6f742d616e2d6f626a656374227d"},
+   {"line":"3","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226e6f742d616e2d6f626a656374227d"},
+   {"line":"null","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226e6f742d616e2d6f626a656374227d"},
+   {"line":"true","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226e6f742d616e2d6f626a656374227d"},
+   {"line":"{not json","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226261642d6a736f6e227d"},
+   {"line":"","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226261642d6a736f6e227d"},
+   {"line":"{\"op\":\"state\"}","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a227374617465222c226572726f72223a226d697373696e672d6964227d"},
+   {"line":"{\"id\":null,\"op\":\"state\"}","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a227374617465222c226572726f72223a226d697373696e672d6964227d"},
+   {"line":"{\"id\":true,\"op\":\"state\"}","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a227374617465222c226572726f72223a226d697373696e672d6964227d"},
+   {"line":"{\"id\":{},\"op\":\"state\"}","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a227374617465222c226572726f72223a226d697373696e672d6964227d"},
+   {"line":"{\"id\":[],\"op\":7}","reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a226d697373696e672d6964227d"},
+   {"line":"{\"id\":4,\"op\":\"launch\"}","reply":"7b226964223a342c226f6b223a66616c73652c226f70223a226c61756e6368222c226572726f72223a22756e6b6e6f776e2d6f70222c22617661696c61626c65223a5b2264656d6f222c226563686f222c2273656564222c227374617465225d7d"},
+   {"line":"{\"id\":4}","reply":"7b226964223a342c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a22756e6b6e6f776e2d6f70222c22617661696c61626c65223a5b2264656d6f222c226563686f222c2273656564222c227374617465225d7d"},
+   {"line":"{\"id\":4,\"op\":7}","reply":"7b226964223a342c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a22756e6b6e6f776e2d6f70222c22617661696c61626c65223a5b2264656d6f222c226563686f222c2273656564222c227374617465225d7d"},
+   {"line":"{\"id\":4.5,\"op\":null}","reply":"7b226964223a342e352c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a22756e6b6e6f776e2d6f70222c22617661696c61626c65223a5b2264656d6f222c226563686f222c2273656564222c227374617465225d7d"},
+   {"line":["{\"id\":5,\"op\":\"state\",\"arg\":",{"repeat":"[","count":31},{"repeat":"]","count":31},"}"],"reply":"7b226964223a352c226f6b223a747275652c226f70223a227374617465222c22726573756c74223a7b7d7d"},
+   {"line":["{\"id\":5,\"op\":\"state\",\"arg\":",{"repeat":"[","count":32},{"repeat":"]","count":32},"}"],"reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a22746f6f2d64656570227d"},
+   {"line":["{\"id\":5,\"op\":\"state\",\"arg\":",{"repeat":"[","count":32},"x}"],"reply":"7b226964223a6e756c6c2c226f6b223a66616c73652c226f70223a6e756c6c2c226572726f72223a22746f6f2d64656570227d"},
+   {"line":"{\"id\":\"a1\",\"op\":\"seed\",\"arg\":{\"seed\":12}}","reply":"7b226964223a226131222c226f6b223a747275652c226f70223a2273656564222c22726573756c74223a7b2273656564223a31327d7d"},
+   {"line":"{\"id\":2,\"op\":\"demo\",\"arg\":{\"name\":\"x\"}}","reply":"7b226964223a322c226f6b223a66616c73652c226f70223a2264656d6f222c226572726f72223a226e6f2d737563682d64656d6f227d"},
+   {"line":"{\"id\":2,\"op\":\"seed\"}","reply":"7b226964223a322c226f6b223a747275652c226f70223a2273656564222c22726573756c74223a7b2273656564223a307d7d"},
+   {"line":"{\"id\":-0,\"op\":\"seed\",\"arg\":{\"seed\":1e400}}","reply":"7b226964223a302c226f6b223a747275652c226f70223a2273656564222c22726573756c74223a7b2273656564223a6e756c6c7d7d"},
+   {"line":"{\"id\":1e21,\"op\":\"echo\",\"arg\":{\"b\":1,\"a\":[0.1,1e-7,-0,\"\\u0001\\ud800\"],\"b\":2}}","reply":"7b226964223a31652b32312c226f6b223a747275652c226f70223a226563686f222c22726573756c74223a7b2262223a322c2261223a5b302e312c31652d30372c302c225c7530303031efbfbd225d7d7d"},
+   {"line":"{\"op\":\"echo\",\"id\":\"x\",\"op\":\"state\"}","reply":"7b226964223a2278222c226f6b223a747275652c226f70223a227374617465222c22726573756c74223a7b7d7d"},
+   {"line":"{\"id\":\"\",\"op\":\"echo\",\"arg\":null}","reply":"7b226964223a22222c226f6b223a747275652c226f70223a226563686f222c22726573756c74223a6e756c6c7d"},
+   {"line":"  {\"id\":3,\"op\":\"echo\",\"arg\":\"caf\\u00e9\"}  ","reply":"7b226964223a332c226f6b223a747275652c226f70223a226563686f222c22726573756c74223a22636166c3a9227d"}
+  ],
+  "lineTooLong": "{\"id\":null,\"ok\":false,\"op\":null,\"error\":\"line-too-long\"}",
+  "ops": [
+   "demo",
+   "echo",
+   "seed",
+   "state"
+  ],
+  "call": [
+   {"op":"state","arg":null,"reply":"{\"id\":null,\"ok\":true,\"op\":\"state\",\"result\":{}}"},
+   {"op":"seed","arg":{"seed":3},"reply":"{\"id\":null,\"ok\":true,\"op\":\"seed\",\"result\":{\"seed\":3}}"},
+   {"op":"demo","arg":{},"reply":"{\"id\":null,\"ok\":false,\"op\":\"demo\",\"error\":\"no-such-demo\"}"},
+   {"op":"nope","arg":1,"reply":"{\"id\":null,\"ok\":false,\"op\":\"nope\",\"error\":\"unknown-op\",\"available\":[\"demo\",\"echo\",\"seed\",\"state\"]}"},
+   {"op":"echo","arg":[1,"two",{"three":3.5}],"reply":"{\"id\":null,\"ok\":true,\"op\":\"echo\",\"result\":[1,\"two\",{\"three\":3.5}]}"}
+  ],
+  "events": [
+   {"name":"focus","fields":{"focused":true},"line":"{\"event\":\"focus\",\"focused\":true}"},
+   {"name":"ready","fields":{"nonce":"n1","protocol":1,"contractVersion":1,"event":"ignored","size":[640,360]},"line":"{\"event\":\"ready\",\"nonce\":\"n1\",\"protocol\":1,\"contractVersion\":1,\"size\":[640,360]}"},
+   {"name":"fatal","fields":{"reason":"gpu-unsupported"},"line":"{\"event\":\"fatal\",\"reason\":\"gpu-unsupported\"}"},
+   {"name":"fatal","fields":null,"line":"{\"event\":\"fatal\"}"},
+   {"name":"x","fields":[1,2],"line":"{\"event\":\"x\"}"}
+  ]
+ }
+}

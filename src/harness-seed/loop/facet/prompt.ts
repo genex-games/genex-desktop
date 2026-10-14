@@ -5,6 +5,7 @@ import { roleEngine, RoleKey, toolCall } from "../model-roles.ts";
 import { facetNotes } from "../repo.ts";
 import { CLIP_QUOTE } from "../text.ts";
 import { DEFAULT_CAMERA } from "../cameras.ts";
+import { type CompiledFacetLines, facetLinesFor } from "../rust-briefs.ts";
 import { FacetStage, moveEscalated, stageOf } from "./stage.ts";
 import { FINISH_FIX_ASK, FINISH_PROMPT_LINE, finishLossEscalate } from "./stage-prompts.ts";
 import { scopeLines } from "../scope-prompts.ts";
@@ -15,6 +16,15 @@ import { screenOwnerLine } from "../screen-owner-prompts.ts";
 import { blockPromptLine } from "./build-block-prompts.ts";
 import { reapplyWords } from "./carried-fixes-prompts.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
+
+/**
+ * A compiled facet's builder reads its stack's lines here (`facetLinesFor`: `CPP_FACET` for a
+ * C++ · raylib game, `RUST_FACET` for a Rust · wgpu one): a copy of this module kept from before
+ * C++ games tells it to write JavaScript, and one kept from before Rust games C++, so a raylib or
+ * Rust night refuses to run on it.
+ */
+export const SERVES_NATIVE = true;
+export const SERVES_RUST = true;
 
 /** Reference stills into the first brief, and pair images later, at most. */
 const MAX_PROMPT_IMAGES = 12;
@@ -63,25 +73,31 @@ export function briefWithMovedSections(
     ownShape = false,
     entryMain = "src/main.js",
     build = null,
+    kind,
   }: {
     spec?: AnyRecord | null;
     ownsMain?: boolean;
     ownShape?: boolean;
     entryMain?: string;
     build?: string | null;
+    /** The game's kind (`ProjectShape.kind`): a compiled game reads its stack's rules. */
+    kind?: string;
   } = {},
 ): string {
   const body = rulesBeforeHistory(withDoneSection(String(text ?? ""), spec));
   if (body.includes("- YOUR SEAM:") || body.includes("- YOUR FILES:")) return body;
+  const compiled = facetLinesFor(kind);
   const rules = [
-    seamRule(spec, ownShape),
-    entryRule(entryMain, ownsMain, ownShape),
+    seamRule(spec, ownShape, compiled),
+    entryRule(entryMain, ownsMain, ownShape, compiled),
     ...(ownShape && build
       ? [
           `- Run \`${build}\` before you finish: the studio runs the same build before every preview, and a build that fails is a black screen for every critic.`,
         ]
       : []),
-    `- If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (config.demos in installStudio) — demo checks run it and photograph its end frame.`,
+    compiled
+      ? compiled.demo
+      : `- If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (config.demos in installStudio) — demo checks run it and photograph its end frame.`,
   ];
   const header = "## Rules that do not change";
   return body.includes(header)
@@ -124,20 +140,34 @@ function withDoneSection(body: string, spec: AnyRecord | null | undefined): stri
 }
 
 /** Where the worker's own work goes: its seam in the user's code, or its own module in the template. */
-function seamRule(spec: AnyRecord | null | undefined, ownShape: boolean): string {
+function seamRule(spec: AnyRecord | null | undefined, ownShape: boolean, compiled: CompiledFacetLines | null): string {
   const owned = spec?.owns?.length ? spec.owns.join(", ") : null;
+  if (compiled)
+    return ownShape ? compiled.seam(owned) : compiled.files(owned ?? compiled.module(String(spec?.id ?? "facet")));
   if (ownShape)
     return `- YOUR SEAM: ${owned ?? "every file of this game except its entry module, the studio contract and index.html"}. It is the user's own code — read what is around your seam before you change anything, follow the conventions the game already has, and do not rename, restyle or reformat a file you did not have to change.`;
   return `- YOUR FILES: put this facet's work in its own module — ${owned ?? `src/${String(spec?.id ?? "facet").replace(/[^a-z0-9-]/g, "")}.js`} (split further under src/ if it grows).`;
 }
 
 /** Who may touch the entry module and the studio contract. */
-function entryRule(entryMain: string, ownsMain: boolean, ownShape: boolean): string {
+function entryRule(
+  entryMain: string,
+  ownsMain: boolean,
+  ownShape: boolean,
+  compiled: CompiledFacetLines | null,
+): string {
+  if (compiled) return compiledEntryRule(compiled, entryMain, ownsMain, ownShape);
   if (ownsMain)
     return `- This worker OWNS ${entryMain} and src/studio.js — you may restructure them, and you wire in other workers' modules when they appear.`;
   if (ownShape)
     return `- This worker does NOT own ${entryMain}, src/studio.js or index.html. If your work needs a change in one of them, say so in your summary and leave it: the director makes that edit, or gives it to whoever owns the entry.`;
   return `- This facet does NOT own ${entryMain} or src/studio.js. Touch ${entryMain} ONLY to add your single import + init line inside the "FACET WIRING" marker block (add the marker block if it is missing); never reformat or reorganise anything else in either file.`;
+}
+
+/** Who may touch a compiled game's entry and the studio runtime, in its stack's `lines`. */
+function compiledEntryRule(lines: CompiledFacetLines, entryMain: string, ownsMain: boolean, ownShape: boolean): string {
+  if (ownsMain) return lines.ownsEntry(entryMain);
+  return ownShape ? lines.notOwnEntry(entryMain) : lines.wiringOnly(entryMain);
 }
 
 /** `n` entries and a tail saying how many were left out, or the whole list when it fits. */
@@ -255,6 +285,8 @@ export function facetPrompt(args: AnyRecord): string {
 /** Everything `facetPrompt` is handed, with its defaults, and what every section derives from it. */
 type PromptInput = AnyRecord & {
   entryMain: string;
+  /** A compiled game's facet lines (`CPP_FACET`, `RUST_FACET`): every line below that names its code reads them; null for three.js. */
+  compiled: CompiledFacetLines | null;
   pointsAtBrief: boolean;
   steering: string[];
   failureText: string | null;
@@ -314,6 +346,7 @@ function promptInput({
     ownShape,
     game,
     entryMain: shape?.main ?? "src/main.js",
+    compiled: facetLinesFor(shape?.kind),
     // Every section below that .studio/BRIEF.md already carries is rendered ONCE (M4.8b). A
     // delegated engine reads the file — the loop wrote it into the worktree and the prompt's
     // first line points at it — so repeating the contract, the ownership rules, the ledger and
@@ -323,7 +356,10 @@ function promptInput({
     steering: cappedSteering(userSteering),
     failureText: lastFailure ? cappedFailure(lastFailure) : null,
     finishing,
-    moveLine: (finishing ? [FINISH_PROMPT_LINE, fixAsk(fix, true)] : [blockLine, moveAsk(move), fixAsk(fix)])
+    moveLine: (finishing
+      ? [FINISH_PROMPT_LINE, fixAsk(fix, { finishing: true })]
+      : [blockLine, moveAsk(move), fixAsk(fix, { compiled: facetLinesFor(shape?.kind) })]
+    )
       .filter(Boolean)
       .join("\n"),
     briefPointer: briefFile
@@ -345,16 +381,26 @@ function moveAsk(move: AnyRecord | null): string {
   return `THE MOVE THIS ITERATION (${move.mandatory ? "mandatory" : "asked for"}): ${move.what}${measured}. ${lead} the move first — the whole step, boldly, so a player notices it in the first minute — then fix up to three ledger items.${escalate}`;
 }
 
-/** THE FIX this iteration names, and how many more namings make it mandatory; a finisher may tune it closed. */
-function fixAsk(fix: AnyRecord | null, finishing = false): string {
+/**
+ * THE FIX this iteration names, and how many more namings make it mandatory; a finisher may tune it
+ * closed, and a compiled game's builder hears the rule in its own language's terms.
+ */
+function fixAsk(
+  fix: AnyRecord | null,
+  { finishing = false, compiled = null }: { finishing?: boolean; compiled?: CompiledFacetLines | null } = {},
+): string {
   if (!fix?.what) return "";
   const weight = fix.mandatory
     ? "mandatory — a build that leaves it LOSES"
-    : "the judge has named it " + fix.streak + " times; next time it is mandatory";
-  const how = finishing
-    ? FINISH_FIX_ASK
-    : "Replace the mechanism, do not tune it: if it is a shape, rebuild the shape; if it is a material, change the material kind (foliage.js for anything leafy).";
-  return `THE FIX THIS ITERATION (${weight}): ${fix.what}${fix.checkId ? ` — measured by check ${fix.checkId}` : ""}. ${how}`;
+    : `the judge has named it ${fix.streak} times; next time it is mandatory`;
+  return `THE FIX THIS ITERATION (${weight}): ${fix.what}${fix.checkId ? ` — measured by check ${fix.checkId}` : ""}. ${fixHow(finishing, compiled)}`;
+}
+
+/** How THE FIX is done: a finisher's tuning, a compiled game's replacement, or the template's. */
+function fixHow(finishing: boolean, compiled: CompiledFacetLines | null): string {
+  if (finishing) return FINISH_FIX_ASK;
+  if (compiled) return compiled.replace;
+  return "Replace the mechanism, do not tune it: if it is a shape, rebuild the shape; if it is a material, change the material kind (foliage.js for anything leafy).";
 }
 
 /** A losing streak's ESCALATE: the build stage's own words, or a finisher's "change the approach". */
@@ -563,7 +609,8 @@ function ownershipLines(p: PromptInput): string[] {
   return p.ownShape ? seamOwnership(p) : templateOwnership(p);
 }
 
-function seamOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): string[] {
+function seamOwnership({ spec: facet, entryMain, ownsMain, compiled }: PromptInput): string[] {
+  if (compiled) return compiledSeamOwnership(compiled, facet, entryMain, ownsMain);
   return [
     `YOUR SEAM IN THIS GAME (it is the user's own code — everything outside your seam already works):`,
     `- Your seam is ${facet.owns?.length ? facet.owns.join(", ") : "every file of this game except its entry module, the studio contract and index.html"}. Read what is around it before you change anything; follow the conventions the game already has rather than the ones you would have chosen.`,
@@ -574,7 +621,27 @@ function seamOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): strin
   ];
 }
 
-function templateOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): string[] {
+/** A compiled worker's seam in a game the user brought, in its stack's `lines`. */
+function compiledSeamOwnership(
+  lines: CompiledFacetLines,
+  facet: AnyRecord,
+  entryMain: string,
+  ownsMain: boolean,
+): string[] {
+  return [
+    `YOUR SEAM IN THIS GAME (it is the user's own code — everything outside your seam already works):`,
+    lines.seam(facet.owns?.length ? facet.owns.join(", ") : null),
+    ownsMain ? lines.ownsEntry(entryMain) : lines.notOwnEntry(entryMain),
+  ];
+}
+
+function templateOwnership({ spec: facet, entryMain, ownsMain, compiled }: PromptInput): string[] {
+  if (compiled)
+    return [
+      `FILE OWNERSHIP (merge conflicts are the run's most expensive failure):`,
+      compiled.files(facet.owns?.length ? facet.owns.join(", ") : compiled.module(facet.id)),
+      ownsMain ? compiled.ownsEntry(entryMain) : compiled.wiringOnly(entryMain),
+    ];
   return [
     `FILE OWNERSHIP (merge conflicts are the run's most expensive failure):`,
     `- Put this facet's work in its own module: ${facet.owns?.length ? facet.owns.join(", ") : `src/${facet.id.replace(/[^a-z0-9-]/g, "")}.js`} (split further under src/ if it grows).`,
@@ -587,6 +654,12 @@ function templateOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): s
 /** Notes, tags and the one-screen rule: the conventions the brief carries when there is one. */
 function conventionLines(p: PromptInput): string[] {
   if (p.pointsAtBrief) return [];
+  if (p.compiled)
+    return [
+      `- Keep your working notes in ${facetNotes(p.spec.id)} — do not edit the shared NOTES.md; the integrator folds notes together.`,
+      p.compiled.tag,
+      p.ownShape ? p.compiled.ownShape(p.entryMain) : p.compiled.oneScreen(harnessEnforced(p.spec)),
+    ];
   return [
     `- Keep your working notes in ${facetNotes(p.spec.id)} — do not edit the shared NOTES.md.`,
     `- Tag every object you create (obj.userData.tag = "<tag>") with the tag names the checks use. Untagged objects do not exist to the checks.`,
@@ -613,20 +686,24 @@ function ownShapeLine({ entryMain, shape }: PromptInput): string {
 }
 
 function oneScreenLine({ spec: facet, run }: PromptInput): string {
+  // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
+  const draws =
+    heldHudPromptDraws(run) ??
+    "drawn into the canvas: text, bars, arcs and gauges, paths, images, panels and fonts, anchored in frame fractions; keep the middle of the view for the game — the harness measures the HUD's coverage and overlap";
+  return `- ONE SCREEN, ONE INPUT PATH: all UI through __studio.hud (${draws}; no DOM, no second HUD); all input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse).${harnessEnforced(facet)} A label that belongs to something in the world — a player's name, a marker over a target — is a sprite or mesh in the scene, attached to that object and tagged with it (never hud), so it moves and hides with it; __studio.hud holds only what stays on the screen.`;
+}
+
+/** The harness-owned checks on this facet's board that enforce the one-screen rule, as a sentence (or nothing). */
+function harnessEnforced(facet: AnyRecord): string {
   // Only the harness-owned checks this facet actually carries — under the declared-only rule a
   // board may carry none of them, and naming a check nobody scores teaches the wrong lesson.
   const harnessOnBoard = (facet.checks ?? [])
     .filter((c: AnyRecord) => HARNESS_CHECKS[c.id])
     .map((c: AnyRecord) => c.id);
   const one = harnessOnBoard.length === 1;
-  const enforced = harnessOnBoard.length
+  return harnessOnBoard.length
     ? ` The harness-owned check${one ? "" : "s"} ${harnessOnBoard.join(", ")} enforce${one ? "s" : ""} this.`
     : "";
-  // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
-  const draws =
-    heldHudPromptDraws(run) ??
-    "drawn into the canvas: text, bars, arcs and gauges, paths, images, panels and fonts, anchored in frame fractions; keep the middle of the view for the game — the harness measures the HUD's coverage and overlap";
-  return `- ONE SCREEN, ONE INPUT PATH: all UI through __studio.hud (${draws}; no DOM, no second HUD); all input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse).${enforced} A label that belongs to something in the world — a player's name, a marker over a target — is a sprite or mesh in the scene, attached to that object and tagged with it (never hud), so it moves and hides with it; __studio.hud holds only what stays on the screen.`;
 }
 
 /** The last build's news: its failure, the legacy gap, or the board. */
@@ -636,7 +713,9 @@ function progressLines(p: PromptInput): string[] {
       "",
       `The previous attempt never reached verification — it failed before quality was in question. The actual errors, verbatim:`,
       p.failureText,
-      `That is a failure report, not a design verdict. Fix that cause first — the same cause twice ends this facet. Deliver a build that loads and keeps window.__studio working.`,
+      p.compiled
+        ? p.compiled.failure
+        : `That is a failure report, not a design verdict. Fix that cause first — the same cause twice ends this facet. Deliver a build that loads and keeps window.__studio working.`,
     ];
   if (p.iteration > 1 && p.legacy) return legacyProgress(p);
   if (p.iteration > 1) return boardProgress(p);
@@ -741,29 +820,33 @@ function setupLine(setup: AnyRecord): string {
 }
 
 /** The demo ask, the builder's hands and eyes, and what to check before finishing. */
-function closingLines({ run, worktree, pointsAtBrief }: PromptInput): string[] {
+function closingLines({ run, worktree, pointsAtBrief, compiled }: PromptInput): string[] {
   return [
     ...(pointsAtBrief
       ? []
       : [
           "",
-          `If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (config.demos in installStudio) — demo checks run it and photograph its end frame.`,
+          compiled
+            ? compiled.demoAsk
+            : `If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (config.demos in installStudio) — demo checks run it and photograph its end frame.`,
         ]),
-    ...(worktree
-      ? [
-          "",
-          `YOU HAVE HANDS AND EYES — USE THEM: ${toolCall(roleEngine(run, RoleKey.Builder), "computer")} runs YOUR build (this worktree, uncommitted edits included) live in its own window and its own description lists every action it takes, down to the reload that picks up your edits; ${toolCall(roleEngine(run, RoleKey.Builder), "capture")} takes every registered camera in one go. Look after every meaningful change and fix what you SEE before finishing; do not finish without at least one frame that shows your change working from the primary camera.`,
-          ...(run.setup ? [setupLine(run.setup)] : []),
-        ]
-      : []),
+    ...(worktree ? ["", eyesLine(run, compiled), ...(run.setup ? [setupLine(run.setup)] : [])] : []),
     "",
     `Before you finish:`,
     `- Re-read the checks and verify each one you can see in your frames. A check ignored every iteration becomes the run's final gap.`,
     `- Compare your captured frames against the accepted build's shots: if you cannot see your change, neither can the verifier — an invisible diff is rejected without a judge.`,
-    ...(pointsAtBrief
-      ? []
-      : [
-          `- Make sure the game still loads and window.__studio still works (installStudio with scene/renderer/camera/player) — a build that cannot be verified counts as a loss.`,
-        ]),
+    ...(pointsAtBrief ? [] : [finishLine(compiled)]),
   ];
+}
+
+/** The builder's hands and eyes on its own worktree: the live window and capture, or a C++ build's. */
+function eyesLine(run: AnyRecord, compiled: CompiledFacetLines | null): string {
+  if (compiled) return compiled.eyes(run);
+  return `YOU HAVE HANDS AND EYES — USE THEM: ${toolCall(roleEngine(run, RoleKey.Builder), "computer")} runs YOUR build (this worktree, uncommitted edits included) live in its own window and its own description lists every action it takes, down to the reload that picks up your edits; ${toolCall(roleEngine(run, RoleKey.Builder), "capture")} takes every registered camera in one go. Look after every meaningful change and fix what you SEE before finishing; do not finish without at least one frame that shows your change working from the primary camera.`;
+}
+
+/** The last thing a builder checks: the game still loads (or builds) and the contract still answers. */
+function finishLine(compiled: CompiledFacetLines | null): string {
+  if (compiled) return compiled.finish;
+  return `- Make sure the game still loads and window.__studio still works (installStudio with scene/renderer/camera/player) — a build that cannot be verified counts as a loss.`;
 }

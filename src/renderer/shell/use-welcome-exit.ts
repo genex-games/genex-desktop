@@ -4,10 +4,13 @@ import type { Studio } from "../state/studio.ts";
 import type { ComposerHandoff } from "./use-composer-handoff.ts";
 
 /**
- * The welcome ends at home, with the idea typed there waiting in home's composer: its first
- * message makes the game. Finishing the welcome queues the Genex promo.
+ * The welcome ends at Home, with its idea waiting in the composer. C++ creation is an explicit
+ * secondary action there; completing the welcome creates no game.
  */
-export function useWelcomeExit(app: Studio, handoff: ComposerHandoff) {
+export function useWelcomeExit(
+  app: Pick<Studio, "goHome" | "finishWelcome">,
+  handoff: Pick<ComposerHandoff, "holdIdea">,
+) {
   const { holdIdea } = handoff;
   const readyAfterWelcome = useCallback(
     async (idea: string | null) => {

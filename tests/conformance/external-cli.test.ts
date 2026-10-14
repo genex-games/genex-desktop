@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, chmod, symlink, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   cliVersion,
   codingCliBinary,
@@ -170,7 +171,11 @@ test("missing external Claude fails before any SDK call, including the judge", a
   await assert.rejects(() => engine.delegate({ cwd: root, prompt: "test" }), /selected path/);
   assert.equal(called, 0);
 });
-test("Stop during CLI diagnostics kills the probe and never proceeds to execution", async () => {
+/** How long the diagnostic probe may take to start on a loaded machine: the row's own bound, not the product's. */
+const PROBE_START_TIMEOUT_MS = 60_000;
+test("Stop during CLI diagnostics kills the probe and never proceeds to execution", {
+  timeout: PROBE_START_TIMEOUT_MS,
+}, async () => {
   const binary = await cli("slow/codex");
   const pidFile = path.join(root, "slow/pid");
   const body = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);\n`;
@@ -179,13 +184,21 @@ test("Stop during CLI diagnostics kills the probe and never proceeds to executio
   const controller = new AbortController();
   const pending = discoverCodingCli("codex", { ...options, override: binary, signal: controller.signal });
   const rejected = assert.rejects(pending, /stopped by test/);
+  // Wait for the probe itself, however long a loaded machine takes to start it (the row's timeout
+  // bounds the wait); a discovery that settles first never started it, and the row fails.
+  let settled = false;
+  void pending.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   let pid = 0;
-  for (let i = 0; i < 200 && !pid; i++) {
-    try {
-      pid = Number(await readFile(pidFile, "utf8"));
-    } catch {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+  while (!pid && !settled) {
+    pid = Number(await readFile(pidFile, "utf8").catch(() => "0"));
+    if (!pid) await sleep(10);
   }
   assert.ok(pid, "diagnostic process started");
   controller.abort(new Error("stopped by test"));

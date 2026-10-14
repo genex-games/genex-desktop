@@ -10,7 +10,8 @@ import { resolveElectron, fixtureElectronArgs, fixtureElectronEnv } from "../../
 const root = fs.realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
 const id = `settings-${randomUUID().slice(0, 8)}`;
 const buildId = `b-${randomUUID()}`;
-const owner = allocateProfile(root, id, "fixture", "game-surface");
+// cpp-game: the game-surface game plus a pre-seeded toolchain store with one unreferenced version.
+const owner = allocateProfile(root, id, "fixture", "cpp-game");
 const out = path.join(root, ".studio-dev/evidence", id);
 fs.mkdirSync(out, { recursive: true });
 async function run(exe, args, env = process.env) {

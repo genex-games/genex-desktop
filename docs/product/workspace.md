@@ -6,11 +6,9 @@ The sidebar contains Search, Notifications, Send feedback
 ([what it sends](../../PRIVACY.md#send-feedback)), New game, Plugins, Harness, Settings, Games
 and, once updates wait, **Update plugins** and **Relaunch to update** (Linux: **Download**); only
 games scroll. Pinned games lead, then recent activity. Every launch opens **home** (also the
-wordmark): nothing selected, one composer over an optional picture. A game opens its conversation
-beside the stage (Live, Builds once planned, Assets); Harness opens its conversation and Activity;
-Plugins fills the workspace.
+wordmark): nothing selected, one composer over an optional picture.
 
-Settings is a modal: Model Providers, Local Models, Appearance, Games, Storage, Harness,
+Settings is a modal: Model Providers, Local Models, Toolchains, Appearance, Games, Storage, Harness,
 Permissions, Privacy, About. Narrow windows use a drawer; wide ones remember the sidebar.
 
 The bell keeps questions, plans and permission requests until answered, then build endings and
@@ -32,6 +30,8 @@ commands to copy, Retry.
 
 - **Home's first message** starts a game the model names, where the chip says
   ([its kind](projects-engines.md)). Duplicates never overwrite; a greeting stays **Untitled game** until an idea. **New game**, the Games **+** and Command-N open home.
+- **Create game** offers Three.js or Rust · wgpu (not C++ · raylib), starting on Rust where it
+  builds ([rollback](../release-operations.md#default-stack-and-rollback)).
 - **Settings → Games** moves new games to an empty folder (default `~/AI Games`);
   **Storage** frees older builds, keeping paused and latest.
 - **Settings → Privacy**: Share build metrics (off by default), See what would be sent and
@@ -41,7 +41,8 @@ commands to copy, Retry.
 - A game's menu offers Rename (same folder), Pin/Unpin, Change image and Delete, which
   drops only the library entry (active work blocks it; reopening restores it).
 - The chat header shows the title, Show in Finder, Terminal, ⋯ (Export game…, Rename) and
-  **Free N GB** past 1 GB; Harness and unbound drafts have none. Search reaches older and unbound chats.
+  **Free N GB** past 1 GB; Harness and unbound drafts have none. Compiled games export per
+  destination (phones **Untested on real devices**). Search reaches older and unbound chats.
 - Command-B toggles navigation, Command-K searches, Command-2 Harness, Command-1 the last chat.
 
 ## State and appearance

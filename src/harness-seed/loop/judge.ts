@@ -59,6 +59,8 @@ import { judgedOnMotion } from "./motion-intent.ts";
 import type { CheckResult, ReferenceStats, Scoreboard } from "./checks.ts";
 import { unmeasured } from "./checks.ts";
 import type { Violation } from "./review.ts";
+import { CPP_REVIEW_FALLBACK, CPP_REVIEW_OWN_SHAPE } from "./native-briefs.ts";
+import { GameStack } from "./native-contract.ts";
 import {
   CompletionRole,
   type JudgePin,
@@ -95,6 +97,93 @@ const PRESERVATION_SUMMARY_CHARS = 1200;
 const MAX_PRESERVATION_DIFF_CHARS = 120_000;
 /** The most images one taste call may carry (WP7): 17–41 was the norm before, and noise. */
 export const MAX_TASTE_IMAGES = 12;
+
+/**
+ * A raylib night's code review reads its own rubric here (`code-review-cpp.md`): a copy of this
+ * module kept from before C++ games reviews C++ with the Three.js rules, so a raylib night refuses it.
+ */
+export const SERVES_NATIVE = true;
+/**
+ * A Rust · wgpu night's code review reads its own rubric here (`code-review-rust.md`, else
+ * `RUST_REVIEW_FALLBACK`), and its uncaptured vision questions fail: a copy of this module kept
+ * from before Rust games reviews Rust by the Three.js rules, so a Rust night refuses it.
+ */
+export const SERVES_RUST = true;
+
+/** The Three.js reviewer's rubric when `judge/code-review.md` is missing from the workspace. */
+const THREE_REVIEW_FALLBACK = [
+  "Review ONE diff of a three.js game for studio-contract violations only (Math.random / wall clock in gameplay, lying probes, broken __studio, untagged new meshes, edits outside the facet's files). No style comments.",
+  'Set "gaming": true only on a finding where a check is made to pass without the work — a probe, flag or value forced to what the check wants — and name that check\'s id in "what".',
+  'Reply with JSON only: {"violations":[{"file":"…","line":0,"what":"…","fix":"…","gaming":false}],"summary":"…"}',
+].join("\n");
+
+/** What the Three.js reviewer is told about a game the studio did not scaffold. */
+const THREE_REVIEW_OWN_SHAPE =
+  "THIS GAME IS NOT THE STUDIO'S TEMPLATE — it is the user's own code. Four of the rules above DO NOT APPLY here and must not be raised: Math.random and the wall clock (the studio seeds the page's randomness and owns its clock), untagged new objects (this game's scene graph is its own), and the FACET WIRING block (there is none). Judge the seam and the studio contract only.";
+
+/**
+ * The Rust reviewer's rubric when `judge/code-review-rust.md` is missing from the workspace (a
+ * workspace that deletes or never had the file still reviews Rust by Rust rules, never C++ ones).
+ */
+export const RUST_REVIEW_FALLBACK = [
+  "Review ONE diff of a Rust · wgpu game on the studio's genex runtime for studio-contract violations only (std::time, Instant or SystemTime, thread_rng / OS entropy, threads, HashMap or HashSet instead of genex::Map/Set, f32 transcendentals outside genex::math, direct winit input or input read outside ctx, a frame loop or sleep of the game's own, unsafe, renderer internals, a Cargo.toml or build.rs, network access, lying probes, removing genex::install or a verb, untagged new draws, edits outside the facet's files; rendering: a hard-coded preset or render_scale in Rust code, a feature switched off in code to save frame time, render settings read in on_update, a probe or demo logic, a custom WGSL material or GPU pass redrawing what [render.look] and the built-ins draw, a new [[wgsl]] source or GpuPass not at api = 2, camera_cut every frame or a frame.id key that changes each frame). genex::render::settings_panel(ui) in on_ui and [render.class.<class>] keys in genex.toml are allowed. No style comments.",
+  'Set "gaming": true only on a finding where a check is made to pass without the work — a probe, flag or value forced to what the check wants — and name that check\'s id in "what".',
+  'Reply with JSON only: {"violations":[{"file":"…","line":0,"what":"…","fix":"…","gaming":false}],"summary":"…"}',
+].join("\n");
+
+/** What the Rust reviewer is told about a game the studio did not scaffold. */
+export const RUST_REVIEW_OWN_SHAPE =
+  "THIS GAME IS NOT THE STUDIO'S TEMPLATE — it is the user's own Rust code. Three of the rules above DO NOT APPLY here and must not be raised: its own UI and input wiring (its screen and controls are its own), untagged draws in code the facet did not write, and the FACET WIRING block (there is none). Randomness and the clock still matter: two builds must run alike on one seed. Judge the seam and the studio contract only.";
+
+/** One stack's code reviewer: the rubric file it reads, the words it falls back to, and its note for a game the studio did not scaffold. */
+interface StackReviewer {
+  rubric: string;
+  fallback: string;
+  ownShape: string;
+}
+
+/**
+ * Each stack's code reviewer. A compiled game has its own rubric: the Three.js one would flag
+ * what C++ or Rust needs and miss what each must not do.
+ */
+const REVIEWER_OF_STACK = {
+  [GameStack.ThreeJs]: { rubric: "code-review.md", fallback: THREE_REVIEW_FALLBACK, ownShape: THREE_REVIEW_OWN_SHAPE },
+  [GameStack.RaylibCpp]: {
+    rubric: "code-review-cpp.md",
+    fallback: CPP_REVIEW_FALLBACK,
+    ownShape: CPP_REVIEW_OWN_SHAPE,
+  },
+  [GameStack.RustWgpu]: {
+    rubric: "code-review-rust.md",
+    fallback: RUST_REVIEW_FALLBACK,
+    ownShape: RUST_REVIEW_OWN_SHAPE,
+  },
+} as const satisfies Record<GameStack, StackReviewer>;
+
+/**
+ * How each stack's game is named where it is judged on its frames, or null when an uncaptured
+ * camera leaves a question unasked (a three.js page has other evidence).
+ */
+const JUDGED_ON_FRAMES = {
+  [GameStack.ThreeJs]: null,
+  [GameStack.RaylibCpp]: "a C++ · raylib game",
+  [GameStack.RustWgpu]: "a Rust · wgpu game",
+} as const satisfies Record<GameStack, string | null>;
+
+/**
+ * The stack a judge reads a night by: `named` (the caller's), else the one the night stamped on
+ * its run (`run.stack`); a three.js game when neither is a stack this seed knows.
+ */
+function judgedStack(run: Readonly<Record<string, unknown>> | null | undefined, named?: unknown): GameStack {
+  const stack = named ?? run?.stack;
+  return isGameStack(stack) ? stack : GameStack.ThreeJs;
+}
+
+/** Whether `value` is a stack this seed knows (native-contract.ts `GameStack`). */
+function isGameStack(value: unknown): value is GameStack {
+  return typeof value === "string" && Object.hasOwn(REVIEWER_OF_STACK, value);
+}
+
 /** Same-engine chances a verdict gets before the fallback (if any) and then the failure surface. */
 const JUDGE_RETRIES = 2;
 /** How many more times a judge whose reply is not usable JSON is asked before it counts as no verdict. */
@@ -1274,7 +1363,7 @@ export async function visionCheck(
       'Reply with JSON only: {"answer":"yes"|"no","confidence":0.0-1.0,"note":"…"}',
     ].join("\n"),
   );
-  if (!crop?.base64) return notCaptured(check);
+  if (!crop?.base64) return notCaptured(check, run);
   const images: MessageImage[] = [
     { mimeType: "image/jpeg", data: crop.base64, label: "IMAGE 1 (build under test)" },
     ...(incumbentCrop?.base64
@@ -1326,7 +1415,7 @@ export async function visionBatch(
   }
   const system = await judgePrompt(ctx, "vision-batch.md", VISION_BATCH_FALLBACK);
   const answerable = asks.filter((ask) => ask.crop?.base64);
-  if (answerable.length === 0) return asks.map((ask) => notCaptured(ask.check));
+  if (answerable.length === 0) return asks.map((ask) => notCaptured(ask.check, run));
   const { images, shownAs } = batchImages(answerable, camera);
   const userContent = [
     gameNote(run),
@@ -1343,15 +1432,27 @@ export async function visionBatch(
   // unusable answer, which is what a lone judge that returned nothing already means.
   const answers = raw?.answers && typeof raw.answers === "object" ? raw.answers : (raw ?? {});
   return asks.map((ask) => {
-    if (!ask.crop?.base64) return notCaptured(ask.check);
+    if (!ask.crop?.base64) return notCaptured(ask.check, run);
     const result = visionResult(ask.check, answers[ask.check.id]);
     ctx.notify("judge.vision", { checkId: ask.check.id, ...result });
     return result;
   });
 }
 
-/** A vision question whose camera was never captured: it could not be asked, and fails. */
-function notCaptured(check: Check): CheckResult {
+/**
+ * A vision question whose camera was never captured: it could not be asked. On a compiled game's
+ * night (C++ · raylib, Rust · wgpu) it fails, because the judges see exactly the frames a player
+ * would and a build that gave none is not judged blind; elsewhere it is unmeasured.
+ */
+function notCaptured(check: Check, run: Run | null = null): CheckResult {
+  const onFrames = JUDGED_ON_FRAMES[judgedStack(run)];
+  if (onFrames) {
+    return {
+      ...visionBase(check),
+      pass: false,
+      reason: `camera ${check.camera} was not captured, so the question fails: ${onFrames} is judged on its frames`,
+    };
+  }
   return unmeasured(check, `camera ${check.camera} was not captured, so the question could not be asked`);
 }
 
@@ -1667,25 +1768,24 @@ function tasteVerdictOf(
  */
 export async function reviewDiff(
   ctx: HarnessCtx,
-  { run, diff, spec, template = true }: { run: Run; diff: string; spec: AnyRecord; template?: boolean },
+  {
+    run,
+    diff,
+    spec,
+    template = true,
+    stack,
+  }: { run: Run; diff: string; spec: AnyRecord; template?: boolean; stack?: GameStack },
 ): Promise<{ violations: Violation[]; summary: string }> {
-  const system = await judgePrompt(
-    ctx,
-    "code-review.md",
-    [
-      "Review ONE diff of a three.js game for studio-contract violations only (Math.random / wall clock in gameplay, lying probes, broken __studio, untagged new meshes, edits outside the facet's files). No style comments.",
-      'Set "gaming": true only on a finding where a check is made to pass without the work — a probe, flag or value forced to what the check wants — and name that check\'s id in "what".',
-      'Reply with JSON only: {"violations":[{"file":"…","line":0,"what":"…","fix":"…","gaming":false}],"summary":"…"}',
-    ].join("\n"),
-  );
+  // Each stack has its own rubric (`REVIEWER_OF_STACK`): the caller's stack, else the one the
+  // night stamped on its run (`run.stack`).
+  const reviewer: StackReviewer = REVIEWER_OF_STACK[judgedStack(run, stack)];
+  const system = await judgePrompt(ctx, reviewer.rubric, reviewer.fallback);
   const userContent = [
     `FACET: ${spec.title} (${spec.id}) — owns: ${(spec.owns ?? []).join(", ") || "its own module under src/"}`,
     `CHECKS THE FACET MUST SATISFY (for context): ${(spec.checks ?? []).map((c: AnyRecord) => c.id).join(", ") || "none"}`,
     // Four of the rules above are the studio template's, not this game's (M4.6). Saying so here
     // is cheaper than dropping the findings after the call, which is what happens anyway.
-    template
-      ? ""
-      : "THIS GAME IS NOT THE STUDIO'S TEMPLATE — it is the user's own code. Four of the rules above DO NOT APPLY here and must not be raised: Math.random and the wall clock (the studio seeds the page's randomness and owns its clock), untagged new objects (this game's scene graph is its own), and the FACET WIRING block (there is none). Judge the seam and the studio contract only.",
+    template ? "" : reviewer.ownShape,
     "",
     "DIFF:",
     "```diff",

@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { layoutFor, prewarmDenyWrites, studioBaseDenyWrites } from "../../src/main/core/layout.ts";
 import { baseDenyRead, claudeFolderDenyWrites } from "../../src/substrate/spawn.ts";
 
 const HOME = "/home/player";
@@ -217,6 +218,106 @@ describe("the games' .claude folders are write-denied", () => {
       assert.deepEqual(
         claudeFolderDenyWrites(games, kept, platform, (p) => p === existing),
         [existing],
+        platform,
+      );
+  });
+});
+
+/**
+ * The write denies every sandboxed process of a studio starts with (agent Bash, `run.exec`, the
+ * builds): the judge's rubrics, the games' `.claude` folders, and now the toolchain store and the
+ * native run folders. The store's ANGLE is copied into every native bundle and backs the Metal
+ * gate, and a native run folder is the host's: neither is under a writable root, and both are
+ * denied besides.
+ */
+describe("the studio's base write denies", () => {
+  const userData = "/Users/me/Library/Application Support/Genex";
+  const kept = ["/Users/me/AI Games/pong", "/Users/me/Projects/racer"];
+  const downloadCache = "/Users/me/Library/Caches/Genex/toolchain-downloads";
+  const layout = { ...layoutFor(userData, downloadCache), gamesRoot: "/Users/me/AI Games" };
+
+  it("on macOS, keep today's entries and add the toolchain store, the native runs and the signing folder", {
+    skip: process.platform === "win32",
+  }, async () => {
+    const denied = studioBaseDenyWrites(layout, kept, "darwin", () => false);
+    assert.equal(layout.toolchains, `${userData}/toolchains`);
+    assert.equal(layout.nativeRuns, `${userData}/native-runs`);
+    assert.equal(layout.signing, `${userData}/signing`);
+    // Flipped (wave-5 review): the signing folder joins, so no agent swaps a file jsign is about to sign.
+    // Flipped (rust-wgpu M1.4): the host-level download cache every profile installs through joins too.
+    // Flipped (rust-wgpu M5 review): the admitted phone packages a device launch installs join too.
+    assert.deepEqual(denied, [
+      `${userData}/workspaces/harness/judge`,
+      ...claudeFolderDenyWrites(layout.gamesRoot, kept, "darwin", () => false),
+      layout.toolchains,
+      layout.nativeRuns,
+      layout.signing,
+      layout.phonePackages,
+      downloadCache,
+    ]);
+    const deny = await macDeny(denied);
+    for (const target of [
+      `${userData}/toolchains/emsdk/6.0.10-0123456789ab/install/emscripten/emcc`,
+      `${userData}/toolchains/emsdk/6.0.10-0123456789ab/install/emscripten/__pycache__/emcc.cpython-313.pyc`,
+      `${userData}/toolchains/current-lock.json`,
+      `${userData}/toolchains/current-lock.rust-wgpu.json`,
+      `${userData}/toolchains/.staging/0123456789ab/genex-web.cmake`,
+      `${userData}/native-runs/run-1/bundle/Pong.app/Contents/Frameworks/libEGL.dylib`,
+      `${userData}/signing/sign-AbC123/Pong.exe`,
+      `${userData}/phone-packages/pong.android/Game.apk`,
+      `${userData}/workspaces/harness/judge/rubric.md`,
+      "/Users/me/AI Games/pong/.claude/settings.json",
+      `${downloadCache}/sha256/${"a".repeat(64)}`,
+      `${downloadCache}/.incoming/partial`,
+    ])
+      assert.ok(deny(target), `denied: ${target}`);
+    for (const target of [
+      `${userData}/runs/run-1/still.png`,
+      `${userData}/cpp-builds/pong-0123/web-0123/out/index.html`,
+      "/Users/me/Library/Caches/Genex/toolchain-downloads-notes.txt",
+      `${userData}/toolchains-notes.txt`,
+      `${userData}/native-runs.log`,
+      "/Users/me/AI Games/pong/src/main.cpp",
+    ])
+      assert.ok(!deny(target), `writable: ${target}`);
+  });
+
+  it("a toolchain prewarm is denied every folder an agent, a run or a build writes, never the store's staging", {
+    skip: process.platform === "win32",
+  }, async () => {
+    const deny = await macDeny(prewarmDenyWrites(layout));
+    for (const target of [
+      `${userData}/workspaces/harness/loop/main.ts`,
+      "/Users/me/AI Games/pong/src/main.cpp",
+      `${userData}/scratch/toolchain-prewarm/x`,
+      `${userData}/runs/run-1/still.png`,
+      `${userData}/exports/pong/index.html`,
+      `${userData}/cpp-builds/pong-0123/web-0123/out/index.html`,
+      `${userData}/native-runs/run-1/state/save.bin`,
+      `${userData}/signing/sign-AbC123/Pong.exe`,
+    ])
+      assert.ok(deny(target), `denied: ${target}`);
+    for (const target of [
+      `${userData}/toolchains/.staging/0123456789ab/raylib-web-es3/lib/libraylib.a`,
+      `${userData}/toolchains-notes.txt`,
+    ])
+      assert.ok(!deny(target), `left to the overlay: ${target}`);
+  });
+
+  it("on Windows and Linux, the same list with only the .claude folders that exist", () => {
+    const existing = path.join(path.resolve("/Users/me/AI Games/pong"), ".claude");
+    for (const platform of ["win32", "linux"] as const)
+      assert.deepEqual(
+        studioBaseDenyWrites(layout, kept, platform, (p) => p === existing),
+        [
+          path.join(layout.harnessWs, "judge"),
+          existing,
+          layout.toolchains,
+          layout.nativeRuns,
+          layout.signing,
+          layout.phonePackages,
+          downloadCache,
+        ],
         platform,
       );
   });

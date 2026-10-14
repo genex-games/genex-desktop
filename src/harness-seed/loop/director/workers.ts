@@ -39,6 +39,7 @@ import { CheckWeight, MAX_DONE, MAX_MILESTONES } from "../spec.ts";
 import { CLIP_BRIEF, CLIP_DETAIL, CLIP_QUOTE, CLIP_REASON, clip } from "../text.ts";
 import { MINUTE_MS, minutes, SECOND_MS, sleep } from "../time.ts";
 import { observedFrom, VerdictPass, VerdictRule } from "../verdict.ts";
+import { failedObservationRule, NativeVerdict } from "../native-verdict.ts";
 import { KIND_QUOTED, list, num, parseJson, slug, withoutFrames, yes } from "./args.ts";
 import {
   CLOSE_SETTLE_MS,
@@ -63,6 +64,8 @@ import {
 import { defaultWorkerId, priorFork, priorIdRefusal, priorWorkerIds } from "./journal.ts";
 import { LEAD_FORK_REFUSED, LEAD_START_DIRTY } from "./lead-session-prompts.ts";
 import { BuildTarget } from "./loop-run.ts";
+import { acquireFor } from "../native-contract.ts";
+import { stampedStack } from "../native-loop.ts";
 import {
   compilePlan,
   compileWorkerSpec,
@@ -85,6 +88,7 @@ import { refundProviderAttempt } from "./attempt-refund.ts";
 import { FINISH_ASKED_NO_WORKERS } from "./wrap-up-prompts.ts";
 import type { LoopRun, LoopRunState, StartingWorker, Worker } from "./loop-run.ts";
 import type { RoundStop } from "../facet/rules.ts";
+import type { AcquireCall } from "../native-contract.ts";
 import type { FacetSpec } from "../spec.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { DelegateOwnership } from "../../types/host-api.d.ts";
@@ -94,6 +98,15 @@ import type { DelegateOwnership } from "../../types/host-api.d.ts";
  * seats one only when every part it depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
+
+/**
+ * This part leases a raylib run's worker windows naming the build they judge
+ * (`acquireWorkerWindow`): a raylib run refuses to start on a copy kept from before
+ * (native-contract.ts `servesNative`), whose untargeted leases the host would refuse mid-run.
+ */
+export const SERVES_NATIVE = true;
+/** A worker is started on the run's stack (`stampedStack`), so a Rust · wgpu worker leases the Rust build and reads Rust briefs. */
+export const SERVES_RUST = true;
 
 /** What `worker_start` tells a director with its own hands whose integration worktree has uncommitted edits. */
 const START_DIRTY =
@@ -212,7 +225,7 @@ export async function protectWorker(loopRun: LoopRun, worker: Worker) {
  * monitor never warns about a file the reviewer would allow, or miss one it reverts.
  */
 async function lookedFindings(loopRun: LoopRun, worker: Worker, status: string, label: string) {
-  const { ctx, ownShape, shape } = loopRun;
+  const { ctx, ownShape, shape, run } = loopRun;
   const last = worker.monitor;
   if (last && status === (last.status ?? null)) return { files: last.files, violations: last.violations };
   // Only when something moved, and never the whole diff of a big game: a regex needs no context.
@@ -223,6 +236,7 @@ async function lookedFindings(loopRun: LoopRun, worker: Worker, status: string, 
     spec: contractOf(worker),
     ownsMain: worker.ownsMain,
     template: !ownShape,
+    stack: stampedStack(run),
     ...(ownShape && shape?.main ? { main: shape.main, studio: STUDIO_CONTRACT } : {}),
   });
 }
@@ -1031,6 +1045,17 @@ async function releaseWorkspace(loopRun: LoopRun, worker: OpenedWorker): Promise
 }
 
 /**
+ * A pooled window for a worker, naming the build it judges (native-contract.ts `acquireFor`):
+ * the host refuses a raylib game's preview on a lease that names none. A run a kept older
+ * setup.ts made has no `leaseGame` and is judged in the browser. Throws when none is free.
+ */
+export async function acquireWorkerWindow(loopRun: LoopRun, label: string): Promise<string> {
+  const { ctx, capacity, leaseGame = {} } = loopRun;
+  const call: AcquireCall = (method, params) => ctx.call(method, params);
+  return (await acquireFor(call, leaseGame, capacity ?? {}, { label })).handle;
+}
+
+/**
  * A worktree and a window — each undone if what comes next refuses. Answers the worker in its
  * worktree, or the refusal.
  */
@@ -1050,7 +1075,7 @@ async function openWorkspace(
     const opened = Object.assign(worker, { worktree });
     if (!pooled) return opened;
     try {
-      opened.handle = (await ctx.call(HostMethod.PreviewAcquire, { label: worker.id })).handle;
+      opened.handle = await acquireWorkerWindow(loopRun, worker.id);
     } catch (err: any) {
       await ctx
         .call(HostMethod.SnapshotRemoveWorktree, { project: run.project, path: opened.worktree })
@@ -1097,13 +1122,17 @@ async function forkGate(loopRun: LoopRun, worker: OpenedWorker, from: string): P
     ...observedFrom(gate),
     consoleInherited: consoleInheritedBy(),
     kept: gate.ok === true,
-    rule: gate.ok === true ? VerdictRule.Starts : VerdictRule.DoesNotStart,
+    rule: gate.ok === true ? VerdictRule.Starts : failedObservationRule(gate, VerdictRule.DoesNotStart),
   });
   if (gate.ok === true) return null;
   // A lead writes nothing (one session): a single session is its hands, and it starts on a build
   // that does not run — repairing it is the job.
   if (loopRun.lead && worker.mode === WorkerMode.Single) {
-    note(`worker ${worker.id} starts on ${shortSha(commit)}, which does not run — ${(gate.problems ?? []).join("; ")}`);
+    const failed =
+      failedObservationRule(gate, VerdictRule.DoesNotStart) === NativeVerdict.Rule
+        ? "failed its native checks"
+        : "does not run";
+    note(`worker ${worker.id} starts on ${shortSha(commit)}, which ${failed} — ${(gate.problems ?? []).join("; ")}`);
     return null;
   }
   await releaseWorkspace(loopRun, worker);
@@ -1208,6 +1237,7 @@ function compileContract(loopRun: LoopRun, worker: Worker, parsed: WorkerArgs, a
       index: state.workers.size,
       forkedFrom: worker.from,
       stage: String(args.stage ?? "").trim() || null,
+      stack: stampedStack(loopRun.run),
       drawsHud: drawsTheHud({ critic, ownsMain: worker.ownsMain, replaces: worker.replaces }, state.facetSpecs),
     },
     state.evidenceByHead.get(worker.from) ?? null,

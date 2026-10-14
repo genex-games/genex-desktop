@@ -65,13 +65,18 @@ import {
 } from "../../shared/plugins.ts";
 import { atomicWriteJson } from "../fsx.ts";
 import {
+  apiKnowsStack,
   canonicalManifest,
   inspectPackage,
+  manifestForStack,
   readPluginIcon,
   readSkillFile,
+  servesStack,
   validateArguments,
   validateManifest,
 } from "./manifest.ts";
+import { type GameStack, stackOf } from "../../shared/game-project.ts";
+import { readProjectShape } from "../project-shape.ts";
 import { fileSkillIndexLine } from "./skill-prompts.ts";
 import { pluginWorkspaces } from "./workspace-manifest.ts";
 import { pluginFolderPaths, pluginWorkerTypes, workerTypeOffered } from "./worker-manifest.ts";
@@ -213,6 +218,8 @@ const MESSAGE = {
   CapabilityDenied: "Plugin service capability denied",
   UnknownTool: "Unknown plugin tool",
   UnknownSkill: (id: string, name: string) => `Plugin ${id} has no skill named ${JSON.stringify(name)}`,
+  SkillNotForStack: (id: string, name: string) =>
+    `Plugin ${id}'s skill ${JSON.stringify(name)} is not for this game's stack; it was not handed to this game`,
   UndeclaredSkillFile: "Read a skill's own file or one of the references it lists, exactly as listed",
   InvalidSkillOffset: "offset must be a whole number within the file: the nextOffset of the previous read",
   HostToolBundledOnly: "A host tool runs only for a bundled plugin that ships with Studio",
@@ -269,6 +276,34 @@ const isActionAmong = (invocation: { method: string; name: string }, names: stri
   invocation.method === "action" && names.includes(invocation.name);
 /** Whether an install record is live: enabled and not removed. */
 const isLive = (p: { enabled: boolean; removed: boolean } | undefined) => Boolean(p?.enabled) && !p?.removed;
+/**
+ * A call's binding, with the bound game's stack (`PluginContext.stack`): the backend reads it to
+ * pick formats, and the skill tool withholds a card that does not serve it.
+ */
+export type StackedBinding = PluginBinding & { stack?: GameStack };
+
+/**
+ * The binding a backend on `apiVersion` is sent. A stack its SDK does not name (`rust-wgpu` before
+ * the API that knows it) is left out, never sent: an old backend sees a Rust game as one whose stack
+ * the host does not know.
+ */
+function backendBinding(binding: StackedBinding | undefined, apiVersion: number): StackedBinding | undefined {
+  if (!binding?.stack || apiKnowsStack(apiVersion, binding.stack)) return binding;
+  const { stack: _unknownToBackend, ...known } = binding;
+  return known;
+}
+
+/**
+ * The bound game's stack: the caller's when it named one (a builder's session), else what the bound
+ * folder's own files say, as the library reads it (`readProjectShape`). So the skill tool withholds
+ * a card from every caller bound to a game it does not serve — a session, the local harness, the
+ * Studio UI — whatever that caller knew.
+ */
+async function boundStack(binding: StackedBinding): Promise<GameStack | undefined> {
+  if (binding.stack) return binding.stack;
+  const shape = await readProjectShape(binding.directory).catch(() => null);
+  return shape ? stackOf(shape) : undefined;
+}
 /**
  * A plugin from a local folder starts off: only the person turns it on; an update keeps its state;
  * every other source starts on as before.
@@ -1128,10 +1163,17 @@ export class PluginRegistry {
    * applies only in part of the folder says where. A session narrowed to some tools (`offered`, a run's sub-agent) gets
    * those, and the guidance, skills and skill reader of only the plugins they belong to.
    */
-  snapshot(scope: readonly FactRef[] | GameKind | GameEngine = [], offered?: ToolOffered): PluginSnapshot {
+  snapshot(
+    scope: readonly FactRef[] | GameKind | GameEngine = [],
+    offered?: ToolOffered,
+    stack?: GameStack | null,
+  ): PluginSnapshot {
     const game = gameKindOf(scope);
+    // A game of one stack is never handed a skill for another: not in its brief, not in its skill
+    // tool, not in what it is recorded as holding (`manifestForStack`, beside the facts' reach).
     const parts = this.#live()
-      .map((p) => ({ manifest: p.manifest, reach: pluginReach(p.manifest, game, offered) }))
+      .map((p) => manifestForStack(p.manifest, stack))
+      .map((manifest) => ({ manifest, reach: pluginReach(manifest, game, offered) }))
       .filter((part) => takesPart(part, offered !== undefined));
     return {
       tools: parts.flatMap(agentTools),
@@ -1773,7 +1815,7 @@ export class PluginRegistry {
   async tool(
     name: string,
     args: Record<string, unknown>,
-    binding: PluginBinding,
+    binding: StackedBinding,
     signal?: AbortSignal,
     caller: PluginToolAudience = PluginToolAudience.Agents,
     timeoutMs = PLUGIN_CALL_TIMEOUT_MS,
@@ -1791,7 +1833,7 @@ export class PluginRegistry {
   async prepareTool(
     name: string,
     args: Record<string, unknown>,
-    binding: PluginBinding,
+    binding: StackedBinding,
     signal?: AbortSignal,
     caller: PluginToolAudience = PluginToolAudience.Agents,
     timeoutMs = PLUGIN_CALL_TIMEOUT_MS,
@@ -1800,7 +1842,7 @@ export class PluginRegistry {
     const p = this.#active(id);
     // A plugin with file skills has its skill tool answered here, in the host: never by its backend.
     if (!extra.length && tool === PLUGIN_SKILL_TOOL && p.manifest.skills.some(isFileSkill))
-      return async () => this.#readSkill(id, p, args);
+      return async () => this.#readSkill(id, p, args, await boundStack(binding));
     const declaration = p.manifest.tools.find((t) => t.name === tool);
     if (extra.length || !declaration) throw new Error(MESSAGE.UnknownTool);
     if (!isAgentTool(declaration) && caller !== PluginToolAudience.Harness) throw new Error(MESSAGE.UnknownTool);
@@ -1825,7 +1867,14 @@ export class PluginRegistry {
     const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, ...nativeJobTimeouts);
     return async () => {
       this.#active(id);
-      return this.#process(id).call("tool", tool, args, binding, signal, ceiling);
+      return this.#process(id).call(
+        "tool",
+        tool,
+        args,
+        backendBinding(binding, p.manifest.apiVersion),
+        signal,
+        ceiling,
+      );
     };
   }
   /** Asks the user before a tool that declares `confirmation`; a no is thrown, and the plugin must still be live after. */
@@ -1945,12 +1994,18 @@ export class PluginRegistry {
    * One page of a file skill, for the `<id>__skill` tool. Only a file the skill lists, spelled as
    * listed, read through a handle checked for links and size; nothing is written anywhere.
    */
-  async #readSkill(id: string, p: Installed, args: Record<string, unknown>): Promise<PluginSkillPage> {
+  async #readSkill(
+    id: string,
+    p: Installed,
+    args: Record<string, unknown>,
+    stack: GameStack | undefined,
+  ): Promise<PluginSkillPage> {
     const declaration = pluginSkillTool(p.manifest);
     if (!declaration) throw new Error(MESSAGE.UnknownTool);
     validateArguments(declaration, args);
     const skill = p.manifest.skills.find((s): s is PluginFileSkill => isFileSkill(s) && s.name === args.name);
     if (!skill) throw new Error(MESSAGE.UnknownSkill(id, String(args.name)));
+    if (!servesStack(skill, stack, p.manifest.apiVersion)) throw new Error(MESSAGE.SkillNotForStack(id, skill.name));
     const file = declaredSkillFile(skill, args.file);
     const text = (await readSkillFile(p.directory, file)).toString("utf8");
     const page = skillPage(text, args.offset);
@@ -1972,7 +2027,7 @@ export class PluginRegistry {
     return skill.text;
   }
   #connecting = new Map<string, Promise<any>>();
-  async action(id: string, name: string, args: unknown, binding?: PluginBinding) {
+  async action(id: string, name: string, args: unknown, binding?: StackedBinding) {
     const p = this.#active(id);
     if (name !== accountActionsOf(p.manifest).connect) return this.#action(id, name, args, binding);
     const pending = this.#connecting.get(id);
@@ -2044,7 +2099,7 @@ export class PluginRegistry {
     await this.#mcpSync(id);
     this.#fire({ id, reason: PluginChangeReason.Account });
   }
-  async #action(id: string, name: string, args: unknown, binding?: PluginBinding) {
+  async #action(id: string, name: string, args: unknown, binding?: StackedBinding) {
     const p = this.#active(id);
     if (!p.manifest.actions.some((a) => a.name === name)) throw new Error(MESSAGE.UnknownAction);
     const account = accountActionsOf(p.manifest);
@@ -2058,7 +2113,7 @@ export class PluginRegistry {
         "action",
         name,
         args,
-        binding,
+        backendBinding(binding, p.manifest.apiVersion),
         undefined,
         installsRuntime ? RUNTIME_INSTALL_TIMEOUT_MS : PLUGIN_CALL_TIMEOUT_MS,
       );
@@ -2078,9 +2133,9 @@ export class PluginRegistry {
       await this.#settleAccountAction(id, name, account);
     }
   }
-  async review(id: string, name: string, args: unknown, binding?: PluginBinding) {
-    this.#active(id);
-    return this.#process(id).call("review", name, args, binding);
+  async review(id: string, name: string, args: unknown, binding?: StackedBinding) {
+    const p = this.#active(id);
+    return this.#process(id).call("review", name, args, backendBinding(binding, p.manifest.apiVersion));
   }
   /**
    * A plugin's own picture, read from the package Studio installed (or, for one found but not yet

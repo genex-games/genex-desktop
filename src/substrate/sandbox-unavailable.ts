@@ -4,12 +4,15 @@
  * `ProcessSandbox` raises {@link SandboxUnavailableError} when sandbox-runtime refuses the platform,
  * reports a missing dependency, or (Windows) has not been provisioned. Main catches it and opens
  * the "Set up the protected workspace" screen; any other startup failure keeps its error dialog.
- * The mapping reads typed inputs only: the platform, the runtime's verdicts, a PATH lookup and a
- * Windows error's `code`, never the words of a message.
+ * The mapping reads typed inputs only: the platform, the runtime's verdicts, a PATH lookup, a
+ * Windows error's `code` and (Linux) Ubuntu's user-namespace switch, this process's AppArmor
+ * label, and the owners of the folders its executable is in, never the words of a message.
  */
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  APPARMOR_PATTERN_CHARACTERS,
+  AppArmorBlockCode,
   LINUX_SANDBOX_TOOLS,
   SandboxProblemCode,
   StudioPlatform,
@@ -17,6 +20,18 @@ import {
   type SandboxProblem,
   type SandboxTool,
 } from "../shared/boot.ts";
+import {
+  type InspectPath,
+  type PathOwner,
+  type Person,
+  type ReadSystemFile,
+  USERNS_RESTRICTION_FILE,
+  appArmorProfile,
+  profileInstallCommand,
+  profilePathRefusal,
+  profileRemoveCommand,
+  writableByOthers,
+} from "./linux-apparmor.ts";
 
 /** sandbox-runtime's Windows error codes that mean "not set up yet", not "broken". */
 const WINDOWS_SETUP_CODES: ReadonlySet<string> = new Set(["not_provisioned", "wfp_fence_inactive"]);
@@ -44,6 +59,14 @@ const WINDOWS_LAUNCH_CODES: ReadonlyMap<string, SandboxLaunchCode> = new Map([
 const MESSAGE = {
   Unavailable: (problem: SandboxProblem) =>
     [`sandbox unavailable on ${problem.platform} (${problem.code})`, ...problem.details].join(": "),
+  UsernsRestricted: `${USERNS_RESTRICTION_FILE} is 1 and no AppArmor profile names this process, so bubblewrap gets no capabilities in its user namespace`,
+  Unnamable: (executable: string, refusal: string | null) =>
+    `an AppArmor profile cannot name ${JSON.stringify(executable)} (${refusal}); move Genex to a folder whose path has none of ${APPARMOR_PATTERN_CHARACTERS.join(" ")}`,
+  SharedFolder: (shared: string) =>
+    `someone other than root and you can change ${JSON.stringify(shared)}, so a profile must not name a program under it; move Genex to a folder only you can write to, such as ~/Genex`,
+  NotAttached: (file: string, executable: string) =>
+    `${file} names ${JSON.stringify(executable)}, yet this process started without it: quit and reopen Genex; if this comes back, AppArmor does not attach the profile to this path`,
+  Repoint: (file: string) => `${file} names another copy of Genex; Set up points it at this one instead`,
   Launch: {
     [SandboxLaunchCode.ArgvTooLong]:
       "The command is too long for Windows to start (over 32,767 characters). Put it in a script file and run that.",
@@ -91,13 +114,82 @@ export interface SandboxCheck {
   dependencyErrors: string[];
   /** Linux tools not found on PATH ({@link missingLinuxTools}). */
   missingTools: SandboxTool[];
+  /** Linux: present while Ubuntu's user-namespace restriction holds for this process ({@link usernsCheck}). */
+  userns?: UsernsCheck;
+}
+
+/** Linux under Ubuntu's restriction: what stands between this copy of Genex and its profile. */
+export interface UsernsCheck {
+  /** The resolved executable the profile would name ({@link runningExecutable}). */
+  executable: string;
+  /** The first of its folders (or itself) someone other than root and the person could replace. */
+  sharedPath: string | null;
+  /** The text of the profile file for this copy as it is installed now, or null when there is none. */
+  installed: string | null;
+}
+
+/** What a test may hand the Linux user-namespace checks instead of the real system. */
+export interface UsernsSeams {
+  /** Reads the restriction switch, this process's label and the installed profile (default: the files). */
+  read?: ReadSystemFile;
+  /** The executable before it is resolved (default: `process.execPath`). */
+  execPath?: string;
+  /** Reads a folder's owner and mode (default: {@link inspectPath}). */
+  inspect?: InspectPath;
+  /** Who runs Genex (default: {@link currentPerson}). */
+  person?: Person;
+}
+
+/** Linux under Ubuntu's restriction: the executable a profile would name, and what stands in its way. */
+export function usernsCheck(seams: UsernsSeams = {}): UsernsCheck {
+  const executable = runningExecutable(seams.execPath);
+  const profile = appArmorProfile(executable);
+  const sharedPath = writableByOthers(executable, seams.inspect ?? inspectPath, seams.person ?? currentPerson());
+  const installed = profile ? (seams.read ?? readSystemFile)(profile.file) : null;
+  return { executable, sharedPath, installed };
+}
+
+/**
+ * Linux under Ubuntu's restriction: the problem, with the profile Set up would install for this
+ * copy, or with the reason there is none and Details that name the path.
+ */
+function usernsProblem({ executable, sharedPath, installed }: UsernsCheck): SandboxProblem {
+  const problem: SandboxProblem = {
+    code: SandboxProblemCode.UsernsRestricted,
+    platform: StudioPlatform.Linux,
+    missingTools: [],
+    installCommands: [],
+    details: [MESSAGE.UsernsRestricted],
+  };
+  const blocked = (apparmorBlock: AppArmorBlockCode, detail: string): SandboxProblem => ({
+    ...problem,
+    apparmorBlock,
+    details: [...problem.details, detail],
+  });
+  const profile = appArmorProfile(executable);
+  if (!profile)
+    return blocked(AppArmorBlockCode.Unnamable, MESSAGE.Unnamable(executable, profilePathRefusal(executable)));
+  if (sharedPath) return blocked(AppArmorBlockCode.SharedFolder, MESSAGE.SharedFolder(sharedPath));
+  // The same text is on disk, so an install has run and did not take: another Set up would not either.
+  if (installed?.trim() === profile.text.trim())
+    return blocked(AppArmorBlockCode.NotAttached, MESSAGE.NotAttached(profile.file, executable));
+  const apparmor = {
+    profile: profile.file,
+    command: profileInstallCommand(profile),
+    remove: profileRemoveCommand(profile),
+  };
+  const details = installed === null ? problem.details : [...problem.details, MESSAGE.Repoint(profile.file)];
+  return { ...problem, details, apparmor };
 }
 
 /** The setup problem the checks describe, or null when the sandbox may initialize. */
 export function sandboxProblem(check: SandboxCheck): SandboxProblem | null {
   const base = { platform: check.platform, missingTools: [], installCommands: [], details: check.dependencyErrors };
   if (!check.supported) return { ...base, code: SandboxProblemCode.UnsupportedPlatform };
-  if (check.dependencyErrors.length === 0) return null;
+  if (check.dependencyErrors.length === 0) {
+    const onLinux = check.platform === StudioPlatform.Linux;
+    return onLinux && check.userns ? usernsProblem(check.userns) : null;
+  }
   if (check.platform === StudioPlatform.Windows) return { ...base, code: SandboxProblemCode.NotProvisioned };
   if (check.platform !== StudioPlatform.Linux) return { ...base, code: SandboxProblemCode.MissingTools };
   return {
@@ -151,4 +243,37 @@ export function onPath(command: string, searchPath = process.env.PATH ?? ""): bo
 /** The Linux sandbox tools `found` cannot find, in install order. */
 export function missingLinuxTools(found: (command: string) => boolean = (command) => onPath(command)): SandboxTool[] {
   return LINUX_SANDBOX_TOOLS.filter((tool) => !found(tool));
+}
+
+/** A system file's text, or null when it cannot be read (absent on this kernel, or not Linux). */
+export function readSystemFile(file: string): string | null {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The running executable as the kernel attaches a profile to it: its resolved path. */
+export function runningExecutable(execPath: string = process.execPath): string {
+  try {
+    return realpathSync(execPath);
+  } catch {
+    return execPath;
+  }
+}
+
+/** A path's owner and mode, following links, or null when it cannot be read. */
+export function inspectPath(file: string): PathOwner | null {
+  try {
+    const { uid, gid, mode } = statSync(file);
+    return { uid, gid, mode };
+  } catch {
+    return null;
+  }
+}
+
+/** The person this process runs as: its user and primary group (-1 where there are none, Windows). */
+export function currentPerson(): Person {
+  return { uid: process.getuid?.() ?? -1, gid: process.getgid?.() ?? -1 };
 }

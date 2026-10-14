@@ -1,7 +1,8 @@
 /** Conversations: the bootstrap, sending, stopping, the event feed and the thread records. */
 import { type ThreadStatusMap, UiEvent } from "../../shared/ui-events.ts";
 import type { SmokeReadGates } from "../smoke/read-gates.ts";
-import type { StudioCore } from "../studio-core.ts";
+import type { StudioCore, StudioSettings } from "../studio-core.ts";
+import type { Bootstrap } from "../../shared/studio-api.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
 
@@ -11,6 +12,18 @@ const MESSAGE = {
   fixtureThreadUnavailable: "Fixture thread unavailable",
   invalidPage: "Invalid conversation page",
 } as const;
+
+/** The owner's rollback switch (`stackDefault`), read from the settings at every bootstrap; absent when unset. */
+function stackDefaultOf(settings: StudioSettings): Pick<Bootstrap, "stackDefault"> {
+  return settings.stackDefault === undefined ? {} : { stackDefault: settings.stackDefault };
+}
+
+/** The build smoke's bootstrap gate: waits for it, and refuses the bootstrap a smoke fails on purpose. */
+async function smokeGate(smokeReads: SmokeReadGates | null): Promise<void> {
+  if (!smokeReads) return;
+  await smokeReads.bootstrap;
+  if (smokeReads.failBootstrap) throw new Error(MESSAGE.fixtureBootstrapUnavailable);
+}
 
 export interface ThreadsIpcDeps {
   core: StudioCore;
@@ -26,6 +39,8 @@ export interface ThreadsIpcDeps {
   welcome: boolean;
   /** An unpackaged developer run, where the renderer offers its developer tools. */
   developer: boolean;
+  /** Whether this build makes Rust · wgpu games (the core's creation gate). */
+  rustCreation: boolean;
 }
 
 export function registerThreadsIpc(
@@ -39,15 +54,11 @@ export function registerThreadsIpc(
     smokeReads,
     welcome,
     developer,
+    rustCreation,
   }: ThreadsIpcDeps,
 ): void {
   handle("studio:bootstrap", async () => {
-    if (smokeReads) {
-      await smokeReads.bootstrap;
-      if (smokeReads.failBootstrap) {
-        throw new Error(MESSAGE.fixtureBootstrapUnavailable);
-      }
-    }
+    await smokeGate(smokeReads);
     // The renderer's poll continues from `eventsCursor`, never from the tail's last id. The reads
     // are independent; the loader waits for the slowest (the engines' CLI checks), not their sum.
     const [feed, threads, games, engines] = await Promise.all([
@@ -70,6 +81,8 @@ export function registerThreadsIpc(
       activeDelegations: core.activeBuilders(),
       welcome,
       developer,
+      rustCreation,
+      ...stackDefaultOf(core.settings),
     };
   });
 

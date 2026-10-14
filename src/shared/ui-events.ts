@@ -10,16 +10,20 @@
  */
 import type { AgentScreenEvent, AgentScreenFrame } from "./agent-screen.ts";
 import type { ReadyUpdate } from "./app-update.ts";
+import type { BuildPhase, CppBuildPurpose } from "./build-problem.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
+import type { BuildTarget } from "./game-project.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
 import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
+import type { NativeLogBatch, NativeRunStatus } from "./native-contract.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
 import type { StudioSettingsView } from "./studio-api.ts";
+import type { ToolchainInstallJob } from "./toolchain.ts";
 
 /** A record the harness wrote whole (a report, a verdict): the fields named are the ones read. */
 type HarnessRecord<Named extends object = object> = Partial<Named> & { readonly [field: string]: unknown };
@@ -104,9 +108,25 @@ export interface UiEventMap {
   /** An in-app Claude Code or Codex install started, finished or failed. */
   "cli.install": CliInstallJob;
   "model.pull": { model: string; progress: ModelPullProgress };
+  /** The C++ toolchain install moved on a phase, a component or a count (`core/toolchains.ts`). */
+  "toolchain.install": ToolchainInstallJob;
 
   // — games and builds —
   "game.changed": { project?: string; file?: string; warning?: string };
+  /** A C++ game's build for one destination moved on a phase, or printed a line (`CppBuilds`). */
+  "build.progress": {
+    project: string;
+    target: BuildTarget;
+    /** Live's build, a judging build or an export's: only Live's is what the stage shows building. */
+    purpose: CppBuildPurpose;
+    phase: BuildPhase;
+    line?: string;
+    at: number;
+  };
+  /** A native run (the Play window, an agent's headless run, an embedded one) changed state (`NativeRuns`). */
+  "native.status": NativeRunStatus;
+  /** A native run's stderr lines, cut and batched (`NativeRuns`). */
+  "native.log": NativeLogBatch;
   "game.archived": { project: string; trash: boolean };
   "delegation.started": { project: string; engine: string; active: number };
   "delegation.finished": { project: string; engine: string; active: number };
@@ -245,8 +265,12 @@ export const UiEvent = {
   EngineFallback: "engine.fallback",
   ModelInstall: "model.install",
   CliInstall: "cli.install",
+  ToolchainInstall: "toolchain.install",
   ModelPull: "model.pull",
   GameChanged: "game.changed",
+  BuildProgress: "build.progress",
+  NativeStatus: "native.status",
+  NativeLog: "native.log",
   GameArchived: "game.archived",
   DelegationStarted: "delegation.started",
   DelegationFinished: "delegation.finished",
@@ -348,9 +372,17 @@ export function uiEvent<K extends UiEventType>(type: K, payload: UiEventMap[K]):
 
 /**
  * Events only the host may send: what they say the renderer acts on (`live.behind` names the
- * build Live's Reload plays), so the harness's forwarded notifications never carry one.
+ * build Live's Reload plays; `build.progress` and `toolchain.install` drive the stage and the
+ * Toolchain sheet; `native.status` and `native.log` drive the native run card), so the harness's
+ * forwarded notifications never carry one.
  */
-const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([UiEvent.LiveBehind]);
+const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
+  UiEvent.LiveBehind,
+  UiEvent.BuildProgress,
+  UiEvent.ToolchainInstall,
+  UiEvent.NativeStatus,
+  UiEvent.NativeLog,
+]);
 
 /** Whether a harness notification names an event only the host sends. */
 export const isHostOnlyUiEvent = (name: string): boolean => HOST_ONLY.has(name);

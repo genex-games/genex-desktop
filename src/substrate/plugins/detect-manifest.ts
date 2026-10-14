@@ -42,7 +42,7 @@ function validateRule(raw: unknown): FactRule {
 
 /** The manifest's `detect` in canonical form; throws on API 1 or 2 and on any malformed rule. */
 export function validateDetect(m: Pick<PluginManifest, "apiVersion" | "detect">): FactRule[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3);
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3);
   const raw: unknown = m.detect;
   if (!Array.isArray(raw) || raw.length > LIMIT.Rules) throw new Error(MESSAGE.NotList);
   return raw.map(validateRule);

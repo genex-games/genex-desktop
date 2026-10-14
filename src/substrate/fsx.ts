@@ -130,6 +130,46 @@ export async function writeFileNoFollow(file: string, data: string | Uint8Array)
 }
 
 /**
+ * Create `file` holding `data` only when nothing at all is at its name: exclusive, so a link there
+ * (a dangling one included) is never written through and a file there is never replaced. False,
+ * having written nothing, when something is there. With `mode` the new file gets exactly that
+ * mode; without, 0o666 less the umask, as `writeFile` gives.
+ */
+export async function writeNewFile(file: string, data: string | Uint8Array, mode?: number): Promise<boolean> {
+  const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL, mode ?? 0o666).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "EEXIST" || error.code === "ELOOP") return null;
+      throw error;
+    },
+  );
+  if (!handle) return false;
+  try {
+    if (mode !== undefined) await handle.chmod(mode);
+    await handle.writeFile(data);
+  } finally {
+    await handle.close();
+  }
+  return true;
+}
+
+/** Whether anything at all is at `p`, a link included even when what it names is gone (`pathExists` follows links). */
+export async function entryExists(p: string): Promise<boolean> {
+  return lstat(p).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Whether `dir` is absent or a real folder, not a link to one nor a file: a folder the studio may fill. */
+export async function isFillableFolder(dir: string): Promise<boolean> {
+  const info = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  return info === null || info.isDirectory();
+}
+
+/**
  * Write `data` as `name` in `dir`, a folder {@link ensureDirBelow} made in a folder a box can write
  * (the runs folder). The name is opened without following a link and without emptying what is
  * there; only once the handle is the very file `name` names in `dir`, and `dir` still resolves to
@@ -197,14 +237,28 @@ export class NotARegularFileError extends Error {
   }
 }
 
+/** How {@link readRegularFile} opens its file. */
+export interface RegularFileOptions {
+  /**
+   * Follow a link at the file's own name (a game's page may be one). Off by default: a file the
+   * host takes settings or trust from is never read through a link.
+   */
+  followLinks?: boolean;
+}
+
 /**
  * The bytes of a file someone else can write into (a contractor's workspace), read safely: never
- * through a link, never blocking on a FIFO (opened non-blocking, then required to be a regular
- * file), and never more than `maxBytes` (M4). A blocked open holds a libuv thread; four of them
- * stall every file operation in the process.
+ * through a link (unless `followLinks`), never blocking on a FIFO or a device (opened
+ * non-blocking, then required to be a regular file), and never more than `maxBytes` (M4). A
+ * blocked open holds a libuv thread; four of them stall every file operation in the process.
  */
-export async function readRegularFile(file: string, maxBytes: number): Promise<Buffer> {
-  const handle = await openNoFollow(file, FS.O_RDONLY | FS.O_NONBLOCK);
+export async function readRegularFile(
+  file: string,
+  maxBytes: number,
+  options: RegularFileOptions = {},
+): Promise<Buffer> {
+  const flags = FS.O_RDONLY | FS.O_NONBLOCK;
+  const handle = options.followLinks ? await open(file, flags) : await openNoFollow(file, flags);
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw new NotARegularFileError(file, "ENOTREG", maxBytes);
@@ -333,13 +387,26 @@ export async function replaceFile(from: string, to: string, options: ReplaceOpti
  * created when missing, with the caller's own `mkdir` first when it needs a mode of its own.
  */
 export async function atomicWriteText(file: string, text: string, options: { mode?: number } = {}): Promise<void> {
+  await atomicWriteFile(file, text, options);
+}
+
+/**
+ * Write `data` (text as UTF-8, or bytes) to `file` complete or not at all, as {@link atomicWriteText}
+ * does: an exclusive temp file beside it, fsync, rename. A link planted at `file` is replaced,
+ * never written through; one planted at the temp name refuses the write.
+ */
+export async function atomicWriteFile(
+  file: string,
+  data: string | Uint8Array,
+  options: { mode?: number } = {},
+): Promise<void> {
   const dir = path.dirname(file);
   await ensureDir(dir);
   // Temp name must live in the same directory so that rename(2) is atomic (same filesystem).
   const tmp = path.join(dir, `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   const handle = await open(tmp, "wx", options.mode);
   try {
-    await handle.writeFile(text, "utf8");
+    await handle.writeFile(data);
     await handle.sync();
   } finally {
     await handle.close();
@@ -373,6 +440,31 @@ export class UnreadableConfig extends Error {
     this.name = "UnreadableConfig";
     this.file = file;
   }
+}
+
+/**
+ * {@link readJsonForUpdate} for a file someone else can write (a game's studio.json, in a folder
+ * every agent process writes): read with {@link readRegularFile}, so never through a link, never
+ * blocking on a FIFO and never more than `maxBytes`. A missing file reads as `null`; a link, a
+ * folder, anything but a regular file, or one that does not parse throws {@link UnreadableConfig}
+ * before the caller writes anything.
+ */
+export async function readOwnJsonForUpdate<T extends object>(file: string, maxBytes: number): Promise<T | null> {
+  let bytes: Buffer;
+  try {
+    bytes = await readRegularFile(file, maxBytes);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new UnreadableConfig(file, err);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch (err) {
+    throw new UnreadableConfig(file, err);
+  }
+  if (!isJsonObject(value)) throw new UnreadableConfig(file, new Error(MESSAGE.NotAnObject));
+  return value as T;
 }
 
 /**

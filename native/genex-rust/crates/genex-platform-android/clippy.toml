@@ -1,0 +1,7 @@
+# genex-platform-android is host code, not a simulation: the lane's game rules (../../clippy.toml,
+# M0a.9) do not bind it, and this file replaces them for this crate. The shell paces frames by the
+# wall clock (`Instant`, fed to the runtime as frame milliseconds).
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use an ordered Vec or IndexMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use an ordered Vec or IndexSet" },
+]

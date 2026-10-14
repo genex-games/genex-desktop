@@ -11,7 +11,7 @@ import type { ProcessSandbox } from "../spawn.ts";
 import type { ToolCall } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { LOCAL_NOTE, LOCAL_TOOL_DESCRIPTION } from "./local-session-prompts.ts";
-import { StudioTool } from "./studio-tool-prompts.ts";
+import { compiledSessionOf, compiledShellEnv, StudioTool } from "./studio-tool-prompts.ts";
 import { captureArgs } from "./capture-args.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult, ToolDefinition } from "./types.ts";
 
@@ -302,12 +302,38 @@ async function runCommandTool(args: ToolArgs, context: ToolContext): Promise<Liv
       command: args.command,
       cwd: context.cwd,
       signal: context.signal,
-      timeoutMs: LOCAL_TOOL_LIMITS.commandTimeoutMs,
       maxOutputBytes: LOCAL_TOOL_LIMITS.commandOutputBytes,
-      policy: { denyRead: context.forbidden, denyWrite: context.deniedWrites },
       label: context.label,
+      ...(await commandShape(context)),
     }),
   );
+}
+
+/**
+ * How long a command runs, under which policy and with which environment: a compiled game's
+ * session (`compiledSessionOf`) builds with its lock's tools ahead of the login PATH, for its
+ * stack's timeout, never writes the store it reads, and writes the folders of its own the record
+ * names (a Rust session's target folder; a C++ session's, none); a Three.js session's commands are
+ * as they always were.
+ */
+async function commandShape(context: ToolContext) {
+  const compiled = compiledSessionOf(context.request);
+  if (!compiled)
+    return {
+      timeoutMs: LOCAL_TOOL_LIMITS.commandTimeoutMs,
+      policy: { denyRead: context.forbidden, denyWrite: context.deniedWrites },
+    };
+  const { shell, localWrites } = compiled;
+  const loginPath = (await context.sandbox?.toolPath()) ?? process.env.PATH;
+  return {
+    timeoutMs: shell.commandTimeoutMs,
+    env: compiledShellEnv(shell, loginPath),
+    policy: {
+      denyRead: context.forbidden,
+      denyWrite: [...context.deniedWrites, shell.store],
+      ...(localWrites.length ? { allowWrite: localWrites } : {}),
+    },
+  };
 }
 
 async function captureTool(args: ToolArgs, context: ToolContext): Promise<LiveToolResult> {

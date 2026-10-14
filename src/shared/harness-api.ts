@@ -14,8 +14,11 @@
  */
 import { z } from "zod";
 import type { AgentScreenFrame } from "./agent-screen.ts";
+import type { StudioPlatform } from "./boot.ts";
+import type { BuildProblem } from "./build-problem.ts";
 import type { ContextSettings } from "./context.ts";
 import type { CompletionProvenance } from "./custom-events.ts";
+import type { CrateRequestAnswer, CrateRequestParams } from "./crate-requests.ts";
 import type { EngineDescriptor } from "./engine-descriptor.ts";
 import type {
   CompleteResponse,
@@ -34,18 +37,26 @@ import type {
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import { FINISH_REASON_CHARS, type FinishCheckStep } from "./finish-check.ts";
 import type { ProjectAssets } from "./game-assets.ts";
-import type {
-  AttachReport,
-  ContentStamps,
-  ContractWord,
-  ExportResult,
-  GameProject,
-  ProjectRecent,
+import type { GameConformanceParams, GameConformanceReport } from "./game-conformance.ts";
+import {
+  type AttachReport,
+  ALL_BUILD_TARGETS,
+  BUILD_TARGETS,
+  type BuildTarget,
+  type ContentStamps,
+  type ContractWord,
+  type ExportResult,
+  type GameProject,
+  GameStack,
+  type GameValidationCode,
+  type ProjectRecent,
 } from "./game-project.ts";
 import type { JobView } from "./jobs.ts";
 import type { McpLiveTool } from "./mcp.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { ModelPreferences } from "./model-preferences.ts";
+import { SECOND_MS } from "./duration.ts";
+import type { NativeAdmissionFacts, NativeRunStatus } from "./native-contract.ts";
 import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
 import {
   type CheckpointAnswer,
@@ -66,6 +77,7 @@ import type {
   PreviewInputAction,
   PreviewPixelStats,
   PreviewPortStatus,
+  PreviewTouchAction,
   ReadyResult,
 } from "./preview-contract.ts";
 import { ProjectStarter } from "./project-facts.ts";
@@ -74,6 +86,11 @@ import type { ReferenceFrame } from "./protocol.ts";
 import type { HardwareReport, StudioSettingsView } from "./studio-api.ts";
 import type { StudioActivityItem } from "./studio-activity.ts";
 import { isWorkerId, isWorkerTitle, type WorkerGrant, type WorkerType } from "./workers.ts";
+
+/** The longest `preview.witness` steps a game, in simulated time. */
+const WITNESS_MS_MAX = 10 * SECOND_MS;
+/** The longest reason a crate request carries to the person. */
+const CRATE_REASON_MAX_CHARS = 500;
 
 /** Budget class of a completion or delegation; anything but `improvement` is user work. */
 export const WorkClass = {
@@ -89,6 +106,31 @@ export type HarnessWorkClass = WorkClass;
 
 /** A snapshot's reach: the harness workspace, the game, or both. */
 export type HarnessSnapshotScope = "harness" | "game" | "both";
+
+/** `preview.witness`: the game stepped `ms` of simulated time; the frame counters before and after. */
+export interface WitnessResult {
+  frameBefore: number;
+  frameAfter: number;
+  simulatedMs: number;
+  drawCalls: number;
+}
+
+/** `preview.emptyScene`: whether the game's own `state().phase` exists to say a scene is empty, and its draws. */
+export interface EmptySceneResult {
+  /** False when the game reports no phase: the check is `unmeasured`, never a pass. */
+  measured: boolean;
+  phase: string | null;
+  drawCalls: number | null;
+}
+
+/** `preview.cameraPose`: the game's own `state().camera`, when it reports one. */
+export interface CameraPoseResult {
+  /** False when the game reports no camera: the check is `unmeasured`, never a pass. */
+  measured: boolean;
+  camera: string | null;
+  /** The pose as the game reported it (untrusted JSON, size-capped by the port). */
+  pose: unknown;
+}
 
 /**
  * Where a self-edit tried in a validation fork stopped: the change itself was refused (a path that
@@ -376,7 +418,8 @@ export interface HarnessHostApi {
   };
   /**
    * The plugin tools and guidance for the game `project` names, by its facts (none named, or a
-   * game with no kind yet: a web game's), and the tools on offer that make a kind of project.
+   * game with no kind yet: a web game's) and its stack (a Rust game's listing leaves out
+   * three.js-only skills), and the tools on offer that make a kind of project.
    */
   "plugins.tools": {
     params: { project?: string | null };
@@ -598,9 +641,15 @@ export interface HarnessHostApi {
   "game.recents": { params: void; result: ProjectRecent[] };
   /**
    * Make a game's folder: Genex's bookkeeping only, or with the starter `kind` names (`"web"`, or
-   * an older caller's `"studio-template"`); any other kind is refused.
+   * an older caller's `"studio-template"`). `kind: "rust-wgpu"` with `targets` scaffolds the Rust ·
+   * wgpu template for those destinations where Rust creation is open (every developer build, and a
+   * release build on a host the Rust lane runs on; `stack-gated` elsewhere); `"raylib-cpp"` is
+   * refused `raylib-creation-retired`; any other kind is refused.
    */
-  "game.scaffold": { params: { name: string; title?: string; threadId?: string; kind?: string }; result: GameProject };
+  "game.scaffold": {
+    params: { name: string; title?: string; threadId?: string; kind?: string; targets?: BuildTarget[] };
+    result: GameProject;
+  };
   /**
    * Write a starter into a game that has no kind yet (no facts); a game with a kind is refused.
    * `threadId`, the chat a local model's `start_web_game` answers: while that chat (this game's) is
@@ -611,10 +660,18 @@ export interface HarnessHostApi {
     params: { project: string; starter: ProjectStarter; threadId?: string };
     result: GameProject | StartHeldInPlan;
   };
+  /** `codes` are the typed reasons beside the sentences; older hosts send none. */
   "game.validate": {
     params: { project: string; candidateId?: string };
     /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
-    result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
+    result: {
+      ok: boolean;
+      problems: string[];
+      missing: string[];
+      warnings: string[];
+      contract: ContractWord;
+      codes?: GameValidationCode[];
+    };
   };
   /** The live half of `game.validate`: serve the page, wait for it, ask what the hook got hold of. */
   "game.attached": {
@@ -646,7 +703,18 @@ export interface HarnessHostApi {
     result: { bytes: number };
   };
   "game.tree": { params: { project: string; candidateId?: string }; result: string[] };
-  "game.export": { params: { project: string; target?: string }; result: ExportResult };
+  /**
+   * Export the game: `target` is the output folder, `destination` the build (default Browser): a
+   * web folder, a Mac `.app`, `<Game>-windows-x64.zip`, `<game>-linux-x64.tar.gz`, or for a Rust
+   * game an iOS Simulator `.app` or a development APK. `signing` is checked by
+   * `parseExportSigning`; the harness exports unsigned (ad hoc for a Mac or Simulator app, Studio's
+   * debug key for an APK) and is refused Developer ID, a certificate, an Apple identity or a
+   * release keystore (`harness-may-not-sign`). Nothing is launched on a Simulator or a device.
+   */
+  "game.export": {
+    params: { project: string; target?: string; destination?: BuildTarget; signing?: unknown };
+    result: ExportResult;
+  };
   /** The stills in `<project>/references/`, sniffed and resized. */
   "game.references": {
     params: { project: string; max?: number; maxPx?: number };
@@ -706,8 +774,12 @@ export interface HarnessHostApi {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
+  /**
+   * Input to a leased game, in order. A play script's `touch` action (contract v2: one finger's
+   * start, move or end in world coordinates) reaches a Rust game's native `input` op.
+   */
   "preview.input": {
-    params: { actions?: PreviewInputAction[]; handle?: string };
+    params: { actions?: Array<PreviewInputAction | PreviewTouchAction>; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
   };
   "preview.console": { params: { sinceMs?: number; handle?: string }; result: PreviewConsoleEntry[] };
@@ -726,7 +798,23 @@ export interface HarnessHostApi {
     result: { project: string; root: string | null; entry: string | undefined; loaded: string | null } | null;
   };
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
-  "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
+  /**
+   * Typed probes a native run answers without evaluating JS: step `ms` of simulated time and read
+   * the frame counters (witness), and the game's own phase and camera from `state()`.
+   */
+  "preview.witness": { params: { handle?: string; ms?: number }; result: WitnessResult };
+  "preview.emptyScene": { params: { handle?: string }; result: EmptySceneResult };
+  "preview.cameraPose": { params: { handle?: string }; result: CameraPoseResult };
+  /**
+   * A hidden window, or a headless native run of a C++ game. `target` names the build it judges
+   * (`judgingTarget` in the seed); a target this host cannot run is refused before any lease.
+   * `stacks` declares the stacks the asking harness serves: a lease that declares none is a
+   * harness from before Rust, and a Rust game's load through it is refused `harness-predates-native`.
+   */
+  "preview.acquire": {
+    params: { label?: string; purpose?: "optimization"; target?: BuildTarget; stacks?: GameStack[] };
+    result: { handle: string };
+  };
   "preview.release": { params: { handle: string }; result: boolean };
   /**
    * One leased window at another size (the art director's 1600×900 look), for that lease only:
@@ -759,9 +847,50 @@ export interface HarnessHostApi {
       live: boolean;
       headless: boolean;
       memory: { freeMb: number; totalMb: number };
+      /** The host's platform, which with `native.gameBox` picks a C++ game's judging target; absent from a host without native runs. */
+      host?: StudioPlatform | null;
+      /** Native runs: whether this host has a game box for its own OS, and its native leases. */
+      native?: { gameBox: boolean; leases: number; max: number };
     };
   };
 
+  // — native runs (C++ · raylib) —
+  /**
+   * Build one destination of a C++ game through the lane (`root`: a playable worktree the host
+   * checks). `lock` is the toolchain lock it built with; `output` the host's own output folder;
+   * `admission` the host's gate facts for a Mac, Windows or Linux build.
+   */
+  "native.build": {
+    params: { project: string; target: BuildTarget; root?: string };
+    result: {
+      ok: boolean;
+      problem: BuildProblem | null;
+      lock: string | null;
+      output: string | null;
+      /** The host's admission facts for a Mac, Windows or Linux build; null for the web target or a build that failed. */
+      admission: NativeAdmissionFacts | null;
+    };
+  };
+  /** The game's native run: the lease's when `handle` names one, else the person's window run; null when none runs. */
+  "native.status": { params: { project: string; handle?: string }; result: NativeRunStatus | null };
+  /** Stop the lease's run (`handle`) or the game's agent runs; false when none ran. */
+  "native.stop": { params: { project: string; handle?: string }; result: boolean };
+
+  /**
+   * Run the game conformance suite on the game's current Mac build (read-only: it builds, starts
+   * and stops the game's own headless runs and changes nothing in the game). Each run is recorded
+   * as a `conformance_run` event keyed by the build digest. Live's ring is never borrowed from the
+   * person: it reports `unavailable` here.
+   */
+  "game.conformance": { params: GameConformanceParams; result: GameConformanceReport };
+
+  // — crates (Rust games, extension ladder level 4) —
+  /**
+   * Ask the person for one extra crate at one exact version for a Rust game. The answer is the
+   * request's id and where it stands, never an approval: only the person decides, in Studio's
+   * window. A refused request says why with a `CrateRefusal` code.
+   */
+  "crates.request": { params: CrateRequestParams; result: CrateRequestAnswer };
   // — jobs: the long processes the agents start, which the app owns —
   /**
    * A game's jobs, read-only: only those that ended after `endedAfter` (an end number) when it is
@@ -911,6 +1040,9 @@ export const HostMethod = {
   PreviewGesture: "preview.gesture",
   PreviewShowing: "preview.showing",
   PreviewObserve: "preview.observe",
+  PreviewWitness: "preview.witness",
+  PreviewEmptyScene: "preview.emptyScene",
+  PreviewCameraPose: "preview.cameraPose",
   PreviewAcquire: "preview.acquire",
   PreviewRelease: "preview.release",
   PreviewViewport: "preview.viewport",
@@ -918,6 +1050,11 @@ export const HostMethod = {
   PreviewPair: "preview.pair",
   PreviewScreens: "preview.screens",
   PreviewCapacity: "preview.capacity",
+  NativeBuild: "native.build",
+  NativeStatus: "native.status",
+  NativeStop: "native.stop",
+  GameConformance: "game.conformance",
+  CratesRequest: "crates.request",
   RunArtifact: "run.artifact",
   GuardianRebuildAndRestart: "guardian.rebuild_and_restart",
   GuardianValidateEdit: "guardian.validate_edit",
@@ -942,6 +1079,39 @@ void hostMethodsAreListed;
 const text = z.string();
 const optionalText = z.string().nullish();
 const project = z.string();
+/** One destination the studio knows. */
+const buildTarget = z.enum(BUILD_TARGETS);
+/**
+ * A destination a preview lease may name: any in the vocabulary, phones included, so the lease
+ * handler refuses a phone with its own typed refusal (containment stage 1: no agent-driven device
+ * run) rather than as a malformed call. Kept apart from {@link buildTarget}: widening the build and
+ * export destinations for the mobile lanes never widens what a lease runs.
+ */
+const leaseTarget = z.enum(ALL_BUILD_TARGETS);
+/**
+ * A destination `game.export` may name: any in the vocabulary, phones included. The host checks
+ * the rest: a stack that never makes a phone is refused `not-a-destination`, and the harness makes
+ * only a Simulator app or a development APK (`HARNESS_MOBILE_ARTIFACTS`; an IPA or an AAB is
+ * `harness-may-not-sign`). Exporting builds and packages; it never runs the game anywhere.
+ */
+const exportTarget = z.enum(ALL_BUILD_TARGETS);
+/** One stack the studio knows. */
+const gameStack = z.enum(Object.values(GameStack));
+/** A crate's registry name: a letter, then letters, digits, `-` and `_`, at most 64 in all. */
+const crateName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
+/** An exact crate version: `MAJOR.MINOR.PATCH`, an optional pre-release or build suffix, at most 64 characters. */
+const crateVersion = z
+  .string()
+  .max(64)
+  .regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/);
+/** How long `preview.witness` steps: whole milliseconds, 1 to `WITNESS_MS_MAX`. */
+const witnessMs = z.number().int().min(1).max(WITNESS_MS_MAX);
+/** A game's destinations: one to four distinct known targets. */
+const buildTargets = z
+  .array(buildTarget)
+  .min(1)
+  .max(BUILD_TARGETS.length)
+  .refine((targets) => new Set(targets).size === targets.length, { message: "destinations repeat" });
 /** A worker a lock is held for or a moment names, by its id (or kind): `isWorkerId`. */
 const workerId = z.custom<string>(isWorkerId);
 /** A worker's title a person could read: `isWorkerTitle`. */
@@ -1058,7 +1228,7 @@ export const HARNESS_PARAM_SCHEMAS = {
   "game.setCover": z.object({ project }),
   "game.setCoverShader": z.object({ project }),
   "game.contentStamp": z.object({ project }),
-  "game.scaffold": z.object({ name: text, kind: optionalText }),
+  "game.scaffold": z.object({ name: text, kind: optionalText, targets: buildTargets.optional() }),
   "game.start": z.object({ project, starter: z.enum([ProjectStarter.Web]), threadId: optionalText }),
   "game.validate": z.object({ project }),
   "game.attached": z.object({ project, root: optionalText, entry: optionalText }),
@@ -1066,9 +1236,28 @@ export const HARNESS_PARAM_SCHEMAS = {
   "game.read": z.object({ project, file: text }),
   "game.write": z.object({ project, file: text }),
   "game.tree": z.object({ project }),
-  "game.export": z.object({ project, target: optionalText }),
+  // `signing` is not a path: the handler checks it with `parseExportSigning`.
+  "game.export": z.object({ project, target: optionalText, destination: exportTarget.optional() }),
   "game.references": z.object({ project }),
   "preview.load": z.object({ project, entry: optionalText, root: optionalText }),
+  // Not path-bearing, but its `target` decides which build an agent's lease starts: checked the same way.
+  // …and its `stacks` decide which games a lease may load: checked the same way.
+  "preview.acquire": z.object({ target: leaseTarget.optional(), stacks: z.array(gameStack).optional() }).nullish(),
+  // Not path-bearing either: a typed probe's `ms` bounds how long a native game is stepped.
+  "preview.witness": z.object({ handle: optionalText, ms: witnessMs.optional() }).nullish(),
+  "preview.emptyScene": z.object({ handle: optionalText }).nullish(),
+  "preview.cameraPose": z.object({ handle: optionalText }).nullish(),
+  "native.build": z.object({ project, target: buildTarget, root: optionalText }),
+  "native.status": z.object({ project, handle: optionalText }),
+  "native.stop": z.object({ project, handle: optionalText }),
+  "game.conformance": z.object({ project, root: optionalText, demo: optionalText, threadId: optionalText }),
+  // A crate's name and version are joined into the registry index and the overlay's paths later.
+  "crates.request": z.object({
+    project,
+    name: crateName,
+    version: crateVersion,
+    reason: z.string().max(CRATE_REASON_MAX_CHARS).nullish(),
+  }),
   "preview.crop": z.object({ runId: text, path: text }).nullish(),
   "preview.diff": z.object({ runId: text, a: text, b: text }).nullish(),
   "preview.statsOf": z.object({ path: optionalText }).nullish(),

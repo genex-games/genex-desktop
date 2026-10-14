@@ -7,6 +7,7 @@
  * *plays* the game instead of watching the clock.
  */
 import { applyPlayScript, CONTROL_EXERCISE, shotToImage } from "../loop/play-script.ts";
+import { touchesSkipped } from "../loop/native-refusal.ts";
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { PageMethod } from "../loop/page-contract.ts";
@@ -27,6 +28,15 @@ const STEPS_PER_CALL = 60;
 /** The most recent console lines console_log reads back. */
 const CONSOLE_LINES = 80;
 
+/**
+ * These tools say what they do for every stack: a three.js page, or a compiled game (C++ · raylib,
+ * Rust · wgpu) the studio builds for its judging destination, and a play script may touch. A copy
+ * kept from before C++ games speaks of a page only, and one from before Rust games of no touch, so
+ * a raylib or Rust run refuses to run on it.
+ */
+export const SERVES_NATIVE = true;
+export const SERVES_RUST = true;
+
 /** The racing-line assist on or off around a held press; a page without one answers so, never throws here. */
 async function steerWhileHeld(ctx: ToolCtx, on: boolean): Promise<void> {
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Assist, arg: { steer: on } }).catch(() => null);
@@ -42,7 +52,8 @@ function keysToPress(args: AnyRecord): string[] {
 export const tools: HarnessTool[] = [
   {
     name: "load_preview",
-    description: "Load a game project into the built-in browser.",
+    description:
+      "Load a game project into the built-in preview: a three.js game's page, or a compiled game (C++ · raylib or Rust · wgpu) built for its judging destination. A build that fails is the load's error: its first compiler error comes back.",
     parameters: { type: "object", properties: { project: str("project id") }, required: ["project"] },
     async execute(args, ctx) {
       const url = await ctx.call(HostMethod.PreviewLoad, { project: args.project });
@@ -52,7 +63,8 @@ export const tools: HarnessTool[] = [
 
   {
     name: "reload_preview",
-    description: "Reload the preview after editing files.",
+    description:
+      "Reload the preview after editing files. A compiled game (C++ · raylib or Rust · wgpu) is rebuilt first through the studio's own lane; a failed build is the reload's error.",
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       await ctx.call(HostMethod.PreviewReload, {});
@@ -186,7 +198,7 @@ export const tools: HarnessTool[] = [
   {
     name: "game_state",
     description:
-      "Read window.__studio.state() — score, phase, entity counts, fps, and any probes the game exposes. The structural half of judging.",
+      "Read the game's state() — window.__studio.state() on a three.js page, the runtime's state() in a compiled game (C++ · raylib, Rust · wgpu) — score, phase, entity counts, fps, and any probes the game exposes. The structural half of judging.",
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       const state = await ctx.call(HostMethod.PreviewState, {});
@@ -207,7 +219,7 @@ export const tools: HarnessTool[] = [
         script: {
           type: "array",
           description:
-            "optional controls after seed. e.g. [{type:'hold', keys:['w'], ms:2000}, {type:'look', dx:40}, {type:'tap', keys:['space']}, {type:'screenshot', camera:'close'}]",
+            "optional controls after seed. e.g. [{type:'hold', keys:['w'], ms:2000}, {type:'look', dx:40}, {type:'tap', keys:['space']}, {type:'screenshot', camera:'close'}]. A touch control (a Rust · wgpu game, phones first) is played with touch, in world pixels: a tap {type:'touch', x:480, y:270}, a hold {type:'touch', x:480, y:270, ms:600}, a swipe {type:'touch', x:200, y:400, toX:700, toY:400, ms:300}. A preview that takes no touch skips it and says so.",
         },
       },
       required: ["seed"],
@@ -227,9 +239,10 @@ export const tools: HarnessTool[] = [
       if (args.camera) await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: args.camera });
       const state = await ctx.call(HostMethod.PreviewState, {});
       const images = (played.images ?? []).slice(-MAX_TURN_IMAGES);
+      const skipped = played.refused > 0 ? `${touchesSkipped(played.refused)}\n` : "";
       return {
         ok: true,
-        content: JSON.stringify(state, null, 2),
+        content: `${skipped}${JSON.stringify(state, null, 2)}`,
         ...(images.length ? { images } : {}),
       };
     },
@@ -237,7 +250,7 @@ export const tools: HarnessTool[] = [
 
   {
     name: "console_log",
-    description: "Read the game's console output and errors.",
+    description: "Read the game's console output and errors (a compiled game's log lines).",
     parameters: { type: "object", properties: { sinceMs: { type: "number", description: "epoch ms" } } },
     async execute(args, ctx) {
       const entries = await ctx.call(HostMethod.PreviewConsole, { sinceMs: args.sinceMs ?? 0 });
@@ -251,7 +264,8 @@ export const tools: HarnessTool[] = [
 
   {
     name: "gpu_errors",
-    description: "WebGL errors from the GPU process — the page console never sees these.",
+    description:
+      "WebGL errors from the GPU process — the page console never sees these. Only a page has them: a C++ game's desktop build reports none here.",
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       const errors = await ctx.call(HostMethod.PreviewGpuErrors, {});

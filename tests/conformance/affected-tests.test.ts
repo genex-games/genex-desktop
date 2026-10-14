@@ -214,6 +214,30 @@ test("in this repository: every mapped test exists, unit tests land in L1 and se
     assert.ok(!selection.L1.includes(rig), `${rig} is a rig test and must not run in L1`);
 });
 
+// The suites that pin what a game's stack is and what follows from it (M1 of the Rust · wgpu runtime).
+const STACK_IDENTITY_SUITES = [
+  "game-project",
+  "game-targets",
+  "stack-setup",
+  "game-workspace",
+  "game-build-lane",
+  "split-sites",
+  "layout",
+  "toolchain-retention",
+  "seed-upgrade",
+  "create-game-destinations",
+  "plugin-manifest",
+  "plugin-registry",
+  "rust-template",
+  "rust-env",
+].map((name) => `tests/conformance/${name}.test.ts`);
+
+test("in this repository: test:area -- stack-identity selects every stack-identity suite in L1", () => {
+  const selection = selectTests(repo, areaFiles(repo, "stack-identity"));
+  const missing = STACK_IDENTITY_SUITES.filter((suite) => !selection.L1.includes(suite));
+  assert.deepEqual(missing, [], "the stack-identity area must reach these suites");
+});
+
 test("--run hands tests no repository pinning: a fixture repo built inside a test never lands in the committing checkout", (t) => {
   const root = fixture(t);
   const sentinel = fs.mkdtempSync(path.join(os.tmpdir(), "affected-sentinel-"));
@@ -259,6 +283,43 @@ test('builds a repo', () => {
       }),
     ),
     ["GIT_AUTHOR_NAME", "PATH"],
+  );
+});
+
+test("--run starts the files that run real games on the GPU one at a time, after the parallel files, and runs them when those fail", (t) => {
+  const root = fixture(t);
+  const log = path.join(root, "spans.log");
+  // Each file logs when it begins and ends; two GPU files that overlapped would interleave.
+  const span = (name: string, fail = false) =>
+    `import { test } from 'node:test';\nimport fs from 'node:fs';\nimport { setTimeout } from 'node:timers/promises';\n${
+      name.startsWith("gpu") ? "import '../helpers/gpu-games.ts';\n" : ""
+    }test('${name}', async () => { fs.appendFileSync(${JSON.stringify(log)}, '${name}+\\n'); await setTimeout(400); fs.appendFileSync(${JSON.stringify(log)}, '${name}-\\n');${
+      fail ? " throw new Error('red');" : ""
+    } });\n`;
+  const files: Record<string, string> = {
+    "tests/helpers/gpu-games.ts": "export const gpu = true;\n",
+    "tests/conformance/gpu-a.test.ts": span("gpu-a"),
+    "tests/conformance/gpu-b.test.ts": span("gpu-b"),
+    "tests/conformance/cpu-a.test.ts": span("cpu-a", true),
+    "tests/conformance/cpu-b.test.ts": span("cpu-b"),
+  };
+  for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(root, file), text);
+  const L1 = Object.keys(files).filter((file) => file.endsWith(".test.ts"));
+  assert.equal(
+    runSelection(root, { L1, L3: [] }, "L1", process.env, "ignore"),
+    1,
+    "the failing parallel file fails the run",
+  );
+  const spans = fs.readFileSync(log, "utf8").trim().split("\n");
+  const gpu = spans.filter((line) => line.startsWith("gpu"));
+  assert.equal(gpu.length, 4, "the GPU files ran although a parallel file failed");
+  assert.ok(gpu[0]?.endsWith("+") && gpu[1] === gpu[0].replace("+", "-"), `one GPU file at a time: ${gpu.join(" ")}`);
+  assert.ok(gpu[2]?.endsWith("+") && gpu[3] === gpu[2].replace("+", "-"), `one GPU file at a time: ${gpu.join(" ")}`);
+  const firstGpu = spans.findIndex((line) => line.startsWith("gpu"));
+  assert.deepEqual(
+    spans.slice(0, firstGpu).sort(),
+    ["cpu-a+", "cpu-a-", "cpu-b+", "cpu-b-"],
+    "the parallel files finished before the first GPU file began",
   );
 });
 

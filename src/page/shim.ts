@@ -152,6 +152,8 @@ interface Clock {
   dateBase: number;
   offset: number;
   pinned: number;
+  /** The last time an animation callback was given: no later frame goes back before it. */
+  lastStamp: number;
   frozen: boolean;
   frames: number;
   steppedFrames: number;
@@ -177,12 +179,27 @@ const nativeNow = (k: Clock) => k.host.now();
 const virtualNow = (k: Clock) => (k.frozen ? k.pinned : nativeNow(k) + k.offset);
 
 // ── animation frames ───────────────────────────────────────────────────────
+/**
+ * A live frame's time on the virtual clock: the browser's own time for the frame (its vsync, one
+ * value for every callback of the frame), never later than now and never before a time a callback
+ * was already given. Reading the clock when the callback runs instead hands a busy page the
+ * main thread's jitter: a game that turns frame times into fixed ticks then draws on the wrong
+ * vsyncs (8 and 25 ms apart on a 120 Hz display, where every 2nd one is right).
+ */
+function frameStamp(k: Clock, nativeTime: Foreign) {
+  const now = virtualNow(k);
+  const time = Number(nativeTime);
+  const stamp = Number.isFinite(time) ? Math.min(now, Math.max(time + k.offset, k.lastStamp)) : now;
+  k.lastStamp = stamp;
+  return stamp;
+}
+
 function arm(k: Clock, entry: RafEntry) {
-  entry.native = k.host.raf(() => {
+  entry.native = k.host.raf((nativeTime: Foreign) => {
     entry.native = null;
     k.rafEntries.delete(entry.id);
     try {
-      entry.cb(virtualNow(k));
+      entry.cb(frameStamp(k, nativeTime));
     } catch (err) {
       k.report(err);
     } finally {
@@ -390,6 +407,7 @@ function start(k: Clock) {
   if (!k.frozen) return true;
   // Monotonic across every freeze/resume cycle: no game ever sees a negative dt.
   k.offset = k.pinned - nativeNow(k);
+  k.lastStamp = Math.max(k.lastStamp, k.pinned);
   k.frozen = false;
   for (const entry of k.rafEntries.values()) if (entry.native == null) arm(k, entry);
   for (const entry of k.timers.values()) if (entry.native == null) armTimer(k, entry);
@@ -410,6 +428,7 @@ function start(k: Clock) {
 function drainFrame(k: Clock, at: Foreign) {
   const snapshot = [...k.rafEntries.values()];
   if (!snapshot.length) return false;
+  k.lastStamp = Math.max(k.lastStamp, at);
   for (const entry of snapshot) {
     if (!k.rafEntries.delete(entry.id)) continue;
     if (entry.native != null) k.host.cancelRaf(entry.native);
@@ -534,6 +553,7 @@ export function createClock(host: Foreign, rawOptions = {}) {
     dateBase: (host.dateNow ? host.dateNow() : Date.now()) - host.now(),
     offset: 0,
     pinned: host.now(),
+    lastStamp: Number.NEGATIVE_INFINITY,
     frozen,
     frames: 0,
     steppedFrames: 0,

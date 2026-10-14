@@ -1,0 +1,696 @@
+name: Native destinations
+# Genex's own C++ · raylib starter game (never a user's game) cross-built with zig for the Windows
+# x64 and Linux x64 destinations (plan M4b; src/substrate/toolchain-store/cross-targets.ts through
+# scripts/cross-build-smoke.ts), exported by the product's own exporters and smoke-run on both. The
+# Linux job builds both targets on ubuntu-24.04, checks the host-gate facts (ANGLE's GLESv2
+# imported, no opengl32 or libGL, RUNPATH exactly $ORIGIN, glibc <= 2.28, no debug sections, no
+# build folder named), admits both packages through the product's own PE and ELF gates and checks
+# that tampered copies are refused (an opengl32 import, a RUNPATH other than $ORIGIN, an extra DLL
+# or .so). It then packs each build with exportWindowsZip and exportLinuxTarball (--export), lists
+# and plans each archive with the store's reader before extracting it, checks its SHA256SUMS,
+# gates and tampers the extracted game, and runs the Linux game from the extracted tarball with
+# ANGLE-Vulkan on the bundled SwiftShader under Xvfb, on this runner and in an AlmaLinux 8
+# container with no network (the glibc floor). A --repro step builds the Windows game twice in two
+# folders and requires an identical game.exe, recording a missing or differing game.pdb as an
+# unmeasured debug-symbol limitation. A non-blocking step runs Linux under
+# headless sway with no X server and records whether it opens a Wayland window (not yet: ANGLE
+# finds no EGLConfig). The Windows job expands the exported zip, checks its SHA256SUMS in
+# PowerShell, runs <Title>.exe from the expanded folder on windows-2025 with ANGLE-D3D11 on WARP,
+# checks the game's own client area for a rendered frame, that opengl32.dll was never loaded, and
+# closes it cleanly; then runs it again as a studio run over its named pipe (GENEX_STUDIO_PIPE and
+# a nonce: ready with the nonce, quit answered, exit 0). Whether the runner offered an audio device
+# is written to the summary (runners have none: unmeasured). It is billed, so it runs on owner
+# dispatch or on a pull request labelled `windows-smoke`. ANGLE comes from the angle.yml run that
+# native/angle/bundle-lock.json names (each manifest the lock's pin, each file its manifest's
+# digest); zig and raylib from their pinned archives; the floor image by digest; CMake comes from
+# the runner image and Ninja and the LLVM readers from apt (no linux-x64 store digests for them
+# yet). The sysroot headers and the run images' packages are the only network fetches (--fetch);
+# every game run is in a container with no network or on the runner. Pull requests and pushes to
+# dev that touch the paths below run the Linux job. No secrets.
+#
+# The rust-android job is the Rust · wgpu runtime's Android row (M2.10): from the committed pins
+# (scripts/spike/rust-wgpu/pins.md) it cross-builds the Rust template offline for
+# aarch64-linux-android and reads every PT_LOAD's 16 KB alignment back
+# (tests/conformance/rust-mobile-build.test.ts; its iOS rows skip off a Mac and run in the
+# dispatch-only rust-mobile.yml), then packages the pond's NativeActivity APK
+# (scripts/spike/rust-wgpu/android-apk.sh, until M5.2's lane) and smoke-runs it on an x86_64
+# emulator on this runner (the arm64 library runs under the image's ARM translation; Vulkan comes
+# from the emulator's SwiftShader). The smoke passes on a WebGPU-core Vulkan adapter in the
+# shell's receipt, or on the typed `gpu-unsupported` record, whose reason goes in the summary (an
+# emulator without a compliant Vulkan is a recorded result: the Android GPU rows then rest on the
+# owner's device row, M2.13); a failure event, a crash or neither fails it (shellSmokeVerdict in
+# src/main/rust-build-mobile.ts). The SDK, NDK, JDK 21, build-tools and platform are the runner
+# image's; the emulator and its system image are the only SDK downloads, under the image's
+# accepted licences. It runs on the same pull requests and pushes as the Linux job.
+#
+# The rust-linux job is the Rust · wgpu runtime's Linux row (M4.4): the pinned ANGLE builds, the
+# SwiftShader split and the Linux sysroot are bundled the way the app bundles them and verified
+# against their pins; the spike's pond (dev flavour, built on this runner from the committed pins) is
+# assembled with the bundle's verified SwiftShader into a run bundle and run headless inside the
+# product's Linux game box (bubblewrap, seccomp, no display, no network). The row passes on a tier
+# core Vulkan receipt over a software adapter and a capture that drew something
+# (scripts/ci/rust-linux-host.ts). The Studio lane's own cargo-zigbuild Linux build has no CI row yet:
+# it is checked on a developer's machine (tests/conformance/rust-linux-lane.test.ts). It runs on the
+# same pull requests and pushes as the Linux job, on ubuntu-22.04 (no AppArmor user-namespace
+# restriction: linux-userns.yml owns that).
+on:
+  pull_request:
+    # `labeled` lets the windows-smoke label start the billed Windows job on a pull request.
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - .github/workflows/native-destinations.yml
+      - scripts/cross-build-smoke.ts
+      - scripts/cross-build-studio-probe.c
+      - src/game-template-cpp/**
+      - src/substrate/bundle-walk.ts
+      - src/substrate/native-cross-admission.ts
+      - src/substrate/native-export-archive.ts
+      - src/substrate/native-export-desktop.ts
+      - src/substrate/native-gate-elf.ts
+      - src/substrate/native-gate-pe.ts
+      - src/substrate/windows-names.ts
+      - src/substrate/toolchain-store/archive.ts
+      - src/substrate/toolchain-store/cross-targets.ts
+      - src/substrate/toolchain-store/genex-cmake.ts
+      - src/substrate/toolchain-store/manifest.ts
+      - src/substrate/toolchain-store/prewarm.ts
+      - src/substrate/toolchain-store/recipe.json
+      - native/angle/bundle-lock.json
+      - src/main/core/native-export-run.ts
+      - src/main/core/desktop-export-run.ts
+      - src/substrate/native-runtime-files.ts
+      - src/substrate/toolchain-store/bundled.ts
+      - src/substrate/windows-sign.ts
+      - native/genex-rust/**
+      - src/game-template-rust/**
+      - src/main/rust-build-mobile.ts
+      - tests/conformance/rust-mobile-build.test.ts
+      - scripts/spike/rust-wgpu/android-apk.sh
+      - scripts/spike/rust-wgpu/android/**
+      - scripts/spike/rust-wgpu/pins.md
+      - scripts/ci/rust-linux-host.ts
+      - scripts/ci/setup-bubblewrap.sh
+      - scripts/ci/android-emulator.sh
+      - scripts/bundle-angle.mjs
+      - scripts/bundle-linux-sysroot.mjs
+      - native/linux-sysroot/**
+      - src/substrate/linux-game-box.ts
+      - src/substrate/native-game-port.ts
+      - src/substrate/toolchain-store/swiftshader-bundle.ts
+      - src/substrate/toolchain-store/linux-sysroot-bundle.ts
+  push:
+    # Changes that reach dev run the Linux job too (the Windows job stays dispatch- or label-only).
+    branches: [dev]
+    paths:
+      - .github/workflows/native-destinations.yml
+      - scripts/cross-build-smoke.ts
+      - scripts/cross-build-studio-probe.c
+      - src/game-template-cpp/**
+      - src/substrate/bundle-walk.ts
+      - src/substrate/native-cross-admission.ts
+      - src/substrate/native-export-archive.ts
+      - src/substrate/native-export-desktop.ts
+      - src/substrate/native-gate-elf.ts
+      - src/substrate/native-gate-pe.ts
+      - src/substrate/windows-names.ts
+      - src/substrate/toolchain-store/archive.ts
+      - src/substrate/toolchain-store/cross-targets.ts
+      - src/substrate/toolchain-store/genex-cmake.ts
+      - src/substrate/toolchain-store/manifest.ts
+      - src/substrate/toolchain-store/prewarm.ts
+      - src/substrate/toolchain-store/recipe.json
+      - native/angle/bundle-lock.json
+      - src/main/core/native-export-run.ts
+      - src/main/core/desktop-export-run.ts
+      - src/substrate/native-runtime-files.ts
+      - src/substrate/toolchain-store/bundled.ts
+      - src/substrate/windows-sign.ts
+      - native/genex-rust/**
+      - src/game-template-rust/**
+      - src/main/rust-build-mobile.ts
+      - tests/conformance/rust-mobile-build.test.ts
+      - scripts/spike/rust-wgpu/android-apk.sh
+      - scripts/spike/rust-wgpu/android/**
+      - scripts/spike/rust-wgpu/pins.md
+      - scripts/ci/rust-linux-host.ts
+      - scripts/ci/setup-bubblewrap.sh
+      - scripts/ci/android-emulator.sh
+      - scripts/bundle-angle.mjs
+      - scripts/bundle-linux-sysroot.mjs
+      - native/linux-sysroot/**
+      - src/substrate/linux-game-box.ts
+      - src/substrate/native-game-port.ts
+      - src/substrate/toolchain-store/swiftshader-bundle.ts
+      - src/substrate/toolchain-store/linux-sysroot-bundle.ts
+  workflow_dispatch:
+permissions:
+  contents: read
+  # Downloads the pinned ANGLE builds from the angle.yml run that produced them.
+  actions: read
+concurrency:
+  group: native-destinations-${{ github.event.pull_request.number || github.ref }}
+  # A new push makes a running smoke stale; adding a label (windows-smoke or any other) must not
+  # cancel a run that is already going.
+  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+env:
+  ZIG_URL: https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+  ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+  RAYLIB_URL: https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz
+  RAYLIB_SHA256: 2b3ee1e2120c7a0796b33062c7e9a694dd8a8caa56a96319ac8c8ecf54a90d0b
+jobs:
+  linux:
+    # Any other label added to the pull request starts nothing.
+    if: github.event.action != 'labeled' || github.event.label.name == 'windows-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      angle-ready: ${{ steps.angle.outputs.ready }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Folders
+        run: |
+          {
+            echo "TOOLS=$RUNNER_TEMP/toolchains"
+            echo "WORK=$RUNNER_TEMP/cross-build-work"
+            echo "EVIDENCE=$RUNNER_TEMP/cross-build-evidence"
+          } >> "$GITHUB_ENV"
+      - name: ANGLE pin (native/angle/bundle-lock.json, the one source)
+        # The lock names the angle.yml run and commit every Genex build bundles; GitHub deletes that
+        # run's artifacts on the lock's `expires` day: re-pin (or publish them) before then.
+        run: |
+          lock=native/angle/bundle-lock.json
+          run_id=$(jq -er .run.id "$lock")
+          commit12=$(jq -er '.commit[0:12]' "$lock")
+          {
+            echo "ANGLE_RUN=$run_id"
+            echo "ANGLE_COMMIT12=$commit12"
+          } >> "$GITHUB_ENV"
+          echo "ANGLE $commit12 from angle.yml run $run_id (artifacts expire $(jq -r .run.expires "$lock"))"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Product exporter dependencies
+        run: npm ci --ignore-scripts
+      - name: Runner tools (Xvfb, Ninja, LLVM readers)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb ninja-build llvm \
+            libx11-6 libxrandr2 libxi6 libxcursor1 libxinerama1 libxext6 libx11-xcb1 libxcb1
+          cmake --version | head -1
+          ninja --version
+      - name: zig 0.16.0 and raylib 6.0 (pinned archives)
+        run: |
+          mkdir -p "$TOOLS/downloads"
+          curl -fsSL --retry 3 -o "$TOOLS/downloads/zig.tar.xz" "$ZIG_URL"
+          curl -fsSL --retry 3 -o "$TOOLS/downloads/raylib.tar.gz" "$RAYLIB_URL"
+          printf '%s  %s\n' "$ZIG_SHA256" "$TOOLS/downloads/zig.tar.xz" "$RAYLIB_SHA256" "$TOOLS/downloads/raylib.tar.gz" | sha256sum -c -
+          mkdir -p "$TOOLS/zig-0.16.0" "$TOOLS/raylib-6.0"
+          tar -xJf "$TOOLS/downloads/zig.tar.xz" -C "$TOOLS/zig-0.16.0" --strip-components=1
+          tar -xzf "$TOOLS/downloads/raylib.tar.gz" -C "$TOOLS/raylib-6.0" --strip-components=1
+          "$TOOLS/zig-0.16.0/zig" version
+      - name: ANGLE for Windows (D3D11) from the pinned angle.yml run
+        id: angle-windows
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: angle-windows-x64-d3d11-${{ env.ANGLE_COMMIT12 }}
+          path: ${{ env.TOOLS }}/angle-windows-x64-d3d11
+          run-id: ${{ env.ANGLE_RUN }}
+          github-token: ${{ github.token }}
+      - name: ANGLE for Linux (Vulkan + SwiftShader) from the pinned angle.yml run
+        id: angle-linux
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: angle-linux-x64-vulkan-${{ env.ANGLE_COMMIT12 }}
+          path: ${{ env.TOOLS }}/angle-linux-x64-vulkan
+          run-id: ${{ env.ANGLE_RUN }}
+          github-token: ${{ github.token }}
+      - name: ANGLE present, or this job reports not run
+        # The angle.yml artifacts expire about 2027-01-12: then the job says so and stops instead
+        # of failing every pull request that touches the template. Any other download failure fails.
+        id: angle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_OUTCOME: ${{ steps.angle-windows.outcome }}
+          LINUX_OUTCOME: ${{ steps.angle-linux.outcome }}
+        run: |
+          if [ "$WINDOWS_OUTCOME" = success ] && [ "$LINUX_OUTCOME" = success ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          expired=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ANGLE_RUN/artifacts" \
+            --jq "[.artifacts[] | select(.name | endswith(\"-$ANGLE_COMMIT12\")) | .expired] | any")
+          if [ "$expired" != true ]; then
+            echo "::error::the ANGLE artifacts of angle.yml run $ANGLE_RUN did not download and have not expired"
+            exit 1
+          fi
+          echo "::warning::NOT RUN: the ANGLE artifacts of angle.yml run $ANGLE_RUN expired; publish them as release assets and repin"
+          echo "### Native destinations: NOT RUN (ANGLE artifacts of run $ANGLE_RUN expired)" >> "$GITHUB_STEP_SUMMARY"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+      - name: ANGLE digests (each manifest the lock's pin, each file its manifest's digest)
+        if: steps.angle.outputs.ready == 'true'
+        working-directory: ${{ env.TOOLS }}
+        run: |
+          lock="$GITHUB_WORKSPACE/native/angle/bundle-lock.json"
+          for target in windows-x64-d3d11 linux-x64-vulkan; do
+            dir="angle-$target"
+            pin=$(jq -er --arg target "$target" '.targets[$target].manifestSha256' "$lock")
+            echo "$pin  $dir/manifest.json" | sha256sum -c -
+            jq -r '.files | to_entries[] | "\(.value.sha256)  \(.key)"' "$dir/manifest.json" \
+              | (cd "$dir" && sha256sum -c --quiet -)
+            echo "$dir: $(jq '.files | length' "$dir/manifest.json") files match the manifest the lock pins"
+          done
+      - name: Cross-build both destinations, export them with the product's exporters, run Linux from the tarball
+        if: steps.angle.outputs.ready == 'true'
+        # The X11 and Wayland headers' sysroot and GLFW's Wayland protocol code come from the
+        # digest-pinned almalinux:8 image (the glibc floor's own packages, versions checked;
+        # --fetch lets those one-time containers use the network). --export packs both builds with
+        # exportWindowsZip and exportLinuxTarball into $WORK/export; each archive is listed and
+        # planned before anything is extracted, its SHA256SUMS must list every file, the extracted
+        # game is admitted and tampered, and the Linux game runs from the extracted tarball here
+        # and (--floor) in AlmaLinux 8 with no network. Any unexpected answer fails this step.
+        run: |
+          node scripts/cross-build-smoke.ts --export --run host --floor --fetch \
+            --toolchains "$TOOLS" --work "$WORK" --evidence "$EVIDENCE" \
+            --cmake "$(command -v cmake)" --ninja "$(command -v ninja)" --readobj "$(command -v llvm-readobj)" \
+            --zig "$TOOLS/zig-0.16.0/zig" --raylib "$TOOLS/raylib-6.0" \
+            --angle-windows "$TOOLS/angle-windows-x64-d3d11" --angle-linux "$TOOLS/angle-linux-x64-vulkan" \
+            --sysroot "$TOOLS/sysroot-linux-x64-x11"
+      - name: Reproducible Windows build (identical executable, debug-symbol limit recorded)
+        if: steps.angle.outputs.ready == 'true'
+        run: |
+          node scripts/cross-build-smoke.ts --repro --allow-pdb-difference \
+            --toolchains "$TOOLS" --work "$WORK" --evidence "$EVIDENCE/repro" \
+            --cmake "$(command -v cmake)" --ninja "$(command -v ninja)" --readobj "$(command -v llvm-readobj)" \
+            --zig "$TOOLS/zig-0.16.0/zig" --raylib "$TOOLS/raylib-6.0" \
+            --angle-windows "$TOOLS/angle-windows-x64-d3d11" --angle-linux "$TOOLS/angle-linux-x64-vulkan"
+      - name: Run Linux on Wayland (headless sway, no X server; reported, not yet required)
+        id: wayland
+        if: steps.angle.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          node scripts/cross-build-smoke.ts --targets linux-x64 --run none --wayland --fetch \
+            --toolchains "$TOOLS" --work "$WORK" --evidence "$EVIDENCE/wayland" \
+            --cmake "$(command -v cmake)" --ninja "$(command -v ninja)" --readobj "$(command -v llvm-readobj)" \
+            --zig "$TOOLS/zig-0.16.0/zig" --raylib "$TOOLS/raylib-6.0" \
+            --angle-windows "$TOOLS/angle-windows-x64-d3d11" --angle-linux "$TOOLS/angle-linux-x64-vulkan" \
+            --sysroot "$TOOLS/sysroot-linux-x64-x11"
+      - name: Summary
+        if: ${{ !cancelled() }}
+        env:
+          WAYLAND_OUTCOME: ${{ steps.wayland.outcome }}
+        run: |
+          [ -f "$EVIDENCE/summary.json" ] || exit 0
+          {
+            echo '### Cross-built starter game'
+            echo '```json'
+            node -e 'const s=require(process.argv[1]); console.log(JSON.stringify({results: s.results, exports: s.exports, archives: s.archives, tampers: s.tampers, runs: s.runs, failures: s.failures}, null, 2))' "$EVIDENCE/summary.json"
+            echo '```'
+            if [ -f "$EVIDENCE/repro/summary.json" ]; then
+              echo '### Reproducible Windows build'
+              echo '```json'
+              node -e 'const s=require(process.argv[1]); console.log(JSON.stringify({repro: s.repro, failures: s.failures}, null, 2))' "$EVIDENCE/repro/summary.json"
+              echo '```'
+            fi
+            # The Wayland step may fail without failing the job: say so here, not only by its icon.
+            if [ "$WAYLAND_OUTCOME" = failure ]; then
+              echo '### Wayland: FAILED (expected, not required: ANGLE-Vulkan offers GLFW no EGLConfig)'
+            else
+              echo "### Wayland: ${WAYLAND_OUTCOME:-not run}"
+            fi
+            if [ -f "$EVIDENCE/wayland/summary.json" ]; then
+              echo '```json'
+              node -e 'const s=require(process.argv[1]); console.log(JSON.stringify({runs: s.runs, failures: s.failures}, null, 2))' "$EVIDENCE/wayland/summary.json"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: native-destinations-linux-evidence
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.angle.outputs.ready == 'true'
+        with:
+          # The product's own Windows export: the Windows job runs the game from it.
+          name: starter-windows-x64-export
+          path: ${{ env.WORK }}/export/*-windows-x64.zip
+          if-no-files-found: error
+  windows-warp:
+    # Billed (AGENTS.md): the owner dispatches it, or labels the pull request windows-smoke.
+    if: needs.linux.outputs.angle-ready == 'true' && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-smoke'))
+    needs: linux
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: starter-windows-x64-export
+          path: ${{ runner.temp }}/export
+      - name: Expand the exported zip and check its SHA256SUMS (every file listed, every digest matching)
+        env:
+          EXPORT: ${{ runner.temp }}/export
+          EXPANDED: ${{ runner.temp }}/game
+          OUT: ${{ runner.temp }}/evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:OUT | Out-Null
+          $zips = @(Get-ChildItem -LiteralPath $env:EXPORT -Filter '*-windows-x64.zip' -File)
+          if ($zips.Count -ne 1) { throw "expected one exported zip, found $($zips.Count)" }
+          "zip: $($zips[0].Name), $($zips[0].Length) bytes, sha256 $((Get-FileHash -LiteralPath $zips[0].FullName -Algorithm SHA256).Hash)" | Tee-Object -FilePath "$env:OUT/files.txt"
+          Expand-Archive -LiteralPath $zips[0].FullName -DestinationPath $env:EXPANDED
+          $top = @(Get-ChildItem -LiteralPath $env:EXPANDED -Force)
+          if ($top.Count -ne 1 -or -not $top[0].PSIsContainer) { throw "the zip holds $($top.Count) top-level entries, not one game folder" }
+          $root = $top[0].FullName
+          $exe = Join-Path $root "$($top[0].Name).exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "the game folder has no $($top[0].Name).exe" }
+          $listed = @{}
+          foreach ($line in Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS') -Encoding utf8) {
+            if ($line -eq '') { continue }
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "a SHA256SUMS line is malformed: $line" }
+            $hash = $Matches[1]
+            $name = $Matches[2]
+            # A listed name stays inside the game folder: relative, forward slashes, no . or .. step.
+            if ($name.StartsWith('/') -or $name.Contains('\') -or $name.Contains(':') -or $name -match '(^|/)\.\.?(/|$)') { throw "SHA256SUMS names $name, outside the game folder" }
+            $file = Join-Path $root $name
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "SHA256SUMS lists $name, which the zip lacks" }
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw "SHA256SUMS does not match $name" }
+            $listed[$name] = $true
+          }
+          $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') })
+          $unlisted = @($files | Where-Object { $_ -ne 'SHA256SUMS' -and -not $listed.ContainsKey($_) })
+          if ($unlisted.Count) { throw "files SHA256SUMS does not list: $($unlisted -join ', ')" }
+          "sums: $($listed.Count) files match SHA256SUMS; nothing unlisted; game: $($top[0].Name).exe" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          Get-ChildItem -LiteralPath $root | Format-Table Name, Length | Out-String | Add-Content "$env:OUT/files.txt"
+          "GAME=$root" >> $env:GITHUB_ENV
+          "GAME_EXE=$exe" >> $env:GITHUB_ENV
+          "### Windows export`n- $($zips[0].Name): $($listed.Count) files match SHA256SUMS, nothing unlisted" >> $env:GITHUB_STEP_SUMMARY
+      - name: Run the exported game on WARP, check its client area, close it and check its exit
+        env:
+          OUT: ${{ runner.temp }}/evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class GenexWindow {
+            [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+            [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+            [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+            [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+            [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+          }
+          '@
+          [void][GenexWindow]::SetProcessDPIAware()
+          $game = Start-Process -FilePath $env:GAME_EXE -WorkingDirectory $env:GAME -PassThru `
+            -RedirectStandardOutput "$env:OUT/game.log" -RedirectStandardError "$env:OUT/game.err.log"
+          $deadline = (Get-Date).AddSeconds(20)
+          while ($game.MainWindowHandle -eq 0 -and -not $game.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250; $game.Refresh()
+          }
+          if ($game.MainWindowHandle -eq 0) { throw "the game opened no window (exited: $($game.HasExited))" }
+          Start-Sleep -Seconds 8
+          if ($game.HasExited) { throw "the game exited early with $($game.ExitCode)" }
+          $window = $game.MainWindowHandle
+          [void][GenexWindow]::SetForegroundWindow($window)
+          Start-Sleep -Milliseconds 500
+          $rect = New-Object GenexWindow+Rect
+          if (-not [GenexWindow]::GetClientRect($window, [ref]$rect)) { throw "GetClientRect failed" }
+          $origin = New-Object GenexWindow+Point
+          if (-not [GenexWindow]::ClientToScreen($window, [ref]$origin)) { throw "ClientToScreen failed" }
+          # Desktop OpenGL must never be in the process: ANGLE draws through Direct3D 11 only.
+          $game.Refresh()
+          $modules = @($game.Modules | ForEach-Object { $_.ModuleName.ToLowerInvariant() })
+          if ($modules.Count -eq 0) { throw "the game's loaded modules could not be read" }
+          if ($modules -contains 'opengl32.dll') { throw "opengl32.dll is loaded in the game" }
+          "modules loaded: $($modules.Count), opengl32.dll among them: no" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          $width = $rect.Right - $rect.Left; $height = $rect.Bottom - $rect.Top
+          if ($width -le 0 -or $height -le 0) { throw "the game's client area is $width x $height" }
+          # Only the game's own client area: the wallpaper, taskbar and title bar never count.
+          $shot = New-Object System.Drawing.Bitmap $width, $height
+          [System.Drawing.Graphics]::FromImage($shot).CopyFromScreen($origin.X, $origin.Y, 0, 0, $shot.Size)
+          $shot.Save("$env:OUT/windows-x64-warp.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $colours = New-Object 'System.Collections.Generic.HashSet[int]'
+          for ($x = 0; $x -lt $width; $x += 4) { for ($y = 0; $y -lt $height; $y += 4) { [void]$colours.Add($shot.GetPixel($x, $y).ToArgb()) } }
+          "client area: $width x $height at $($origin.X),$($origin.Y); colours sampled: $($colours.Count)" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          (Get-FileHash -Algorithm SHA256 "$env:OUT/windows-x64-warp.png").Hash | Tee-Object -FilePath "$env:OUT/windows-x64-warp.png.sha256"
+          # A real close: WM_CLOSE ends raylib's loop, the game returns from main and flushes its log.
+          [void]$game.CloseMainWindow()
+          if (-not $game.WaitForExit(15000)) { Stop-Process -Id $game.Id; throw "the game did not close on WM_CLOSE" }
+          $game.WaitForExit()
+          Get-Content "$env:OUT/game.log", "$env:OUT/game.err.log"
+          if ($game.ExitCode -ne 0) { throw "the game exited with $($game.ExitCode) after WM_CLOSE" }
+          if ($colours.Count -lt 16) { throw "the game's client area has $($colours.Count) colours: nothing was rendered" }
+          $renderer = Select-String -Path "$env:OUT/game.log" -Pattern '> Renderer: ANGLE \(.*Direct3D11' | Select-Object -First 1
+          if (-not $renderer) { throw "game.log names no ANGLE Direct3D11 renderer" }
+          "renderer: $($renderer.Line)" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          # A hosted runner has no audio endpoint: say so instead of passing it silently. raylib's
+          # warnings reach the game's stderr, its info lines stdout: both logs are read.
+          $audio = Select-String -Path "$env:OUT/game.log", "$env:OUT/game.err.log" -Pattern 'AUDIO: Failed to initialize playback device' | Select-Object -First 1
+          $sound = if ($audio) { 'unmeasured: the runner has no audio endpoint (raylib could not open a playback device)' } else { 'a playback device opened' }
+          "audio: $sound" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          "### Windows WARP smoke`n- renderer: $($renderer.Line.Trim())`n- opengl32.dll loaded: no`n- audio: $sound" >> $env:GITHUB_STEP_SUMMARY
+      - name: Run it as a studio run over its named pipe (ready with the nonce, quit, exit 0)
+        env:
+          OUT: ${{ runner.temp }}/evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The pipe a Windows run's launcher would create (genex-game-<run id>), served here directly.
+          $name = 'genex-game-0199a1b2c3d4e5f6'
+          $nonce = 'a1b2c3d4e5f60718'
+          $log = "$env:OUT/pipe-protocol.txt"
+          $server = [System.IO.Pipes.NamedPipeServerStream]::new($name, [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+          $env:GENEX_STUDIO_PIPE = "\\.\pipe\$name"
+          $env:GENEX_STUDIO_NONCE = $nonce
+          $game = Start-Process -FilePath $env:GAME_EXE -WorkingDirectory $env:GAME -PassThru `
+            -RedirectStandardOutput "$env:OUT/pipe-game.log" -RedirectStandardError "$env:OUT/pipe-game.err.log"
+          Remove-Item Env:GENEX_STUDIO_PIPE, Env:GENEX_STUDIO_NONCE
+          if (-not $server.WaitForConnectionAsync().Wait(30000)) { Stop-Process -Id $game.Id; throw "game.exe never connected to $name" }
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          $reader = [System.IO.StreamReader]::new($server, $utf8)
+          $writer = [System.IO.StreamWriter]::new($server, $utf8)
+          $writer.AutoFlush = $true
+          $writer.NewLine = "`n"
+          # The game's next line, or $null when it sends none within `ms`.
+          function Next-Line([int] $ms) {
+            $read = $reader.ReadLineAsync()
+            if (-not $read.Wait($ms)) { return $null }
+            if ($null -ne $read.Result) { "game> $($read.Result)" | Add-Content $log }
+            return $read.Result
+          }
+          $ready = $null
+          for ($line = Next-Line 30000; $null -ne $line; $line = Next-Line 30000) {
+            if ($line -match '"event":"ready"') { $ready = $line; break }
+          }
+          if (-not $ready) { Stop-Process -Id $game.Id; throw "no ready event over the pipe" }
+          if (-not $ready.Contains("""nonce"":""$nonce""")) { Stop-Process -Id $game.Id; throw "ready names another nonce: $ready" }
+          Start-Sleep -Seconds 3
+          $writer.WriteLine('{"id":1,"op":"quit"}')
+          $answered = $false
+          for ($line = Next-Line 10000; $null -ne $line; $line = Next-Line 10000) {
+            if ($line -match '"id":1\b' -and $line -match '"ok":true') { $answered = $true; break }
+          }
+          if (-not $answered) { Stop-Process -Id $game.Id; throw "quit got no ok answer over the pipe" }
+          if (-not $game.WaitForExit(15000)) { Stop-Process -Id $game.Id; throw "game.exe did not exit after quit" }
+          $game.WaitForExit()
+          Get-Content "$env:OUT/pipe-game.log", "$env:OUT/pipe-game.err.log"
+          if ($game.ExitCode -ne 0) { throw "game.exe exited with $($game.ExitCode) after quit" }
+          "pipe: ready with the nonce, quit answered, exit 0" | Tee-Object -Append -FilePath "$env:OUT/files.txt"
+          "- named pipe (GENEX_STUDIO_PIPE): ready with the nonce, quit answered, exit 0" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: native-destinations-windows-evidence
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+  rust-android:
+    # Any label added to the pull request starts nothing here.
+    if: github.event.action != 'labeled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+      GENEX_MOBILE_OUT: ${{ github.workspace }}/.studio-dev/spike-mobile/out
+      EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-android-ci
+      ANDROID_APP_ID: games.genex.spike.pond.native
+      AVD_IMAGE: system-images;android-34;google_apis;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (the facade's graph, the APK and the emulator image)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Pinned application dependencies
+        run: npm ci --ignore-scripts
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: The runner's Android SDK, NDK and JDK
+        run: |
+          mkdir -p "$EVIDENCE"
+          {
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+            ls "$ANDROID_HOME/build-tools" "$ANDROID_HOME/platforms"
+            "$JAVA_HOME_21_X64/bin/java" -version 2>&1
+          } | tee "$EVIDENCE/sdk.txt"
+          # android-apk.sh reads the spike JDK at tools/jdk/Contents/Home (the macOS layout of the
+          # pinned Temurin); on Linux it is the runner's Temurin 21.
+          jdk=.studio-dev/spike-toolchain/tools/jdk/Contents
+          if [ ! -x "$jdk/Home/bin/java" ]; then mkdir -p "$jdk" && ln -s "$JAVA_HOME_21_X64" "$jdk/Home"; fi
+      - name: The template cross-compiles for aarch64-linux-android with 16 KB pages
+        env:
+          GENEX_REQUIRE_TOOLCHAINS: "1"
+        run: node --test tests/conformance/rust-mobile-build.test.ts
+      - name: The pond's NativeActivity APK (debug-signed, zip-aligned for 16 KB pages)
+        run: |
+          # android-apk.sh is the macOS spike's: it asks df for gigabytes with -g, which GNU df
+          # spells -BG. TODO(M5-F4): the core's Android export replaces the script and this shim.
+          shims="$RUNNER_TEMP/macos-shims"
+          mkdir -p "$shims"
+          cat > "$shims/df" <<'SHIM'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = -g ]; then shift; /usr/bin/df -BG "$@" | sed -E 's/([0-9]+)G/\1/g'; else exec /usr/bin/df "$@"; fi
+          SHIM
+          chmod +x "$shims/df"
+          PATH="$shims:$PATH" bash scripts/spike/rust-wgpu/android-apk.sh --activity native
+      - name: Emulator with KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          # The emulator's qemu links PulseAudio even with -no-audio; the runner image lacks it.
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libpulse0
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --install emulator platform-tools "$AVD_IMAGE" > "$EVIDENCE/sdkmanager.txt"
+      - name: Smoke the APK on the emulator
+        run: |
+          adb="$ANDROID_HOME/platform-tools/adb"
+          trap '"$adb" emu kill || true' EXIT
+          # The AVD folder is named for avdmanager and the emulator alike, and the boot is bounded.
+          bash scripts/ci/android-emulator.sh "$EVIDENCE"
+          apk=$(find "$GENEX_MOBILE_OUT/android" -name '*native*.apk' | head -1)
+          [ -n "$apk" ] || { echo "::error::no NativeActivity APK under $GENEX_MOBILE_OUT/android"; exit 1; }
+          "$adb" install -r "$apk"
+          "$adb" shell am start -n "$ANDROID_APP_ID/android.app.NativeActivity"
+          log="$EVIDENCE/lifecycle.ndjson"
+          for _ in $(seq 1 90); do
+            "$adb" shell run-as "$ANDROID_APP_ID" cat files/genex-self-test/lifecycle.ndjson > "$log" 2>/dev/null || true
+            if grep -q '"event":"\(gpu\|gpu-unsupported\|failed\)"' "$log"; then break; fi
+            sleep 2
+          done
+          "$adb" logcat -d -s genex:V AndroidRuntime:E DEBUG:V > "$EVIDENCE/logcat.txt" || true
+          node --input-type=module -e '
+            import { appendFileSync, existsSync, readFileSync } from "node:fs";
+            import { shellSmokeVerdict } from "./src/main/rust-build-mobile.ts";
+            const log = process.argv[1];
+            const verdict = shellSmokeVerdict(existsSync(log) ? readFileSync(log, "utf8") : "", "vulkan");
+            const line = `- Android emulator smoke: ${verdict.outcome}: ${verdict.detail}`;
+            console.log(line);
+            if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+            if (!verdict.pass) process.exit(1);
+          ' "$log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: native-destinations-rust-android-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+  rust-linux:
+    # Any label added to the pull request starts nothing here.
+    if: github.event.action != 'labeled'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds).
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+      EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-linux-ci
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (the facade's graph and the pond share one target folder)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Process sandbox prerequisites and the audio and udev headers the facade links
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat pkg-config libasound2-dev libudev-dev xz-utils meson ninja-build libcap-dev
+      - name: Pinned application dependencies
+        run: npm ci --ignore-scripts
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: Bundle the pinned ANGLE builds, their SwiftShader split and the Linux sysroot as the app does
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          # The bundlers resolve the resources folder by its real path, as the app's own build
+          # folder already exists when they run.
+          mkdir -p "$RUNNER_TEMP/resources"
+          GENEX_ANGLE_DIR="$RUNNER_TEMP/angle" node --input-type=module -e '
+            import { bundleAngle } from "./scripts/bundle-angle.mjs";
+            import { bundleLinuxSysroot } from "./scripts/bundle-linux-sysroot.mjs";
+            const resources = process.argv[1];
+            await bundleAngle({ resources, release: true });
+            await bundleLinuxSysroot({ resources });
+          ' "$RUNNER_TEMP/resources"
+      - name: The bundle's pins hold
+        run: node scripts/ci/rust-linux-host.ts --step bundle-pins --resources "$RUNNER_TEMP/resources" --evidence "$EVIDENCE"
+      - name: Build the pond (dev flavour) from the committed pins
+        run: node scripts/ci/rust-spike.ts --step build-pond --profile release --evidence "$EVIDENCE"
+      - name: Assemble the run bundle (the game beside the package's verified SwiftShader)
+        run: node scripts/ci/rust-linux-host.ts --step assemble-bundle --resources "$RUNNER_TEMP/resources" --pond "$CARGO_TARGET_DIR/release/pond" --bundle "$RUNNER_TEMP/rust-bundle" --evidence "$EVIDENCE"
+      # The box passes --disable-userns (bubblewrap 0.8+); Ubuntu 22.04's own bubblewrap is 0.6.1.
+      - name: The pinned bubblewrap the game box needs
+        run: bash scripts/ci/setup-bubblewrap.sh
+      - name: Headless in the Linux game box on SwiftShader Vulkan (tier core, a drawn capture)
+        run: node scripts/ci/rust-linux-host.ts --step headless-box --bundle "$RUNNER_TEMP/rust-bundle" --evidence "$EVIDENCE"
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "$EVIDENCE/headless-box.json" ]; then
+            node -e '
+              const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+              const line = `- Rust Linux headless box: ${r.status}: ${r.receipt ? `${r.receipt.tier} on ${r.receipt.backend} (${r.receipt.adapter}), ${r.capture?.colours}+ colours` : r.code + " " + r.detail}`;
+              console.log(line);
+              if (process.env.GITHUB_STEP_SUMMARY) require("node:fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, line + "\n");
+            ' "$EVIDENCE/headless-box.json"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: native-destinations-rust-linux-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn

@@ -180,10 +180,11 @@ Delivery through `assets.deliver` is already format-agnostic; preview and classi
 not.
 
 1. Format: one row in `ASSET_FORMATS` in `src/shared/game-assets.ts` — kind, preview mode,
-   MIME, and whether it is a raster thumbnail or a model texture. The inventory, the preview's
-   MIME map, main's contained readers (`isImageFile`) and the audio checks (`isAudioFile`) all
-   read that row. Where a project keeps a format (an engine's asset folder) is the
-   `CORE_WORKSPACE` table in `src/shared/project-workspace.ts`.
+   MIME, whether it is a raster thumbnail or a model texture, and how each compiled stack takes
+   it (`stacks`: loads, converts at import, or refused; `stackAcceptsAsset` marks a refused
+   delivery). The inventory, the preview's MIME map, main's contained readers (`isImageFile`)
+   and the audio checks (`isAudioFile`) all read that row. Where a project keeps a format (an
+   engine's asset folder) is the `CORE_WORKSPACE` table in `src/shared/project-workspace.ts`.
 2. Preview: `assetPreviewMode` in `src/shared/asset-preview.ts` only if the mode needs new logic.
 3. 3D formats: a loader branch in `src/renderer/asset-model-viewer.js`; copy any decoder in
    `scripts/build.mjs`.
@@ -191,6 +192,123 @@ not.
    `AssetPreview.tsx`.
 5. Tests: `tests/conformance/asset-preview.test.ts` and `game-assets.test.ts`; add a small
    synthetic sample to `tests/fixtures/asset-previews/` and note its source in its README.
+
+## Destination
+
+A place a compiled game is built for (Browser, Mac, Windows, Linux, and the phones below). Every
+list of destinations reads the vocabularies, so a new one is mostly rows. The steps below are the
+C++ · raylib lane's; a Rust · wgpu destination follows the phone steps after them.
+
+1. Test first in `tests/conformance/game-targets.test.ts`: the host matrix row and
+   `judgingTarget` for the new destination.
+2. Contract: a `BuildTarget` member in `src/shared/game-project.ts` (in `BUILD_TARGETS` order,
+   and `DESKTOP_TARGETS` for a desktop one), its row in `src/shared/game-targets.ts`
+   (`hostTarget`, `buildRefusal`, `runRefusal`) and its `REQUIRED_COMPONENTS` in
+   `src/shared/toolchain.ts`.
+3. Toolchain: pinned entries in `src/substrate/toolchain-store/manifest.ts` (each digest also in
+   the dev cache's `SHA256SUMS`), a `targets` and raylib variant in `recipe.json` with
+   `tests/conformance/genex-cmake.test.ts` rows, and `PREWARMED_TARGETS` in `prewarm.ts` once
+   prewarm builds its outputs. A `recipe.json` change makes the dev store re-prewarm
+   (`node scripts/toolchains/dev-store.ts`).
+4. Lane: its `CPP_BUILD_TIMEOUT_MS` row in `src/main/cpp-build.ts`, and a diagnostics pattern if
+   its tools print a new error shape (`tests/conformance/cpp-build.test.ts`).
+5. Words and UI: `DESTINATION_WORDS` in `src/renderer/words.ts`; the create dialog
+   (`src/renderer/create-game-destinations.ts`) and the stage badges
+   (`src/renderer/panels/stage/destinations.ts`) follow the vocabularies. `game.scaffold`'s
+   targets schema is in `src/shared/harness-api.ts`; regenerate with
+   `node scripts/gen-harness-types.ts`.
+6. Run `node scripts/affected-tests.mjs --files <changed files> --run` with
+   `GENEX_REQUIRE_TOOLCHAINS=1`, and `tests/conformance/cpp-lane-real.test.ts` where the dev
+   toolchains are present.
+
+A phone destination (iPhone and iPad, Android) is a Rust · wgpu destination with extra rows, and
+an agent never runs it:
+
+1. Test first: the admission row in `native-cross-admission.test.ts` and the gate's hostile table
+   (`native-gate-elf.test.ts`, `native-gate-pe.test.ts`, `native-gate-wasm.test.ts`), signing in
+   `mobile-sign.test.ts`, the launch in `device-launch.test.ts`.
+2. Binary: `RUST_ADMITTED_EXECUTABLES` in `src/shared/native-contract.ts` (format, machine, files),
+   its gate in `src/substrate/native-gate-*.ts`, and the notices row in
+   `src/substrate/rust-notices.ts` (a destination without one is refused before anything is
+   written).
+3. Build and sign: its builder in `src/main/rust-build-mobile.ts` (registered by
+   `rustTargetBuilders`; its row in `STACK_HOST_MATRIX`'s and the seed copy's `build`, never
+   `run`) and its signer in `src/substrate/mobile-sign.ts`. The person's own identities are
+   `ExportSigning` kinds the harness is refused before anything is read.
+4. Export: its packaging in `src/substrate/<phone>-package.ts`, its run in
+   `src/main/core/<phone>-export-run.ts` with an `EXPORT_RUNS` entry, and its services in
+   `src/main/core/mobile-export-deps.ts` (lanes, the person's SDK probe, store tools, signer
+   sandbox), bound by `StudioCore`'s export runners; `MOBILE_ARTIFACTS` and `ARTIFACT_SIGNINGS`
+   name what the export sheet offers. `mobile-export-core.test.ts` holds the binding and
+   `mobile-export-real.test.ts` the real lane-to-package row (`GENEX_REQUIRE_TOOLCHAINS=1`).
+   Until the owner's device row runs, `RUST_GPU_QUALIFICATION` keeps it `untested` and the
+   menu says "Untested on real devices".
+5. Launch: its package path in `DEVICE_PACKAGE` (`src/main/core/device-launch.ts`) and its button
+   in `stage/DeviceLaunch.tsx`. The launch stays a person's press
+   (`studio:native.launchDevice`, native-classified); add no harness method, lease or capture
+   that starts a device (`harness-api.test.ts`, `device-launch.test.ts` and the sandbox's adb
+   and `~/.android` denies fail otherwise).
+6. Judge it on the Mac or web build of the same code: the judge does not build a phone, so its
+   parity rows stay unmeasured ("not built or run by the judge"), never a pass.
+
+## Stack
+
+What a game is written in (`three-js`, `raylib-cpp`, `rust-wgpu`); the Rust · wgpu stack is the
+worked example. A stack is decided by the game's files and never changes, so most of a new one is
+table rows that the typecheck forces.
+
+1. Test first: per-stack table rows in `tests/conformance/game-project.test.ts`, detection and
+   creation rows in `game-workspace.test.ts` (whose pre-M1 characterization digests must stay
+   equal), and the seam's dispatch in `game-build-lane.test.ts`.
+2. Contract: `GameStack` and `ProjectKind` members and `STACK_OF_KIND`, `STACK_TARGETS` in
+   `src/shared/game-project.ts`; `STACK_HOST_MATRIX` in `game-targets.ts`; the required
+   components and `LOCK_FILE_OF_STACK` in `toolchain.ts`; `setupTargets` in `stack-setup.ts`.
+   Every exhaustive `Record<GameStack, …>` then fails the typecheck until it has a row. A stack
+   a new game may start on joins `CREATABLE_STACKS` and the default's rows (`defaultStackFor`,
+   `rustDefaultHost` in `toolchain.ts`: the host-conditional switch, its reasons and the
+   rollback to Three.js); C++ · raylib stays out of both, its creation being retired
+   (`CreationRefusal.RaylibCreationRetired`, `tests/conformance/stack-default.test.ts`). The
+   seed's copy in `loop/native-contract.ts` is held by `seed-contracts.test.ts`
+   ([seed contract](#seed-contract)).
+3. Detection and creation: the stack's marker file in `src/substrate/project-shape.ts` (read by
+   `lstat`, never followed), its checks in `game-validation.ts`, and its template
+   `src/game-template-<stack>/`, shipped by `scripts/build.mjs` and
+   `tests/helpers/resources.ts`. Until it ships, creation stays behind the development gate
+   (`src/main/core/stack-gate.ts`), opened per host when it does.
+4. Builds: register its lane in `coreGameBuilds` (`src/main/core/internals.ts`); until then every
+   build is refused `lane-missing`. A destination's builder lands in its own module and is
+   registered over the lane's table in one line (`rustTargetBuilders`), with any settings the
+   lane merges (`targetSettings`). Each `isCompiledStack` call site is classified in
+   `tests/fixtures/stack-split-sites.json` (`split-sites.test.ts`).
+5. Toolchains: its pinned recipe beside `rust-recipe.json`, its lock file, and retention rows in
+   `toolchain-retention.test.ts`.
+6. Seed and plugins: list the seed modules an older kept copy cannot serve
+   (`tests/fixtures/seed-exports-pre-rust.json`, `seedNightRefusal` in
+   `src/substrate/seed-upgrade.ts`); a plugin skill naming the stack needs a new plugin API
+   (`PRE_RUST_SKILL_STACKS`, `RUST_SKILL_STACKS_API` in `src/shared/plugins.ts`).
+7. Words and UI: `STACK_WORDS` in `src/renderer/words.ts`, `stackOffer` in
+   `src/renderer/create-game-destinations.ts`, and a fixture seed (`rust-game`,
+   [dev fixture](#dev-fixture)).
+8. Add the new suites to the `stack-identity` area in `docs/agent/knowledge-map.json`, then run
+   `npm run test:area -- stack-identity` and `npm run verify:harness`.
+
+## Genex API
+
+What a generated Rust game can call: the `genex` facade in `native/genex-rust`, held by its own
+tests and by the reference page the in-app agent reads. The
+[add-genex-api skill](../../.agents/skills/add-genex-api/SKILL.md) has the files and the tests;
+in short:
+
+1. Test first in `native/genex-rust/crates/genex/tests/` (or a compile-fail case), run only
+   through `node scripts/toolchains/rust-env.ts -- cargo test -p genex --offline --locked`.
+2. The facade and the runtime crate behind it; new dependencies only from the vendored set
+   (`scripts/toolchains/rust-vendor.ts check`).
+3. `native/genex-rust/docs/GENEX_API.md` and its byte-equal copy in
+   `src/game-template-rust/docs/`; vocabularies in `tests/fixtures/rust-facade-vocabulary.json`.
+4. A verb, refusal or native feature the app knows also goes through `src/shared/native-contract.ts`
+   and the seed's copy ([seed contract](#seed-contract)).
+5. `npm run test:rust-spike`, `npm run test:area -- rust-runtime` and `npm run verify:harness`;
+   re-inventory the release tree (`rust-release.ts inventory`) for review.
 
 ## Zustand store
 

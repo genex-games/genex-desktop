@@ -1,0 +1,41 @@
+# genex-render is host code, not a simulation: the lane's game rules (../../clippy.toml, M0a.9) do
+# not bind it, and this file replaces them for this crate. It keeps the order and clock rules.
+# The f32 transcendentals are the lane's entries too: every CPU-side number that reaches a capture
+# (the sphere mesh, the sRGB curve, shadow cascades, mips, skinning) comes from libm, the same bits
+# on every target. Platform `sin`/`cos`/`powf` made the M0a.7 web/native and arm64/x86 capture
+# digests differ (M2.5). Shader math is the GPU's and is not covered here.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use an ordered Vec or IndexMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use an ordered Vec or IndexSet" },
+  { path = "std::time::Instant", reason = "a frame's content never depends on the wall clock" },
+  { path = "std::time::SystemTime", reason = "a frame's content never depends on the wall clock" },
+]
+
+disallowed-methods = [
+  { path = "f32::sin", reason = "platform libm: use the libm crate" },
+  { path = "f32::cos", reason = "platform libm: use the libm crate" },
+  { path = "f32::sin_cos", reason = "platform libm: use the libm crate" },
+  { path = "f32::tan", reason = "platform libm: use the libm crate" },
+  { path = "f32::asin", reason = "platform libm: use the libm crate" },
+  { path = "f32::acos", reason = "platform libm: use the libm crate" },
+  { path = "f32::atan", reason = "platform libm: use the libm crate" },
+  { path = "f32::atan2", reason = "platform libm: use the libm crate" },
+  { path = "f32::sinh", reason = "platform libm: use the libm crate" },
+  { path = "f32::cosh", reason = "platform libm: use the libm crate" },
+  { path = "f32::tanh", reason = "platform libm: use the libm crate" },
+  { path = "f32::asinh", reason = "platform libm: use the libm crate" },
+  { path = "f32::acosh", reason = "platform libm: use the libm crate" },
+  { path = "f32::atanh", reason = "platform libm: use the libm crate" },
+  { path = "f32::exp", reason = "platform libm: use the libm crate" },
+  { path = "f32::exp2", reason = "platform libm: use the libm crate" },
+  { path = "f32::exp_m1", reason = "platform libm: use the libm crate" },
+  { path = "f32::ln", reason = "platform libm: use the libm crate" },
+  { path = "f32::log", reason = "platform libm: use the libm crate" },
+  { path = "f32::log2", reason = "platform libm: use the libm crate" },
+  { path = "f32::log10", reason = "platform libm: use the libm crate" },
+  { path = "f32::ln_1p", reason = "platform libm: use the libm crate" },
+  { path = "f32::powf", reason = "platform libm: use the libm crate" },
+  { path = "f32::powi", reason = "unspecified precision per target: multiply, or use the libm crate" },
+  { path = "f32::cbrt", reason = "platform libm: use the libm crate" },
+  { path = "f32::hypot", reason = "platform libm: use the libm crate" },
+]

@@ -21,7 +21,25 @@ import { GIT_TIMEOUT_MS } from "./config.ts";
 import { screenOwnership } from "./screen-owner.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EngineFailure } from "./outage.ts";
+import {
+  CPP_TEMPLATE_MAIN,
+  cppFindings,
+  isCppOwnerFile,
+  isCppSource,
+  RUST_TEMPLATE_MAIN,
+  ownedPlaceFor,
+  reviewsCpp,
+} from "./native-review.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
+
+/**
+ * This review reads a C++ · raylib facet's C++ and CMake with the C++ rules (native-review.ts) and
+ * knows the C++ template's entry and runtime. run-dispatch.ts and chat-dispatch.ts refuse a raylib
+ * night on a kept copy without this mark (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+/** It reads a Rust · wgpu facet's `.rs` and `genex.toml` with the Rust rules and names a Rust facet's own module. */
+export const SERVES_RUST = true;
 
 /** One finding against an attempt: the file, the line, what is wrong and how to fix it. */
 export interface Violation {
@@ -129,6 +147,17 @@ function globRegExp(pattern: string): RegExp {
 }
 
 /**
+ * The template's entry, where a facet that does not own it adds only its FACET WIRING line: the
+ * shape's own entry, or — for a caller that names none, as a director worker on a template does —
+ * the C++ and Rust templates' as well as the three.js template's, since a raylib game's facets wire
+ * into `src/main.cpp` and a Rust game's into `src/main.rs` (substrate/ownership.ts, M3.14).
+ */
+function isTemplateEntry(file: string, main: string, named: boolean): boolean {
+  const compiledEntry = file === CPP_TEMPLATE_MAIN || file === RUST_TEMPLATE_MAIN;
+  return file === main || (!named && compiledEntry);
+}
+
+/**
  * Files a facet may touch: its own module(s), its notes (`docs/notes/`, out of the game's own
  * root), and the wiring line. The same rule runs at edit time as an SDK PreToolUse hook
  * (`substrate/ownership.ts`, WP8) — keep the two in step;
@@ -145,17 +174,36 @@ export function allowedFile(file: string, spec: ReviewSpec, ownsMain: boolean): 
   const main = spec.main ?? DEFAULT_MAIN;
   const studio = spec.studio ?? DEFAULT_STUDIO;
   if (sharedFile(file, spec.id)) return true;
+  // A Rust game's ejected engine is the entry owner's: no seam, wiring block or facet name reaches it.
+  const engine = engineOwner(file, template, ownsMain);
+  if (engine !== null) return engine;
   // The contract's declaration and the compiler config belong to whoever owns the entry: a
   // TypeScript game whose build is `tsc -b && vite build` cannot import ./studio.js until they
   // agree, and the brief that tells the builder to fix that must not also forbid the edit.
-  const entryOrConfig = isEntryFile(file, main, studio) || isTypeConfig(file);
+  // A C++ game's entry, runtime and CMakeLists.txt are the entry owner's, as the contract is.
+  const entryOrConfig = isEntryFile(file, main, studio) || isTypeConfig(file) || isCppOwnerFile(file);
   if (ownsMain && entryOrConfig) return true;
-  if (template && file === main) return true; // the FACET WIRING block — checked below by content
+  // the FACET WIRING block — checked below by content
+  if (template && isTemplateEntry(file, main, Boolean(spec.main))) return true;
   if (spec.owns?.length) {
     return spec.owns.some((own) => ownMatches(file, own)) || (template && file.includes(spec.id));
   }
-  if (template) return file.startsWith("src/") && file !== studio && file !== hudFor(studio);
+  // A worker with no seam in the C++ template still leaves the entry owner's files alone.
+  if (template) return file.startsWith("src/") && file !== studio && file !== hudFor(studio) && !isCppOwnerFile(file);
   return !isEntryFile(file, main, studio);
+}
+
+/**
+ * A file of a Rust game's ejected engine (`engine/**`): the entry owner's alone. The host's hook
+ * holds the same rule (`substrate/ownership.ts` `isEngineFile`).
+ */
+function isEngineFile(file: string): boolean {
+  return file === "engine" || file.startsWith("engine/");
+}
+
+/** Whether a facet may write `file` of a template's ejected engine (only the entry owner may); null for any other file. */
+function engineOwner(file: string, template: boolean, ownsMain: boolean): boolean | null {
+  return template && isEngineFile(file) ? ownsMain : null;
 }
 
 /** Files every facet may touch: its notes, the game's notes, the studio's scratch and the assets. */
@@ -239,9 +287,9 @@ function recordLine(entry: FileDiff, line: string, newLine: number): number {
 const TEMPLATE_ONLY_FINDING =
   /Math\.random|wall[- ]clock|Date\.now|performance\.now|untagged|userData\.tag|FACET WIRING|wiring line|not tagged|tag them/i;
 
-/** Is this a finding the studio only makes about its own template? (M4.6) */
+/** Is this a finding the studio only makes about its own template? (M4.6) Raw input is the C++ template's rule. */
 export function templateOnlyFinding(violation: Partial<Violation> | null | undefined): boolean {
-  if (violation?.category) return ["determinism", "wall-clock", "tags", "wiring"].includes(violation.category);
+  if (violation?.category) return ["determinism", "wall-clock", "tags", "wiring", "input"].includes(violation.category);
   return TEMPLATE_ONLY_FINDING.test(`${violation?.what ?? ""} ${violation?.fix ?? ""}`);
 }
 
@@ -258,9 +306,19 @@ interface FileReview {
   template: boolean;
   entryMain: string;
   entryStudio: string;
+  /** Whether the caller named the entry (`main`), or left it to the template's. */
+  namedMain: boolean;
+  /** Whether this is a compiled game's review (native-review.ts `reviewsCpp`): its stack's rules run. */
+  cpp: boolean;
+  /** The game's stack as the caller named it (`run.stack`), or null. */
+  stack: string | null;
 }
 
-/** The regex half. Returns violations with `source: "mechanical"`. */
+/**
+ * The regex half. Returns violations with `source: "mechanical"`. `stack` is the game's
+ * (`run.stack`): the C++ rules read a C++ · raylib game only, and a caller that names none gets
+ * them when the entry or a changed file is C++.
+ */
 export function mechanicalReview(
   diff: unknown,
   spec: ReviewSpec,
@@ -269,7 +327,14 @@ export function mechanicalReview(
     main = null,
     studio = null,
     template = true,
-  }: { ownsMain?: boolean; main?: string | null; studio?: string | null; template?: boolean } = {},
+    stack = null,
+  }: {
+    ownsMain?: boolean;
+    main?: string | null;
+    studio?: string | null;
+    template?: boolean;
+    stack?: string | null;
+  } = {},
 ): Violation[] {
   // The entry files this project's shape names — a game the user brought has its own.
   const shaped: ReviewSpec = {
@@ -281,10 +346,26 @@ export function mechanicalReview(
   const entryMain = shaped.main ?? DEFAULT_MAIN;
   const entryStudio = shaped.studio ?? DEFAULT_STUDIO;
   const violations: Violation[] = [];
-  for (const [file, { added, removed }] of parseDiff(diff)) {
-    const review: FileReview = { file, added, removed, spec: shaped, ownsMain, template, entryMain, entryStudio };
+  const namedMain = Boolean(shaped.main);
+  const changed = parseDiff(diff);
+  const cpp = reviewsCpp(stack, entryMain, [...changed.keys()]);
+  for (const [file, { added, removed }] of changed) {
+    const review: FileReview = {
+      file,
+      added,
+      removed,
+      spec: shaped,
+      ownsMain,
+      template,
+      entryMain,
+      entryStudio,
+      namedMain,
+      cpp,
+      stack,
+    };
     violations.push(
       ...templateFindings(review),
+      ...(cpp ? cppFindings({ file, added, removed, template }) : []),
       ...evidenceWrites(review),
       ...contractRemovals(review),
       ...wiringOverreach(review),
@@ -295,14 +376,22 @@ export function mechanicalReview(
   return violations;
 }
 
-/** Is this file game code (JavaScript or TypeScript)? */
-function isSourceFile(file: string): boolean {
+/** Is this file JavaScript or TypeScript? */
+function isScriptFile(file: string): boolean {
   return /\.(m?js|ts)$/.test(file);
 }
 
-/** Inside the template's game code (never a bench page's, which the game never loads): no Math.random, no wall clock, and new objects are tagged. */
+/** Is this file game code: JavaScript or TypeScript, or C++ and its CMake? */
+function isSourceFile(file: string): boolean {
+  return isScriptFile(file) || isCppSource(file);
+}
+
+/**
+ * Inside the template's game code (never a bench page's, which the game never loads): no
+ * Math.random, no wall clock, and new objects are tagged (the C++ rules are native-review.ts's).
+ */
 function templateFindings({ file, added, template }: FileReview): Violation[] {
-  const templateSource = template && isSourceFile(file) && !file.endsWith("studio.js") && !isBenchFile(file);
+  const templateSource = template && isScriptFile(file) && !file.endsWith("studio.js") && !isBenchFile(file);
   if (!templateSource) return [];
   const violations: Violation[] = [];
   for (const { line, text } of added) {
@@ -408,11 +497,12 @@ function contractRemovals(review: FileReview): Violation[] {
 }
 
 /** In the template, a facet that does not own the entry edits only its wiring line there. */
-function wiringOverreach({ file, added, template, ownsMain, entryMain }: FileReview): Violation[] {
-  const othersEntry = template && !ownsMain && file === entryMain;
+function wiringOverreach({ file, added, template, ownsMain, entryMain, namedMain }: FileReview): Violation[] {
+  const othersEntry = template && !ownsMain && isTemplateEntry(file, entryMain, namedMain);
   if (!othersEntry) return [];
+  // A wiring line imports its facet (`import` in JavaScript, `#include` in C++) and calls it.
   const outsideWiring = added.filter(
-    ({ text }) => !/^\s*(import|\/\/|$)/.test(text) && !/init|setup|install/i.test(text),
+    ({ text }) => !/^\s*(import|#include|\/\/|$)/.test(text) && !/init|setup|install|wire_/i.test(text),
   );
   const [first] = outsideWiring;
   if (outsideWiring.length <= WIRING_LINE_LIMIT || !first) return [];
@@ -421,22 +511,25 @@ function wiringOverreach({ file, added, template, ownsMain, entryMain }: FileRev
       file,
       line: first.line,
       category: "wiring",
-      what: `this facet does not own ${entryMain} but edited beyond its wiring line`,
+      what: `this facet does not own ${file} but edited beyond its wiring line`,
       fix: "touch only the FACET WIRING block: one import + one init line",
       source: "mechanical",
     },
   ];
 }
 
-/** Where the facet's work belongs, as the ownership finding tells it. */
-function ownedPlace(spec: ReviewSpec, template: boolean): string {
+/** Where the facet's work belongs, as the ownership finding tells it: a C++ game's facet owns `src/<id>.cpp`. */
+function ownedPlace(review: Pick<FileReview, "spec" | "template" | "cpp" | "stack" | "entryMain">): string {
+  const { spec, template, cpp } = review;
   if (spec.owns?.length) return spec.owns.join(", ");
+  if (template && cpp) return ownedPlaceFor(spec.id, review.stack, review.entryMain);
   if (template) return `src/${spec.id}.js`;
   return "the seam it was given";
 }
 
 /** A file outside the facet's ownership. */
-function ownershipBreach({ file, spec, ownsMain, template }: FileReview): Violation[] {
+function ownershipBreach(review: FileReview): Violation[] {
+  const { file, spec, ownsMain } = review;
   if (allowedFile(file, spec, ownsMain)) return [];
   return [
     {
@@ -444,7 +537,7 @@ function ownershipBreach({ file, spec, ownsMain, template }: FileReview): Violat
       line: 0,
       category: ReviewCategory.Ownership,
       what: `edited a file outside this facet's ownership (${file})`,
-      fix: `keep this facet's work in ${ownedPlace(spec, template)}`,
+      fix: `keep this facet's work in ${ownedPlace(review)}`,
       source: "mechanical",
     },
   ];
@@ -482,7 +575,7 @@ const DIFF_EXCLUDES = `':(exclude)*.md' ':(exclude).studio/*'`;
  * the mechanical scan (the default for local engines, where a judge call costs minutes).
  */
 export async function reviewAttempt(ctx: HarnessCtx, attempt: AttemptReview): Promise<ReviewOutcome> {
-  const { spec, worktree, ownsMain = true, model = true, main = null, studio = null, template = true } = attempt;
+  const { run, spec, worktree, ownsMain = true, model = true, main = null, studio = null, template = true } = attempt;
   const exec: Exec = (command) =>
     ctx.call(HostMethod.RunExec, {
       command,
@@ -492,7 +585,9 @@ export async function reviewAttempt(ctx: HarnessCtx, attempt: AttemptReview): Pr
     });
   const { diff, base, merged } = await attemptDiff(exec, attempt);
   if (!diff.trim()) return { violations: [], summary: "no source changes", diffChars: 0, base, merged };
-  const violations = mechanicalReview(diff, spec, { ownsMain, main, studio, template });
+  // The run's stack (stamped where the night learned its game) decides whether the C++ rules read.
+  const stack = typeof run?.stack === "string" ? run.stack : null;
+  const violations = mechanicalReview(diff, spec, { ownsMain, main, studio, template, stack });
   let summary = violations.length ? `${violations.length} mechanical finding(s)` : "mechanical scan clean";
   if (model && diff.length <= MAX_MODEL_DIFF_CHARS)
     summary = await modelReview(ctx, attempt, diff, violations, summary);

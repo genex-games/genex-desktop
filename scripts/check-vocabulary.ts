@@ -110,9 +110,9 @@ const RULES: Record<VocabularyRule, RuleSpec> = {
 
 const CODE = /\.(?:[cm]?[jt]sx?)$/;
 const SKIPPED_DIRS = new Set(["node_modules", "dist", "out"]);
-// The game template is the game's own code, addressed to the in-app agent: none of these
-// vocabularies reach it.
-const SKIPPED_TREES = ["src/game-template/"];
+// The game templates are the game's own code, addressed to the in-app agent: none of these
+// vocabularies reach them.
+const SKIPPED_TREES = ["src/game-template/", "src/game-template-cpp/", "src/game-template-rust/"];
 
 // A `/` starts a regular expression after these; after a name, `)` or `]` it divides.
 const REGEX_AFTER = new Set([..."(,=:[!&|?{;+-*%>~^"]);

@@ -8,6 +8,7 @@ Small, synthetic format samples created locally for Studio's preview acceptance;
 - KTX2: Three.js official `examples/textures/ktx2/2d_etc1s.ktx2` sample, retrieved 22 September 2026 from https://github.com/mrdoob/three.js/blob/dev/examples/textures/ktx2/2d_etc1s.ktx2. SHA-256 `e56ddcc757fc73ff06bb0dac2a3533ce79c1e196ad895a3ff7dcc4d9de6b9d5d`. This exercises real Basis transcoding, not just raw-container reading. See the upstream MIT notice below.
 - FFmpeg lavfi testsrc (128×96, 12fps, two seconds): video.mp4 and animated.gif. Sine 440Hz, two seconds: tone.wav.
 - notes.json is plain metadata. broken.glb deliberately contains invalid text.
+- raylib-only formats, written by hand from each format's public header layout (no encoder, no third-party file): sample.qoi, sample.dds (images), sample.vox, sample.iqm, sample.m3d (models), sample.qoa, sample.xm, sample.mod (audio). `asset-preview.test.ts` reads them; the build smoke copies them with the rest and checks none of them.
 
 Run after building:
 

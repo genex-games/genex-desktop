@@ -1,0 +1,30 @@
+{
+  "id": "raylib.shader-es3",
+  "runtime": "raylib-cpp",
+  "title": "Shaders in GLSL ES 3.00 through studio::shader, with no version line of their own",
+  "tags": ["shader", "glsl", "fragment", "vertex", "webgl2", "angle", "precision", "post", "material", "raylib", "cpp"],
+  "checkClass": "shader",
+  "kind": "technique",
+  "pack": "raylib",
+  "note": "Write shaders as GLSL ES 3.00 bodies and load them with studio::shader: the runtime adds the version and precision lines.",
+  "intent": "Every destination draws through GLSL ES 3.00 (WebGL2 in the browser, ANGLE on the desktop), so a shader written for desktop GL fails on all of them. Write the source without any version line and load it with studio::shader(vertex, fragment); the runtime puts the ES 3.00 header and precision in front (null keeps raylib's default stage). Use in/out, texture(), and raylib's own names: fragTexCoord, fragColor, texture0, colDiffuse and an out vec4 finalColor in the fragment stage; vertexPosition, vertexTexCoord, vertexColor and mvp in the vertex stage. Set uniforms with GetShaderLocation once and SetShaderValue each frame from simulation state, never from the clock.",
+  "sketch": "#include \"studio.h\"\n\nnamespace {\nconstexpr const char* kGlowFs =\n    \"in vec2 fragTexCoord;\\n\"\n    \"in vec4 fragColor;\\n\"\n    \"uniform sampler2D texture0;\\n\"\n    \"uniform vec4 colDiffuse;\\n\"\n    \"uniform float glow;\\n\"\n    \"out vec4 finalColor;\\n\"\n    \"void main() {\\n\"\n    \"  vec4 base = texture(texture0, fragTexCoord) * colDiffuse * fragColor;\\n\"\n    \"  finalColor = vec4(base.rgb * (1.0 + glow), base.a);\\n\"\n    \"}\\n\";\nShader glowShader{};\nint glowAt = -1;\n}  // namespace\n\nvoid loadGlow() {\n  glowShader = studio::shader(nullptr, kGlowFs);\n  glowAt = GetShaderLocation(glowShader, \"glow\");\n}\n\nvoid setGlow(float amount) { SetShaderValue(glowShader, glowAt, &amount, SHADER_UNIFORM_FLOAT); }\n",
+  "port": "A shader belongs to the facet that draws with it; assign it to that facet's model materials in reset, after the model is loaded.",
+  "evidence": [
+    {
+      "source": "src/game-template-cpp/docs/CONTRACT.md",
+      "note": "studio::shader(vs, fs) takes GLSL ES 3.00 without a version line; the runtime adds it and precision highp float."
+    },
+    {
+      "source": "src/game-template-cpp/src/platform.h",
+      "note": "The shader header every destination gets: ANGLE and WebGL2 both speak GLSL ES 3.00."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

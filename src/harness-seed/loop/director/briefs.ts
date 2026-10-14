@@ -8,6 +8,8 @@ import { workersAtOnce } from "./foundation.ts";
 import { lastTimeBlock } from "../ledger.ts";
 import { roleEngine, RoleKey, toolCall, toolSyntax } from "../model-roles.ts";
 import { contractWiringAsk } from "../prompts-build.ts";
+import { CPP_WORKER, cppContractBrief, cppDirectorShapeLine, isNativeShape } from "../native-briefs.ts";
+import { isRustShape, RUST_WORKER, rustContractBrief, rustDirectorShapeLine } from "../rust-briefs.ts";
 import { facetNotes, runRef } from "../repo.ts";
 import { shortSha } from "../git.ts";
 import { isRunning } from "../outcomes.ts";
@@ -35,6 +37,18 @@ import type { Worker } from "./loop-run.ts";
  * depends on says so (lead-session.ts `servesLead`).
  */
 export const SERVES_LEAD = true;
+
+/**
+ * A C++ · raylib run's director and workers read their C++ lines here (`native-briefs.ts`): a
+ * copy kept from before C++ games describes a JavaScript game, so a raylib run refuses it.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * A Rust · wgpu run's director and workers read their Rust lines here (`rust-briefs.ts`): a copy
+ * kept from before Rust games describes a JavaScript game, so a Rust run refuses it.
+ */
+export const SERVES_RUST = true;
 
 /**
  * The pool is a ceiling, not a quota: the fewest workers that cover independent files. A lead told
@@ -68,6 +82,8 @@ export function contractBrief({
   projectLabel: string;
   shape?: AnyRecord | null;
 }): string {
+  if (isRustShape(shape)) return rustContractBrief({ run, projectLabel, shape });
+  if (isNativeShape(shape)) return cppContractBrief({ run, projectLabel, shape });
   const entryMain = shape?.main ?? "src/main.js";
   return [
     `You are making the game "${projectLabel}" judgeable for run ${run.runId}, in an isolated copy of it (this folder). This is your only job: nothing in this game can be looked at, checked or compared until its page loads the studio contract.`,
@@ -161,6 +177,8 @@ function referenceLine(run: Run): string {
 
 /** Whose shape the game has: its own (and the seam rule that follows from it), or the studio's template. */
 function shapeLine(ownShape: boolean, shape: AnyRecord | null): string {
+  if (isRustShape(shape)) return rustDirectorShapeLine(ownShape, shape);
+  if (isNativeShape(shape)) return cppDirectorShapeLine(ownShape, shape);
   if (!ownShape)
     return `THIS GAME IS ON THE STUDIO TEMPLATE: index.html → src/main.js, src/studio.js is the contract (installStudio, cameras, demos, probes, the FACET WIRING block in main.js).`;
   return `THIS GAME HAS ITS OWN SHAPE: entry ${shape?.main ?? "src/main.ts"}${shape?.build ? `, built with \`${shape.build}\`` : ""}; the studio serves ${shape?.entry ?? "index.html"} and builds it before every window loads. Keep its entry, its UI and its input handling; the studio contract (src/studio.js, installStudio) must stay wired so every window, judge and check can see it.\nTHIS IS THE USER'S OWN CODE, NOT THE STUDIO'S TEMPLATE: there is no FACET WIRING block in its entry and no module-per-worker convention to fall back on. Every worker you start here gets a SEAM — owns= with files, folders or a quoted glob — in the structure the game already has; a worker with no seam may edit anything but the entry, the contract and index.html, so start one of those only when nobody else is running, and never two owners of the entry at once.`;
@@ -478,16 +496,28 @@ export function singleWorkerBrief({
     worker.brief,
     ``,
     seamLine(worker, ownShape, shape),
-    ownShape
-      ? `THIS GAME HAS ITS OWN SHAPE: entry ${shape?.main ?? "src/main.ts"}${shape?.build ? `, built with \`${shape.build}\` — run it before you finish and fix what it reports` : ""}; keep its entry, UI and input handling; keep the studio contract wired. This game is the user's own code: follow the conventions it already has, and do not rename, restyle or reformat anything you did not have to change.`
-      : "",
+    ownShape ? workerOwnShapeLine(shape) : "",
     setup
       ? `THE REQUESTED STATE: your window opens on the state this work is about (${setup.note ?? "the run's setup"}); if a screenshot says the state was not reached, fix the way a player reaches it, not what the game boots into.`
       : "",
-    `YOU HAVE HANDS AND EYES: ${toolCall(roleEngine(run, RoleKey.Builder), "computer")} runs this folder's build live in its own window (its own description lists every action), and ${toolCall(roleEngine(run, RoleKey.Builder), "capture")} takes every registered camera at once. Look at what you made before you say it is done; the director will.`,
+    workerEyesLine(run, shape),
     `Do not commit — the studio commits your folder when you stop. Do not touch files outside this folder. Keep ${facetNotes(worker.id)} with what you did and what you verified.`,
     `When you are done, reply with a short report: what you built, what you verified by looking, what you could not do.`,
   ]);
+}
+
+/** A worker's rule for a game the user brought: its entry, UI and input stay, and its build (or a C++ game's lane) must pass. */
+function workerOwnShapeLine(shape: AnyRecord | null): string {
+  if (isRustShape(shape)) return RUST_WORKER.ownShape(shape);
+  if (isNativeShape(shape)) return CPP_WORKER.ownShape(shape);
+  return `THIS GAME HAS ITS OWN SHAPE: entry ${shape?.main ?? "src/main.ts"}${shape?.build ? `, built with \`${shape.build}\` — run it before you finish and fix what it reports` : ""}; keep its entry, UI and input handling; keep the studio contract wired. This game is the user's own code: follow the conventions it already has, and do not rename, restyle or reformat anything you did not have to change.`;
+}
+
+/** A worker's hands and eyes: the live window and capture, or a C++ game's capture through the lane. */
+function workerEyesLine(run: Run, shape: AnyRecord | null): string {
+  if (isRustShape(shape)) return RUST_WORKER.eyes(run);
+  if (isNativeShape(shape)) return CPP_WORKER.eyes(run);
+  return `YOU HAVE HANDS AND EYES: ${toolCall(roleEngine(run, RoleKey.Builder), "computer")} runs this folder's build live in its own window (its own description lists every action), and ${toolCall(roleEngine(run, RoleKey.Builder), "capture")} takes every registered camera at once. Look at what you made before you say it is done; the director will.`;
 }
 
 /** What a resumed session is told about the run it picks up. */

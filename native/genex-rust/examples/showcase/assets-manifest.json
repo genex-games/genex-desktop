@@ -1,0 +1,440 @@
+{
+  "about": "The lakeside remaster's fetched assets: CC0 only, from the pinned official URLs, sha256-verified. `node scripts/showcase-assets.ts fetch` downloads them into .studio-dev/assets-cache/lakeside/raw/ and writes the processed textures the scene reads (fetched/*) into .studio-dev/assets-cache/lakeside/assets/ (`--install` also copies them into game/assets/fetched/, which Git ignores, for a Studio run). Without them the scene draws its procedural fallback.",
+  "licence": "CC0-1.0",
+  "assets": [
+    {
+      "id": "forrest_ground_01",
+      "kind": "texture",
+      "use": "terrain grass layer (atlas tile 0)",
+      "output": "terrain-grass",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/forrest_ground_01",
+      "authors": ["Rob Tuytel"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 2,
+      "resolution": "1k jpg source; a 1024 x 1024 tile of the 2048 x 2048 terrain atlases",
+      "files": [
+        {
+          "map": "diff",
+          "name": "forrest_ground_01_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forrest_ground_01/forrest_ground_01_diff_1k.jpg",
+          "bytes": 833711,
+          "sha256": "3dd6875cb3908e022a3c45ebbffa5e84c670ff2691fbbb6dc9ea4bff88523800"
+        },
+        {
+          "map": "nor_gl",
+          "name": "forrest_ground_01_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forrest_ground_01/forrest_ground_01_nor_gl_1k.jpg",
+          "bytes": 1428763,
+          "sha256": "32528a7cdee962cc0b248ee4023a74d0df175737ea90e1eb425122351e0bdab4"
+        },
+        {
+          "map": "arm",
+          "name": "forrest_ground_01_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forrest_ground_01/forrest_ground_01_arm_1k.jpg",
+          "bytes": 296969,
+          "sha256": "22eb09a2ed951377f339c08be9f1665f0db7391ed9ba0b0e91e55aea2dbef315"
+        },
+        {
+          "map": "disp",
+          "name": "forrest_ground_01_disp_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forrest_ground_01/forrest_ground_01_disp_1k.jpg",
+          "bytes": 321227,
+          "sha256": "a1ce10a2426d20d7fec2e48efa255638055922c809ff3ea03067257c0a594953"
+        }
+      ]
+    },
+    {
+      "id": "dirt",
+      "kind": "texture",
+      "use": "terrain soil layer: the path and the yard (atlas tile 1)",
+      "output": "terrain-soil",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/dirt",
+      "authors": ["Charlotte Baglioni"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 2,
+      "resolution": "1k jpg source; a 1024 x 1024 tile of the 2048 x 2048 terrain atlases",
+      "files": [
+        {
+          "map": "diff",
+          "name": "dirt_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirt/dirt_diff_1k.jpg",
+          "bytes": 730425,
+          "sha256": "6ce6ca7e28ed046f7f93fa60dcb29f8cf42cd5a539adc5676675acccfa34efd3"
+        },
+        {
+          "map": "nor_gl",
+          "name": "dirt_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirt/dirt_nor_gl_1k.jpg",
+          "bytes": 1202783,
+          "sha256": "5a5f97d920fdcdf352b350b95558bf48bb306be1fe61a47418aadc60b7deb0ce"
+        },
+        {
+          "map": "arm",
+          "name": "dirt_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirt/dirt_arm_1k.jpg",
+          "bytes": 653784,
+          "sha256": "54bd300ba53a3bcc4772e4b5bdab7670bf52e23cc698b628c2b38315c5a9bae8"
+        },
+        {
+          "map": "disp",
+          "name": "dirt_disp_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirt/dirt_disp_1k.jpg",
+          "bytes": 418669,
+          "sha256": "73b0d30a4c5a3c8bc1444954078875c3df51524717c7b4b7f0cc801147edc559"
+        }
+      ]
+    },
+    {
+      "id": "coast_sand_01",
+      "kind": "texture",
+      "use": "terrain sand layer: the beach and the lake bed (atlas tile 2)",
+      "output": "terrain-sand",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/coast_sand_01",
+      "authors": ["Rob Tuytel"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 15,
+      "resolution": "1k jpg source; a 1024 x 1024 tile of the 2048 x 2048 terrain atlases",
+      "files": [
+        {
+          "map": "diff",
+          "name": "coast_sand_01_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_diff_1k.jpg",
+          "bytes": 960614,
+          "sha256": "58af2e40100f7f405703a86d593af64379f822c4786850def23ecfc921450d54"
+        },
+        {
+          "map": "nor_gl",
+          "name": "coast_sand_01_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_nor_gl_1k.jpg",
+          "bytes": 1146826,
+          "sha256": "fe4d045aec99e71e80f682fcf0ad958d2dff1fe614b73178b304d1bac047b54a"
+        },
+        {
+          "map": "arm",
+          "name": "coast_sand_01_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_arm_1k.jpg",
+          "bytes": 662421,
+          "sha256": "eeb552fb26de45ae5c52d3db6f96f8f0414fdbfa335c1d27ef5f59b6ef01a5c8"
+        },
+        {
+          "map": "disp",
+          "name": "coast_sand_01_disp_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_disp_1k.jpg",
+          "bytes": 325269,
+          "sha256": "e7f08f61db1de5b3efa8b8856544f69e66a69cdfa94c535d3e5759d23effec71"
+        }
+      ]
+    },
+    {
+      "id": "rock_face",
+      "kind": "texture",
+      "use": "terrain rock layer: steep slopes (atlas tile 3)",
+      "output": "terrain-rock",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/rock_face",
+      "authors": ["Dario Barresi", "Greg Zaal"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 2.38,
+      "resolution": "1k jpg source; a 1024 x 1024 tile of the 2048 x 2048 terrain atlases",
+      "files": [
+        {
+          "map": "diff",
+          "name": "rock_face_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rock_face/rock_face_diff_1k.jpg",
+          "bytes": 732721,
+          "sha256": "cce4b50517161264bdef196f5e247e328ca3739083cd6044ad3cc54d88cb82e2"
+        },
+        {
+          "map": "nor_gl",
+          "name": "rock_face_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rock_face/rock_face_nor_gl_1k.jpg",
+          "bytes": 1139857,
+          "sha256": "e2682e1286c8b6aca7e01ba7b8fe1726cb6606042b9ee70d097aa67470d410ef"
+        },
+        {
+          "map": "arm",
+          "name": "rock_face_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rock_face/rock_face_arm_1k.jpg",
+          "bytes": 458661,
+          "sha256": "3a0fce8658ba2bac6690f68e79630c16e004f1676c1588ef4d54906fc3907616"
+        },
+        {
+          "map": "disp",
+          "name": "rock_face_disp_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rock_face/rock_face_disp_1k.jpg",
+          "bytes": 304037,
+          "sha256": "83a23e8bcdaf6e3cc29c202d2d64eb82b687bc8ecd56f21b1bf4847647e61b35"
+        }
+      ]
+    },
+    {
+      "id": "bark_brown_02",
+      "kind": "texture",
+      "use": "broadleaf bark",
+      "output": "bark",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/bark_brown_02",
+      "authors": ["Rob Tuytel"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 1,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "bark_brown_02_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_diff_1k.jpg",
+          "bytes": 659592,
+          "sha256": "920fa0bed0c9d78c1d530e99795113afd532d7db746de440f4a85d7c83ed0f1a"
+        },
+        {
+          "map": "nor_gl",
+          "name": "bark_brown_02_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_nor_gl_1k.jpg",
+          "bytes": 1015623,
+          "sha256": "0d5e691e8ad8bcd093a3587887fda2a6b4a948b5708a4f256f7919584c6eb857"
+        },
+        {
+          "map": "arm",
+          "name": "bark_brown_02_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_arm_1k.jpg",
+          "bytes": 232742,
+          "sha256": "6bd86d37b3b9b40cc30a4b661e382ec41fa7463a8b1144ff44708b19fa675af1"
+        }
+      ]
+    },
+    {
+      "id": "pine_bark",
+      "kind": "texture",
+      "use": "pine bark",
+      "output": "pine-bark",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/pine_bark",
+      "authors": ["Dimitrios Savva"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 2,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "pine_bark_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pine_bark/pine_bark_diff_1k.jpg",
+          "bytes": 837641,
+          "sha256": "89ddfbff0388d30caff902ba600cdf75eb1e651ca71ece6594b5a9b27abb47ab"
+        },
+        {
+          "map": "nor_gl",
+          "name": "pine_bark_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pine_bark/pine_bark_nor_gl_1k.jpg",
+          "bytes": 1178440,
+          "sha256": "666e5f175a010f12577687dd8029125bff99110e6a97958afb295b34266437db"
+        },
+        {
+          "map": "arm",
+          "name": "pine_bark_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/pine_bark/pine_bark_arm_1k.jpg",
+          "bytes": 810100,
+          "sha256": "1ba20ec25c9f43327d6aa0ea809917854cff553ad7f21fb548e853a5b5ec701a"
+        }
+      ]
+    },
+    {
+      "id": "mossy_rock",
+      "kind": "texture",
+      "use": "rocks and boulders",
+      "output": "rock",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/mossy_rock",
+      "authors": ["Rob Tuytel"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 3,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "mossy_rock_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_diff_1k.jpg",
+          "bytes": 1124438,
+          "sha256": "4dbf37f1b0465c9c8914213163923be159716f5b97fb6946437b6c5e143ef540"
+        },
+        {
+          "map": "nor_gl",
+          "name": "mossy_rock_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_nor_gl_1k.jpg",
+          "bytes": 995727,
+          "sha256": "232cdd6a9fdfd01bb8bb1f8f604c53dbca79fa0d3d7995edf85c9945757aa8df"
+        },
+        {
+          "map": "arm",
+          "name": "mossy_rock_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/mossy_rock/mossy_rock_arm_1k.jpg",
+          "bytes": 926941,
+          "sha256": "1c1b8da603c93e863ccb68a8f4fcc6ff02774b83d9a6e9422c7d4aa77397b6a3"
+        }
+      ]
+    },
+    {
+      "id": "dark_wooden_planks",
+      "kind": "texture",
+      "use": "the dock deck, the porch, the bench and the boat",
+      "output": "planks",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/dark_wooden_planks",
+      "authors": ["Amal Kumar"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 2,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "dark_wooden_planks_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_wooden_planks/dark_wooden_planks_diff_1k.jpg",
+          "bytes": 701221,
+          "sha256": "e8216baa6b2d701b5523fcb904d45570acf7b96d160ef815e96e2dbfa82bdd9b"
+        },
+        {
+          "map": "nor_gl",
+          "name": "dark_wooden_planks_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_wooden_planks/dark_wooden_planks_nor_gl_1k.jpg",
+          "bytes": 658444,
+          "sha256": "87a7b26bc674477865d4589c6589200bfa649a6461422bf56f5600c05a470206"
+        },
+        {
+          "map": "arm",
+          "name": "dark_wooden_planks_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_wooden_planks/dark_wooden_planks_arm_1k.jpg",
+          "bytes": 777830,
+          "sha256": "8cb87b3d886d26a3baf72a829e4fb3f0e2b97b5f43dad44bdd7fd7fe4d4ea762"
+        }
+      ]
+    },
+    {
+      "id": "raw_plank_wall",
+      "kind": "texture",
+      "use": "the cabin logs, the posts and the woodpile",
+      "output": "logs",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/raw_plank_wall",
+      "authors": ["Dimitrios Savva"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 1.87,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "raw_plank_wall_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/raw_plank_wall/raw_plank_wall_diff_1k.jpg",
+          "bytes": 640551,
+          "sha256": "c1cb9c95325897e40c3173ed86ad862feaa394cf6c091952b0b1ca0403ac8b43"
+        },
+        {
+          "map": "nor_gl",
+          "name": "raw_plank_wall_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/raw_plank_wall/raw_plank_wall_nor_gl_1k.jpg",
+          "bytes": 741259,
+          "sha256": "30cf91ffb06844f8b11107a20a3bbd3155d8e965460e0a8547e11a1989fa12e4"
+        },
+        {
+          "map": "arm",
+          "name": "raw_plank_wall_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/raw_plank_wall/raw_plank_wall_arm_1k.jpg",
+          "bytes": 579601,
+          "sha256": "5a768cce76a552391c339ba74746e8b4f3d2537ab9a296b545bd56d77779eb27"
+        }
+      ]
+    },
+    {
+      "id": "roof_slates_02",
+      "kind": "texture",
+      "use": "the cabin roof",
+      "output": "roof",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/roof_slates_02",
+      "authors": ["Rob Tuytel"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 3,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "roof_slates_02_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_diff_1k.jpg",
+          "bytes": 515626,
+          "sha256": "de3d2729ab385c5f7dd7106d3b435c737f6d2c3ea8883cea37de53cec2a34867"
+        },
+        {
+          "map": "nor_gl",
+          "name": "roof_slates_02_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_nor_gl_1k.jpg",
+          "bytes": 763206,
+          "sha256": "32be0c0ba1565856156a315dc98a773d72f1a03415930657b8a8ad62bf60c1bf"
+        },
+        {
+          "map": "arm",
+          "name": "roof_slates_02_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_arm_1k.jpg",
+          "bytes": 224234,
+          "sha256": "a43d670bb04a70d32502e8b976b0cb97dd975ccab04b8a612ac6543f2b89ad2a"
+        }
+      ]
+    },
+    {
+      "id": "rustic_stone_wall",
+      "kind": "texture",
+      "use": "the cabin footing and the chimney",
+      "output": "stone",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/rustic_stone_wall",
+      "authors": ["Dimitrios Savva"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": 1.52,
+      "resolution": "1k jpg source; used at 1024 x 1024 (the renderer resamples to its size class)",
+      "files": [
+        {
+          "map": "diff",
+          "name": "rustic_stone_wall_diff_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rustic_stone_wall/rustic_stone_wall_diff_1k.jpg",
+          "bytes": 849830,
+          "sha256": "6e9ab9ab9a406f9d47efcf9224d09f06b3b22e88053d8eb6d0e8a78cf4ec66d9"
+        },
+        {
+          "map": "nor_gl",
+          "name": "rustic_stone_wall_nor_gl_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rustic_stone_wall/rustic_stone_wall_nor_gl_1k.jpg",
+          "bytes": 1206685,
+          "sha256": "c5af47086405e28c6979a88b23b46533d6eec33323560ed4dcabfe3bed50cf41"
+        },
+        {
+          "map": "arm",
+          "name": "rustic_stone_wall_arm_1k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rustic_stone_wall/rustic_stone_wall_arm_1k.jpg",
+          "bytes": 723204,
+          "sha256": "a53a8722effb6c2af13caa2e821b9f55927f08d69b8e1f0bce10d5d6d34c2ac1"
+        }
+      ]
+    },
+    {
+      "id": "kloppenheim_06_puresky",
+      "kind": "hdri",
+      "use": "the golden-hour sky map (B switches to it): image-based light and the backdrop",
+      "output": "golden-sky",
+      "source": "Poly Haven",
+      "page": "https://polyhaven.com/a/kloppenheim_06_puresky",
+      "authors": ["Greg Zaal", "Jarod Guest"],
+      "licence": "CC0-1.0",
+      "worldSizeMetres": null,
+      "resolution": "2k (2048 x 1024) Radiance HDR, used as it is",
+      "files": [
+        {
+          "map": "hdr",
+          "name": "kloppenheim_06_puresky_2k.hdr",
+          "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/kloppenheim_06_puresky_2k.hdr",
+          "bytes": 4434394,
+          "sha256": "99451201586489ef3288c97bfac2a2ac232a5491c51a1faf0ec8ea39f3ccd533"
+        }
+      ]
+    }
+  ]
+}

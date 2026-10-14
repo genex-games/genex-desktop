@@ -1,0 +1,54 @@
+{
+  "id": "rust.lighting-materials",
+  "runtime": "rust-wgpu",
+  "title": "Lights, emissive materials and the sky in Rust: light with the built-ins, name what moves",
+  "tags": [
+    "light",
+    "lights",
+    "lighting",
+    "lantern",
+    "lamp",
+    "emissive",
+    "glow",
+    "bloom",
+    "sky",
+    "environment",
+    "hdri",
+    "sun",
+    "shadow",
+    "shadows",
+    "spot",
+    "point",
+    "tonemap",
+    "exposure",
+    "taa",
+    "camera",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "A white sun under frame.environment(Environment::sky()), a point or spot light with the range it needs beside every glowing Material::emissive, frame.id(key) on everything that moves, and the look in [render.look]: no custom pass for what the renderer already draws.",
+  "intent": "The renderer lights, shadows and fogs a scene itself; a game describes it. Set frame.sun to a white colour and let its elevation do the time of day under frame.environment(Environment::sky()) (or Environment::hdri(path) for a .hdr map in assets/, whose sun becomes the frame's), and keep frame.ambient and frame.clear sensible for devices that draw no sky. Light a lantern, a window or a fire with frame.point_light or frame.spot_light and give each the range it needs (a lantern 3 to 4 units, a street lamp 8): emission lights the picture, not other surfaces, so pair every glowing Material::emissive(color, strength) with a light. Strength is in a light's units: above 1 the look's bloom haloes it. Frames are HDR: choose the look's tonemapper (khronos-neutral keeps authored colours, agx-punchy for a low sun or neon) and exposure = \"auto\" when light and shade sit together, and retune ev_compensation against a capture after adding an environment. Bloom, height fog, ambient occlusion and contact shadows are the look's: state bloom_*, fog_*, ao_* in [render.look] and never rebuild them as custom passes. Under TAA (high and ultra) draw everything that moves on its own under frame.id(key) with a key that stays with it, call frame.camera_cut() on the frame a shot changes and never on every frame. Check a capture as mobile-mid and at low: the lantern must still read, with fewer shadows and effects.",
+  "sketch": "use genex::prelude::*;\nuse genex::render::Environment;\n\nfn draw(world: &World, frame: &mut Frame) {\n    frame.clear(Color::rgb(150, 180, 215)).ambient(Color::rgb(170, 190, 220), 0.2) // devices that draw no sky\n        .sun(vec3(-0.62, 0.45, -0.64), Color::WHITE, 3.0);                       // white: the sky colours it\n    frame.environment(Environment::sky());\n    let glow = Color::rgb(255, 170, 80);\n    frame.tag(\"lantern\");\n    frame.point_light(world.lantern, 4.0, glow, 6.0)                                 // the light\n        .sphere_with(world.lantern, 0.12, &Material::emissive(glow, 4.0));         // the glass\n    for enemy in &world.enemies {\n        frame.tag(\"enemy\").id(enemy.id)                                              // a key that stays with it\n            .cube_with(Transform::from_translation(enemy.at), &Material::color(Color::rgb(90, 40, 40)));\n        frame.end_id();\n    }\n    if world.shot_changed {\n        frame.camera_cut(); // a respawn or cutscene shot, never every frame\n    }\n}\n",
+  "port": "The facet that owns the scene's lighting owns frame.sun, frame.environment and the look in genex.toml; a facet that adds a lamp adds its light and its emissive together and tags both.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Lighting, materials and environment)",
+      "note": "frame.point_light and frame.spot_light with their range; Material::emissive lights the picture, not other surfaces; Environment::sky and Environment::hdri; the preset caps how many lights and shadowed spots a device draws."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Rendering)",
+      "note": "frame.id(key), frame.end_id() and frame.camera_cut() under TAA; the look's bloom, fog and exposure; test as mobile-mid and at low."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

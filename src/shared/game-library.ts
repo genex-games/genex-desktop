@@ -1,5 +1,7 @@
 import { validateCoverSurface } from "./cover-shader.ts";
 import { coverKeySeed, coverRecipeFromSeed, validateCoverRecipe, type CoverRecipe } from "./cover-recipe.ts";
+import type { BuildTarget } from "./game-project.ts";
+import type { DestinationCheck } from "./native-contract.ts";
 /** Host-owned presentation metadata. Folder identity and game files never change on rename. */
 export type CoverStyle = "world" | "relic" | "city";
 export type LegacyShaderCover = {
@@ -25,6 +27,13 @@ export interface GameLibraryEntry {
   trustProjectSettings?: boolean;
   cover?: GameCover;
   primaryThreadId?: string;
+  /**
+   * A C++ · raylib game's host facts: `lock`, the toolchain lock digest the last build of its own
+   * folder used, `bundleId`, the Mac bundle identifier chosen once for it and kept ever after, and
+   * `checks`, what the lane last learned of each desktop build (`GameWorkspaces.writeNativeCheck`).
+   * Kept here, never in studio.json, which every agent process can write or link.
+   */
+  native?: { lock?: string; bundleId?: string; checks?: Partial<Record<BuildTarget, DestinationCheck>> };
   /** The folder's content stamp as New game made it (`GameProject.scaffoldStamp`). */
   scaffoldStamp?: string;
   /** The title waits for the game's first idea; any title given since clears it. */

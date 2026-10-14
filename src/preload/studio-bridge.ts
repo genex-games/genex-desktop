@@ -1,8 +1,11 @@
 /**
  * The `window.studio` object the preload exposes, built over the part of `ipcRenderer` it uses so a
  * test can drive it with a recorder. Every call goes through {@link invoke} or {@link subscribe},
- * whose channel, payload and result types come from `shared/ipc-channels.ts`.
+ * whose channel, payload and result types come from `shared/ipc-channels.ts`. Live's embedded
+ * frames are the one exception: they arrive through Electron's `sharedTexture` receiver
+ * ({@link BridgeFrames}), never through a channel.
  */
+import { isNativeFrameMeta } from "../shared/native-contract.ts";
 import { createRunSummaryFeeds, type GraphCursor } from "../shared/run-summary-feed.ts";
 import type { StudioApi } from "../shared/studio-api.ts";
 import type {
@@ -31,7 +34,55 @@ export interface BridgeIpc {
 type PayloadArgs<C extends StudioInvokeChannel> =
   StudioInvokePayload<C> extends undefined ? [] : [payload: StudioInvokePayload<C>];
 
-export function createStudioBridge(ipc: BridgeIpc): StudioApi {
+/** One imported frame as the receiver gets it: a `VideoFrame` to draw, and the import to release. */
+export interface BridgeImportedFrame {
+  getVideoFrame(): { close(): void };
+  release(): void;
+}
+
+/** The part of Electron's renderer `sharedTexture` the bridge uses; `sharedTexture` itself satisfies it. */
+export interface BridgeFrames {
+  setSharedTextureReceiver(
+    receiver: (data: { importedSharedTexture: BridgeImportedFrame }, ...args: unknown[]) => Promise<void>,
+  ): void;
+}
+
+/** What `nativeFrames` hands its subscriber: the frame, and main's meta for it. */
+type FrameListener = Parameters<StudioApi["nativeFrames"]>[0];
+
+/**
+ * `nativeFrames` over one `sharedTexture` receiver, registered now, before main can send a frame.
+ * The receiver draws through the one subscriber and then, whatever the subscriber did (or a frame
+ * that could not be read), closes the frame and releases the import exactly once: a frame never
+ * released holds one of the game's three slots. Without `frames` (no `sharedTexture` in this
+ * build) the subscription is a no-op.
+ */
+function frameCalls(frames: BridgeFrames | undefined): Pick<StudioApi, "nativeFrames"> {
+  if (!frames) return { nativeFrames: () => () => {} };
+  let subscriber: FrameListener | null = null;
+  frames.setSharedTextureReceiver(async ({ importedSharedTexture }, meta) => {
+    let frame: { close(): void } | null = null;
+    try {
+      frame = importedSharedTexture.getVideoFrame();
+      if (subscriber && isNativeFrameMeta(meta)) await subscriber(frame, meta);
+    } catch {
+      // A frame that could not be read or drawn is dropped; the next one is drawn afresh.
+    } finally {
+      frame?.close();
+      importedSharedTexture.release();
+    }
+  });
+  return {
+    nativeFrames: (listener) => {
+      subscriber = listener;
+      return () => {
+        if (subscriber === listener) subscriber = null;
+      };
+    },
+  };
+}
+
+export function createStudioBridge(ipc: BridgeIpc, frames?: BridgeFrames): StudioApi {
   async function invoke<C extends StudioInvokeChannel>(
     channel: C,
     ...args: PayloadArgs<C>
@@ -60,6 +111,8 @@ export function createStudioBridge(ipc: BridgeIpc): StudioApi {
     ...accountCalls(bridge),
     ...terminalCalls(bridge),
     ...previewCalls(bridge),
+    ...embedCalls(bridge),
+    ...frameCalls(frames),
   };
 }
 
@@ -112,7 +165,12 @@ function gameCalls(bridge: BridgeCalls) {
     stopJob: (project, jobId) => invoke("studio:jobs.stop", { project, jobId }),
     openPrivacySettings: (pane) => invoke("studio:app-look.open-settings", { pane }),
     createGame: (title, options) =>
-      invoke("studio:game.create", { title, ...(options?.parent === undefined ? {} : { parent: options.parent }) }),
+      invoke("studio:game.create", {
+        title,
+        ...(options?.parent === undefined ? {} : { parent: options.parent }),
+        ...(options?.stack === undefined ? {} : { stack: options.stack }),
+        ...(options?.targets === undefined ? {} : { targets: options.targets }),
+      }),
     nameGame: (request) => invoke("studio:game.name", request),
     makeBackdrop: (request) => invoke("studio:backdrop.make", request),
     pickGameLocation: () => invoke("studio:game.location.pick"),
@@ -123,7 +181,13 @@ function gameCalls(bridge: BridgeCalls) {
     snapshots: () => invoke("studio:snapshots"),
     selfChanges: () => invoke("studio:selfchanges"),
     studioActivity: () => invoke("studio:activity"),
-    exportGame: (project) => invoke("studio:export", { project }),
+    exportGame: (project, options) =>
+      invoke("studio:export", {
+        project,
+        ...(options?.destination === undefined ? {} : { destination: options.destination }),
+        ...(options?.signing === undefined ? {} : { signing: options.signing }),
+      }),
+    exportSigningReference: (kind) => invoke("studio:export.signingReference", { kind }),
     revealProject: (project, file) => invoke("studio:reveal-project", { project, ...(file ? { file } : {}) }),
     pickProject: () => invoke("studio:project.pick"),
     inspectFolder: (dir) => invoke("studio:project.inspect", { dir }),
@@ -214,6 +278,17 @@ function studioCalls(bridge: BridgeCalls) {
     cliUpdate: (provider) => invoke("studio:cli.update", { provider }),
     cliInstall: (provider) => invoke("studio:cli-install.start", { provider }),
     cliInstallStatus: () => invoke("studio:cli-install.status"),
+    toolchainStatus: () => invoke("studio:toolchain.status"),
+    toolchainInstall: (targets) => invoke("studio:toolchain.install", targets === undefined ? {} : { targets }),
+    toolchainCancel: () => invoke("studio:toolchain.cancel"),
+    toolchainPrune: () => invoke("studio:toolchain.prune"),
+    toolchainInstallClt: () => invoke("studio:toolchain.installClt"),
+    toolchainInstallMobile: (target) => invoke("studio:toolchain.installMobile", { target }),
+    toolchainAcceptAndroidLicence: (licence) => invoke("studio:toolchain.acceptAndroidLicence", { licence }),
+    nativeRun: (project) => invoke("studio:native.run", { project }),
+    nativeStop: (project) => invoke("studio:native.stop", { project }),
+    nativeState: (project) => invoke("studio:native.state", { project }),
+    nativeFront: (project) => invoke("studio:native.front", { project }),
     pullModel: (model) => invoke("studio:pull-model", { model }),
     lookupModel: (model) => invoke("studio:models.lookup", { model }),
     removeModel: (model) => invoke("studio:models.remove", { model }),
@@ -315,6 +390,25 @@ function terminalCalls(bridge: BridgeCalls) {
     terminalRemove: (id) => invoke("studio:terminal.remove", { id }),
     terminalOpenLink: (id) => invoke("studio:terminal.open-link", { id }),
     onTerminal: (listener) => subscribe("studio:terminal", listener),
+  } satisfies Partial<StudioApi>;
+}
+
+/** A C++ game's Mac build inside Live: the embedded run, its input and its size. */
+function embedCalls(bridge: BridgeCalls) {
+  const { invoke } = bridge;
+  return {
+    nativeEmbed: (project, size) => invoke("studio:native.embed", { project, size }),
+    nativeUnembed: (project) => invoke("studio:native.unembed", { project }),
+    nativeInput: (project, actions) => invoke("studio:native.input", { project, actions }),
+    nativeResize: (project, size) => invoke("studio:native.resize", { project, size }),
+    nativeLaunchDevice: (project, request) => invoke("studio:native.launchDevice", { project, request }),
+    retakeSeedModule: (module) => invoke("studio:seed.retake", { module }),
+    cratesList: (project) => invoke("studio:crates.list", project === undefined ? {} : { project }),
+    cratesDecide: (decision) => invoke("studio:crates.decide", decision),
+    engineEject: (project) => invoke("studio:engine.eject", { project }),
+    engineUneject: (project) => invoke("studio:engine.uneject", { project }),
+    engineSetTrust: (project, trusted) => invoke("studio:engine.setTrust", { project, trusted }),
+    engineState: (project) => invoke("studio:engine.state", { project }),
   } satisfies Partial<StudioApi>;
 }
 

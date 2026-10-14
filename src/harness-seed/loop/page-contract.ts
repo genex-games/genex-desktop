@@ -21,6 +21,8 @@ export const PageMethod = {
   Demos: "demos",
   Demo: "demo",
   Audio: "audio",
+  /** Read or change the renderer's quality (a Rust · wgpu game; a refusal carries the game's code). */
+  RenderSettings: "renderSettings",
   /** Past the game's title, menu and countdown into play (`config.begin`), left paused. */
   Begin: "begin",
   /** The racing-line assist on or off (`{ steer: true }`): the game's `config.steer` steers through the player's keys. */

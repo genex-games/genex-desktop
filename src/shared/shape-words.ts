@@ -7,7 +7,15 @@
  * here too, as data: what a folder offers is worth testing without a window. (The harness's own
  * status vocabulary is a different job and lives in `renderer/words.ts`; nothing here reads a run.)
  */
-import type { FolderInspection, ProjectKind, ProjectShape } from "./game-project.ts";
+import {
+  type CompiledStack,
+  type FolderInspection,
+  GameStack,
+  isCompiledStack,
+  ProjectKind,
+  type ProjectShape,
+  stackOf,
+} from "./game-project.ts";
 
 /** For each kind: the phrase that finishes "This folder holds …", and the stage header's chip. */
 const KINDS: Record<ProjectKind, { phrase: string; chip: string }> = {
@@ -18,7 +26,15 @@ const KINDS: Record<ProjectKind, { phrase: string; chip: string }> = {
   phaser: { phrase: "a Phaser game", chip: "Phaser" },
   "engine-export": { phrase: "a game exported from a game engine", chip: "engine export" },
   "own-script": { phrase: "a game with its own scripts", chip: "own scripts" },
+  [ProjectKind.RaylibCpp]: { phrase: "a C++ game built with raylib", chip: "C++ · raylib" },
+  [ProjectKind.RustWgpu]: { phrase: "a Rust game built with genex", chip: "Rust · wgpu" },
 };
+
+/** How the studio runs a compiled game: with the stack's own managed toolchain. */
+const COMPILED_RUNS = {
+  [GameStack.RaylibCpp]: "builds it with its C++ toolchain for each place it plays",
+  [GameStack.RustWgpu]: "builds it with its Rust toolchain for each place it plays",
+} as const satisfies Record<CompiledStack, string>;
 
 /** What this folder holds, as a phrase: "This folder holds …". */
 export function kindWords(kind: ProjectKind): string {
@@ -30,8 +46,10 @@ export function kindChip(kind: ProjectKind): string {
   return KINDS[kind].chip;
 }
 
-/** How the studio will run it: the build it runs first, or nothing at all. */
+/** How the studio will run it: its own C++ build, the game's build it runs first, or nothing at all. */
 export function runsWords(shape: ProjectShape): string {
+  const stack = stackOf(shape);
+  if (isCompiledStack(stack)) return COMPILED_RUNS[stack];
   if (!shape.build) return `opens ${shape.entry.split("?")[0]} directly, with no build step`;
   return `built with ${shape.build}, then shown from ${shape.serve === "." ? "the folder" : `${shape.serve}/`}`;
 }

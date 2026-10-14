@@ -1,0 +1,43 @@
+{
+  "id": "rust.tagged-draws",
+  "runtime": "rust-wgpu",
+  "title": "Tagged draws in Rust: every draw counted under a tag, shared models, few draws",
+  "tags": [
+    "drawcalls",
+    "draw",
+    "calls",
+    "triangles",
+    "ceiling",
+    "tag",
+    "tags",
+    "instancing",
+    "batch",
+    "model",
+    "budget",
+    "stats",
+    "fps",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Name every draw with frame.tag, load a model once in on_reset and draw it many times: the checks count the game's tagged draws.",
+  "intent": "The checks read state().__render: drawCalls is the game's logical draw count, the sum over its tags (frame.tag(name) names what the following draws count under), counted before the renderer culls or batches anything, so GPU culling never changes it and the GPU encoder's own counts are reported apart under state().volatile.gpu. An untagged draw does not exist to a tag check. Load each model once in on_reset with gfx.assets().model(\"x.glb\") and keep the handle in the world; draw a field of the same prop from that one handle (the renderer instances repeated models on the GPU), never by loading a second copy. Keep the frame under the draw budget and fix a frame-time spike before adding content; a model the renderer could not load is named in state().__render.missingModels.",
+  "sketch": "use genex::prelude::*;\n\n#[derive(Default)]\npub struct World { rock: Model, rocks: Vec<Vec3> }\n\npub fn wire(game: &mut Game<World>) {\n    game.on_reset(|sim, _seed, rng, gfx| {\n        sim.world.rock = gfx.assets().model(\"rock.glb\"); // once, never per instance\n        sim.world.rocks = (0..40).map(|_| vec3(rng.range_f32(-10.0, 10.0), 0.0, rng.range_f32(-10.0, 10.0))).collect();\n    });\n    game.on_draw(|sim, frame, _camera| {\n        frame.tag(\"rocks\"); // every draw below counts under \"rocks\"\n        for &at in &sim.world.rocks {\n            frame.model(&sim.world.rock, Transform::from_translation(at));\n        }\n    });\n}\n",
+  "port": "The facet that owns a prop family owns its model handle; other facets draw it through that facet's state, never by loading a second copy.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Drawing)",
+      "note": "frame.tag(name) names what the following draws count under (state().__render.tags); a missing model draws as a magenta checker and is named in __render.missingModels."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

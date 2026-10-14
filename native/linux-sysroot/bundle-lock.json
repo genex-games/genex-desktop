@@ -1,0 +1,16 @@
+{
+  "$comment": "Linux build headers and link stubs included with every Genex build. The checked-in archive is the deterministic output of scripts/toolchains/linux-sysroot.ts --archive, built from the image and package versions recorded inside manifest.json plus the cpal/gilrs link stubs native/linux-sysroot/manifest.json describes (zig 0.16.0, glibc 2.28). Both archive bytes and every extracted file are verified before bundling; the store verifies the resources copy again before installing. No external download or hosting service is needed until the owner publishes it as a release asset.",
+  "schema": 1,
+  "version": "almalinux-8.10",
+  "target": "linux-x64-sysroot",
+  "imageDigest": "sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f",
+  "manifestSha256": "8031a635e0327caea1817221f933817bbd131217d316b0711c6da2a4fb2548c9",
+  "manifestBytes": 36154,
+  "files": 215,
+  "bytes": 4909033,
+  "archive": {
+    "file": "linux-sysroot-x64.tar.gz",
+    "sha256": "105406897b0ea242d6a928efc15503266c03eedd5d21e4355b8e71ff0ea0d97d",
+    "bytes": 1639754
+  }
+}

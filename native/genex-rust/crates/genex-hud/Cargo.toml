@@ -1,0 +1,38 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.5, M2.8, M5.3. Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-hud"
+description = "egui HUD fed from the merged input and the simulated clock; legacy text/bar/crosshair/flash; hud.items."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+genex-core = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+# The painter names wgpu itself (the version egui-wgpu draws with); the workspace's backend
+# features (Metal, Vulkan, D3D12, browser WebGPU) come with it, never a GL one.
+wgpu = { workspace = true }
+
+# Desktop-only: egui-winit's clipboard (arboard) has no wasm backend, and its winit would pull
+# android-activity with no activity chosen into a phone build; the web shell feeds egui from its
+# own events.
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+egui-winit = { workspace = true }
+
+[dev-dependencies]
+# The capture test drives one game through the desktop shell in both modes.
+genex-platform-desktop = { workspace = true }
+
+# winit's EventLoop must be created on the main thread, which libtest's workers are not.
+[[test]]
+name = "capture"
+path = "tests/capture.rs"
+harness = false

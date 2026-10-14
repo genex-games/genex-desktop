@@ -21,6 +21,7 @@ import {
   pluginSkillTool,
 } from "../../src/shared/plugins.ts";
 import { GENEX_GAME_PACKAGES } from "../../src/shared/genex.ts";
+import { GameStack } from "../../src/shared/game-project.ts";
 import { inspectPackage, pluginSkillDigests, validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { PluginConsentDeclined, PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { copyOfExample, installLocalOn, pluginFixture } from "../helpers/plugins.ts";
@@ -182,6 +183,25 @@ const HOSTILE: Array<[string, (dir: string, m: RawManifest) => Promise<void> | v
       m.tools.push(hostTool("shell", "Runs anything."));
     },
     /host/,
+  ],
+  // `stacks` names the games a skill serves: one or two of the studio's stacks, each once.
+  ["a skill for an unknown stack", (_d, m) => void (skill(m).stacks = ["unity"]), /stacks/],
+  ["a skill for no stack", (_d, m) => void (skill(m).stacks = []), /stacks/],
+  [
+    "a skill naming one stack twice",
+    (_d, m) => void (skill(m).stacks = [GameStack.ThreeJs, GameStack.ThreeJs]),
+    /stacks/,
+  ],
+  ["stacks that are not a list", (_d, m) => void (skill(m).stacks = GameStack.ThreeJs), /stacks/],
+  [
+    "three stacks",
+    (_d, m) => void (skill(m).stacks = [GameStack.ThreeJs, GameStack.RaylibCpp, GameStack.ThreeJs]),
+    /stacks/,
+  ],
+  [
+    "an inline skill for an unknown stack",
+    (_d, m) => void m.skills.push({ name: "inline", text: "Hi.", stacks: [null] }),
+    /stacks/,
   ],
 ];
 
@@ -673,4 +693,20 @@ test("a host credential file is served only for a live plugin, and only once its
   } finally {
     await f.close();
   }
+});
+
+test("a skill's valid stacks are kept, and a skill without them serves every stack", async () => {
+  await withPackage(
+    (_d, m) => {
+      skill(m).stacks = [GameStack.ThreeJs];
+      m.skills.push({ name: "both", text: "For every game.", stacks: [GameStack.RaylibCpp, GameStack.ThreeJs] });
+    },
+    async (dir) => {
+      const m = await inspectPackage(dir);
+      const byName = Object.fromEntries(m.skills.map((s) => [s.name, s]));
+      assert.deepEqual(byName.card?.stacks, [GameStack.ThreeJs]);
+      assert.deepEqual(byName.both?.stacks, [GameStack.RaylibCpp, GameStack.ThreeJs]);
+      assert.equal("stacks" in (byName[exampleManifest.skills[0]!.name] ?? {}), false, "absent stays absent");
+    },
+  );
 });

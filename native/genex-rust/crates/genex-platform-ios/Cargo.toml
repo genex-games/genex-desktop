@@ -1,0 +1,50 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.16 (spike shell), M2.10, M5.3. Dependencies come from [workspace.dependencies],
+# except the pond dev-dependency the spike example packages (a path inside this workspace).
+[package]
+name = "genex-platform-ios"
+description = "iOS shell: lifecycle, touch, safe area, audio session."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The phone shell (`mobile`, which genex-platform-android re-exports) is plain winit + wgpu, so
+# it builds (and its unit tests run) on the host too; only `run`'s records folder, safe area and
+# audio session read iOS facts.
+[dependencies]
+genex = { workspace = true }
+# The pads' standard-order state the shell injects (genex-core's `Injection`, M5.3).
+genex-core = { workspace = true }
+# The HUD's painter over the world target and the soft-keyboard bridge (M5.3).
+genex-hud = { workspace = true }
+genex-render = { workspace = true }
+genex-platform-web = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+# The audio session, its interruptions, GCController gamepads and the thermal state go through the
+# Objective-C runtime (objc2, objc2-foundation's NSString); the soft keyboard is winit's own
+# UIKeyInput view. objc2-ui-kit and objc2-quartz-core are kept from the M0a.1 stub.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-ui-kit = { workspace = true }
+objc2-quartz-core = { workspace = true }
+
+# The spike's packaged game (M0a.16): `examples/pond_ios.rs` is the `.app` executable.
+[dev-dependencies]
+pond = { path = "../../examples/pond" }
+
+[[example]]
+name = "pond_ios"
+path = "examples/pond_ios.rs"
+test = false

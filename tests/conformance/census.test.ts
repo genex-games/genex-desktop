@@ -29,6 +29,13 @@ import {
 import { PRICE_TABLE_SCHEMA, PRICE_UNIT, validatePriceTable } from "../../scripts/evals/prices.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
 import { replanCheck } from "../../src/harness-seed/loop/replan.ts";
+import { baseBrief } from "../../src/harness-seed/loop/autopilot.ts";
+import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
+import { toolCall } from "../../src/harness-seed/loop/model-roles.ts";
+import { facetPrompt } from "../../src/harness-seed/loop/facet-loop.ts";
+import { spikeBrief } from "../../src/harness-seed/loop/spike.ts";
+import { directorBrief } from "../../src/harness-seed/loop/director.ts";
+import { GameStack, ProjectKind } from "../../src/harness-seed/loop/native-contract.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -490,5 +497,93 @@ describe("the transcript census", () => {
     ])
       assert.ok(!source.includes(call), `the census must not call ${call}`);
     assert.equal(source.match(/writeFile/g)?.length, 2, "exactly the two files --json and --md name");
+  });
+});
+
+/** A C++ · raylib game the studio scaffolded, as a brief's `shape`. */
+const CPP_SHAPE = { entry: "index.html", main: "src/main.cpp", build: null, kind: ProjectKind.RaylibCpp };
+
+describe("the C++ · raylib briefs", () => {
+  it("open with the sentence their role is counted by, on both engines", () => {
+    for (const engine of ["claude-code", "codex"]) {
+      const run = { runId: "run_c", project: "pong", goal: "a pong game", engine, reference: null };
+      const facet = { id: "paddles", title: "Paddles", owns: ["src/paddles.cpp"], cameras: ["default"] };
+      const base = baseBrief({ run, plan: { facets: [facet] }, projectLabel: "pong", shape: CPP_SHAPE } as never);
+      assert.equal(classifyBrief(base), "worker:base", `${engine}: the C++ base builder`);
+      assert.match(base, /studio::install/, `${engine}: and it is the C++ brief`);
+    }
+    const review = fs.readFileSync(path.resolve("src/harness-seed/judge/code-review-cpp.md"), "utf8");
+    assert.equal(classifyBrief(review), "judge:code-review", "the C++ reviewer is a code reviewer");
+  });
+
+  it("count a C++ facet builder, spike builder and director as their Three.js twins are counted", () => {
+    for (const engine of ["claude-code", "codex"]) {
+      const run = { runId: "run_c", project: "pong", goal: "a pong game", engine, reference: null };
+      const spec = {
+        id: "paddles",
+        title: "Paddles",
+        intent: "two paddles",
+        owns: ["src/paddles.cpp"],
+        checks: [{ id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" }],
+        cameras: ["default"],
+      };
+      const facet = facetPrompt({
+        run,
+        spec,
+        iteration: 1,
+        resumed: false,
+        briefFile: null,
+        board: {},
+        worktree: "/w",
+        acceptedShots: [],
+        userSteering: [],
+        shape: CPP_SHAPE,
+      });
+      assert.equal(classifyBrief(facet), "worker:facet", engine);
+      assert.match(facet, /studio::tag/, `${engine}: the C++ facet prompt`);
+      const spikeText = spikeBrief({
+        run,
+        spec,
+        check: spec.checks[0],
+        tried: [],
+        recipes: [],
+        page: "spike/lit.html",
+        script: "spike/lit.js",
+        recipeFile: "spike/lit.RECIPE.md",
+        stack: GameStack.RaylibCpp,
+      } as never);
+      assert.equal(classifyBrief(spikeText), "worker:spike", engine);
+      assert.match(spikeText, /CMake/, `${engine}: the C++ spike`);
+      const now = Date.now();
+      const lead = directorBrief({
+        run,
+        shape: CPP_SHAPE,
+        ownShape: false,
+        capacity: null,
+        skill: "",
+        softDeadline: now + 60_000,
+        finalDeadline: now + 120_000,
+        integrationWorktree: "/w",
+        baseCommit: "abcdef1234567890",
+      } as never);
+      assert.equal(classifyBrief(lead), "director", engine);
+      assert.match(lead, /C\+\+ · RAYLIB TEMPLATE/, `${engine}: the C++ director`);
+    }
+  });
+
+  it("tell a new game's chat the destination words, Browser when unclear, and to ask once", () => {
+    for (const engine of ["claude-code", "codex"]) {
+      const launch = { toolName: "start_autopilot", hours: 8, project: "pong" };
+      const intake = buildContractorBrief({ ask: "a pong game", scaffolded: true, engine, launch, intake: true });
+      for (const word of ["Mac", "Windows", "Linux", "desktop", "app", "Steam", "offline", "C++"])
+        assert.ok(intake.includes(`"${word}"`), `${engine}: the desktop word "${word}"`);
+      for (const word of ["browser", "link", "multiplayer", "login", "AI characters"])
+        assert.ok(intake.includes(`"${word}"`), `${engine}: the Browser word "${word}"`);
+      assert.match(intake, /Unclear[^\n]*: Browser/, `${engine}: unclear is Browser`);
+      assert.match(intake, new RegExp(`Ask once, with ${toolCall(engine, "ask_user").replaceAll(".", "\\.")}`));
+      assert.match(intake, /never ask about it again/);
+      const later = buildContractorBrief({ ask: "a pong game", scaffolded: true, engine, launch });
+      assert.doesNotMatch(later, /WHERE PEOPLE WILL PLAY/, `${engine}: only a new game's intake asks`);
+    }
   });
 });

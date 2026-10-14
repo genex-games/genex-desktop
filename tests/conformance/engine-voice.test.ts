@@ -27,6 +27,17 @@ import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import * as chatSteer from "../../src/harness-seed/loop/chat-steer-prompts.ts";
 import * as scout from "../../src/harness-seed/loop/scout.ts";
 import * as library from "../../src/harness-seed/loop/library.ts";
+import * as nativeBriefs from "../../src/harness-seed/loop/native-briefs.ts";
+import {
+  CheckSupport,
+  GameStack,
+  ProjectKind,
+  RAYLIB_CHECK_SUPPORT,
+} from "../../src/harness-seed/loop/native-contract.ts";
+import { computerToolDescription } from "../../src/substrate/computer-tool-prompts.ts";
+import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const CLAUDE = "claude-code";
 const CODEX = "codex";
@@ -162,8 +173,182 @@ function builders(engine: string): Array<{ name: string; text: string }> {
       name: "renderBrief",
       text: library.renderBrief({ run, spec, iteration: 2, board: {}, comparison: null } as never),
     },
+    ...cppBuilders(engine),
+    ...cppRenderBriefs(engine),
   ];
   return out;
+}
+
+/** A C++ · raylib game as the studio scaffolds it, and one somebody brought. */
+const CPP_SHAPE = { entry: "index.html", main: "src/main.cpp", build: null, kind: ProjectKind.RaylibCpp };
+const CPP_OWN = { entry: "index.html", main: "src/game.cpp", build: null, kind: ProjectKind.RaylibCpp };
+
+/** A C++ · raylib facet's BRIEF.md, on the studio's C++ template and in a game of its own, for `engine`. */
+function cppRenderBriefs(engine: string): Array<{ name: string; text: string }> {
+  const { run, spec } = fixture(engine);
+  const cppSpec = { ...spec, owns: ["src/plaza.cpp"] };
+  const cpp = { run, spec: cppSpec, iteration: 2, board: {}, comparison: null, stack: GameStack.RaylibCpp };
+  return [
+    { name: "renderBrief (C++)", text: library.renderBrief({ ...cpp, entryMain: CPP_SHAPE.main } as never) },
+    {
+      name: "renderBrief (C++ own shape)",
+      text: library.renderBrief({ ...cpp, entryMain: CPP_OWN.main, screen: false, template: false } as never),
+    },
+  ];
+}
+
+/** Every brief a C++ · raylib game's agents read, rendered for `engine`. */
+function cppBuilders(engine: string): Array<{ name: string; text: string }> {
+  const { run, spec } = fixture(engine);
+  const cppSpec = { ...spec, owns: ["src/plaza.cpp"] };
+  const launch = { toolName: "start_autopilot", hours: 8, project: "plaza" };
+  return [
+    {
+      name: "cppBaseBrief",
+      text: nativeBriefs.cppBaseBrief({
+        run,
+        plan: { facets: [cppSpec] },
+        projectLabel: "plaza",
+        shape: CPP_SHAPE,
+      } as never),
+    },
+    {
+      name: "baseBrief (C++)",
+      text: autopilot.baseBrief({ run, plan: { facets: [cppSpec] }, projectLabel: "plaza", shape: CPP_SHAPE } as never),
+    },
+    {
+      name: "baseBrief (C++ starting scene)",
+      text: autopilot.baseBrief({ run, plan: { facets: [] }, projectLabel: "plaza", shape: CPP_SHAPE } as never),
+    },
+    {
+      name: "baseBrief (C++ own shape)",
+      text: autopilot.baseBrief({
+        run,
+        plan: { facets: [cppSpec] },
+        projectLabel: "plaza",
+        shape: CPP_OWN,
+        ownShape: true,
+      } as never),
+    },
+    { name: "contractWiringAsk (C++)", text: autopilot.contractWiringAsk(CPP_OWN as never) },
+    {
+      name: "buildContractorBrief (C++)",
+      text: chatSession.buildContractorBrief({
+        ask: "a pong game",
+        scaffolded: true,
+        engine,
+        launch,
+        shape: CPP_SHAPE,
+      }),
+    },
+    {
+      name: "buildContractorBrief (C++ own shape)",
+      text: chatSession.buildContractorBrief({
+        ask: "add a boss",
+        engine,
+        shape: CPP_OWN,
+        ownShape: true,
+        contractMissing: true,
+      }),
+    },
+    {
+      name: "facetPrompt (C++)",
+      text: facetLoop.facetPrompt({ ...facetArgs, run, spec: cppSpec, ownsMain: false, shape: CPP_SHAPE } as never),
+    },
+    {
+      name: "facetPrompt (C++ owner)",
+      text: facetLoop.facetPrompt({ ...facetArgs, run, spec: cppSpec, ownsMain: true, shape: CPP_SHAPE } as never),
+    },
+    {
+      name: "facetPrompt (C++ own shape)",
+      text: facetLoop.facetPrompt({ ...facetArgs, run, spec: cppSpec, ownShape: true, shape: CPP_OWN } as never),
+    },
+    {
+      name: "briefWithMovedSections (C++)",
+      text: facetLoop.briefWithMovedSections("# Brief", {
+        spec: cppSpec,
+        ownsMain: false,
+        entryMain: CPP_SHAPE.main,
+        kind: CPP_SHAPE.kind,
+      } as never),
+    },
+    {
+      name: "spikeBrief (C++)",
+      text: spike.spikeBrief({
+        run,
+        spec: cppSpec,
+        check: spec.checks[0],
+        tried: ["a shader"],
+        recipes: [],
+        page: "spike/lit.html",
+        script: "spike/lit.js",
+        recipeFile: "spike/lit.RECIPE.md",
+        stack: GameStack.RaylibCpp,
+      } as never),
+    },
+    {
+      name: "contractBrief (C++)",
+      text: director.contractBrief({ run, projectLabel: "plaza", shape: CPP_OWN } as never),
+    },
+    {
+      name: "cppContractBrief",
+      text: nativeBriefs.cppContractBrief({ run, projectLabel: "plaza", shape: CPP_OWN } as never),
+    },
+    {
+      name: "cppSpikeBrief",
+      text: nativeBriefs.cppSpikeBrief({
+        run,
+        spec: cppSpec,
+        check: "- lit: litFraction > 0.5",
+        tried: [],
+        recipes: [],
+        id: "lit",
+        location: { dir: "spike", recipeFile: "spike/lit.RECIPE.md" },
+      } as never),
+    },
+    {
+      name: "singleWorkerBrief (C++)",
+      text: director.singleWorkerBrief({ run, worker: cppWorker, shape: CPP_SHAPE } as never),
+    },
+    {
+      name: "singleWorkerBrief (C++ own shape)",
+      text: director.singleWorkerBrief({ run, worker: cppWorker, shape: CPP_OWN, ownShape: true } as never),
+    },
+    {
+      name: "directorBrief (C++)",
+      text: director.directorBrief({ ...directorArgs(run), shape: CPP_SHAPE, ownShape: false } as never),
+    },
+    {
+      name: "directorBrief (C++ own shape)",
+      text: director.directorBrief({ ...directorArgs(run), shape: CPP_OWN, ownShape: true } as never),
+    },
+  ];
+}
+
+/** A facet prompt's arguments that are the same for every stack. */
+const facetArgs = {
+  iteration: 2,
+  resumed: false,
+  briefFile: null,
+  board: {},
+  worktree: "/w",
+  acceptedShots: [],
+  userSteering: [],
+};
+/** A worker the director starts on a C++ game. */
+const cppWorker = { id: "w1", title: "The plaza", brief: "build the plaza", owns: ["src/plaza.cpp"], ownsMain: false };
+/** A director brief's arguments that are the same for every stack. */
+function directorArgs(run: Record<string, unknown>) {
+  const now = Date.now();
+  return {
+    run: { ...run, engine: run.engine },
+    capacity: { max: 6, free: 5, memory: { freeMb: 9000 } },
+    skill: "# playbook",
+    softDeadline: now + 60_000,
+    finalDeadline: now + 120_000,
+    integrationWorktree: "/w",
+    baseCommit: "abcdef1234567890",
+  };
 }
 
 describe("one engine voice", () => {
@@ -224,6 +409,7 @@ describe("one engine voice", () => {
       chatSteer,
       scout,
       library,
+      nativeBriefs,
     })) {
       for (const [key, value] of Object.entries(mod as Record<string, unknown>)) {
         if (typeof value !== "function") continue;
@@ -335,5 +521,250 @@ describe("one engine voice on a run with two engines", () => {
     } as never);
     assert.ok(forDirector.includes(BRIDGE_TOOL_CMD.replace("node ", "")));
     assert.equal(forDirector.includes("mcp__studio__"), false);
+  });
+});
+
+/** The words a Three.js game read before C++ games: what `cppBuilders` must never leave behind. */
+const THREE_ONLY = [/installStudio/, /window\.__studio/, /src\/main\.js/, /src\/studio\.js/, /THREE\./, /import map/];
+
+describe("a C++ · raylib game's briefs", () => {
+  it("speak C++ on both engines: the contract is studio::install, and no Three.js word reaches them", () => {
+    for (const engine of [CLAUDE, CODEX]) {
+      for (const { name, text } of [...cppBuilders(engine), ...cppRenderBriefs(engine)]) {
+        for (const word of THREE_ONLY) assert.doesNotMatch(text, word, `${engine} ${name}: ${word}`);
+        assert.match(text, /studio::install|the studio's C\+\+ lane/, `${engine} ${name} speaks of the C++ contract`);
+      }
+    }
+  });
+
+  it("tell a raylib night's planner the game is C++ and which check kinds it measures, by the checks' own table", () => {
+    const text = nativeBriefs.cppPlannerLines().join("\n");
+    assert.ok(text.startsWith(nativeBriefs.CPP_PLANNER_HEADER), "it opens with the line the planner skill names");
+    for (const word of [...THREE_ONLY, /src\/\S+\.js\b/]) assert.doesNotMatch(text, word, String(word));
+    assert.match(text, /src\/<slug>\.cpp/, "a facet owns its own C++ source");
+    assert.match(text, /wire_<id>\(game\)/, "and wires in with one line");
+    const kindsLine = text.split("\n").find((line) => line.includes("Check kinds measured")) ?? "";
+    const [measured = "", never = ""] = kindsLine.split(". A ");
+    for (const [kind, support] of Object.entries(RAYLIB_CHECK_SUPPORT)) {
+      const clause = support === CheckSupport.Measured ? measured : never;
+      assert.ok(clause.includes(`\`${kind}\``), `${kind} is said to be ${support}: ${kindsLine}`);
+    }
+    assert.match(never, /check is never measured here/);
+    // The workspace's own skill copy may predate C++ games; the shipped one names the line the ask carries.
+    const skill = readFileSync(
+      new URL("../../src/harness-seed/skills/facet-decomposition.md", import.meta.url),
+      "utf8",
+    );
+    assert.ok(
+      skill.includes(`\`${nativeBriefs.CPP_PLANNER_HEADER}\``),
+      "the planner skill's C++ section is keyed to it",
+    );
+  });
+
+  it("name only paths the spike runner lets a C++ spike edit, and the recipe file it harvests", () => {
+    const location = spike.spikeLocation({ id: "lit", shape: CPP_SHAPE });
+    const { run, spec } = fixture(CLAUDE);
+    const text = spike.spikeBrief({
+      run,
+      spec,
+      check: spec.checks[0],
+      tried: [],
+      recipes: [],
+      page: location.page,
+      script: location.script,
+      recipeFile: location.recipeFile,
+      stack: GameStack.RaylibCpp,
+    } as never);
+    const owns = spike.spikeOwns(location);
+    const named = [...new Set(text.match(/\b[\w./-]*spike\/[\w./<>-]+/g) ?? [])].map((p) => p.replace(/[.]$/, ""));
+    assert.ok(named.length >= 4, `the brief names its files: ${named.join(", ")}`);
+    for (const file of named)
+      assert.ok(
+        owns.some((own) => file === own || file.startsWith(`${own}/`)),
+        `${file} is inside what the spike owns (${owns.join(", ")})`,
+      );
+    assert.ok(
+      text.includes(`write ${location.recipeFile} with exactly these sections`),
+      "it writes the runner's recipe file",
+    );
+    assert.ok(spike.recipeCandidates(location, "lit").includes(location.recipeFile), "which the runner harvests");
+  });
+
+  it("open no spike on a C++ · raylib game: no workspace, no build turn, and the reason in the outcome", async () => {
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.describe": () => [{ id: "claude-code", kind: "delegated" }],
+        "engine.delegate": () => assert.fail("no build for a C++ spike"),
+      },
+    });
+    const { spec } = fixture(CLAUDE);
+    const outcome = await spike.runSpike(
+      recorder.ctx as never,
+      {
+        run: { runId: "run_c", project: "pong", engine: CLAUDE },
+        spec,
+        check: spec.checks[0],
+        iteration: 2,
+        facetThreadId: "facet-thread",
+        deadline: Date.now() + 60 * 60_000,
+        shape: CPP_SHAPE,
+        worktree: true,
+        incumbentCommit: "abc123",
+      } as never,
+    );
+    assert.deepEqual(recorder.sequence(), ["engine.describe"], "nothing opened, snapshotted or built");
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.reason, /^no spike: this is a C\+\+ · raylib game/);
+    for (const word of THREE_ONLY) assert.doesNotMatch(outcome.reason, word);
+  });
+});
+
+describe("the computer tool's words", () => {
+  const view = { width: 1280, height: 720 };
+  const cameras = " Known cameras: default, eye:here.";
+  it("are what they were before C++ games for every Three.js session (sha256 at origin/dev cf4b2c56)", () => {
+    const PRE_NATIVE = {
+      builder: "66885724c53287dc",
+      director: "9aad5ebfff99c483",
+      playtester: "62a2ba5bfbdc8741",
+      scout: "e6d353c39e17adae",
+    } as const;
+    for (const [role, digest] of Object.entries(PRE_NATIVE)) {
+      const text = computerToolDescription({ role: role as keyof typeof PRE_NATIVE, view, cameras });
+      assert.equal(createHash("sha256").update(text).digest("hex").slice(0, 16), digest, role);
+      assert.doesNotMatch(text, /C\+\+/, `${role}: no C++ word`);
+    }
+  });
+
+  it("say a C++ session's reload rebuilds through the studio's lane, for the roles that edit", () => {
+    for (const role of ["builder", "director"] as const)
+      assert.match(computerToolDescription({ role, view, cameras, cpp: true }), /rebuilds this C\+\+ · raylib game/);
+    assert.doesNotMatch(computerToolDescription({ role: "playtester", view, cameras, cpp: true }), /C\+\+/);
+  });
+});
+
+/**
+ * Every Three.js brief, rendered from fixed arguments, and the first 16 hex of its sha256 in
+ * origin/dev cf4b2c56's seed, before the compiled stacks were ported to it: the C++ and Rust
+ * variants branch beside these texts, never through them.
+ */
+const PRE_NATIVE_BRIEFS = {
+  [CLAUDE]: {
+    baseBriefFacets: "51dc3d2810245dce",
+    baseBriefStart: "73fe6a14005c24a1",
+    baseBriefOwn: "9a2cabce6cd93d4f",
+    contractWiringAsk: "08bd1fab4144a340",
+    contractorFresh: "b94dc08e250475da",
+    contractorFollowUp: "f75cf05c6ee0de88",
+    contractorOwn: "c23353614b9e6a40",
+    contractorResume: "f08664c74565604b",
+    interview: "ccfc8e18264c12f3",
+    spikeBrief: "3981c09354d6e4f8",
+    facetPrompt: "1597ab4163ef756b",
+    contractBrief: "4fd6edf2d2afabe1",
+    singleWorkerBrief: "9f8cc64ed6b36d3a",
+  },
+  [CODEX]: {
+    baseBriefFacets: "b46b89125416b882",
+    baseBriefStart: "73fe6a14005c24a1",
+    baseBriefOwn: "8e36d19e777dc2f6",
+    contractWiringAsk: "08bd1fab4144a340",
+    contractorFresh: "687471899698e04b",
+    contractorFollowUp: "aca630fcbe4ea7d1",
+    contractorOwn: "47afdca1c69693e5",
+    contractorResume: "f08664c74565604b",
+    interview: "ccfc8e18264c12f3",
+    spikeBrief: "7279d5ca7f175080",
+    facetPrompt: "a5717393b3494bea",
+    contractBrief: "cf35637b1216e916",
+    singleWorkerBrief: "9028fcf334c02e81",
+  },
+} as const;
+
+/** The Three.js briefs `PRE_NATIVE_BRIEFS` digests, from the same arguments every time. */
+function threeBriefs(engine: string): Record<string, string> {
+  const { run, spec, worker, shape } = fixture(engine);
+  const template = { ...shape, kind: "studio-template" };
+  const own = { entry: "dist/index.html", main: "src/game.ts", build: "npm run build", kind: "three-vite" };
+  return {
+    baseBriefFacets: autopilot.baseBrief({
+      run,
+      plan: { facets: [spec], base: { notes: "", files: [] } },
+      projectLabel: "plaza",
+      shape: template,
+    } as never),
+    baseBriefStart: autopilot.baseBrief({ run, plan: { facets: [] }, projectLabel: "plaza", shape: template } as never),
+    baseBriefOwn: autopilot.baseBrief({
+      run,
+      plan: { facets: [spec] },
+      projectLabel: "plaza",
+      shape: own,
+      ownShape: true,
+      setup: { note: "the arena", verify: { path: "phase", equals: "arena" } },
+    } as never),
+    contractWiringAsk: autopilot.contractWiringAsk(own) + autopilot.contractWiringAsk(null),
+    contractorFresh: chatSession.buildContractorBrief({
+      ask: "a pong game",
+      scaffolded: true,
+      engine,
+      launch: { toolName: "start_autopilot", hours: 8, project: "plaza" },
+    }),
+    contractorFollowUp: chatSession.buildContractorBrief({
+      ask: "add fog",
+      messages: [
+        { role: "user", content: "a pong game" },
+        { role: "assistant", content: "done" },
+      ],
+      engine,
+      extraReads: ["/stills"],
+      folderLabel: "plaza",
+    }),
+    contractorOwn: chatSession.buildContractorBrief({
+      ask: "add fog",
+      engine,
+      shape: own,
+      ownShape: true,
+      contractMissing: true,
+    }),
+    contractorResume: chatSession.buildContractorBrief({ ask: "go on", resume: true, engine }),
+    interview: chatSession.buildInterviewBrief({
+      ask: "a pong game",
+      project: "plaza",
+      toolName: "start_autopilot",
+      hours: 8,
+    }),
+    spikeBrief: spike.spikeBrief({
+      run,
+      spec,
+      check: spec.checks[0],
+      tried: ["a shader"],
+      recipes: [],
+      page: "spike/lit.html",
+      script: "spike/lit.js",
+      recipeFile: "spike/RECIPE.md",
+    } as never),
+    facetPrompt: facetLoop.facetPrompt({
+      run,
+      spec,
+      iteration: 2,
+      resumed: false,
+      briefFile: null,
+      board: {},
+      worktree: "/w",
+      acceptedShots: [],
+      userSteering: ["make it oak"],
+    } as never),
+    contractBrief: director.contractBrief({ run, projectLabel: "plaza", shape: own } as never),
+    singleWorkerBrief: director.singleWorkerBrief({ run, worker, shape: template } as never),
+  };
+}
+
+describe("a Three.js game's briefs", () => {
+  it("keep every word they had before C++ games, on both engines", () => {
+    const digest = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+    for (const engine of [CLAUDE, CODEX] as const) {
+      const rendered = Object.fromEntries(Object.entries(threeBriefs(engine)).map(([k, v]) => [k, digest(v)]));
+      assert.deepEqual(rendered, PRE_NATIVE_BRIEFS[engine], engine);
+    }
   });
 });

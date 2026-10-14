@@ -48,6 +48,7 @@ export const VerdictRule = {
   NoStart: "no-start",
   Starts: "starts",
   DoesNotStart: "does-not-start",
+  NativeCheckFailed: "native-check-failed",
   Preferred: "preferred",
   NotPreferred: "not-preferred",
   Unseen: "unseen",

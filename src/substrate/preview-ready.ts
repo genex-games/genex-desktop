@@ -250,12 +250,14 @@ function normalizeSnapshot(raw: unknown): ReadySnapshot {
 }
 
 /**
- * One question to the page. NEVER throws: `evaluate` rejects in two entirely ordinary ways
- * while a page boots — a navigating frame and a disposed one — and `#loadServed`'s callers
- * must not be broken by either. Both become `via: "none"`.
+ * One question to the page — or to the port itself, when it knows its game's readiness without a
+ * page (`PreviewPort.readySnapshot`, a native run). NEVER throws: `evaluate` rejects in two
+ * entirely ordinary ways while a page boots — a navigating frame and a disposed one — and
+ * `#loadServed`'s callers must not be broken by either. Both become `via: "none"`.
  */
 export async function readySnapshot(port: PreviewPort): Promise<ReadySnapshot> {
   try {
+    if (port.readySnapshot) return normalizeSnapshot(await port.readySnapshot());
     return normalizeSnapshot(await port.evaluate(READY_PROBE));
   } catch (err) {
     return silent(String(errorMessage(err)).slice(0, MAX_REASON_CHARS));

@@ -92,7 +92,7 @@ const nameOf = (entry: unknown, key: string, index: number): string => {
 
 /** The section's list, refusing anything but a list of at most `max` on API 3. */
 function sectionList(m: Pick<PluginManifest, "apiVersion">, section: string, raw: unknown, max: number): unknown[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3(section));
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3(section));
   if (!Array.isArray(raw) || raw.length > max) throw new Error(MESSAGE.NotList(section, max));
   return raw;
 }

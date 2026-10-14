@@ -81,7 +81,7 @@ test("local package validation rejects links, incompatibility and duplicate decl
     await symlink("/tmp", path.join(dir, "escape"));
     await assert.rejects(inspectPackage(dir), /links/);
     const manifest = JSON.parse(await readFile(path.join(source, "plugin.json"), "utf8"));
-    assert.throws(() => validateManifest({ ...manifest, apiVersion: 4 }), /incompatible/);
+    assert.throws(() => validateManifest({ ...manifest, apiVersion: 5 }), /incompatible/);
     assert.throws(() => validateManifest({ ...manifest, tools: [...manifest.tools, ...manifest.tools] }), /duplicate/);
   } finally {
     await f.close();

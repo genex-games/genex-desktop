@@ -66,7 +66,7 @@ This is a command catalog. The scope table above determines which layers apply.
 | Layer | Available checks |
 | --- | --- |
 | L0 | `npm run check:static`: typecheck, architecture, context, changed-script syntax, changed-file lint, test style, vocabulary and bundled plugin versions. |
-| L1 | `npm run check`: L0 plus affected non-rig tests; named tests for red/green iteration. |
+| L1 | `npm run check`: L0 plus affected non-rig tests; named tests for red/green iteration. Files that import `tests/helpers/gpu-games.ts` (real games on this GPU) run one at a time after the parallel files. |
 | L2 | `npm run test:area -- <id>` for an area's non-rig tests; `npm run verify:harness` for harness/template behavior. `test:fast` covers all non-rig tests when that breadth is needed. |
 | L3 | `node scripts/affected-tests.mjs --tier L3 --run` for affected rig suites. `npm run test:rig` covers all rigs at broad checkpoints; full `npm test` covers all Node tests. |
 | L4 | Owned fixture UI session or `npm run test:ui -- <name>` for relevant rendered behavior. |
@@ -88,8 +88,75 @@ when a change reaches it, with the Linux sandbox tools installed, so a test that
 must release it ([tests](../../tests/AGENTS.md#runner)). Its macOS fast
 group, plus package, Windows and terminal workflows, run on PRs into
 `main`, pushes to `main`, and dispatches. The owner opens dev-to-main PRs by hand.
+Linux packaging extracts the `.deb` for `run-cpp-packaged-ui.mjs`: Home, the C++ chooser and real
+creation IPC use offline fixtures; compilation is checked separately. Extracted RPM acceptance
+verifies every bundled ANGLE byte; a guarded installer patch prevents stripping pinned libraries.
+`linux-userns.yml` (Linux, on PRs and pushes that touch the Ubuntu AppArmor fix, not dependency
+bumps; dispatch it for those) switches Ubuntu 24.04's user-namespace restriction on, installs the
+deb and boots it and a portable copy set up as the setup screen does (`scripts/ci-linux-userns.ts`),
+then removes the deb and its profile.
+Mac game-profile Metal rows require the measured AGX driver as well as a plain Metal device.
+Virtual-GPU rows remain unaccepted; `GENEX_REQUIRE_METAL=1` or `GENEX_REQUIRE_TOOLCHAINS=1`
+fails missing prerequisites. Other sandbox denial rows still run, using owned files.
+
 Rig runs are separate: `full-tests`-labelled PRs and dispatches. Label core/harness/engine PRs
 `full-tests`. For platform-sensitive work, dispatch the relevant workflow on its branch.
+`native-destinations.yml` cross-builds the C++ starter for Windows and Linux on PRs that touch the
+cross lane and runs the Linux build under Xvfb on SwiftShader; its billed Windows WARP job runs
+only on a dispatch or a PR labelled `windows-smoke`, on every push while the label stays.
+`cpp-linux-host.yml` exercises fresh managed C++ setup, reuse, real starter builds, browser capture
+and Windows/Linux exports on Linux. It does not certify protected native play or embedding.
+Spike only until M1.12: `rust-spike.yml` runs its Linux job (up to 150 minutes) on pushes that
+touch `native/genex-rust`, the spike scripts, the workflow or `package-lock.json`; its billed
+Windows WARP job runs only on an owner dispatch. `node scripts/ci/rust-spike.ts --local` is the
+local equivalent, and `npm run test:rust-spike` runs the workspace's cargo tests and clippy.
+
+Rust · wgpu lane rows: `rust-build`, `rust-stage`, `genex-toml`, `fixture-rust`, `core-rust-lane`,
+the stub rows of `rust-store` and the host-only rows of `rust-end-to-end` (`game.scaffold`, the
+core's lane, the fd-3 stub game, a capture the host verifies; the web branch and its shell
+refusals) run over stub cargo and need no toolchain. The real rows need the project-local pinned toolchain
+(`.studio-dev/spike-toolchain/`, `scripts/spike/rust-wgpu/setup-toolchain.sh`) and skip without
+it; `GENEX_REQUIRE_TOOLCHAINS=1` makes them fail instead: `rust-lane-real` (cold and warm offline
+template builds, planted configs, the clippy and unsafe gates), the real `rust-store` rows
+(install, prewarm, builds from clones), `rust-runtime` (a built Rust game through
+`NativeGamePort`), the real chain of `rust-end-to-end` (the scaffolded template built by the real
+lane under Seatbelt in the dev flavour, then a Metal capture; it also needs the release's vendored
+crates from `node scripts/toolchains/rust-release.ts tree --out .studio-dev/rust-release/e2e`) and
+`rust-performance` (the matched bench scene in `tests/fixtures/bench-scene/` against the Mac p95
+budget; the raylib comparison needs `GENEX_RAYLIB_BENCH_RECORD`, and
+`GENEX_REQUIRE_RAYLIB_BASELINE=1` fails without it). Run cargo only through `node scripts/toolchains/rust-env.ts -- cargo …` with
+one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check free disk first.
+`GENEX_REQUIRE_METAL=1` makes the skipped Metal renderer goldens fail.
+
+Rust Windows and Linux: `rust-windows-lane`, `rust-linux-lane`, `rust-cross-lane`,
+`linux-game-box` and `native-export-desktop` run their stub and hostile-input rows everywhere; the
+real cross builds (gnullvm with llvm-mingw, cargo-zigbuild against glibc 2.28) need the dev
+store's llvm-mingw, zig, cargo-zigbuild and sysroot (`GENEX_DEV_TOOLCHAINS`) and skip without
+them. In CI, `rust-linux-host.yml` (PRs touching the Rust Linux inputs) builds and extracts the
+`.deb`, checks its bundle pins, scaffolds a Rust game, runs the packaged Rust acceptance and runs
+the pond headless in the Linux game box on SwiftShader; `native-destinations.yml` has the same
+`rust-linux` job. The Windows WARP row is billed and owner-dispatched
+([Windows sandbox](../windows-sandbox.md#ci-and-curated-suite)). No CI row builds through the
+Studio lane's own cross build or runs on a real GPU: the WARP row runs the spike's `pond.exe`, and
+the Linux box row boxes the spike's pond, built without the lane's `$ORIGIN` RUNPATH and started
+through `launchLinuxGameBox` rather than `ProcessSandbox`, so it does not prove that the bundled
+Vulkan loader is the one loaded.
+
+Rust phones: `mobile-contract`, `mobile-export-core`, `ios-package`, `android-package`,
+`android-sdk`, `xcode-probe`, `mobile-sign`, `rust-mobile-build` and `export-ipc` run their
+stub and hostile-input rows everywhere. The real rows skip without their tools and fail under
+`GENEX_REQUIRE_TOOLCHAINS=1`: `ios-package-real` and `rust-mobile-build`'s cross builds need the
+dev store's sysroot with the phone standard libraries and Xcode 26 with the iOS Simulator SDK;
+`mobile-export-real` builds the template on the Simulator lane and exports a signed Simulator
+app, and with `ANDROID_HOME` also builds on the Android lane and packages a dev APK (the newest
+installed NDK stands in for the pinned r30); `android-package-real` needs `ANDROID_HOME` with
+Build-Tools 36 and android-36. `npm run test:ui -- export-ui` and `export-mobile-ui` render the
+export menu, its phone labels and the export sheet. `rust-mobile.yml` runs the Android emulator
+smoke on Linux; its macOS iOS Simulator job is owner-dispatched. No agent runs a phone build on
+a Simulator, emulator or device: device evidence is the owner's (iPhone budgets, signed
+distribution, Android real devices or a recorded `deferred`), written with device, OS version
+and build digest under `.studio-dev/evidence/rust-mobile/`; until a device row passes, phone exports stay
+`untested` and say "Untested on real devices".
 
 Windows sandbox setup, curated suite and dispatch options live in
 [Windows sandbox verification](../windows-sandbox.md#ci-and-curated-suite).

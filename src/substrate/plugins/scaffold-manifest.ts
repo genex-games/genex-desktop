@@ -76,7 +76,7 @@ function validateScaffold(raw: unknown, tools: readonly PluginManifestTool[]): P
  * each id once and each tool once (a call is recorded as its tool's one scaffold). Throws on API 1 or 2 and on any malformed scaffold.
  */
 export function validateScaffolds(m: Pick<PluginManifest, "apiVersion" | "scaffolds" | "tools">): PluginScaffold[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3);
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3);
   const raw: unknown = m.scaffolds;
   if (!Array.isArray(raw) || raw.length > MAX_SCAFFOLDS) throw new Error(MESSAGE.NotList);
   const ids = new Set<string>();

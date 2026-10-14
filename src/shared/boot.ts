@@ -32,6 +32,11 @@ export const SandboxProblemCode = {
   /** Windows: Git for Windows is not installed, so there is no Git Bash to run commands in. */
   GitMissing: "git-missing",
   /**
+   * Linux: Ubuntu's AppArmor restriction (23.10 and later) leaves bubblewrap no capabilities in
+   * its user namespace, and no profile names this copy of Genex yet.
+   */
+  UsernsRestricted: "userns-restricted",
+  /**
    * Linux: the tools are installed but the sandbox cannot start a process, most often because the
    * system lets only programs an AppArmor profile allows create user namespaces (Ubuntu 24.04 and
    * the distributions built on it).
@@ -73,6 +78,33 @@ const TOOL_PACKAGE = {
   [SandboxTool.Ripgrep]: "ripgrep",
 } as const satisfies Record<SandboxTool, string>;
 
+/**
+ * The characters AppArmor reads as a pattern, a variable, an escape or the end of a quoted name: a
+ * profile cannot name a path that holds one. The one list the check and the setup screen's copy share.
+ */
+export const APPARMOR_PATTERN_CHARACTERS = ['"', "\\", "*", "?", "[", "]", "{", "}", "^", "@"] as const;
+
+/** Ubuntu's user-namespace restriction: the AppArmor profile that lifts it for this copy of Genex. */
+export interface AppArmorFix {
+  /** The profile's file, such as `/etc/apparmor.d/genex-portable`. */
+  profile: string;
+  /** One terminal command that writes and loads it with sudo: the same install Set up runs. */
+  command: string;
+  /** One terminal command that unloads and deletes it again. */
+  remove: string;
+}
+
+/** Why Set up offers no AppArmor profile for this copy of Genex under Ubuntu's restriction. */
+export const AppArmorBlockCode = {
+  /** The path holds a character AppArmor reads as a pattern, or is not a plain absolute path. */
+  Unnamable: "unnamable",
+  /** Someone other than root and the person could replace Genex's file or one of its folders. */
+  SharedFolder: "shared-folder",
+  /** This copy's profile is installed, yet the process started without it. */
+  NotAttached: "not-attached",
+} as const;
+export type AppArmorBlockCode = (typeof AppArmorBlockCode)[keyof typeof AppArmorBlockCode];
+
 /** What stops the sandbox, and what the person can do about it. */
 export interface SandboxProblem {
   code: SandboxProblemCode;
@@ -84,6 +116,13 @@ export interface SandboxProblem {
   installCommands: InstallCommand[];
   /** sandbox-runtime's own findings, for Details. */
   details: string[];
+  /**
+   * Linux, for `UsernsRestricted`: the profile Set up installs. Absent for other problems, and when
+   * `apparmorBlock` says why there is none to install (Details name the path).
+   */
+  apparmor?: AppArmorFix;
+  /** Linux, for `UsernsRestricted` without `apparmor`: why no profile is offered. */
+  apparmorBlock?: AppArmorBlockCode;
   /** Isolation blocked by AppArmor: the command that installs a profile allowing it for this app. */
   allowCommand?: string;
 }
@@ -95,12 +134,14 @@ export interface BootState {
   sandbox: SandboxProblem | null;
 }
 
-/** How Set up (Windows) ended when it did not fail. */
+/** How Set up ended when it did not fail. */
 export const SandboxSetupOutcome = {
   /** Installed; startup ran again, and `state` says where it stands now. */
   Installed: "installed",
   /** The person dismissed the administrator prompt: nothing changed. */
   Cancelled: "cancelled",
+  /** Linux: installed, and the app restarts, since AppArmor attaches a profile only when a program starts. */
+  Restarting: "restarting",
 } as const;
 export type SandboxSetupOutcome = (typeof SandboxSetupOutcome)[keyof typeof SandboxSetupOutcome];
 

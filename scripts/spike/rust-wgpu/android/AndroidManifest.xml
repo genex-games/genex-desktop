@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M0a.16 spike only (M5.2 writes the lane's own): the pond APK's manifest for both activity
+  candidates. android-apk.sh checks it (minSdk >= 29, the required Vulkan 1.1 uses-feature) and
+  fills the @…@ fields per candidate:
+    NativeActivity: android.app.NativeActivity, hasCode false (the JNI bridge calls framework classes)
+    GameActivity:   com.google.androidgamesdk.GameActivity (games-activity 4.4.0), hasCode true,
+                    an AppCompat theme (GameActivity extends AppCompatActivity)
+  WebGPU core needs Vulkan 1.1 (0x401000) on Android; there is no GLES tier.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="@PACKAGE@"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
+
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+
+    <application
+        android:label="Pond"
+        android:hasCode="@HAS_CODE@"
+        android:extractNativeLibs="false"
+        android:allowBackup="false"
+        android:theme="@THEME@">
+        <activity
+            android:name="@ACTIVITY@"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:launchMode="singleTask">
+            <meta-data android:name="android.app.lib_name" android:value="main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

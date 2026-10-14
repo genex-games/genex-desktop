@@ -1,0 +1,279 @@
+{
+  "schema": 1,
+  "about": "The Rust stack's pinned toolchain archives (manifest.ts reads them as RUST_MANIFEST). Every URL is a durable release URL on its component's release host (RELEASE_URL_PREFIXES); each sha256 is the one scripts/spike/rust-wgpu/pins.md records from the official source's published checksum, each size the downloaded archive's (darwin-arm64) or the release host's Content-Length (linux-x64, 2026-10-06). The crate checker (cargo-deny, cargo-vet and the RustSec snapshot `crate-policy.json` pins; `scripts/toolchains/crate-policy.ts refresh` moves the snapshot) installs on demand at the person's first crate approval and is in no build lock. The vendored crate set (rust-vendor) joins once the owner publishes a `genex` release cut by `scripts/toolchains/rust-release.ts cut` and `rust-release.ts pin` adds it.",
+  "rust": {
+    "version": "1.99.0",
+    "date": "2026-10-01",
+    "channelManifestSha256": "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"
+  },
+  "entries": [
+    {
+      "id": "rust",
+      "version": "1.99.0",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0 (Rust); Apache-2.0 WITH LLVM-exception (LLVM tools)",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-aarch64-apple-darwin.tar.xz",
+          "bytes": 50296404,
+          "sha256": "334a66714ca316d71bbe5efe44f71762d0b276cea73be2987374693a837f7450",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "rustc"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-aarch64-apple-darwin.tar.xz",
+          "bytes": 8951812,
+          "sha256": "76abff0ad79a10a3152dff640ea0d8b3c37637d9300bf55da41b95c3ddc069c1",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "cargo"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-aarch64-apple-darwin.tar.xz",
+          "bytes": 2811804,
+          "sha256": "c31a0765ed31d98515a09a13b44486048873d90ac75bb1e6690a17fb36a5d4e2",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "clippy"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/llvm-tools-1.99.0-aarch64-apple-darwin.tar.xz",
+          "bytes": 26789148,
+          "sha256": "9cbaa83827e53c9bbae05fa3a36aff0832448de6d2204829b710cbc85567ad2d",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "llvm-tools"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-darwin.tar.xz",
+          "bytes": 30726892,
+          "sha256": "a7c6de8aa21e7c31163a7656295b321bb85f5dce55ed8ea95ac9ac561202bb5b",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "rust-std"
+        }
+      ]
+    },
+    {
+      "id": "rust",
+      "version": "1.99.0",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0 (Rust); Apache-2.0 WITH LLVM-exception (LLVM tools)",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 84044652,
+          "sha256": "77171ba2a0345fdf2abc4fedda55d6de078dae7a68527c28be8c77dcc9604bd5",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "rustc"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 10954432,
+          "sha256": "d7674918d28093097614cd9728b6ca60db9ea3038f640f0bd1e9a4188c7568ce",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "cargo"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 5232532,
+          "sha256": "982442e32ad8dd3f0bb3a30db74038da5f71fd9bf1a865cc71da8ea5d4ec71ec",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "clippy"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/llvm-tools-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 41019060,
+          "sha256": "91a6db5668c08ee68e330e5b0fda27c11b79b90592627e89f7c5db12af2ff0ba",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "llvm-tools"
+        },
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 31598812,
+          "sha256": "3e58dff2d0b72196b5ea4e90536e174d400de88564a52694686b81e091169933",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": "rust-std"
+        }
+      ]
+    },
+    {
+      "id": "rust-std-wasm32",
+      "version": "1.99.0",
+      "host": null,
+      "target": "web",
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-wasm32-unknown-unknown.tar.xz",
+          "bytes": 23152600,
+          "sha256": "b760b0c9b08a6843c05de0098bd6802e23178ff473c4715ae57c1d679125bf22",
+          "format": "tar.xz",
+          "strip": 2,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "wasm-bindgen",
+      "version": "0.2.129",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-aarch64-apple-darwin.tar.gz",
+          "bytes": 7925587,
+          "sha256": "81d4a23d56b3c3eb8187658329116d50e0b228a93b343825fb71f70179051cd1",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "wasm-bindgen",
+      "version": "0.2.129",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl.tar.gz",
+          "bytes": 11695824,
+          "sha256": "82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "binaryen",
+      "version": "133",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-arm64-macos.tar.gz",
+          "bytes": 7810532,
+          "sha256": "ad66da82ac13f163e424b1643f16c6dfcccc98b5966296b43e52d3cab04f84a8",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "binaryen",
+      "version": "133",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz",
+          "bytes": 111200018,
+          "sha256": "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-deny",
+      "version": "0.20.2",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-aarch64-apple-darwin.tar.gz",
+          "bytes": 4517865,
+          "sha256": "fe67d82a10d8597a3549364cb733a3f9cc1bfff9031b7ae46384a9f2a72090c3",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-deny",
+      "version": "0.20.2",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz",
+          "bytes": 4936832,
+          "sha256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-vet",
+      "version": "0.10.0",
+      "host": "darwin-arm64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.0/cargo-vet-aarch64-apple-darwin.tar.xz",
+          "bytes": 3255980,
+          "sha256": "4b6cdbb7b1287428daf4a9bb3dc83b73ceb336893dbee6df35371a2e06ced51a",
+          "format": "tar.xz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "cargo-vet",
+      "version": "0.10.0",
+      "host": "linux-x64",
+      "target": null,
+      "licence": "MIT OR Apache-2.0",
+      "archives": [
+        {
+          "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.0/cargo-vet-x86_64-unknown-linux-gnu.tar.xz",
+          "bytes": 3895488,
+          "sha256": "c7664d9db5dd2ff813f20303650ac8253fa712ff2a1ea9ce12bed71e346f1744",
+          "format": "tar.xz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    },
+    {
+      "id": "rustsec-advisory-db",
+      "version": "550efd3d587a",
+      "host": null,
+      "target": null,
+      "licence": "CC0-1.0",
+      "archives": [
+        {
+          "url": "https://github.com/rustsec/advisory-db/archive/550efd3d587a29b2e2c2b21b17a440da4fede999.tar.gz",
+          "bytes": 494628,
+          "sha256": "2b757db4827f9b974a06be9f0267114527af2d5d93395f06f90fb42eeaa89c03",
+          "format": "tar.gz",
+          "strip": 1,
+          "into": ""
+        }
+      ]
+    }
+  ]
+}

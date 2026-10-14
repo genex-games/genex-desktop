@@ -1,0 +1,13 @@
+error[E0521]: borrowed data escapes outside of closure
+  --> tests/ui/fail/demo_driver_escapes.rs:14:10
+   |
+12 |     let stash = Rc::clone(&slot);
+   |         ----- `stash` declared here, outside of the closure body
+13 |     game.demo("escape", move |driver| {
+   |                               ------ `driver` is a reference that is only valid in the closure body
+14 |         *stash.borrow_mut() = Some(driver);
+   |          ^^^^^^^^^^^^^^^^^^ `driver` escapes the closure body here
+   |
+   = note: requirement occurs because of the type `RefCell<Option<&mut genex::DemoDriver<'_, World>>>`, which makes the generic argument `Option<&mut genex::DemoDriver<'_, World>>` invariant
+   = note: the struct `RefCell<T>` is invariant over the parameter `T`
+   = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance

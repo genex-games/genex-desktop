@@ -4,8 +4,15 @@ import path from "node:path";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { ensureDir, readRegularFile, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
 import {
+  CreationError,
+  creationRefusal,
+  DestinationError,
   hudContractGeneration,
   isImageFile,
+  readOnlyRefusal,
+  readProjectShape,
+  ScaffoldCaller,
+  type ScaffoldOptions,
   shippedHudGeneration,
   shippedStudioGeneration,
   studioContractGeneration,
@@ -13,7 +20,17 @@ import {
 } from "../../substrate/game-workspace.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
 import { starterOfKind } from "../../shared/project-facts.ts";
-import type { AttachReport } from "../../shared/game-project.ts";
+import {
+  type AttachReport,
+  BuildTarget,
+  type CompiledStack,
+  GameStack,
+  isCompiledStack,
+  ProjectKind,
+  stackOf,
+} from "../../shared/game-project.ts";
+import { TargetRefusal } from "../../shared/game-targets.ts";
+import { NativeError, NativeRefusal } from "../../shared/native-contract.ts";
 import {
   HostMethod,
   type HarnessHostHandlers,
@@ -22,9 +39,13 @@ import {
 } from "../../shared/harness-api.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
+import { keptPreRustParts, type SeedDirs, seedNightRefusal } from "../../substrate/seed-upgrade.ts";
 import { git } from "../../substrate/snapshots.ts";
+import { keptPreRustNotice } from "../seed-upgrade-notice.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
+import { developmentStacksOpen } from "../core/stack-gate.ts";
 import { attachReport, noAttachment, str } from "../core/page-report.ts";
+import { ExportCaller, exportDestinationOf, exportDirFor, exportSigningFor } from "../core/native-export-run.ts";
 import { startHeldInPlan } from "../core/project-tools.ts";
 import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
 
@@ -41,6 +62,24 @@ const MESSAGE = {
   exportOutsideExports: (target: string) =>
     `refused: game.export writes only into the studio's exports folder: ${target}`,
   onlyBrowserGames: "Only browser-game scaffolding is supported in this build.",
+  /** A compiled game keeps its own contract, named in its stack's terms. */
+  contractKept: {
+    [GameStack.RaylibCpp]:
+      "a C++ · raylib game keeps its own C++ contract (src/studio.h and studio::install); the JavaScript contract upgrade does not apply",
+    [GameStack.RustWgpu]:
+      "a Rust · wgpu game keeps its own Rust contract (genex::install(game) at the end of main in src/main.rs, written against the read-only docs/GENEX_API.md); the JavaScript contract upgrade does not apply",
+  } satisfies Record<CompiledStack, string>,
+  stackGated: "Rust games aren't available in this version of Genex yet.",
+  /**
+   * A new C++ · raylib game asked for: only a harness from before Rust games still asks. Names the
+   * kept modules when the workspace has any, each to re-take.
+   */
+  raylibRetired: (kept: readonly string[]) =>
+    `raylib-creation-retired: new C++ · raylib games can't be made any more (existing ones still open, build and export). Scaffold a Rust · wgpu game instead (kind: rust-wgpu). ${
+      kept.length > 0
+        ? `This harness keeps modules edited before Rust games, which still ask for raylib: ${kept.join(", ")}. Re-take the seed copy of each; the edit is kept as a patch to carry over.`
+        : "A harness copy from before Rust games asks for raylib: re-take the seed copy of its game tools and intake."
+    }`,
   imageTooLarge: (file: string) => `${file} is larger than ${MAX_IMAGE_READ_MB} MB`,
   imageNotJudgeable: (file: string, what: string) =>
     `${file} is ${what}, which the judges cannot read — re-save it as JPEG or PNG`,
@@ -104,6 +143,30 @@ async function assertExportTarget(core: StudioCore, target: string): Promise<voi
   const real = await realpathNearest(target);
   const exportsRoot = await realpathNearest(core.layout.exports);
   if (!isBelow(exportsRoot, real)) throw new Error(MESSAGE.exportOutsideExports(target));
+}
+
+/**
+ * `game.export`: the destination and signing are checked before anything runs (a build target;
+ * none or ad hoc, never an identity: `harness-may-not-sign`), then the folder (TQ-1). A three.js
+ * game's browser folder is exported as it always was; a compiled game (C++, Rust), or any named
+ * desktop destination, through `exportPublicCopy`, which builds through its lane first or refuses
+ * `build-failed`: a compiled game's folder is never exported as it stands.
+ */
+async function harnessExport(
+  core: StudioCore,
+  x: CoreInternals,
+  p: HarnessParams<typeof HostMethod.GameExport>,
+): Promise<HarnessResult<typeof HostMethod.GameExport>> {
+  const destination = exportDestinationOf(p.destination);
+  const signing = exportSigningFor(destination, p.signing, ExportCaller.Harness);
+  await x.assertHarnessRoot(p.project, null);
+  if (p.target !== undefined && p.target !== null) await assertExportTarget(core, String(p.target));
+  const target = p.target ?? exportDirFor(core.layout.exports, p.project, destination);
+  const compiled = isCompiledStack(stackOf(await readProjectShape(core.games.dirFor(p.project))));
+  if (compiled || destination !== BuildTarget.Web) {
+    return core.exportPublicCopy(p.project, target, { destination, signing });
+  }
+  return core.games.export(p.project, target, undefined, { secretValues: core.knownSecretValues() });
 }
 
 export function gameRpc(core: StudioCore, x: CoreInternals) {
@@ -171,17 +234,86 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
     },
     [HostMethod.GameTree]: async (p) =>
       p.candidateId ? core.candidates.tree(p.candidateId, p.project) : x.delegation.gameTree(p.project),
-    [HostMethod.GameExport]: async (p) => {
-      await x.assertHarnessRoot(p.project, null);
-      if (p.target !== undefined && p.target !== null) await assertExportTarget(core, String(p.target));
-      return core.games.export(p.project, p.target ?? path.join(core.layout.exports, p.project), undefined, {
-        secretValues: core.knownSecretValues(),
-      });
-    },
+    [HostMethod.GameExport]: async (p) => harnessExport(core, x, p),
     // The stills in <project>/references/, sniffed and resized, for a run whose board is
     // empty (a resume, or a board attached in an earlier chat).
     [HostMethod.GameReferences]: async (p) => core.referenceStills(p.project, { max: p?.max, maxPx: p?.maxPx }),
   } satisfies Partial<HarnessHostHandlers>;
+}
+
+/**
+ * What `game.scaffold` asks the library for, as the harness ({@link ScaffoldCaller.Harness}). A
+ * C++ · raylib request, by kind or by destinations naming a desktop and no kind (how a pre-Rust
+ * harness asked for one), is passed on as raylib: the library returns an existing raylib game of
+ * that name and refuses a new one `raylib-creation-retired`. The Rust · wgpu template for its kind
+ * only where the development gate is open (`stack-gated` before the library is asked elsewhere);
+ * the Three.js template for the studio template's kind, so an existing game of another stack is
+ * refused (`stack-is-fixed`); the web starter's kind (`web`, or an older caller's
+ * `studio-template`) or destinations alone ask for the Three.js template. With no kind and no
+ * destinations, null: a game with no kind yet (`makeEmpty`). Any other kind is refused in the
+ * words it always was.
+ */
+function scaffoldOptions(
+  p: HarnessParams<typeof HostMethod.GameScaffold>,
+  gateOpen: boolean,
+): Partial<ScaffoldOptions> | null {
+  const title = p.title ? { title: p.title } : {};
+  const targets = p.targets ? { targets: p.targets } : {};
+  const caller = { caller: ScaffoldCaller.Harness };
+  const asksRaylib = p.kind === ProjectKind.RaylibCpp || (!p.kind && creationRefusal({ targets: p.targets }) !== null);
+  if (asksRaylib) return { ...title, stack: GameStack.RaylibCpp, ...targets, ...caller };
+  if (p.kind === ProjectKind.RustWgpu) {
+    if (!gateOpen) throw new DestinationError(TargetRefusal.StackGated, MESSAGE.stackGated);
+    return { ...title, stack: GameStack.RustWgpu, ...targets, ...caller };
+  }
+  const starter = starterOfKind(p.kind);
+  if (starter === undefined) throw new Error(MESSAGE.onlyBrowserGames);
+  // Destinations named for a browser game are checked by the library: a desktop one is refused.
+  if (starter || p.targets) return { ...title, stack: GameStack.ThreeJs, ...targets, ...caller };
+  // No kind makes a game with no kind yet; the web starter only when the caller names it.
+  return null;
+}
+
+/**
+ * `game.scaffold` refused for the harness workspace (`harness-predates-native`): typed by `code`,
+ * as the scaffold's other refusals are (`stack-gated`, `raylib-creation-retired`), and by
+ * `refusal`, as the lease it stands in for would have been.
+ */
+class ScaffoldPredatesRust extends NativeError {
+  readonly code: NativeRefusal;
+
+  constructor(message: string) {
+    super(NativeRefusal.HarnessPredatesNative, message);
+    this.code = this.refusal;
+  }
+}
+
+/** Where the harness is read: the seed the app ships, and the agent's workspace copy of it. */
+function seedDirs(core: StudioCore): SeedDirs {
+  return { seedDir: path.join(core.options.paths.resources, "harness-seed"), workspaceDir: core.layout.harnessWs };
+}
+
+/**
+ * The library's scaffold as the harness asks it. A new Rust · wgpu folder is never made for a
+ * harness workspace that kept a part a Rust night runs from before Rust games: its lease would be
+ * refused, so the scaffold is refused first (`harness-predates-native`, naming each kept module
+ * and its re-take), before any folder exists. A retired raylib request is answered in the
+ * harness's terms: the kind to ask for instead, and the kept modules to re-take.
+ */
+async function scaffoldAsHarness(core: StudioCore, p: HarnessParams<typeof HostMethod.GameScaffold>) {
+  const options = scaffoldOptions(p, developmentStacksOpen(core.options));
+  if (options === null) return core.games.makeEmpty(p.name, p.title ? { title: p.title } : {});
+  if (options.stack === GameStack.RustWgpu) {
+    const notice = keptPreRustNotice(await seedNightRefusal(GameStack.RustWgpu, seedDirs(core)));
+    if (notice) throw new ScaffoldPredatesRust(notice.text);
+  }
+  try {
+    return await core.games.scaffold(p.name, options);
+  } catch (error) {
+    if (!(error instanceof CreationError)) throw error;
+    const kept = await keptPreRustParts(seedDirs(core)).catch(() => []);
+    throw new CreationError(error.code, MESSAGE.raylibRetired(kept));
+  }
 }
 
 async function scaffold(
@@ -189,12 +321,7 @@ async function scaffold(
   x: CoreInternals,
   p: HarnessParams<typeof HostMethod.GameScaffold>,
 ): Promise<HarnessResult<typeof HostMethod.GameScaffold>> {
-  // No kind makes a game with no kind yet; the web starter only when the caller names it.
-  const starter = starterOfKind(p.kind);
-  if (starter === undefined) throw new Error(MESSAGE.onlyBrowserGames);
-  const options = p.title ? { title: p.title } : {};
-  const made = starter ? await core.games.scaffold(p.name, options) : await core.games.makeEmpty(p.name, options);
-  const project = await x.readyProject(made);
+  const project = await x.readyProject(await scaffoldAsHarness(core, p));
   // A brief sent from an unbound "new game" thread names that thread the moment the
   // folder exists — the chat and the project become one thing.
   if (p.threadId && p.threadId !== core.mainThread) {
@@ -255,6 +382,13 @@ async function readImage(target: string, file: string) {
 
 async function upgradeContract(core: StudioCore, project: string): Promise<HarnessResult<"game.upgradeContract">> {
   const dir = core.games.dirFor(project);
+  const shape = await readProjectShape(dir);
+  // Before any write: a newer Genex's game is read-only, and the JavaScript contract, its
+  // companions and its page have no place in a compiled game.
+  const readOnly = readOnlyRefusal(shape);
+  if (readOnly) throw readOnly;
+  const stack = stackOf(shape);
+  if (isCompiledStack(stack)) return { upgraded: false, reason: MESSAGE.contractKept[stack] };
   const own = await isOwnShape(core, project);
   const materialsAdded = await addCompanionFiles(core, dir);
   await addContractPage(own, dir, core.games.templateDir);

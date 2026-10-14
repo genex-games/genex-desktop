@@ -629,7 +629,147 @@ Unattended deny rules now actually apply (they were relative before and guarded 
 Loop run must confirm the two known changes: builders can no longer read sibling worktrees under
 `scratch/autopilot/<run>/`, and optimization candidates now read the live game.
 
+## Devices and emulators
+
+Containment stage 1 (policy for the whole Rust runtime milestone sequence): **no agent-driven
+device runs.** A Simulator app is a host process on the host network, an emulator guest reaches the
+host's loopback and the internet, and a phone runs agent-generated code outside `ProcessSandbox`,
+so agents never start any of them. Agents build and admit mobile binaries and judge gameplay on the
+Mac or web build of the same code; mobile rows record build-and-admit only.
+
+- **The one exception** to "every game process goes through ProcessSandbox": a person launching an
+  admitted mobile build in the Simulator, an emulator or on a phone, from Studio. It is a
+  person-initiated Studio action (`studio:native.launchDevice`, classified native in
+  `native-policy.ts`, recorded as `device_launch`) with no harness call behind it. It installs only
+  a package the host built and admitted, from a host-owned folder, checked against the admission's
+  digest and copied to a private folder first. The export lane packages phones (`game.export` may
+  make a Simulator app or a development APK, never an IPA or an AAB: `harness-may-not-sign`); each
+  Simulator app or development APK is copied from the export's host-only staging into Studio's phone
+  package folder with its digest before it reaches the exports folder, and that copy is what a
+  launch installs (an iPhone launch and a game never exported are refused `unsupported`). No harness method leases, starts or reaches
+  a device, simulator or emulator, and a lease asks for a host-native or web destination only (a
+  phone destination is refused `not-runnable-here`); `harness-api.test.ts` fails if a member of
+  that kind appears.
+- **What the sandbox enforces** ([architecture](agent/architecture.md#processes-and-trust-boundaries))
+  for commands run through `ProcessSandbox` (the harness, Bonsai, builds): they cannot read the
+  phone credential homes (including the emulator's discovery files with its gRPC token) or the
+  SDK's `platform-tools` and `emulator` folders, and the SDK's `adb` and `emulator` are dropped
+  from `PATH`. The ports differ by platform. On macOS, Seatbelt denies the adb server (5037) and
+  the emulator console, adb and gRPC ports (5554-5585, 8554-8585) on IPv4 and IPv6 loopback, and
+  no program under those SDK folders or Homebrew's adb cask starts. On Linux the command's own
+  network namespace hides the host's loopback (proven by the Linux CI row only). Windows has no
+  port rule in stage 1, and denies only the credential folders that exist when the session
+  starts; it denies a device-tool folder by everything at its top, not the folder itself,
+  because srt-win's deny rewrites the parent's ACL over its whole tree, and for the folder that
+  parent is the SDK root (161 s per start on GitHub's runner, past srt-win's 60 s limit). A
+  game's own box never had those routes.
+- **Unattended Claude Code contractors** get the same read denies in Claude Code's own sandbox, and
+  a C++ session's `PATH` loses the SDK's device tools; that sandbox grants no local binding, so
+  its loopback reaches only its own proxy.
+- **Stage 2** (contained emulator leases) comes only after the mobile qualification milestone, and
+  only if judging gameplay on mobile proves impossible from the Mac or web build. It would need its
+  own review: a host-started emulator with networking off or filtered, a host-private adb server
+  and an authenticated transport. Simulator leases would stay off. Until then adding a device or
+  emulator method to the harness is a design change, not a feature.
+
+## Crate requests
+
+A Rust · wgpu game builds against the genex facade and a reviewed allowlist of crates. An agent
+that needs another crate asks for it; only the person decides (extension ladder level 4).
+
+- **The agent asks.** `request_crate` (harness `crates.request`) names one crate at one exact
+  version and why, for a Rust game the harness may work on (inside its allowed project root, never
+  a read-only game). It answers the request's id and state and never approves anything. The ask is
+  a `[[crate_request]]` row in `genex.toml` and a `crate_request` event.
+- **The person decides** in Settings → Toolchains and the Rust toolchain sheet (`studio:crates.list`, fixture-safe, and
+  `studio:crates.decide`, native and refused in fixture profiles). The shipped policy
+  (`native/genex-rust/crate-policy.json`, mode `person-decides`, its sha256 pinned in
+  `crate-policy.ts`) makes the approval the deciding vote, with three automatic refusals: a RustSec
+  advisory of the pinned snapshot (`crate-advisory`; withdrawn and informational `unmaintained`
+  ones pass, as the policy's rule says), a licence outside deny.toml's allow list
+  (`crate-licence`) and a banned crate (`crate-banned`), each anywhere in the closure. A licence
+  the host's manifest reader cannot read as cargo would, or a `license-file` that is not the
+  crate's own regular file, is refused `crate-licence` before any checker runs. The trusted
+  sources' cargo-vet audits (Bytecode Alliance, Embark, Google, Mozilla, Zcash) are shown and never
+  refuse: a crate the asked sources left unaudited is added with the `crate-unaudited` notice, and
+  one checked while no source's list is installed (the shipped policy pins none yet) with
+  `crate-no-audit-lists`. Build scripts and proc macros need their own approval. The closure is
+  read only after the approval (crates.io is reached on the person's approval alone), so a waiting
+  request says its checks come then. A decided request names the crate a check stopped (the
+  requested one or one it brings in, with the advisory or licence), the advisories as of the
+  snapshot's day, each source's audit, the flags and, behind "How it was checked", the engines.
+  A crate the engine already uses (in the store's lock, off the reviewed list) is refused
+  `crate-engine-internal`: a game reaches it only through the facade.
+- **On approval the host vendors it** for that profile only. A policy that is not the pinned one
+  refuses `crate-policy-tampered` before anything is fetched. The index entry and archives come
+  through crates.io with a deadline and a size cap per fetch, into the shared verified download
+  cache; an offline job unpacks (capped per crate and per closure) and reads each manifest (an
+  unreadable one counts as a build script and a proc macro) in the main process. The checks run
+  the store's pinned cargo-deny and cargo-vet (installed with the RustSec snapshot on the first
+  approval, in no build lock) in a sandbox that writes only the job's `.check/` folder, adds no
+  domain and closes loopback (a domain another run opens meanwhile stays reachable: see the
+  architecture's residual risks); they read host-written `cargo metadata`, so no cargo runs, and
+  the host writes everything they read before the first runs and nothing after. Without them
+  nothing is judged: the request waits for the person again, marked `crate-checker-unavailable`
+  (not installed, offline) or `crate-check-failed` (the installed checker timed out, gave no
+  readable answer or met a snapshot it will not copy); the TypeScript copy of the rules is the
+  fixture profiles' and the tests' engine only. Each verdict and decision event names its engine. What passes joins
+  the profile's overlay under a digest manifest.
+- **The build** uses the overlay only for the game it was approved for. A declined crate is refused
+  `crate-declined`, and a tampered overlay `crate-overlay-tampered`, both typed on the lane's
+  report (`rust.crate`) before any sandbox opens.
+- **Vendoring never loosens a sandbox.** An approved closure joins the overlay as data: the
+  build that uses it runs in the same offline, network-denied build sandbox as every Rust build,
+  and a crate's build script or proc macro still needs its own approval.
+
+## Eject and the trust flag
+
+Extension ladder level 5 is the person's alone, in Studio's window; no harness method, tool,
+game file or `genex.toml` key reaches it, so an agent can only suggest it in chat.
+
+- **Eject** (`studio:engine.eject`, native and refused in fixture profiles) copies the game's
+  lock-line genex crates into its `engine/` after checking each against cargo's checksums
+  (`eject-source-tampered`, `eject-lock-missing`, `eject-target-exists`, nothing written). The
+  copy is made in the profile's scratch folder, outside every root an agent writes, and renamed
+  into the game whole. Eject is offered only on a Mac for a game naming macOS
+  (`eject-needs-mac`): the conformance suite judges the Mac build. The person's eject is recorded
+  in the profile's `engine-ejects.json`, keyed by the folder's identity like the trust flag; the
+  build links a fork only where `genex.toml`'s `[engine]` row names that record's release, so a
+  row and `engine/` an agent wrote itself, or a row it removed, are refused `engine-unrecorded`.
+  The host writes the forked crates' `Cargo.toml` files at each build, so the engine's own build
+  scripts and proc macros never build, trusted or not (trust covers the game's own `build.rs`
+  only); `engine/**` is the entry owner's in the ownership hook and the seed reviewer.
+  **Un-eject** (`studio:engine.uneject`) snapshots the game first, then clears the record.
+- **The trust flag** (`studio:engine.setTrust`, native; read with `studio:engine.state`,
+  fixture-safe) lives in the profile's `engine-trust.json`, keyed by the game folder's identity,
+  so a copied or re-imported game starts untrusted. A game whose own files claim trust is
+  refused `trust-person-only`. On, the lane drops `-F unsafe_code` and stages the game's own
+  `build.rs` through its own handle; off, `unsafe` fails `unsafe-code` and a build script
+  `build-script-refused` before cargo runs. The build and game sandboxes are byte-identical
+  either way: no network, writes only inside the build folder (`rust-trust.test.ts`).
+- **Conformance gate.** Live's run, an agent's run and every export of an ejected game wait for
+  a green `conformance_run` on the build they would use (`conformance-required`); the suite's own
+  runs (`check_conformance`) are the only ones the gate lets through. Only the host writes a
+  `conformance_run`, `engine_ejected` or `game_trust` record: a harness append of one is refused.
+  An export (web and phones included) is vouched for by the Mac judging build of the same sources.
+  The browser preview of an ejected game is not gated: it runs inside the Chromium renderer's
+  sandbox, and the native Live run beside it is.
+
 ## Residual risks
+
+- The conformance gate of an ejected game does not judge Live's ring yet: every caller reports the
+  `live-ring` check `unavailable` until the frames-host probe lands, and a green run counts it so.
+  An export is gated on the Mac judging build's digest, while the export compiles its own build:
+  an `engine/` edit between the two ships sources the suite did not judge.
+
+- Every Rust build sandbox, trusted or not, may still connect to services on this Mac (loopback
+  and its own LAN address): `ProcessSandbox` always allows local binding. Other hosts are refused.
+
+- Containment stage 1 does not reach every agent shell (C1): a Codex contractor's sandbox reads the
+  whole disk, phone credential homes included; a chat session that asks (Auto, Bypass) runs its
+  commands with the person's access after asking; and a Claude Code contractor can still start a
+  compiled `adb` by its full path, since Claude Code's sandbox has no exec deny (its loopback deny
+  still keeps it from any adb server or emulator).
 
 - Codex cannot ask mid-turn: Manual and Accept edits are unavailable for it until it runs over a
   protocol that asks (`codex app-server`), and a chat in either runs Codex in Auto's sandbox. Its

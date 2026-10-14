@@ -21,6 +21,7 @@ import { ResultButton } from "../../src/renderer/ui/ResultButton.tsx";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { EventKind, ThreadKind, type EventEnvelope } from "../../src/shared/event-log.ts";
 import { ProjectAssetScope, type ProjectAssetRead } from "../../src/shared/game-assets.ts";
+import { BuildTarget } from "../../src/shared/game-project.ts";
 import { GenexAction, type GenexCoverRecord, GenexCoverOutcome, type GenexPublishState } from "../../src/shared/genex.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import { CaptureSource, StillMimeType } from "../../src/shared/preview-contract.ts";
@@ -296,6 +297,7 @@ function render(events: EventEnvelope[]) {
             <PluginToolbar
               plugins={plugins}
               project={GAME}
+              destinations={[BuildTarget.Web]}
               facts={WEB_GAME}
               emptyGame={false}
               onNotice={noop}

@@ -3,12 +3,6 @@
  * being built, and the game's reference frames. Every still itself is read through `stills.ts`.
  */
 import { useEffect, useState } from "react";
-import { SECOND_MS } from "../../shared/duration.ts";
-import { type RunGraph, runIdOf } from "../run-graph.ts";
-import { loadStill, useStill } from "../stills.ts";
-
-/** How often a round still in hand looks for a newer saved frame. */
-const LIVE_FRAME_POLL_MS = 5 * SECOND_MS;
 
 /**
  * Reads now and, while `again`, once more `everyMs` after each read settles, until the returned
@@ -84,39 +78,6 @@ export function readRoundPreview(request: BuildPreviewRequest, active: boolean):
     if (oldest !== undefined) finishedPreviews.delete(oldest);
   }
   return pending;
-}
-
-/**
- * What a round looks like: its judged still when it has one, else the newest frame the builder
- * saved — polled while the round is in hand, because that frame changes as it works.
- */
-export function useRoundStill(
-  graph: Pick<RunGraph, "runId">,
-  facetId: string,
-  iteration: number,
-  shot: string | null,
-  active: boolean,
-): string | null {
-  const judged = useStill(shot ? { run: shot, maxPx: 640 } : null);
-  const [live, setLive] = useState<string | null>(null);
-  // A chat turn's graph has no run whose saved frames could be asked for.
-  const runId = runIdOf(graph);
-  useEffect(() => {
-    setLive(null);
-    // No part named: nothing to ask for (a caller whose picture comes from elsewhere).
-    if (shot || !facetId || !runId) return;
-    const read = async (isCurrent: () => boolean): Promise<void> => {
-      try {
-        const frame = await readRoundPreview({ runId, facetId, iteration }, active);
-        const src = frame ? await loadStill({ run: frame.path, version: frame.capturedAt, maxPx: 640 }) : null;
-        if (isCurrent() && src) setLive(src);
-      } catch {
-        /* no frame yet */
-      }
-    };
-    return pollWhile(read, active, LIVE_FRAME_POLL_MS);
-  }, [runId, facetId, iteration, shot, active]);
-  return judged ?? live;
 }
 
 export interface ReferenceFrame {

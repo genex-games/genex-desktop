@@ -1,0 +1,44 @@
+{
+  "id": "raylib.seeded-step",
+  "runtime": "raylib-cpp",
+  "title": "Seeded randomness, the fixed tick and a probe per mechanic, in C++",
+  "tags": [
+    "rng",
+    "seed",
+    "deterministic",
+    "step",
+    "tick",
+    "probe",
+    "state",
+    "player",
+    "moved",
+    "demo",
+    "contract",
+    "raylib",
+    "cpp"
+  ],
+  "checkClass": "probe",
+  "kind": "technique",
+  "pack": "raylib",
+  "note": "ctx.rng, ctx.dt and probes() in C++: what makes a raylib build measurable and the same on every destination.",
+  "intent": "The same seed must give the same game on the web, the Mac, Windows and Linux. Every random number comes from ctx.rng (seeded by reset(seed)), time comes only from dt in update(dt, ctx), and input only from ctx.keys, ctx.look, ctx.pointer and ctx.pads inside update: the studio steps the game by hand and injects its keys there, so anything read from the clock or from raylib's own input functions is invisible to every judge. Reset rebuilds the whole world from the seed. probes() returns one truthful leaf per mechanic that exists (score, phase, counts), player() returns the real pose so the harness can tell the controls work, and a Demo drives a mechanic a generic walk cannot reach to an end state a probe can verify.",
+  "sketch": "// src/<facet>.cpp — the facet's own file; src/main.cpp adds one wiring line:\n//   void wire_dash(studio::Game&); wire_dash(game);\n#include \"studio.h\"\n\nnamespace {\nstruct Dash { Vector3 at{}; float cooldown = 0; int dashes = 0; };\nDash dash;\n}  // namespace\n\nvoid wire_dash(studio::Game& game) {\n  auto reset = game.reset;\n  game.reset = [reset](int seed) {\n    if (reset) reset(seed);\n    dash = Dash{};\n  };\n  auto update = game.update;\n  game.update = [update](float dt, const studio::Ctx& ctx) {\n    if (update) update(dt, ctx);\n    dash.cooldown = dash.cooldown > dt ? dash.cooldown - dt : 0;\n    if (ctx.keys.pressed(\"Space\") && dash.cooldown == 0) {\n      dash.at.x += ctx.rng.nextFloat(2.0f, 3.0f);  // the seeded stream, the same on every destination\n      dash.cooldown = 0.5f;\n      dash.dashes += 1;\n    }\n  };\n  auto probes = game.probes;\n  game.probes = [probes] {\n    json::Value out = probes ? probes() : json::Value::object();\n    out.set(\"dashes\", dash.dashes);\n    return out;\n  };\n}\n",
+  "port": "A facet owns src/<slug>.cpp and adds exactly one line inside the FACET WIRING block of src/main.cpp; only the facet that owns main edits src/main.cpp, src/studio.* or CMakeLists.txt.",
+  "evidence": [
+    {
+      "source": "src/game-template-cpp/CLAUDE.md (C++ template, wave 1)",
+      "note": "Randomness only from ctx.rng; time only from dt; read input only from ctx.keys/look/wheel/pointer/pads/text inside update(dt, ctx)."
+    },
+    {
+      "source": "src/game-template-cpp/docs/CONTRACT.md",
+      "note": "probes() is what state().<name> checks read; player() is {x, y, z, yaw?} or null; a Demo ends paused."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

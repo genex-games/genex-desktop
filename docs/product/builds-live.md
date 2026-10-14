@@ -19,7 +19,7 @@ Live. Files and images opened from the chat get closable tabs.
 
 **Live** plays the browser game in a native view; unwatched previews pause. The strip
 holds Live/Builds/Assets, Play/Stop, Reload, the sound switch (⌥⌘M; only a shown Live is heard),
-Full screen (hold Esc) and plugin actions such as Publish. Stop halts it until Play
+Full screen (hold Esc) and plugin actions (Publish). Stop halts it until Play
 or Reload. An empty scaffold shows “Ready for your first idea”, or
 “Building your game” with Watch progress, then Play latest; the first healthy build shows itself.
 Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
@@ -29,20 +29,22 @@ in at once. The
 preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
+**Compiled games** (C++ · raylib; Rust · wgpu on an Apple-silicon Mac or Linux x64) build per
+destination in the sandbox; **Web | Native** shows the Mac build in Live. Rust needs WebGPU. Only your
+**On a device** press installs a phone build ([feature map](../agent/feature-map.md)).
+
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
 hangs below. Tries a pause cut off show Paused until added. An eye marks (and opens) the reviewers'
 notes. A new build is “Checking it starts…” until it has run. A working node shows its agent's
 screen; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
 Earlier builds open from chat cards. A Loop in place draws the lead's save points on one row
-(no eye). A Loop's lead, workers, jobs or a claim make a tree: the lead (jobs below), a row per
-worker, then the finish check, tinted by state (Checking, Not yet with reasons and round of 3, Done,
-Stopped; a chat line each round). Finished workers stand on the line, others are ghosts. A chat
-message's workers get a graph while newest.
+(no eye). A Loop's lead, workers and jobs make a tree ending in the finish check (Checking, Not
+yet, Done or Stopped; [feature map](../agent/feature-map.md)); a chat message's workers get a graph.
 
 Agents test in hidden windows, never Live; chat frames never certify a build. A finished
 worker, passing checks, integration and Live's revision are distinct facts; Builds and Studio
-report missing checks, coverage and revisions; chat shows a delivery's capture, failures too.
+report missing checks and coverage limits.
 
 ## Continuation and interruption
 

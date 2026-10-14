@@ -1,0 +1,41 @@
+{
+  "id": "rust.touch-first",
+  "runtime": "rust-wgpu",
+  "title": "One touch path for desktop and phone, injected by demos, in Rust",
+  "tags": [
+    "touch",
+    "tap",
+    "input",
+    "phone",
+    "mobile",
+    "ios",
+    "android",
+    "pointer",
+    "click",
+    "controls",
+    "demo",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "play",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Read ctx.touches for every pointer action: the mouse's first button is touch 0, and a demo injects fingers with Input::touch_start/end.",
+  "intent": "Touch is the first-class pointer on every destination: ctx.touches.all() lists this tick's fingers with stable ids, world positions in pixels (y down) and a phase (Began, Held, Ended, Tapped), and the mouse's first button arrives as touch 0. Write one touch path for each action and do not also read ctx.pointer for it, give every action a way to reach it without a keyboard, and keep tap targets large. A demo plays it the way the checks do: Input::touch_start(id, x, y) and Input::touch_end(id, x, y) injected through the demo driver, then advance_ms, then return a value a probe can verify.",
+  "sketch": "use genex::prelude::*;\n\npub fn wire(game: &mut Game<super::World>) {\n    game.on_update(|sim, ctx| {\n        if ctx.touches.tapped() || ctx.keys.pressed(Key::Space) {\n            sim.world.casts += 1; // the same action from a finger, the mouse (touch 0) or the keyboard\n        }\n    });\n    game.demo(\"cast\", |driver| {\n        driver.inject(Input::touch_start(0, 480.0, 270.0).and(Input::touch_end(0, 480.0, 270.0)));\n        driver.advance_ms(500);\n        json!({ \"casts\": driver.sim().world.casts })\n    });\n}\n",
+  "port": "Each facet reads the touches for its own actions inside its own on_update; the entry owner decides what a tap means where two facets' targets overlap.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Ctx: Touch)",
+      "note": "ctx.touches with stable ids and phases; the mouse's first button is touch 0; Input::touch_start/move/end inject a finger."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

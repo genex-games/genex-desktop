@@ -4,9 +4,21 @@
  * evaluate arbitrary code or touch the filesystem. The calls are built in `studio-bridge.ts`, typed
  * by the channel map in `shared/ipc-channels.ts`.
  */
-import { contextBridge, ipcRenderer } from "electron";
-import { createStudioBridge } from "./studio-bridge.ts";
+import { contextBridge, ipcRenderer, sharedTexture } from "electron";
+import { type BridgeFrames, createStudioBridge } from "./studio-bridge.ts";
 
-contextBridge.exposeInMainWorld("studio", createStudioBridge(ipcRenderer));
+/** Whether this Electron has a `sharedTexture` the bridge can receive Live's embedded frames through. */
+function hasFramesReceiver(candidate: unknown): candidate is BridgeFrames {
+  return (
+    typeof candidate === "object" &&
+    candidate !== null &&
+    "setSharedTextureReceiver" in candidate &&
+    typeof candidate.setSharedTextureReceiver === "function"
+  );
+}
+
+// The frames receiver is registered here, at load, before main can send a frame (studio-bridge.ts).
+const frames = hasFramesReceiver(sharedTexture) ? sharedTexture : undefined;
+contextBridge.exposeInMainWorld("studio", createStudioBridge(ipcRenderer, frames));
 
 export type { StudioApi } from "../shared/studio-api.ts";

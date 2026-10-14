@@ -1,0 +1,25 @@
+# M0a.8 spike link probe (not shipped): calls cpal and gilrs so the Linux 2.28 cross build really
+# links libasound and libudev (the runtime crates do not call them yet: TODO(M2.7), TODO(M2.8)).
+# Its own workspace with registry dependencies only, so it can share the cargo target dir with
+# native/genex-rust without a path crate being built twice under one name. It builds through the
+# env helper with GENEX_SPIKE_WORKSPACE pointing here, offline and locked against the vendored
+# crates (Cargo.lock seeded from the runtime workspace's lock: the same versions).
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "genex-link-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[dependencies]
+cpal = "0.18.2"
+gilrs = "0.11.2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

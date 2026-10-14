@@ -223,19 +223,14 @@ test("the real host stores approval before dispatch and keeps 15-minute Loop set
   const { StudioCore } = await import("../../src/main/studio-core.ts");
   const { fixtureEngines } = await import("../../src/main/dev/fixtures.ts");
   const { makeResources } = await import("../helpers/studio-rig.ts");
-  const fs = await import("node:fs/promises"),
-    path = await import("node:path"),
-    os = await import("node:os");
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-composer-review-"));
+  const { tmpDir } = await import("../helpers/tmp.ts");
+  const root = await tmpDir("studio-composer-review-");
   const core = new StudioCore({
     paths: { userData: root, resources: await makeResources() },
     engines: fixtureEngines(),
     executionPolicy: { runBackgroundImprovement: false },
   });
-  t.after(async () => {
-    await core.stop();
-    await fs.rm(root, { recursive: true, force: true });
-  });
+  t.after(() => core.stop());
   await core.init();
   const thread = await core.createGameThread();
   const dispatched: unknown[] = [];
@@ -271,20 +266,14 @@ test("each provider plans with current plugin capabilities without executable to
   const { StudioCore } = await import("../../src/main/studio-core.ts");
   const { fixtureEngines } = await import("../../src/main/dev/fixtures.ts");
   const { makeResources } = await import("../helpers/studio-rig.ts");
-  const fs = await import("node:fs/promises"),
-    path = await import("node:path"),
-    os = await import("node:os");
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-planning-tools-"));
+  const { tmpDir } = await import("../helpers/tmp.ts");
+  const root = await tmpDir("studio-planning-tools-");
   const core = new StudioCore({
     paths: { userData: root, resources: await makeResources() },
     engines: fixtureEngines(),
     executionPolicy: { runBackgroundImprovement: false },
   });
-  t.after(async () => {
-    await core.stop();
-    // A late harness git write can still land in .git/info while the tree is removed (ENOTEMPTY).
-    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  });
+  t.after(() => core.stop());
   await core.init();
   const thread = await core.createGameThread();
   const engines = core.engines.all();

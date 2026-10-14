@@ -4,6 +4,11 @@
  * listed in NOTICE.md. A package that ships no license file must have a section in
  * THIRD-PARTY-NOTICES.md (shipped as PROJECT-SOURCES.md), and every library three.js vendors in
  * `examples/jsm/libs` must be listed there too. A gap stops the build, before anything is written.
+ * The Rust · wgpu asset importer's WebAssembly decoders and the egui fonts the Rust HUD compiles in
+ * are held to the same page (`assertImportDecodersListed`, `assertEguiFontsListed`), and so are the
+ * Rust games' own inputs: every crate the shipped lock line resolves from the registry
+ * (`assertRustCratesListed`) and the toolchain runtime every Rust game links
+ * (`assertRustToolchainRuntimeListed`, the parts in `RUST_TOOLCHAIN_RUNTIME`).
  */
 import fs from "node:fs";
 import { cp, mkdir, writeFile } from "node:fs/promises";
@@ -11,6 +16,36 @@ import path from "node:path";
 
 /** The heading of THIRD-PARTY-NOTICES.md's table of three.js's vendored libraries. */
 const THREE_LIBS_HEADING = "## three.js add-on libraries";
+/** The heading of THIRD-PARTY-NOTICES.md's table of the Rust asset importer's decoders. */
+const IMPORT_DECODERS_HEADING = "## Asset importer decoders";
+/** The heading of THIRD-PARTY-NOTICES.md's section on the Rust runtime's crates. */
+const RUST_CRATES_HEADING = "## Rust runtime crates";
+/** The crate that compiles egui's default fonts into the Rust HUD. */
+const EGUI_FONTS_CRATE = "epaint_default_fonts";
+/** The heading of THIRD-PARTY-NOTICES.md's table of what the Rust toolchain links into every game. */
+const RUST_TOOLCHAIN_HEADING = "## Rust toolchain runtime";
+/** How a Cargo.lock names a package from crates.io. */
+const REGISTRY_SOURCE = "registry+";
+
+/**
+ * What the pinned toolchains link into a Rust game besides its crates, and the software Vulkan a
+ * Linux export ships beside it: the destinations each part reaches and its licence, as
+ * THIRD-PARTY-NOTICES.md's toolchain runtime table must state them. Every part a destination's
+ * export notices carry (`RUST_NOTICE_ROWS` in `src/substrate/rust-notices.ts`) is here. System
+ * libraries a destination's OS provides (libSystem, libgcc_s, the Windows UCRT, Bionic) are not
+ * shipped and not listed.
+ */
+export const RUST_TOOLCHAIN_RUNTIME = [
+  { name: "std", destinations: "every destination", license: "MIT OR Apache-2.0" },
+  { name: "compiler_builtins", destinations: "every destination", license: "MIT OR Apache-2.0" },
+  { name: "compiler-rt", destinations: "every destination", license: "Apache-2.0 WITH LLVM-exception" },
+  { name: "libunwind", destinations: "Windows, Android", license: "Apache-2.0 WITH LLVM-exception" },
+  { name: "mingw-w64-crt", destinations: "Windows", license: "ZPL-2.1" },
+  { name: "winpthreads", destinations: "Windows", license: "MIT" },
+  { name: "zig-runtime", destinations: "Linux", license: "MIT" },
+  { name: "swiftshader", destinations: "Linux", license: "Apache-2.0" },
+  { name: "vulkan-loader", destinations: "Linux", license: "Apache-2.0" },
+];
 
 /** The installed package a file belongs to: the nearest named, versioned package.json above it. */
 export function packageOf(root, input) {
@@ -106,14 +141,28 @@ export async function writeBundledNotices({ root, dist, inputs }) {
   await writeFile(path.join(destination, "NOTICE.md"), `${lines.join("\n")}\n`);
 }
 
+/** The text under `heading`, up to the next `## ` heading; empty when the heading is absent. */
+function sectionOf(markdown, heading) {
+  const start = markdown.indexOf(heading);
+  if (start === -1) return "";
+  const rest = markdown.slice(start + heading.length);
+  const end = rest.search(/^## /m);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** The table rows of a section, each as its backticked first-column name and the whole row. */
+function tableRows(section) {
+  return [...section.matchAll(/^\|\s*`([^`]+)`.*$/gm)].map(([row, name]) => ({ name, row }));
+}
+
+/** Whether a listed name (a file, or a folder ending in `/`) covers `file`. */
+function covers(name, file) {
+  return name.endsWith("/") ? file.startsWith(name) : file === name;
+}
+
 /** The backticked file or folder names in the first column of the three.js libraries table. */
 function listedThreeLibs(markdown) {
-  const start = markdown.indexOf(THREE_LIBS_HEADING);
-  if (start === -1) return [];
-  const rest = markdown.slice(start + THREE_LIBS_HEADING.length);
-  const end = rest.search(/^## /m);
-  const section = end === -1 ? rest : rest.slice(0, end);
-  return [...section.matchAll(/^\|\s*`([^`]+)`/gm)].map(([, name]) => name);
+  return tableRows(sectionOf(markdown, THREE_LIBS_HEADING)).map(({ name }) => name);
 }
 
 /**
@@ -122,12 +171,100 @@ function listedThreeLibs(markdown) {
  */
 export function assertThreeLibsListed(libsDir, markdown) {
   const listed = listedThreeLibs(markdown);
-  const covered = (file) => listed.some((name) => (name.endsWith("/") ? file.startsWith(name) : file === name));
+  const covered = (file) => listed.some((name) => covers(name, file));
   const files = fs.readdirSync(libsDir, { recursive: true }).map((file) => String(file).split(path.sep).join("/"));
   const missing = files.filter((file) => fs.statSync(path.join(libsDir, file)).isFile() && !covered(file));
   if (missing.length > 0) {
     throw new Error(
       `three.js libraries missing from THIRD-PARTY-NOTICES.md ("${THREE_LIBS_HEADING}"): ${missing.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Throws, naming them, when a decoder the Rust asset importer copies (`IMPORT_DECODERS` in
+ * `src/substrate/asset-import/decoders.ts`: name → files under `three/`, upstream, licence) has a
+ * file without a row in THIRD-PARTY-NOTICES.md's importer table that names its upstream and licence.
+ */
+export function assertImportDecodersListed(decoders, markdown) {
+  const rows = tableRows(sectionOf(markdown, IMPORT_DECODERS_HEADING));
+  const listed = (record, file) =>
+    rows.some(({ name, row }) => covers(name, file) && row.includes(record.upstream) && row.includes(record.license));
+  const missing = Object.entries(decoders)
+    .filter(([, record]) => record.files.some((file) => !listed(record, file)))
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(
+      `asset importer decoders missing from THIRD-PARTY-NOTICES.md ("${IMPORT_DECODERS_HEADING}"): ${missing.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Throws, naming them, when a part of {@link RUST_TOOLCHAIN_RUNTIME} has no row in
+ * THIRD-PARTY-NOTICES.md's toolchain runtime table stating its destinations and its licence.
+ */
+export function assertRustToolchainRuntimeListed(markdown, parts = RUST_TOOLCHAIN_RUNTIME) {
+  const rows = tableRows(sectionOf(markdown, RUST_TOOLCHAIN_HEADING));
+  const listed = (part) =>
+    rows.some(({ name, row }) => name === part.name && row.includes(part.destinations) && row.includes(part.license));
+  const missing = parts.filter((part) => !listed(part)).map((part) => part.name);
+  if (missing.length > 0) {
+    throw new Error(`missing from THIRD-PARTY-NOTICES.md ("${RUST_TOOLCHAIN_HEADING}"): ${missing.join(", ")}`);
+  }
+}
+
+/** The packages a Cargo.lock resolves from the registry, as `{ name, version }` (path packages are the workspace's own). */
+function registryPackages(cargoLock) {
+  const packages = [];
+  for (const block of cargoLock.split(/^\[\[package\]\]\s*$/m).slice(1)) {
+    const field = (key) => new RegExp(`^${key} = "([^"]*)"`, "m").exec(block)?.[1] ?? null;
+    const [name, version, source] = [field("name"), field("version"), field("source")];
+    if (name && version && source?.startsWith(REGISTRY_SOURCE)) packages.push({ name, version });
+  }
+  return packages;
+}
+
+/** Whether `text` names `name version` as a whole word pair (the crate tables' spelling). */
+function namesCrate(text, name, version) {
+  const literal = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w-])${literal(name)}\`?\\s+${literal(version)}(?![\\w.+-])`).test(text);
+}
+
+/**
+ * Throws, naming them, when a crate the Rust lock line resolves from the registry is not named at
+ * its version in THIRD-PARTY-NOTICES.md's Rust runtime crates section.
+ */
+export function assertRustCratesListed(cargoLock, markdown) {
+  const section = sectionOf(markdown, RUST_CRATES_HEADING);
+  const missing = registryPackages(cargoLock)
+    .filter(({ name, version }) => !namesCrate(section, name, version))
+    .map(({ name, version }) => `${name} ${version}`);
+  if (missing.length > 0) {
+    throw new Error(
+      `Rust crates missing from THIRD-PARTY-NOTICES.md ("${RUST_CRATES_HEADING}"): ${missing.join(", ")}`,
+    );
+  }
+}
+
+/** The version of `crate` a Cargo.lock resolves, or null when it resolves none. */
+function lockedVersion(cargoLock, crate) {
+  const match = new RegExp(`^name = "${crate}"\\r?\\nversion = "([^"]+)"`, "m").exec(cargoLock);
+  return match ? match[1] : null;
+}
+
+/**
+ * Throws when the Rust workspace's Cargo.lock resolves egui's default fonts crate at a version the
+ * Rust runtime crates section of THIRD-PARTY-NOTICES.md does not name: the fonts' licences
+ * (Ubuntu Font Licence, OFL, Bitstream Vera) are listed against that version.
+ */
+export function assertEguiFontsListed(cargoLock, markdown) {
+  const version = lockedVersion(cargoLock, EGUI_FONTS_CRATE);
+  if (version === null) return;
+  const named = new RegExp(`${EGUI_FONTS_CRATE}\`?\\s+${version.replaceAll(".", "\\.")}(?![\\w.])`);
+  if (!named.test(sectionOf(markdown, RUST_CRATES_HEADING))) {
+    throw new Error(
+      `egui fonts missing from THIRD-PARTY-NOTICES.md ("${RUST_CRATES_HEADING}"): ${EGUI_FONTS_CRATE} ${version}`,
     );
   }
 }

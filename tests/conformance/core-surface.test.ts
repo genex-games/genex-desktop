@@ -8,6 +8,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { StudioCore } from "../../src/main/studio-core.ts";
+import { type HostExec, probeCommandLineTools } from "../../src/main/core/toolchains.ts";
+import { servedToolchainHost } from "../../src/shared/toolchain.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 
 const METHODS = [
@@ -73,6 +75,9 @@ const METHODS = [
   "previewProjectAsset",
   "projectAssets",
   "projectModelRigs",
+  // Studio's protected paths and the export redaction's roots: the phone SDK probe and the redaction refuse a file there (rust-wgpu M5 review).
+  "protectedPaths",
+  "redactionForbiddenRoots",
   // Publish's file list, shown in Studio's dialog before anything is uploaded (studio:plugins.genex-publish-review).
   "publicCopyFiles",
   "readGameFile",
@@ -127,7 +132,8 @@ const METHODS = [
   "withApprovedExport",
 ];
 // `planReviews` is TypeScript-`private`, which is erased: it is still reachable at run time.
-const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "pendingUpdateId", "planReviews", "settings"];
+// phonePackages: the admitted phone packages the device launch installs from (rust-wgpu M5 review).
+const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "pendingUpdateId", "phonePackages", "planReviews", "settings"];
 /** Own enumerable fields after `init()` (true `#private` state is not visible and not listed). */
 const FIELDS = [
   "appLook",
@@ -135,6 +141,8 @@ const FIELDS = [
   "builds",
   "candidates",
   "contextPreferences",
+  // The C++ build lane and the toolchain store.
+  "cppBuilds",
   "engineLinks",
   "engines",
   "games",
@@ -147,6 +155,8 @@ const FIELDS = [
   "locks",
   "mainThread",
   "mcp",
+  // Every C++ game the studio started: the Play window, agents' headless runs, embedded ones.
+  "nativeRuns",
   "ollamaSidecar",
   "options",
   "pluginServices",
@@ -156,6 +166,7 @@ const FIELDS = [
   "snapshotIndex",
   "snapshots",
   "store",
+  "toolchains",
   "turns",
 ];
 
@@ -189,4 +200,100 @@ test("StudioCore prototype exposes exactly the golden public methods and accesso
 test("an initialized StudioCore exposes exactly the golden public fields", async () => {
   const { core } = await coreLite();
   assert.deepEqual(Object.keys(core).sort(), [...FIELDS].sort());
+});
+
+test("before any install the toolchain status is the empty store on this host, and Stop cancels C++ builds", async (t) => {
+  const lite = await coreLite();
+  const status = await lite.core.toolchains.status();
+  // A Windows host serves no toolchain (its C++ lane does not run there, `cppLaneRunsOn`), so it
+  // names no host and no part without a download.
+  const host = servedToolchainHost(process.platform, process.arch);
+  // Every Genex build bundles the pinned ANGLE builds and Linux headers, so a supported host has
+  // no component waiting for publication even before its first install.
+  assert.deepEqual(
+    { ...status, clt: typeof status.clt.present },
+    {
+      host,
+      clt: "boolean",
+      installed: [],
+      lock: null,
+      job: null,
+      storeBytes: 0,
+      ...(host ? { unhosted: [] } : {}),
+    },
+  );
+  // Composer Stop and the studio's own stop end every C++ build in flight; with none, nothing fails.
+  const cancelled = t.mock.method(lite.core.cppBuilds, "cancelAll");
+  await lite.core.stopThread("no-such-thread").catch(() => {});
+  assert.equal(cancelled.mock.callCount(), 1);
+  await lite.close();
+  assert.equal(cancelled.mock.callCount(), 2);
+});
+
+test("the Command Line Tools probe runs only xcode-select -p and pkgutil, and nothing off a Mac", async () => {
+  const XCODE_SELECT = "/usr/bin/xcode-select";
+  const PKGUTIL = "/usr/bin/pkgutil";
+  const cases: Array<{
+    name: string;
+    answers: Record<string, { code: number | null; stdout: string }>;
+    expected: unknown;
+    ran: string[];
+  }> = [
+    {
+      name: "the Command Line Tools",
+      answers: {
+        [XCODE_SELECT]: { code: 0, stdout: "/Library/Developer/CommandLineTools\n" },
+        [PKGUTIL]: {
+          code: 0,
+          stdout: "package-id: com.apple.pkg.CLTools_Executables\nversion: 26.6.0.0.1.1750000000\n",
+        },
+      },
+      expected: { present: true, version: "26.6.0.0.1.1750000000" },
+      ran: [XCODE_SELECT, PKGUTIL],
+    },
+    {
+      name: "Xcode selected, no Command Line Tools package",
+      answers: {
+        [XCODE_SELECT]: { code: 0, stdout: "/Applications/Xcode.app/Contents/Developer\n" },
+        [PKGUTIL]: { code: 1, stdout: "" },
+      },
+      expected: { present: true, version: null },
+      ran: [XCODE_SELECT, PKGUTIL],
+    },
+    {
+      name: "nothing selected",
+      answers: { [XCODE_SELECT]: { code: 2, stdout: "" } },
+      expected: { present: false, version: null },
+      ran: [XCODE_SELECT],
+    },
+    {
+      name: "xcode-select missing",
+      answers: { [XCODE_SELECT]: { code: null, stdout: "" } },
+      expected: { present: false, version: null },
+      ran: [XCODE_SELECT],
+    },
+  ];
+  for (const row of cases) {
+    const ran: string[][] = [];
+    const exec: HostExec = async (file, args) => {
+      ran.push([file, ...args]);
+      return { stderr: "", ...(row.answers[file] ?? { code: null, stdout: "" }) };
+    };
+    assert.deepEqual(await probeCommandLineTools(exec, "darwin"), row.expected, row.name);
+    assert.deepEqual(
+      ran.map(([file]) => file),
+      row.ran,
+      row.name,
+    );
+    assert.deepEqual(ran[0], [XCODE_SELECT, "-p"], row.name);
+  }
+  for (const platform of ["linux", "win32"] as const) {
+    const ran: string[] = [];
+    const exec: HostExec = async (file) => {
+      ran.push(file);
+      return { code: 0, stdout: "x", stderr: "" };
+    };
+    assert.deepEqual(await probeCommandLineTools(exec, platform), { present: false, version: null }, platform);
+    assert.deepEqual(ran, [], platform);
+  }
 });

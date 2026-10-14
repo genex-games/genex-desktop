@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { makeResources, startRig, type Rig } from "../helpers/studio-rig.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { nameFromIdea } from "../../src/main/core/game-naming.ts";
 import type { GameName, GameNameRequest } from "../../src/shared/game-project.ts";
-import { GameWorkspaces } from "../../src/substrate/game-workspace.ts";
+import { GameWorkspaces, ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
 import { coverFromBrief, validateGameCover } from "../../src/shared/game-library.ts";
 import { gameCoverSvg } from "../../src/shared/game-cover.ts";
 import { librarySearch } from "../../src/renderer/game-search.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
+import { DestinationBadge } from "../../src/shared/game-targets.ts";
+import { type DestinationCheck, NativeRefusal } from "../../src/shared/native-contract.ts";
 let rig: Rig;
 before(async () => {
   rig = await startRig({ replies: [] });
@@ -164,8 +167,7 @@ describe("game-first library", () => {
     assert.equal(back.find((game) => game.name === fresh.name)?.dir, fresh.dir);
   });
   it("a restart keeps creating games in the chosen folder", async (t) => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "games-root-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    const root = await tmpDir("games-root-");
     const userData = path.join(root, "userData");
     const chosen = path.join(root, "chosen");
     await mkdir(userData);
@@ -197,5 +199,100 @@ describe("game-first library", () => {
     assert.ok(gameCoverSvg(cover).length < 20000);
     assert.doesNotMatch(gameCoverSvg(cover), /<script|onload|href=/);
     assert.notEqual(gameCoverSvg(), gameCoverSvg(cover));
+  });
+});
+
+/** A library on a Mac with the shipped C++ template: one raylib game and one Three.js game. */
+async function nativeLibrary() {
+  const base = await tmpDir("studio-native-checks-");
+  const repo = path.resolve(import.meta.dirname, "../..");
+  const options = {
+    root: path.join(base, "library"),
+    templateDir: path.join(repo, "src", "game-template"),
+    cppTemplateDir: path.join(repo, "src", "game-template-cpp"),
+    vendorDir: path.join(base, "vendor"),
+    indexFile: path.join(base, "projects.json"),
+    userData: path.join(base, "userData"),
+    homeDir: base,
+    platform: StudioPlatform.Mac,
+  };
+  const games = new GameWorkspaces(options);
+  const targets = [BuildTarget.Web, BuildTarget.Windows, BuildTarget.Linux];
+  const pong = await games.scaffold("pong", { stack: GameStack.RaylibCpp, caller: ScaffoldCaller.Internal, targets });
+  const arena = await games.scaffold("arena");
+  return { games, pong, arena, options };
+}
+
+const NATIVE_CHECK: DestinationCheck = {
+  badge: DestinationBadge.NotRunHere,
+  lock: "0123456789ab",
+  at: "2026-10-01T11:00:00.000Z",
+};
+
+describe("a destination check the build lane records", () => {
+  it("is kept in the host's library by the game's real path and shown as the game's nativeChecks", async () => {
+    const { games, options } = await nativeLibrary();
+    await games.writeNativeCheck("pong", BuildTarget.Windows, NATIVE_CHECK);
+    const failed = { ...NATIVE_CHECK, badge: DestinationBadge.Failed, refusal: NativeRefusal.ForeignImport };
+    await games.writeNativeCheck("pong", BuildTarget.Linux, failed);
+    const listed = (await games.list()).find((game) => game.name === "pong");
+    assert.deepEqual(listed?.nativeChecks, { [BuildTarget.Windows]: NATIVE_CHECK, [BuildTarget.Linux]: failed });
+    assert.equal((await games.list()).find((game) => game.name === "arena")?.nativeChecks, undefined);
+    // The record is the host's, so it outlives the process that wrote it.
+    const reread = new GameWorkspaces(options);
+    const again = (await reread.list()).find((game) => game.name === "pong");
+    assert.deepEqual(again?.nativeChecks, listed?.nativeChecks);
+  });
+
+  it("an unchanged check writes nothing", async () => {
+    const { games, options } = await nativeLibrary();
+    await games.writeNativeCheck("pong", BuildTarget.Windows, NATIVE_CHECK);
+    const before = await readFile(options.indexFile, "utf8");
+    await writeFile(options.indexFile, before.replace(/\n?$/, "\n\n"));
+    const marked = await readFile(options.indexFile, "utf8");
+    await games.writeNativeCheck("pong", BuildTarget.Windows, { ...NATIVE_CHECK });
+    assert.equal(await readFile(options.indexFile, "utf8"), marked, "the index was not saved again");
+  });
+
+  const REFUSED: ReadonlyArray<[string, string, string, unknown]> = [
+    ["a Three.js game", "arena", BuildTarget.Windows, NATIVE_CHECK],
+    ["an unknown game", "nowhere", BuildTarget.Windows, NATIVE_CHECK],
+    ["a name that climbs out", "../pong", BuildTarget.Windows, NATIVE_CHECK],
+    ["a destination Genex does not know", "pong", "ios", NATIVE_CHECK],
+    ["the browser, which has no desktop check", "pong", BuildTarget.Web, NATIVE_CHECK],
+    ["a badge the stage does not know", "pong", BuildTarget.Windows, { ...NATIVE_CHECK, badge: "pass" }],
+    ["a lock that is not 12 hex", "pong", BuildTarget.Windows, { ...NATIVE_CHECK, lock: "../x" }],
+    ["a time that is no date", "pong", BuildTarget.Windows, { ...NATIVE_CHECK, at: "yesterday" }],
+    ["a refusal the host does not know", "pong", BuildTarget.Linux, { ...NATIVE_CHECK, refusal: "rm -rf" }],
+    ["no check at all", "pong", BuildTarget.Linux, null],
+  ];
+  for (const [label, name, target, check] of REFUSED)
+    it(`refuses ${label} and writes nothing`, async () => {
+      const { games, options } = await nativeLibrary();
+      await games.writeNativeCheck("pong", BuildTarget.Windows, NATIVE_CHECK);
+      const before = await readFile(options.indexFile, "utf8").catch(() => null);
+      await assert.rejects(games.writeNativeCheck(name, target as BuildTarget, check as DestinationCheck));
+      assert.equal(await readFile(options.indexFile, "utf8").catch(() => null), before, "index bytes unchanged");
+    });
+
+  it("drops a check planted in the library file that is not one, and keeps the valid ones", async () => {
+    const { games, pong, options } = await nativeLibrary();
+    await games.writeNativeCheck("pong", BuildTarget.Windows, NATIVE_CHECK);
+    const index = JSON.parse(await readFile(options.indexFile, "utf8"));
+    const key = Object.keys(index.presentation).find((dir) => dir.endsWith(`${path.sep}${path.basename(pong.dir)}`));
+    assert.ok(key, "the library keys the game by its real path");
+    // JSON.parse makes "__proto__" an own key, as a planted file would.
+    const planted = JSON.parse(`{"__proto__": ${JSON.stringify(NATIVE_CHECK)}}`);
+    index.presentation[key].native.checks = Object.assign(planted, {
+      [BuildTarget.Windows]: NATIVE_CHECK,
+      [BuildTarget.Linux]: { ...NATIVE_CHECK, lock: "../../etc" },
+      [BuildTarget.Mac]: { ...NATIVE_CHECK, badge: "pass" },
+      [BuildTarget.Web]: NATIVE_CHECK,
+      ios: NATIVE_CHECK,
+    });
+    await writeFile(options.indexFile, JSON.stringify(index));
+    const reread = new GameWorkspaces(options);
+    const listed = (await reread.list()).find((game) => game.name === "pong");
+    assert.deepEqual(listed?.nativeChecks, { [BuildTarget.Windows]: NATIVE_CHECK });
   });
 });

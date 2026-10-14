@@ -8,9 +8,37 @@ carries the studio's own shim before the game's first line, so `window.__studio`
 that never heard of the contract, the studio owns the clock, `seed(n)` is reproducible, draw calls
 are counted at the graphics API, and readiness is a fact the page reports rather than a wait. That
 holds for any Three.js game of any shape — inline, ES modules with an import map, a Vite bundle
-(which adds the two-line `installStudio({ renderer, player })` and nothing else), WebGL or WebGPU.
-It does not hold for Phaser, plain canvas 2D or an engine export: those are out of scope, and a
-folder whose kind is `engine-export` can be played and photographed but can never start a run.
+(which adds the two-line `installStudio({ renderer, player })` and nothing else), WebGL or WebGPU
+— and for a C++ · raylib game's web build, whose runtime answers the same verbs. It does not hold
+for Phaser, plain canvas 2D or an engine export: those are out of scope, and a folder whose kind is
+`engine-export` can be played and photographed but can never start a run.
+
+C++ · raylib games. A desktop destination at intake (`targets` on `new_game` and
+the launch tools) makes a new folder the C++ template (`native-loop.ts`); a browser game that
+exists keeps its stack and the launch is refused (`stack-is-fixed`). Every lease names its judging
+target (`acquireFor`): Web when Browser is a destination, else a desktop build this host runs in a
+game box (`native-evidence.ts`), else a judging-only web build; optimizer leases are always web.
+Scene checks are unmeasured, C++ review rules apply by stack (`native-review.ts`), union merges
+reach `src/main.cpp`, the autopilot drops `no-dom-ui`/`single-hud`, the planner's ask and the
+director's playbook carry `cppPlannerLines()`, a facet's recipes, THE FIX and BRIEF.md rules are
+its stack's, and the desktop parity gate rides on the web look ([judge evaluation](judge-evaluation.md)).
+
+Rust · wgpu games. Every mode (director, autopilot, facet loop, gauntlet, spike) keeps its own
+control flow and takes its stack's text from one table (`stackPlannerLines`, `facetLinesFor`,
+`loop/rust-briefs.ts`): the planner's rules, the builder and contract-wiring briefs, the facet's
+recipes (`library/recipes/rust.*.json`) and the code reviewer's rubric (`judge/code-review-rust.md`).
+Checks follow `STACK_CHECK_SUPPORT`: scene checks are unmeasured and a look with no captured frame
+fails its vision and play checks. A web build refused `gpu-unsupported` (a preview without WebGPU)
+leaves parity unavailable, not failed, and the gate is weighed over the other destinations. Tolerances
+are kept per (stack, target, target) pair in `library/games/<game>.parity.json`; a Rust pair never
+reads a raylib game's. Phones are built and admitted, never run: their rows are unmeasured, a
+gameplay judgment rests on this computer's build, and a device run is the person's, started from
+Studio ([devices](tool-permissions.md#devices-and-emulators)). A Rust run starts only when every
+part in `RUST_PARTS` (`run-dispatch.ts`) exports `SERVES_RUST`; else it is refused with
+`rust-parts-missing`, naming the kept parts, and the person may re-take their shipped copies
+(`studio:seed.retake`). Captures carry provenance (the camera the game says it drew from), a
+capture refused `device-lost` is retried a few times, and a game that misses a step or capture
+deadline is killed `gpu-hang` (its heartbeat waits while it owes one).
 
 The kind of game (`loop/kinds.ts`). Eight kinds — first-person, third-person, top-down, side-2d,
 racing, flight, static-board, free-camera. Each names the traits it implies, the state axes its
@@ -22,7 +50,11 @@ judgement (racing and flight then hold W/ArrowUp through the rest of the drive, 
 the game's racing line when it has one and released before the cameras; a declared script holds
 nothing; a front-end kept for its owner, `begin:false`, is pressed by nothing, not even a declared
 script), and `gameLine(run.game)` is the first line of
-every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` may declare `start.keys`. Two critics, not one:
+every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` may declare `start.keys`. A play script may
+`touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
+the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;
+any other preview answers `touch-not-taken`, the script skips that touch, and the look warns that
+those controls went untested. Two critics, not one:
 `place` for a world a player walks through and `screen` for a board, a puzzle or a builder.
 
 Malformed facet ballots hold the current build and report an unmeasured comparison. A
@@ -167,7 +199,8 @@ vintages are `seed-exports-pre-wake.json`, `seed-exports-pre-journal.json`,
 `seed-exports-pre-after-loop-run.json`, `seed-exports-pre-reopen.json`,
 `seed-exports-pre-goals.json`, the Unreal lead's `seed-exports-pre-lead.json`, the open harness's
 `seed-exports-pre-open-harness.json`, Genex's moments' `seed-exports-pre-hooks.json` and one Loop's
-`seed-exports-pre-one-loop.json`; the goals',
+`seed-exports-pre-one-loop.json`, and C++ · raylib's and Rust · wgpu's have their own
+`seed-exports-pre-*.json`; the goals', C++ · raylib's, Rust · wgpu's,
 the lead's and the moments' are kept one module at a time, the lead's and the moments' with each
 module's own imports as they were, so a retired module a kept caller still imports stays as a shim:
 `loop/unreal/live.ts`, `live-journal.ts`, `editor-life.ts`, `editor-wait.ts`, `editor-wait-prompts.ts`, `editor-activity.ts`). Where a kept older
@@ -181,13 +214,16 @@ after a finished build reopens the same run only when the parts that answer it e
 `SERVES_REOPEN` — the session's runner, turn, note and start (`turn-loop.ts`, `delegated-turn.ts`,
 `after-loop-run-prompts.ts`, `run-dispatch.ts`; `chat-dispatch.ts` `ownSessionReopens`), or the
 coordinator, its prompt and the start (`coordinator.ts`, `coordinator-prompts.ts`,
-`run-dispatch.ts`; `coordinatorReopens`) — and is otherwise answered as with Loop off. The run's
+`run-dispatch.ts`; `coordinatorReopens`) — and is otherwise answered as with Loop off. A C++ ·
+raylib run starts only when every part it runs exports `SERVES_NATIVE` (`NATIVE_PARTS` in
+`run-dispatch.ts` and `chat-dispatch.ts`, whose list also names the start), else it is refused
+with `native-parts-missing`; with both kept, the host refuses a raylib preview to a lease without
+a `target`. The run's
 own parts need no such mark for a reopen: the chat rewrites the journal
 (`director/reopen.ts` `reopenedJournal`) without the clock and wake state, which every vintage of
 `setup.ts`, `wake.ts` and `journal.ts` reads as a new run's. An edit the agent made to a moved
 function in a kept file still serves that file's own callers; the rest of the loop uses the new
-home. The upgrade does not hold the callers back (that would freeze every shipped fix to them for
-as long as the file stays edited); it says so instead. `SEED_MOVES` in `substrate/seed-upgrade.ts`
+home. The upgrade does not hold the callers back; it says so instead. `SEED_MOVES` in `substrate/seed-upgrade.ts`
 lists what moved where, and `applySeed` reports a kept file that still defines moved code which
 other files now import from the new home (`moved`: names, new home, callers). The
 `seed_upgraded` chat card and Studio activity name it, and every boot keeps one note per such
@@ -229,7 +265,10 @@ registered for a moment and the facts it guards, reading typed fields only. `web
 needs to load, by `game.validate`'s `missing` names, in the words it always used (`loopRunRefusal`,
 which still refuses an engine export of any kind); a Godot, Unreal or plugin project is never refused
 for a missing `index.html`; a chat-launched web Loop's start asks `game.validate` itself, so a kept
-older launch that hands no `missing` is refused all the same. The web method is a skill for web
+older launch that hands no `missing` is refused all the same. A C++ · raylib or Rust · wgpu game has no
+page for `missing` to name: a chat-launched Loop on one is refused by `game.validate`'s typed `codes`
+instead (a missing `CMakeLists.txt`, `genex.toml` or entry, or a studio.json whose stack its files
+contradict), and any game a newer Genex made by `kind-unsupported` (`loopRunRefusal`'s `codes`). The web method is a skill for web
 games: a seed skill names the facts it serves (`facts: web-game`; one naming none, a copy kept from
 before, is the web method's), and a Loop's brief reads only those whose facts reach the folder
 (`loop/loop-skills.ts`): a web Loop's playbook is the same text as before, and an open Loop's brief
@@ -1012,12 +1051,8 @@ source/document ownership areas in knowledge-map.json route changes to maintaine
 `verify:context` checks links, documented commands, source ownership and Git artifact policy.
 It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
 and summarize that review in the PR; a structural pass does not certify semantic accuracy.
-The new conformance tests deliberately corrupt temporary inputs/imports/ownership/request
-shapes and compile an incompatible canonical API method; they do not break app source.
 
-Background interaction was checked initially on Electron 43.4.1: Unicode input and Send worked
-unfocused; a delayed real Stop aborted its pending fixture coordinator and produced a durable
-turn end. The existing coordinator records an aborted delegated turn as error; the fixture
+The existing coordinator records an aborted delegated turn as error; the fixture
 asserts the explicit abort cause, without changing coordinator semantics. A sent Stop during
 the composer's short ignore guard is not evidence of cancellation. Capture content must still
 be reviewed by the task's developer. Native IME, vendor authorization, every graph geometry,
@@ -1027,11 +1062,9 @@ Implementation references for debugger input: [Electron Debugger](https://www.el
 and [Chromium Input](https://chromedevtools.github.io/devtools-protocol/tot/Input/). Runtime
 acceptance on the pinned version, rather than current online API descriptions, defines coverage.
 
-The app smoke suite now explicitly checks early Electron/session path isolation, forwarded
+The app smoke suite checks early Electron/session path isolation, forwarded
 local-model host, and absence of the developer controller in ordinary builds. The shared
-Node rig injects its scripted local provider before startup. Two existing asynchronous tests
-now wait for the first turn's completion and rendezvous of parallel delegates respectively;
-they retain the original assertions without a fixed overlap timing window. Fixture native
+Node rig injects its scripted local provider before startup. Fixture native
 guards and missing game compositor bounds fail explicitly; interrupted transport responses
 are tested as failures, never successful captures.
 
@@ -1171,7 +1204,8 @@ four minutes after it starts (judge.ts's per-call deadline, for engines that hon
 timeout), because the close runs inside the lead's ten-minute `finish` call; an answer it was not
 surer of than a coin flip counts as none. A head that never moved beyond the start is not judged,
 and a Stop before or during the close lands nothing. The verdict is reported, not a veto: the build
-lands when the close's look loaded it or a judge saw it load, the close's own included.
+lands when the close's evidence passes or a judge passed the same head, including required native
+checks for C++ games. Failed native checks keep the build aside and report a check failure.
 `landingResult` says what the landing may claim (`judge-pick`; `judge-answered-yes` or
 `judge-answered-no` for a sure answer to the goal question; otherwise the health tokens), and
 `finish` tells the lead. A workspace that kept an agent-edited older `integrate.ts` keeps its older

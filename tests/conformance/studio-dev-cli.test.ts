@@ -16,15 +16,22 @@ import { makeResources } from "../helpers/resources.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 test("fixtures lists the one exported fixture list without a profile or app", async () => {
-  // Flipped from 25: building-card joined the list (from 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
-  assert.equal(FIXTURE_NAMES.length, 26);
+  // Flipped from 30: building-card joined the list from dev (from 25 → 30, the cpp-game, native-game,
+  // cross-game, rust-game and rust-mobile-game fixtures of the C++ · raylib and Rust · wgpu branch;
+  // from 24: paused-build, 23: plugin-updates, 22: open-projects, 21: stills-game).
+  assert.equal(FIXTURE_NAMES.length, 31);
   for (const added of [
     "first-launch",
     "notifications",
     "build-graph",
     "lead-graph",
     "sandbox-setup",
+    "cpp-game",
+    "native-game",
     "update-ready",
+    "cross-game",
+    "rust-game",
+    "rust-mobile-game",
     "chat-workers",
     "finish-check",
     "stills-game",
@@ -163,6 +170,15 @@ test("snapshot, logs and capture shortcuts build the protocol operations with it
   assert.deepEqual(parseStudioDevArgs(["capture", "--profile", "p"], 42).operation, {
     method: "capture",
     params: { surface: "desktop", name: "capture-42" },
+  });
+  // A C++ game's own run is a surface of its own: its captures and logs are the native game's.
+  assert.deepEqual(parseStudioDevArgs(["capture", "--profile", "p", "--surface", "native"], 42).operation, {
+    method: "capture",
+    params: { surface: "native", name: "capture-42" },
+  });
+  assert.deepEqual(parseStudioDevArgs(["logs", "--profile", "p", "--surface", "native"]).operation, {
+    method: "logs",
+    params: { surface: "native", cursor: 0, limit: 100 },
   });
   assert.throws(() => parseStudioDevArgs(["logs", "--profile", "p", "--limit", "9999"]));
   assert.throws(() => parseStudioDevArgs(["logs", "--profile", "p", "--surface", "keychain"]));

@@ -103,6 +103,7 @@ import {
 import { longTurnRules, wakeTools } from "./director/wake-prompts.ts";
 import { DirectorLoop, directorLoopOf, WRAP_UP_MARGIN_MS, WrapCause } from "./director/wake-schedule.ts";
 import { openLeadLine, type LeadLine } from "./director/lead-line.ts";
+import { stackPlannerLines } from "./rust-briefs.ts";
 import { bookmarkLead, freshChat, leadSeat, servesLead } from "./director/lead-session.ts";
 import type { LoopRun } from "./director/loop-run.ts";
 import type { DirectorTalk, WakeClock } from "./director/wake.ts";
@@ -427,6 +428,18 @@ async function prepareTheStart(loopRun: LoopRun): Promise<StartOfRun> {
   return { contract, startingPoint };
 }
 
+/**
+ * The playbook the director plans by: its skill, and on a compiled run (`run.stack`, stamped by
+ * prepareLoopRun) that stack's planner rules after it, C++'s or Rust's. The skill is the workspace's
+ * own copy, which may predate those games (SkillOpt edits it, an upgrade keeps the edit), and the
+ * worker tools' examples are JavaScript; a three.js run's playbook is the skill as it is.
+ */
+function playbookFor(skill: string, run: Run): string {
+  const rules = stackPlannerLines(run.stack);
+  if (rules.length === 0) return skill;
+  return [skill.trim(), rules.join("\n")].filter(Boolean).join("\n\n");
+}
+
 /** The brief the director's session opens with (`directorBrief`), from what the run knows. */
 function openingBrief(
   loopRun: LoopRun,
@@ -443,7 +456,7 @@ function openingBrief(
     shape,
     ownShape,
     capacity,
-    skill,
+    skill: playbookFor(skill, run),
     softDeadline,
     finalDeadline,
     resume,

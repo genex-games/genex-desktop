@@ -128,6 +128,9 @@ export const RPC_CLASSES = {
   "preview.gesture": RpcClass.Page,
   "preview.showing": RpcClass.Page,
   "preview.observe": RpcClass.PageLoad,
+  "preview.witness": RpcClass.Page,
+  "preview.emptyScene": RpcClass.Page,
+  "preview.cameraPose": RpcClass.Page,
   "preview.acquire": RpcClass.PageLoad,
   "preview.release": RpcClass.Page,
   "preview.viewport": RpcClass.Page,
@@ -135,6 +138,13 @@ export const RPC_CLASSES = {
   "preview.pair": RpcClass.Page,
   "preview.screens": RpcClass.Page,
   "preview.capacity": RpcClass.Page,
+  "native.build": RpcClass.Work,
+  "native.status": RpcClass.Record,
+  "native.stop": RpcClass.Work,
+  // Builds the game, then starts and stops two runs of it: bounded by the build and Stop deadlines.
+  "game.conformance": RpcClass.Work,
+  // Records a request for the person to decide later; it never waits for the decision.
+  "crates.request": RpcClass.Record,
   "run.artifact": RpcClass.Record,
   "guardian.rebuild_and_restart": RpcClass.Work,
   "guardian.validate_edit": RpcClass.Work,

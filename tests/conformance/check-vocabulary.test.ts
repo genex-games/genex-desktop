@@ -305,6 +305,7 @@ describe("check-vocabulary", () => {
       "src/renderer/b.tsx": "export const B = () => null;\n",
       "scripts/c.mjs": "await new Promise((r) => setTimeout(r, 5));\n",
       "src/game-template/src/main.js": offender,
+      "src/game-template-rust/web/shell.js": offender,
       "src/harness-seed/types/host-api.d.ts": offender,
       "src/renderer/dist/bundle.js": offender,
       "tests/conformance/d.test.ts": offender,

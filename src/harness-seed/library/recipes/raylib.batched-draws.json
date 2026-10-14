@@ -1,0 +1,46 @@
+{
+  "id": "raylib.batched-draws",
+  "runtime": "raylib-cpp",
+  "title": "Few draw calls in raylib: one mesh and material per prop family, instanced",
+  "tags": [
+    "drawcalls",
+    "draw",
+    "calls",
+    "triangles",
+    "ceiling",
+    "instancing",
+    "instanced",
+    "batch",
+    "mesh",
+    "material",
+    "budget",
+    "stats",
+    "fps",
+    "raylib",
+    "cpp"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "raylib",
+  "note": "Share meshes and materials and instance repeated props so the frame stays under the draw-call ceiling on WebGL2 and ANGLE.",
+  "intent": "Every DrawModel is at least one draw call, and WebGL2 pays for each one far more than a desktop driver. Load a prop's model and material once, never per instance; draw a field of the same prop with DrawMeshInstanced from one Mesh, one Material and an array of transforms built in reset from ctx-seeded positions; merge static scenery into a few large meshes. The runtime counts the whole frame at the graphics API and reports it as state().__render (drawCalls, triangles), so the ceiling is measured whatever the game reports; keep it under 1000 draw calls and a few hundred thousand triangles, and fix a frame-time spike before adding content.",
+  "sketch": "#include <vector>\n\n#include \"studio.h\"\n#include \"raymath.h\"  // after raylib.h: it reuses raylib's vector types\n\nnamespace {\nMesh grass{};\nMaterial grassMaterial{};\nstd::vector<Matrix> tufts;\n}  // namespace\n\nvoid buildGrass(studio::Rng& rng) {\n  grass = GenMeshCube(0.1f, 0.4f, 0.1f);\n  grassMaterial = LoadMaterialDefault();\n  tufts.clear();\n  for (int i = 0; i < 2000; i++)\n    tufts.push_back(MatrixTranslate(rng.nextFloat(-20, 20), 0.2f, rng.nextFloat(-20, 20)));\n}\n\nvoid drawGrass() {\n  studio::tag(\"grass\");\n  DrawMeshInstanced(grass, grassMaterial, tufts.data(), static_cast<int>(tufts.size()));\n}\n",
+  "port": "The facet that owns a prop family owns its mesh and material; others draw it through that facet's function, never by loading a second copy.",
+  "evidence": [
+    {
+      "source": "library/recipes/stats.draw-call-capture.json (the three.js technique)",
+      "note": "Reuse geometries and materials; a material per object is the draw-call explosion; the studio counts the whole frame under __render."
+    },
+    {
+      "source": "src/game-template-cpp/src/studio.h",
+      "note": "studio::tag names what the following draws belong to for the draw counter (state().__render.tags)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

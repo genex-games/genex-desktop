@@ -15,6 +15,34 @@ export type HarnessWorkClass = WorkClass;
 export type HarnessSnapshotScope = "harness" | "game" | "both";
 // ↑ src/shared/harness-api.ts
 
+/** `preview.witness`: the game stepped `ms` of simulated time; the frame counters before and after. */
+export interface WitnessResult {
+  frameBefore: number;
+  frameAfter: number;
+  simulatedMs: number;
+  drawCalls: number;
+}
+// ↑ src/shared/harness-api.ts
+
+/** `preview.emptyScene`: whether the game's own `state().phase` exists to say a scene is empty, and its draws. */
+export interface EmptySceneResult {
+  /** False when the game reports no phase: the check is `unmeasured`, never a pass. */
+  measured: boolean;
+  phase: string | null;
+  drawCalls: number | null;
+}
+// ↑ src/shared/harness-api.ts
+
+/** `preview.cameraPose`: the game's own `state().camera`, when it reports one. */
+export interface CameraPoseResult {
+  /** False when the game reports no camera: the check is `unmeasured`, never a pass. */
+  measured: boolean;
+  camera: string | null;
+  /** The pose as the game reported it (untrusted JSON, size-capped by the port). */
+  pose: unknown;
+}
+// ↑ src/shared/harness-api.ts
+
 /**
  * Where a self-edit tried in a validation fork stopped: the change itself was refused (a path that
  * is not the harness's own), it added type errors, the type check ran out of time, the copy did
@@ -1307,6 +1335,31 @@ export type GameCover =
   | CoverRecipe;
 // ↑ src/shared/game-library.ts
 
+export type BuildTarget = 'web' | 'macos' | 'windows' | 'linux' | 'ios' | 'android';
+// ↑ src/shared/game-project.ts
+
+export type DestinationBadge = 'failed' | 'building' | 'built' | 'not-built' | 'not-run-here' | 'ci-passed' | 'verified-in-vm';
+// ↑ src/shared/game-targets.ts
+
+export type NativeRefusal = 'unsupported' | 'extra-mach-o' | 'symlink' | 'hard-link' | 'links-opengl' | 'missing-angle-import' | 'foreign-rpath' | 'not-an-executable' | 'angle-digest' | 'extra-pe' | 'imports-opengl32' | 'extra-shared-object' | 'imports-libgl' | 'runpath-not-origin' | 'glibc-too-new' | 'bad-handshake' | 'ready-timeout' | 'reply-too-large' | 'reply-invalid' | 'capture-too-large' | 'capture-digest' | 'memory-cap' | 'unresponsive' | 'not-runnable-here' | 'no-game-box' | 'not-a-destination' | 'kind-unsupported' | 'stack-gated' | 'toolchain-offline' | 'lane-missing' | 'build-failed' | 'harness-predates-native' | 'embed-unsupported' | 'slot-unknown' | 'slot-mismatch' | 'too-many-slots' | 'frame-rate' | 'electron-untested' | 'frames-invalid' | 'frames-stalled' | 'game-predates-embedding' | 'wrong-machine' | 'foreign-import' | 'gpu-unsupported' | 'device-lost' | 'gpu-hang' | 'native-feature-missing' | 'native-features-web' | 'gpu-pass-invalid' | 'touch-not-taken' | 'conformance-required';
+// ↑ src/shared/native-contract.ts
+
+/**
+ * What the build lane last learned of a desktop (Windows, Linux or Mac) build of a game's own
+ * folder: the badge its stage shows, the lock it was built with (first 12 hex of the digest), when,
+ * and the gate's refusal when it refused the build. A host fact kept in the library
+ * (`GameLibraryEntry.native.checks`), never in the game.
+ */
+export interface DestinationCheck {
+  badge: DestinationBadge;
+  /** The toolchain lock's digest, first 12 lowercase hex. */
+  lock: string;
+  /** ISO 8601, as `Date.toISOString` writes it. */
+  at: string;
+  refusal?: NativeRefusal;
+}
+// ↑ src/shared/native-contract.ts
+
 export interface GameLibraryEntry {
   title?: string;
   pinned?: boolean;
@@ -1315,6 +1368,13 @@ export interface GameLibraryEntry {
   trustProjectSettings?: boolean;
   cover?: GameCover;
   primaryThreadId?: string;
+  /**
+   * A C++ · raylib game's host facts: `lock`, the toolchain lock digest the last build of its own
+   * folder used, `bundleId`, the Mac bundle identifier chosen once for it and kept ever after, and
+   * `checks`, what the lane last learned of each desktop build (`GameWorkspaces.writeNativeCheck`).
+   * Kept here, never in studio.json, which every agent process can write or link.
+   */
+  native?: { lock?: string; bundleId?: string; checks?: Partial<Record<BuildTarget, DestinationCheck>> };
   /** The folder's content stamp as New game made it (`GameProject.scaffoldStamp`). */
   scaffoldStamp?: string;
   /** The title waits for the game's first idea; any title given since clears it. */
@@ -1322,24 +1382,11 @@ export interface GameLibraryEntry {
 }
 // ↑ src/shared/game-library.ts
 
-/**
- * What kind of game a folder holds, decided from the libraries and runtimes it actually loads —
- * never from the entry filename. `src/main.js` is Vite's stock layout as much as the studio's,
- * and reading it as "the template" is what served the user's own three.js game raw, with a bare
- * `three` import nothing could resolve.
- *
- * The kind says what the game *is*; `build` and `serve` say how it runs. A bundled Phaser game
- * is `phaser`, not `three-vite`.
- */
-export type ProjectKind =
-  | "studio-template"
-  | "three-vite"
-  | "three-modules"
-  | "canvas2d"
-  | "phaser"
-  | "engine-export"
-  | "own-script";
+export type ProjectKind = 'studio-template' | 'three-vite' | 'three-modules' | 'canvas2d' | 'phaser' | 'engine-export' | 'own-script' | 'raylib-cpp' | 'rust-wgpu';
 // ↑ src/shared/game-project.ts
+
+export type TargetRefusal = 'mac-builds-need-a-mac' | 'not-runnable-here' | 'no-game-box' | 'not-a-destination' | 'stack-is-fixed' | 'no-judging-target' | 'kind-unsupported' | 'stack-gated' | 'toolchain-offline';
+// ↑ src/shared/game-targets.ts
 
 /**
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
@@ -1377,6 +1424,22 @@ export interface ProjectShape {
    * and then the studio waits its own default.
    */
   bootMs?: number;
+  /**
+   * Set when studio.json records a kind this version of Genex does not know: a newer Genex made the
+   * game. The studio lists and shows it but writes nothing into it, runs no command it records and
+   * refuses every change with `kind-unsupported`. Absent for every kind this version knows.
+   */
+  readOnly?: TargetRefusal;
+}
+// ↑ src/shared/game-project.ts
+
+export type GameStack = 'raylib-cpp' | 'rust-wgpu' | 'three-js';
+// ↑ src/shared/game-project.ts
+
+/** The stack and destinations a game was created with; a game that records none is a Three.js browser game. */
+export interface GameDestinations {
+  stack: GameStack;
+  targets: readonly BuildTarget[];
 }
 // ↑ src/shared/game-project.ts
 
@@ -1422,6 +1485,13 @@ export interface GameProject {
   shape: ProjectShape;
   /** `shape.own`: the folder brought its own game, so the studio builds it and serves its output. */
   built: boolean;
+  /**
+   * The stack and destinations the game was created with. Optional so older literals still
+   * compile; `GameWorkspaces` always fills it, and readers go through {@link destinationsOf}.
+   */
+  destinations?: GameDestinations;
+  /** A C++ game's desktop checks from the host's library (`GameLibraryEntry.native.checks`); absent when it has none. */
+  nativeChecks?: Partial<Record<BuildTarget, DestinationCheck>>;
   /** The engine project Genex linked this game to; absent for a web game (`shared/game-engine.ts`). */
   engine?: EngineBinding;
   /**
@@ -1497,6 +1567,9 @@ export interface StartHeldInPlan {
 export type ContractWord = 'loaded' | 'attached' | 'missing';
 // ↑ src/shared/game-project.ts
 
+export type GameValidationCode = 'kind-unsupported' | 'engine-export' | 'missing-file' | 'no-contract' | 'native-missing-cmake' | 'native-missing-main' | 'native-contract-removed' | 'native-needs-genex-cmake' | 'stack-contradicts-kind' | 'rust-own-build-input';
+// ↑ src/shared/game-project.ts
+
 /**
  * What the studio's instrumentation actually got hold of on a page it just served (M4.2b).
  *
@@ -1530,12 +1603,34 @@ export interface AttachReport {
 }
 // ↑ src/shared/game-project.ts
 
+export type GpuQualification = 'untested' | 'real-gpu';
+// ↑ src/shared/game-export-contract.ts
+
+export type ExportWarningCode = 'wasm-over-target';
+// ↑ src/shared/game-export-contract.ts
+
+/** A warning on an export that was made: its code, the gzip size and the game's budget it passed. */
+export interface ExportWarning {
+  code: ExportWarningCode;
+  gzipBytes: number;
+  budgetBytes: number;
+}
+// ↑ src/shared/game-export-contract.ts
+
 /** What `game.export` wrote: the public roots it assembled, and what it left out. */
 export interface ExportResult {
   dir: string;
   files: number;
   included: string[];
   excluded: string[];
+  /** The build exported; absent for a browser game's own export (the web folder). */
+  destination?: BuildTarget;
+  /** The one artifact a desktop export made (the `.app`, the Windows `.zip`, the Linux `.tar.gz`), inside `dir`; absent for a web folder. */
+  artifact?: string;
+  /** Whether the export's GPU path ran on a real GPU of its destination (`gpuQualificationOf`); absent where the receipt carries none. */
+  gpuQualification?: GpuQualification;
+  /** What the export made but warns about (a browser game's code past its budget); absent: none. */
+  warnings?: ExportWarning[];
 }
 // ↑ src/shared/game-project.ts
 
@@ -1651,6 +1746,28 @@ export interface PixelDiff {
 }
 // ↑ src/shared/preview-contract.ts
 
+export type TouchPhase = 'start' | 'move' | 'end';
+// ↑ src/shared/preview-contract.ts
+
+/**
+ * One finger's step (contract v2): `id` ties a start to its moves and end (a uint32 the sender
+ * picks), `x`/`y` are world coordinates, the game's own world size before any letterbox. A Rust ·
+ * wgpu game takes it through the native `input` op; desktop builds also emulate one touch from
+ * the primary mouse button. The harness's play-script `touch` action reaches a native run through
+ * `preview.input`; a protocol 1 game and the browser preview take none, and refuse the whole call
+ * `unsupported` with nothing applied.
+ */
+export interface PreviewTouchAction {
+  type: "touch";
+  phase: TouchPhase;
+  id: number;
+  x: number;
+  y: number;
+  /** Live's embedded ring: `x`/`y` are ring pixels from the top-left, which the game maps through its letterbox to world coordinates. */
+  px?: true;
+}
+// ↑ src/shared/preview-contract.ts
+
 export interface PreviewConsoleEntry {
   at: number;
   level: string;
@@ -1683,6 +1800,12 @@ export interface PreviewPortStatus {
   loadError: string | null;
   consoleErrors: number | null;
   consoleAvailable?: boolean;
+  /**
+   * Why the window does not show the build it was asked for, or null: the build failed, and the
+   * window shows no page (a judged load) or the last build that worked (Live). Absent from a port
+   * that cannot say. A page that loaded is never this, whatever else failed on it (a subframe).
+   */
+  buildFailed?: string | null;
 }
 // ↑ src/shared/preview-contract.ts
 
@@ -1745,7 +1868,7 @@ export interface AgentScreen {
 }
 // ↑ src/shared/agent-screen.ts
 
-export type ScreenDeed = 'load' | 'look' | 'click' | 'press' | 'type' | 'drag' | 'move' | 'scroll' | 'wait' | 'reload';
+export type ScreenDeed = 'move' | 'load' | 'look' | 'click' | 'press' | 'type' | 'drag' | 'scroll' | 'wait' | 'reload';
 // ↑ src/shared/agent-screen.ts
 
 /** One action at a screen: what it was, and for a press the keys as the agent named them ("space", "ArrowRight"). */
@@ -1769,6 +1892,235 @@ export interface AgentScreenFrame extends AgentScreen {
   at: number;
 }
 // ↑ src/shared/agent-screen.ts
+
+export type StudioPlatform = 'linux' | 'darwin' | 'win32';
+// ↑ src/shared/boot.ts
+
+export type BuildProblemCode = 'mac-builds-need-a-mac' | 'not-a-destination' | 'command-failed' | 'in-source-build' | 'toolchain-missing' | 'toolchain-stale' | 'clt-missing' | 'unsupported-host' | 'not-hosted' | 'timed-out' | 'cancelled' | 'toolchain-unprepared' | 'gate-refused';
+// ↑ src/shared/build-problem.ts
+
+export type DiagnosticTool = 'clang' | 'cmake' | 'wasm-ld' | 'emcc' | 'ninja' | 'zig';
+// ↑ src/shared/build-problem.ts
+
+/** One parsed `file:line:col: error:` (or a CMake/linker error), as the stage shows it. */
+export interface BuildDiagnostic {
+  tool: DiagnosticTool;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+  message: string;
+}
+// ↑ src/shared/build-problem.ts
+
+export interface BuildProblem {
+  project: string;
+  /** The command that failed, shown only behind "Details". */
+  command: string;
+  /** Its exit code; null when it was killed. */
+  code: number | null;
+  /** The first three lines of what it printed — the part that names the error. */
+  lines: string[];
+  /** Dependencies are declared and node_modules is not there: offer "Install packages". */
+  needsInstall: boolean;
+  /** What that button runs (`npm install`, `pnpm install`, …); null when there is nothing to install. */
+  install: string | null;
+  /** The stage is showing the last build that worked instead of nothing at all. */
+  showingLastBuild: boolean;
+  at: string;
+  /** Typed reason; absent on problems written before this field existed (read as CommandFailed). */
+  reason?: BuildProblemCode;
+  /** The destination that was being built; absent for a browser game's own build. */
+  target?: BuildTarget;
+  /** The first three diagnostics the C++ lane parsed; `lines` keeps the first output lines as before. */
+  diagnostics?: BuildDiagnostic[];
+  /** `GateRefused`: the gate's refusal and the file in `out/` it was about. */
+  gate?: { refusal: NativeRefusal; file: string };
+}
+// ↑ src/shared/build-problem.ts
+
+/**
+ * The host's own facts about a desktop build it admitted or refused, as `native.build` hands them to
+ * the harness: a Mac bundle (`admitMacBundle`), or a Windows or Linux `out/` (`admitCrossOutput`,
+ * read even when refused). What the game reports about its backend is a claim; these are facts.
+ */
+export interface NativeAdmissionFacts {
+  /** `macos`, `windows` or `linux`. */
+  target: BuildTarget;
+  /** Why the build was refused; null when it was admitted. */
+  refusal: NativeRefusal | null;
+  /** The refusal's detail (the import, rpath or file that failed it); null when admitted. */
+  detail: string | null;
+  /** The libraries the executable names, as written: each `LC_LOAD_DYLIB`, PE import DLL name, or ELF `DT_NEEDED`. */
+  imports: string[];
+  /** Where it looks for them, as written: each `LC_RPATH` or ELF `DT_RUNPATH`; always empty on Windows. */
+  rpaths: string[];
+  /** The SHA-256 of the store ANGLE's `manifest.json` the build was checked against; null when none was. */
+  angleManifestSha256: string | null;
+}
+// ↑ src/shared/native-contract.ts
+
+export type NativeRunState = 'stopped' | 'ready' | 'building' | 'killed' | 'crashed' | 'admitting' | 'starting' | 'paused' | 'stopping' | 'refused';
+// ↑ src/shared/native-contract.ts
+
+export type NativeRunMode = 'window' | 'headless' | 'embedded';
+// ↑ src/shared/native-contract.ts
+
+export type NativeBackend = 'unknown' | 'metal-angle' | 'd3d11-angle' | 'vulkan-angle' | 'webgl2' | 'metal' | 'vulkan' | 'd3d12' | 'webgpu';
+// ↑ src/shared/native-contract.ts
+
+export type NativeGpuTier = 'core';
+// ↑ src/shared/native-contract.ts
+
+/** The backends a Rust · wgpu game may report: WebGPU core natively and on the web, never GL. */
+export type NativeWgpuBackend = 'metal' | 'vulkan' | 'd3d12' | 'webgpu';
+// ↑ src/shared/native-contract.ts
+
+export type NativeEnhancedFeature = 'shader-int64-atomic-min-max' | 'shader-int64-atomic-all-ops' | 'subgroup' | 'ray-query' | 'mesh-shader' | 'texture-binding-array' | 'multi-draw-indirect-count';
+// ↑ src/shared/native-contract.ts
+
+export type RendererFeature = 'timestamp-query' | 'rg11b10ufloat-renderable' | 'depth-clip-control';
+// ↑ src/shared/render-quality.ts
+
+export type RenderInput = 'depth' | 'normals' | 'motion' | 'environment' | 'hdr-scene';
+// ↑ src/shared/render-quality.ts
+
+/**
+ * What a Rust · wgpu game's `ready` reports about its GPU (contract v2, inline in `ready`): tier
+ * core, the backend, the adapter, the native-enhanced features the adapter offers (offered, not
+ * requested) and the extension API versions the runtime serves. A claim the host records; the
+ * lane and the admission decide. A receipt from before the renderer follow-up has the singular
+ * API fields only: read the versions it serves through {@link receiptExtensionApis} and
+ * {@link receiptCustomPassApis}, which answer `[extensionApi]` and `[customPassApi]` for it.
+ */
+export interface NativeCapabilityReceipt {
+  tier: NativeGpuTier;
+  backend: NativeWgpuBackend;
+  /** The adapter's name, at most 256 characters. */
+  adapter: string;
+  /** Each offered feature once, in the order the game lists them. */
+  nativeEnhanced: NativeEnhancedFeature[];
+  /** The highest WGSL extension points' bind layout version served (`NATIVE_EXTENSION_API_VERSION` today). */
+  extensionApi: number;
+  /** The highest custom GPU pass API version served (`NATIVE_CUSTOM_PASS_API_VERSION` today). */
+  customPassApi: number;
+  /** Every extension API version served, ascending, ending in `extensionApi`. */
+  extensionApis?: number[];
+  /** Every custom pass API version served, ascending, ending in `customPassApi`. */
+  customPassApis?: number[];
+  /** Optional adapter features the renderer opened the device with for itself (never a game's). */
+  rendererFeatures?: RendererFeature[];
+  /** The v2 extension inputs a producer really fills (the rest are neutral 1x1 resources). */
+  renderInputs?: RenderInput[];
+  /** The `renderSettings` verb's version this game serves; absent: the game has no such verb. */
+  renderSettingsApi?: number;
+}
+// ↑ src/shared/native-contract.ts
+
+export type GameBoxProblem = 'launcher-missing' | 'bubblewrap-missing' | 'userns-restricted' | 'x11-only' | 'no-wayland' | 'wayland-unrestricted' | 'no-headless-build' | 'box-refused' | 'wayland-helper-missing';
+// ↑ src/shared/native-contract.ts
+
+/** What a run looks like to the renderer, the harness and `studio:native.state`. */
+export interface NativeRunStatus {
+  project: string;
+  runId: string;
+  target: BuildTarget;
+  state: NativeRunState;
+  /** The run is a person's window (Play), an agent's headless run, or embedded in Live. */
+  mode: NativeRunMode;
+  pid: number | null;
+  backend: NativeBackend | null;
+  /** A protocol 2 game's capability receipt from its `ready`; absent or null for a v1 game. */
+  receipt?: NativeCapabilityReceipt | null;
+  refusal: NativeRefusal | null;
+  /** Why the build failed, when `refusal` is `build-failed`. */
+  problem: BuildProblem | null;
+  /** Why the host has no usable game box, when `refusal` is `no-game-box` on Windows or Linux. */
+  box?: GameBoxProblem | null;
+  exit: { code: number | null; signal: string | null } | null;
+  /** The harness lease that started it; null for the person's window. */
+  owner: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+// ↑ src/shared/native-contract.ts
+
+/** What the harness sends with `game.conformance`: the game, optionally a playable worktree, and the demo to seed. */
+export interface GameConformanceParams {
+  project: string;
+  /** A playable worktree to build instead of the game folder (checked by the host). */
+  root?: string;
+  /** The demo the determinism check runs; the game's first demo when absent, a fixed step when it lists none. */
+  demo?: string;
+  /** The seed both determinism runs start from (default `CONFORMANCE_SEED`). */
+  seed?: number;
+  /** The thread the `conformance_run` event is written to; the main thread when absent. */
+  threadId?: string;
+}
+// ↑ src/shared/game-conformance.ts
+
+export type ConformanceCheck = 'capture-digest' | 'verbs' | 'seed-determinism' | 'live-ring' | 'stop-reap' | 'render-presets' | 'render-extensions';
+// ↑ src/shared/game-conformance.ts
+
+export type ConformanceOutcome = 'unavailable' | 'pass' | 'fail';
+// ↑ src/shared/game-conformance.ts
+
+export type ConformanceProblem = 'capture-digest' | 'launch-failed' | 'game-ended' | 'verb-missing' | 'verb-invalid' | 'verb-failed' | 'demo-missing' | 'checksum-missing' | 'nondeterministic' | 'build-changed' | 'capture-file' | 'live-not-mac' | 'live-no-frames-host' | 'ring-no-frames' | 'ring-seq' | 'ring-generation' | 'stop-ignored' | 'stop-deadline' | 'orphan' | 'target-unsupported' | 'render-settings-unsupported' | 'render-status-invalid' | 'look-inconsistent' | 'capture-unpinned' | 'custom-pass-refused' | 'degrade-not-allowed' | 'extension-refused';
+// ↑ src/shared/game-conformance.ts
+
+/** One check's result. `code` is null for a pass; `detail` names the verb, the field or the numbers. */
+export interface ConformanceCheckResult {
+  check: ConformanceCheck;
+  outcome: ConformanceOutcome;
+  code: ConformanceProblem | null;
+  detail: string | null;
+}
+// ↑ src/shared/game-conformance.ts
+
+/**
+ * A whole suite run on one build: green as `conformancePassed` says. `unavailable` counts green only
+ * for Live's ring, which no caller watches yet, and for the renderer's checks on a game without the
+ * verb (see {@link conformancePassed}).
+ */
+export interface GameConformanceReport {
+  project: string | null;
+  target: BuildTarget;
+  /** The admitted build's SHA-256 the run judged, or null where the caller did not know it. */
+  buildDigest: string | null;
+  /** Every check passed, Live's ring and the renderer's checks of an unsupported game possibly `unavailable` (`conformancePassed`). */
+  passed: boolean;
+  checks: ConformanceCheckResult[];
+  /** ISO 8601, as `Date.toISOString` writes it. */
+  at: string;
+}
+// ↑ src/shared/game-conformance.ts
+
+/** What the harness sends with `crates.request`: one crate at one version, for one game, and why. */
+export interface CrateRequestParams {
+  project: string;
+  /** The crate's registry name. */
+  name: string;
+  /** An exact version, `MAJOR.MINOR.PATCH` with an optional pre-release or build suffix. */
+  version: string;
+  /** One sentence for the person: what the game needs it for. */
+  reason?: string;
+  threadId?: string;
+}
+// ↑ src/shared/crate-requests.ts
+
+export type CrateRequestState = 'refused' | 'pending' | 'approved' | 'vendored';
+// ↑ src/shared/crate-requests.ts
+
+export type CrateRefusal = 'crate-declined' | 'crate-not-found' | 'crate-yanked' | 'crate-advisory' | 'crate-licence' | 'crate-unvetted' | 'crate-build-script' | 'crate-proc-macro' | 'crate-duplicate-version' | 'crate-overlay-tampered' | 'crate-engine-internal' | 'crate-banned' | 'crate-policy-tampered' | 'crate-checker-unavailable' | 'crate-check-failed';
+// ↑ src/shared/crate-requests.ts
+
+/** What `crates.request` answers: the request's id and where it stands. Never an approval. */
+export interface CrateRequestAnswer {
+  requestId: string;
+  state: CrateRequestState;
+  /** Why an earlier decision on the same crate refused it; null or absent otherwise. */
+  refusal?: CrateRefusal | null;
+}
+// ↑ src/shared/crate-requests.ts
 
 export type JobRole = 'lead' | 'chat' | 'worker';
 // ↑ src/shared/jobs.ts
@@ -1900,7 +2252,8 @@ export interface HarnessHostApi {
   };
   /**
    * The plugin tools and guidance for the game `project` names, by its facts (none named, or a
-   * game with no kind yet: a web game's), and the tools on offer that make a kind of project.
+   * game with no kind yet: a web game's) and its stack (a Rust game's listing leaves out
+   * three.js-only skills), and the tools on offer that make a kind of project.
    */
   "plugins.tools": {
     params: { project?: string | null };
@@ -2122,9 +2475,15 @@ export interface HarnessHostApi {
   "game.recents": { params: void; result: ProjectRecent[] };
   /**
    * Make a game's folder: Genex's bookkeeping only, or with the starter `kind` names (`"web"`, or
-   * an older caller's `"studio-template"`); any other kind is refused.
+   * an older caller's `"studio-template"`). `kind: "rust-wgpu"` with `targets` scaffolds the Rust ·
+   * wgpu template for those destinations where Rust creation is open (every developer build, and a
+   * release build on a host the Rust lane runs on; `stack-gated` elsewhere); `"raylib-cpp"` is
+   * refused `raylib-creation-retired`; any other kind is refused.
    */
-  "game.scaffold": { params: { name: string; title?: string; threadId?: string; kind?: string }; result: GameProject };
+  "game.scaffold": {
+    params: { name: string; title?: string; threadId?: string; kind?: string; targets?: BuildTarget[] };
+    result: GameProject;
+  };
   /**
    * Write a starter into a game that has no kind yet (no facts); a game with a kind is refused.
    * `threadId`, the chat a local model's `start_web_game` answers: while that chat (this game's) is
@@ -2135,10 +2494,18 @@ export interface HarnessHostApi {
     params: { project: string; starter: ProjectStarter; threadId?: string };
     result: GameProject | StartHeldInPlan;
   };
+  /** `codes` are the typed reasons beside the sentences; older hosts send none. */
   "game.validate": {
     params: { project: string; candidateId?: string };
     /** `missing`: the files a web page needs that are not there, by name (`problems` says it in sentences). */
-    result: { ok: boolean; problems: string[]; missing: string[]; warnings: string[]; contract: ContractWord };
+    result: {
+      ok: boolean;
+      problems: string[];
+      missing: string[];
+      warnings: string[];
+      contract: ContractWord;
+      codes?: GameValidationCode[];
+    };
   };
   /** The live half of `game.validate`: serve the page, wait for it, ask what the hook got hold of. */
   "game.attached": {
@@ -2170,7 +2537,18 @@ export interface HarnessHostApi {
     result: { bytes: number };
   };
   "game.tree": { params: { project: string; candidateId?: string }; result: string[] };
-  "game.export": { params: { project: string; target?: string }; result: ExportResult };
+  /**
+   * Export the game: `target` is the output folder, `destination` the build (default Browser): a
+   * web folder, a Mac `.app`, `<Game>-windows-x64.zip`, `<game>-linux-x64.tar.gz`, or for a Rust
+   * game an iOS Simulator `.app` or a development APK. `signing` is checked by
+   * `parseExportSigning`; the harness exports unsigned (ad hoc for a Mac or Simulator app, Studio's
+   * debug key for an APK) and is refused Developer ID, a certificate, an Apple identity or a
+   * release keystore (`harness-may-not-sign`). Nothing is launched on a Simulator or a device.
+   */
+  "game.export": {
+    params: { project: string; target?: string; destination?: BuildTarget; signing?: unknown };
+    result: ExportResult;
+  };
   /** The stills in `<project>/references/`, sniffed and resized. */
   "game.references": {
     params: { project: string; max?: number; maxPx?: number };
@@ -2230,8 +2608,12 @@ export interface HarnessHostApi {
     params: { runId: string; a: string; b: string; label?: string; handle?: string };
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
+  /**
+   * Input to a leased game, in order. A play script's `touch` action (contract v2: one finger's
+   * start, move or end in world coordinates) reaches a Rust game's native `input` op.
+   */
   "preview.input": {
-    params: { actions?: PreviewInputAction[]; handle?: string };
+    params: { actions?: Array<PreviewInputAction | PreviewTouchAction>; handle?: string };
     result: { ok: boolean; applied: number; width: number; height: number };
   };
   "preview.console": { params: { sinceMs?: number; handle?: string }; result: PreviewConsoleEntry[] };
@@ -2250,7 +2632,23 @@ export interface HarnessHostApi {
     result: { project: string; root: string | null; entry: string | undefined; loaded: string | null } | null;
   };
   "preview.observe": { params: { handle?: string }; result: BuildObservation };
-  "preview.acquire": { params: { label?: string; purpose?: "optimization" }; result: { handle: string } };
+  /**
+   * Typed probes a native run answers without evaluating JS: step `ms` of simulated time and read
+   * the frame counters (witness), and the game's own phase and camera from `state()`.
+   */
+  "preview.witness": { params: { handle?: string; ms?: number }; result: WitnessResult };
+  "preview.emptyScene": { params: { handle?: string }; result: EmptySceneResult };
+  "preview.cameraPose": { params: { handle?: string }; result: CameraPoseResult };
+  /**
+   * A hidden window, or a headless native run of a C++ game. `target` names the build it judges
+   * (`judgingTarget` in the seed); a target this host cannot run is refused before any lease.
+   * `stacks` declares the stacks the asking harness serves: a lease that declares none is a
+   * harness from before Rust, and a Rust game's load through it is refused `harness-predates-native`.
+   */
+  "preview.acquire": {
+    params: { label?: string; purpose?: "optimization"; target?: BuildTarget; stacks?: GameStack[] };
+    result: { handle: string };
+  };
   "preview.release": { params: { handle: string }; result: boolean };
   /**
    * One leased window at another size (the art director's 1600×900 look), for that lease only:
@@ -2283,9 +2681,50 @@ export interface HarnessHostApi {
       live: boolean;
       headless: boolean;
       memory: { freeMb: number; totalMb: number };
+      /** The host's platform, which with `native.gameBox` picks a C++ game's judging target; absent from a host without native runs. */
+      host?: StudioPlatform | null;
+      /** Native runs: whether this host has a game box for its own OS, and its native leases. */
+      native?: { gameBox: boolean; leases: number; max: number };
     };
   };
 
+  // — native runs (C++ · raylib) —
+  /**
+   * Build one destination of a C++ game through the lane (`root`: a playable worktree the host
+   * checks). `lock` is the toolchain lock it built with; `output` the host's own output folder;
+   * `admission` the host's gate facts for a Mac, Windows or Linux build.
+   */
+  "native.build": {
+    params: { project: string; target: BuildTarget; root?: string };
+    result: {
+      ok: boolean;
+      problem: BuildProblem | null;
+      lock: string | null;
+      output: string | null;
+      /** The host's admission facts for a Mac, Windows or Linux build; null for the web target or a build that failed. */
+      admission: NativeAdmissionFacts | null;
+    };
+  };
+  /** The game's native run: the lease's when `handle` names one, else the person's window run; null when none runs. */
+  "native.status": { params: { project: string; handle?: string }; result: NativeRunStatus | null };
+  /** Stop the lease's run (`handle`) or the game's agent runs; false when none ran. */
+  "native.stop": { params: { project: string; handle?: string }; result: boolean };
+
+  /**
+   * Run the game conformance suite on the game's current Mac build (read-only: it builds, starts
+   * and stops the game's own headless runs and changes nothing in the game). Each run is recorded
+   * as a `conformance_run` event keyed by the build digest. Live's ring is never borrowed from the
+   * person: it reports `unavailable` here.
+   */
+  "game.conformance": { params: GameConformanceParams; result: GameConformanceReport };
+
+  // — crates (Rust games, extension ladder level 4) —
+  /**
+   * Ask the person for one extra crate at one exact version for a Rust game. The answer is the
+   * request's id and where it stands, never an approval: only the person decides, in Studio's
+   * window. A refused request says why with a `CrateRefusal` code.
+   */
+  "crates.request": { params: CrateRequestParams; result: CrateRequestAnswer };
   // — jobs: the long processes the agents start, which the app owns —
   /**
    * A game's jobs, read-only: only those that ended after `endedAfter` (an end number) when it is

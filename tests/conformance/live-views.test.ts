@@ -26,7 +26,7 @@ import {
   liveViewsFor,
   picturesGraph,
 } from "../../src/renderer/live-views.ts";
-import { stageFlags } from "../../src/renderer/panels/stage/stage-flags.ts";
+import { compiledStageFlags, stageFlags } from "../../src/renderer/panels/stage/stage-flags.ts";
 import { activeStageTab, stageTabs, tabChoice } from "../../src/renderer/panels/stage/stage-tabs.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { StageView } from "../../src/renderer/stage.ts";
@@ -342,6 +342,22 @@ describe("the stage's flags follow Live's view", () => {
       for (const [key, value] of Object.entries(expected))
         assert.equal(flags[key as keyof typeof flags], value, `${name}: ${key}`);
     });
+
+  it("a stopped compiled game says so in Native as in Web; its card for no page does not", () => {
+    const stopped = stageFlags({
+      view: StageView.Live,
+      beside: null,
+      graph: null,
+      planning: false,
+      project: "game",
+      liveView: ObserverLive.Preview,
+      pending: false,
+      live: { state: null, liveLoad: null, stopped: true },
+    });
+    assert.equal(compiledStageFlags(stopped, { noLivePage: false, native: false }).gameStopped, true, "Web");
+    assert.equal(compiledStageFlags(stopped, { noLivePage: false, native: true }).gameStopped, true, "Native");
+    assert.equal(compiledStageFlags(stopped, { noLivePage: true, native: false }).gameStopped, false, "the card");
+  });
 
   it("on Builds no view is on stage", () => {
     for (const liveView of Object.values(ObserverLive)) {

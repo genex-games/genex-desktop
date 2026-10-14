@@ -58,6 +58,8 @@ function rendererIpc(answer: (channel: string) => IpcResult = () => ({ ok: true,
 /** Call one `StudioApi` method with no arguments (subscriptions get a listener); returns the unsubscribe, if any. */
 function callBare(api: StudioApi, method: keyof StudioApi): unknown {
   if (method === "onRunSummary") return api.onRunSummary("pong", "run-1", () => {});
+  // Live's frames come through the preload's sharedTexture receiver, not a channel (§1.1).
+  if (method === "nativeFrames") return api.nativeFrames(() => {});
   if (method.startsWith("on")) return (api[method] as (listener: () => void) => () => void)(() => {});
   return (api[method] as () => Promise<unknown>)().catch(() => {});
 }
@@ -78,6 +80,10 @@ test("every preload call invokes the channel the map names for it, and every cha
       // A summary subscription reads the summary once and re-reads it on `studio:event`.
       assert.deepEqual(channels, ["studio:run.summary"], method);
       assert.equal(count("studio:event"), 1, method);
+    } else if (method === "nativeFrames") {
+      // The one subscription that is no push: nothing invoked, nothing subscribed on a channel.
+      assert.deepEqual(channels, [], method);
+      for (const push of PUSH) assert.equal(count(push), 0, `${method} subscribed ${push}`);
     } else if (method.startsWith("on")) {
       assert.deepEqual(channels, [], method);
       const channel = PUSH.find((push) => pushOf.get(push) === method);
@@ -123,11 +129,49 @@ test("the preload sends each payload in the shape main reads", async () => {
   await api.adoptFolder("/games/pong", { subdir: "web" });
   await api.createGame("Pong");
   await api.createGame("Pong", { parent: "/Users/me/Projects" });
+  // Where people play: the stack and the destinations reach main only when the dialog chose them.
+  await api.createGame("Pong", { stack: "raylib-cpp", targets: ["web", "macos"] });
+  await api.createGame("Pong", { parent: "/Users/me/Projects", stack: "raylib-cpp", targets: ["macos"] });
   await api.pickGameLocation();
   await api.pickProject();
   await api.send("hi", { thread: "t1" });
   await api.cancelModelDownload();
   await api.recheckEngines();
+  await api.toolchainStatus();
+  await api.toolchainInstall();
+  await api.toolchainInstall(["web", "macos"]);
+  await api.toolchainCancel();
+  await api.toolchainPrune();
+  await api.toolchainInstallClt();
+  // A C++ game's own window: each call names the game, and main finds its run.
+  await api.nativeRun("pong");
+  await api.nativeStop("pong");
+  await api.nativeState("pong");
+  await api.nativeFront("pong");
+  // Its Mac build inside Live: the canvas size and the captured input go with the game's name.
+  await api.nativeEmbed("pong", { width: 800, height: 600, dpr: 2 });
+  await api.nativeUnembed("pong");
+  await api.nativeInput("pong", [{ type: "tap", keys: ["KeyW"] }]);
+  await api.nativeResize("pong", { width: 640, height: 480, dpr: 2 });
+  // Export: the web folder by default; a destination and a signing choice only when named.
+  await api.exportGame("pong");
+  await api.exportGame("pong", { destination: "macos", signing: { kind: "adhoc" } });
+  // The Rust host channels: the person's device launch names the game and the device, a re-take
+  // names one seed module, and crate requests are listed per game and decided by request id.
+  await api.nativeLaunchDevice("pong", { target: "ios", device: "simulator" });
+  await api.retakeSeedModule("loop/checks.ts");
+  await api.cratesList();
+  await api.cratesList("pong");
+  await api.cratesDecide({ requestId: "cr-1", decision: "approve", buildScripts: false, procMacros: false });
+  // The phones' setup and signing (M5.0): each names its phone, licence or file kind.
+  await api.toolchainInstallMobile("android");
+  await api.toolchainAcceptAndroidLicence("android-sdk-license");
+  await api.exportSigningReference("provisioning-profile");
+  // The engine actions (M7.0): each names the game; the trust flag carries the person's choice.
+  await api.engineEject("pond");
+  await api.engineUneject("pond");
+  await api.engineSetTrust("pond", true);
+  await api.engineState("pond");
   await api.pluginChooseFile("unreal", { title: "Choose a project", extensions: ["uproject"] });
   assert.deepEqual(invokes, [
     { channel: "studio:bootstrap", payload: undefined },
@@ -139,11 +183,51 @@ test("the preload sends each payload in the shape main reads", async () => {
     { channel: "studio:project.adopt", payload: { dir: "/games/pong", subdir: "web" } },
     { channel: "studio:game.create", payload: { title: "Pong" } },
     { channel: "studio:game.create", payload: { title: "Pong", parent: "/Users/me/Projects" } },
+    { channel: "studio:game.create", payload: { title: "Pong", stack: "raylib-cpp", targets: ["web", "macos"] } },
+    {
+      channel: "studio:game.create",
+      payload: { title: "Pong", parent: "/Users/me/Projects", stack: "raylib-cpp", targets: ["macos"] },
+    },
     { channel: "studio:game.location.pick", payload: undefined },
     { channel: "studio:project.pick", payload: undefined },
     { channel: "studio:send", payload: { text: "hi", thread: "t1" } },
     { channel: "studio:cancel-model-download", payload: {} },
     { channel: "studio:engines.recheck", payload: {} },
+    { channel: "studio:toolchain.status", payload: undefined },
+    // No destinations: main installs what Browser and this computer's own OS need.
+    { channel: "studio:toolchain.install", payload: {} },
+    { channel: "studio:toolchain.install", payload: { targets: ["web", "macos"] } },
+    { channel: "studio:toolchain.cancel", payload: undefined },
+    { channel: "studio:toolchain.prune", payload: undefined },
+    { channel: "studio:toolchain.installClt", payload: undefined },
+    { channel: "studio:native.run", payload: { project: "pong" } },
+    { channel: "studio:native.stop", payload: { project: "pong" } },
+    { channel: "studio:native.state", payload: { project: "pong" } },
+    { channel: "studio:native.front", payload: { project: "pong" } },
+    { channel: "studio:native.embed", payload: { project: "pong", size: { width: 800, height: 600, dpr: 2 } } },
+    { channel: "studio:native.unembed", payload: { project: "pong" } },
+    { channel: "studio:native.input", payload: { project: "pong", actions: [{ type: "tap", keys: ["KeyW"] }] } },
+    { channel: "studio:native.resize", payload: { project: "pong", size: { width: 640, height: 480, dpr: 2 } } },
+    { channel: "studio:export", payload: { project: "pong" } },
+    { channel: "studio:export", payload: { project: "pong", destination: "macos", signing: { kind: "adhoc" } } },
+    {
+      channel: "studio:native.launchDevice",
+      payload: { project: "pong", request: { target: "ios", device: "simulator" } },
+    },
+    { channel: "studio:seed.retake", payload: { module: "loop/checks.ts" } },
+    { channel: "studio:crates.list", payload: {} },
+    { channel: "studio:crates.list", payload: { project: "pong" } },
+    {
+      channel: "studio:crates.decide",
+      payload: { requestId: "cr-1", decision: "approve", buildScripts: false, procMacros: false },
+    },
+    { channel: "studio:toolchain.installMobile", payload: { target: "android" } },
+    { channel: "studio:toolchain.acceptAndroidLicence", payload: { licence: "android-sdk-license" } },
+    { channel: "studio:export.signingReference", payload: { kind: "provisioning-profile" } },
+    { channel: "studio:engine.eject", payload: { project: "pond" } },
+    { channel: "studio:engine.uneject", payload: { project: "pond" } },
+    { channel: "studio:engine.setTrust", payload: { project: "pond", trusted: true } },
+    { channel: "studio:engine.state", payload: { project: "pond" } },
     {
       channel: "studio:plugins.choose-file",
       payload: { id: "unreal", request: { title: "Choose a project", extensions: ["uproject"] } },

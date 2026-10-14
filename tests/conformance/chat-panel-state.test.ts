@@ -18,7 +18,21 @@ import { ToolState } from "../../src/renderer/ui/tool-state.ts";
 import { planAwaitsAnswer, planInProgress } from "../../src/renderer/chat/use-plan-review.ts";
 import { localToolModel, signInRequested, subscriptionBlocksSend } from "../../src/renderer/chat/use-sign-in-gate.ts";
 import { MODEL_KEY_SEPARATOR, modelKey, parseModelKey } from "../../src/renderer/model-key.ts";
-import { exportedWords } from "../../src/renderer/words.ts";
+import { EXPORT_WORDS, exportedWords } from "../../src/renderer/words.ts";
+import {
+  exportDestinationLabel,
+  exportDestinationsFor,
+  exportNotice,
+} from "../../src/renderer/chat/use-chat-export.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { ExportWarningCode, WEB_BUDGET_MB_BYTES } from "../../src/shared/game-export-contract.ts";
+import {
+  BuildTarget,
+  GameStack,
+  type GameProject,
+  ProjectKind,
+  type ProjectShape,
+} from "../../src/shared/game-project.ts";
 import { leadFrameOf } from "../../src/renderer/state/agent-screens.ts";
 import { compactControl } from "../../src/renderer/chat/compact-control.ts";
 import { ComposerCommand, commandMatches, commandQuery } from "../../src/renderer/chat/composer-commands.ts";
@@ -294,6 +308,113 @@ describe("the export notice", () => {
       exportedWords({ files: 1, included: ["index.html"], excluded: [] }),
       "Exported 1 public files. Included: index.html. Excluded from selected roots: 0.",
     );
+  });
+});
+
+describe("the export menu and its notice, per destination", () => {
+  const shape = (kind: ProjectShape["kind"]) => ({ kind }) as ProjectShape;
+  const cpp = (targets: BuildTarget[]): Pick<GameProject, "shape" | "destinations"> => ({
+    shape: shape(ProjectKind.RaylibCpp),
+    destinations: { stack: GameStack.RaylibCpp, targets },
+  });
+
+  it("a three.js game keeps its one export item: no destination list", () => {
+    const threeJs = { shape: shape(ProjectKind.StudioTemplate) };
+    for (const host of [StudioPlatform.Mac, StudioPlatform.Linux, null])
+      assert.equal(exportDestinationsFor(threeJs, host), null, String(host));
+  });
+
+  it("a C++ game lists the destinations this host exports, in the create dialog's order", () => {
+    const { Web, Mac, Windows, Linux } = BuildTarget;
+    const cases: Array<[BuildTarget[], StudioPlatform | null, BuildTarget[]]> = [
+      [[Mac, Web], StudioPlatform.Mac, [Web, Mac]],
+      [[Web, Mac], StudioPlatform.Linux, [Web]],
+      // Flipped (wave 6): a Mac cross-builds Windows and Linux with pinned tools, so it exports them.
+      [[Web, Windows, Linux], StudioPlatform.Mac, [Web, Windows, Linux]],
+      [[Mac], StudioPlatform.Mac, [Mac]],
+      [[Mac], StudioPlatform.Windows, []],
+      [[Web, Mac], null, [Web]],
+    ];
+    for (const [targets, host, offered] of cases)
+      assert.deepEqual(exportDestinationsFor(cpp(targets), host), offered, `${targets} on ${host}`);
+  });
+
+  it("a game made for all four: a Mac offers every one, in order; Windows, Linux and an unknown host the browser folder only", () => {
+    const { Web, Mac, Windows, Linux } = BuildTarget;
+    const everywhere = cpp([Linux, Windows, Mac, Web]);
+    assert.deepEqual(exportDestinationsFor(everywhere, StudioPlatform.Mac), [Web, Mac, Windows, Linux]);
+    // A Linux host's lane has no pinned linux-x64 CMake and Ninja, and a Windows host's lane is off.
+    for (const host of [StudioPlatform.Linux, StudioPlatform.Windows, null])
+      assert.deepEqual(exportDestinationsFor(everywhere, host), [Web], String(host));
+    assert.deepEqual(exportDestinationsFor(cpp([Windows, Linux]), StudioPlatform.Linux), [], "nothing to export here");
+  });
+
+  it("each destination has its label", () => {
+    assert.equal(exportDestinationLabel(BuildTarget.Web), EXPORT_WORDS.browser);
+    assert.equal(exportDestinationLabel(BuildTarget.Mac), EXPORT_WORDS.mac);
+    assert.equal(exportDestinationLabel(BuildTarget.Windows), EXPORT_WORDS.windows);
+    assert.equal(exportDestinationLabel(BuildTarget.Linux), EXPORT_WORDS.linux);
+    assert.equal(exportDestinationLabel(BuildTarget.Windows), "Windows (.zip)");
+    assert.equal(exportDestinationLabel(BuildTarget.Linux), "Linux (.tar.gz)");
+  });
+
+  it("names the Windows or Linux archive it made, and that it never ran there", () => {
+    const desktop = { files: 9, included: ["game.exe"], excluded: [] };
+    const windows = {
+      ...desktop,
+      dir: "/x/exports/pong-cross.windows",
+      destination: BuildTarget.Windows,
+      artifact: "/x/exports/pong-cross.windows/Pong everywhere-windows-x64.zip",
+    };
+    assert.equal(exportNotice(windows), EXPORT_WORDS.exportedWindows("Pong everywhere-windows-x64.zip"));
+    assert.equal(
+      exportNotice(windows),
+      "Exported Pong everywhere-windows-x64.zip. Genex built it on this Mac but hasn’t run it on Windows.",
+    );
+    const linux = {
+      ...desktop,
+      dir: "/x/exports/pong-cross.linux",
+      destination: BuildTarget.Linux,
+      artifact: "/x/exports/pong-cross.linux/pong-cross-linux-x64.tar.gz",
+    };
+    assert.equal(exportNotice(linux), EXPORT_WORDS.exportedLinux("pong-cross-linux-x64.tar.gz"));
+    const backslashes = { ...windows, artifact: "C:\\exports\\pong.windows\\Pong-windows-x64.zip" };
+    assert.equal(exportNotice(backslashes), EXPORT_WORDS.exportedWindows("Pong-windows-x64.zip"), "a Windows path");
+    const noArtifact = { ...desktop, dir: linux.dir, destination: BuildTarget.Linux };
+    assert.equal(exportNotice(noArtifact), exportedWords(noArtifact), "no archive named: the files, as before");
+  });
+
+  it("names the Mac app it made, and counts the browser folder's files as before", () => {
+    const web = { dir: "/x/exports/pong", files: 1, included: ["index.html"], excluded: [] };
+    assert.equal(exportNotice(web), exportedWords(web));
+    assert.equal(exportNotice({ ...web, destination: BuildTarget.Web }), exportedWords(web));
+    const mac = {
+      dir: "/x/exports/pong-mac",
+      files: 3,
+      included: ["Pong & Co.app/Contents/MacOS/game"],
+      excluded: [],
+      destination: BuildTarget.Mac,
+      artifact: "/x/exports/pong-mac/Pong & Co.app",
+    };
+    assert.equal(exportNotice(mac), EXPORT_WORDS.exportedMac("Pong & Co"));
+  });
+
+  // Owner decision 2026-10-11: a browser game's code past its budget is exported with a warning.
+  it("adds the slower-first-load warning after a browser export whose code is past its game's budget", () => {
+    const web = { dir: "/x/exports/pond", files: 4, included: ["index.html"], excluded: [] };
+    const over = {
+      ...web,
+      warnings: [
+        {
+          code: ExportWarningCode.WasmOverTarget,
+          gzipBytes: 5 * WEB_BUDGET_MB_BYTES,
+          budgetBytes: 4 * WEB_BUDGET_MB_BYTES,
+        },
+      ],
+    };
+    assert.equal(exportNotice(over), `${exportedWords(web)} ${EXPORT_WORDS.wasmOverTarget("5.0", "4")}`);
+    assert.match(EXPORT_WORDS.wasmOverTarget("5.0", "4"), /slower .*phones/);
+    assert.equal(exportNotice({ ...web, warnings: [] }), exportedWords(web), "no warning: as before");
   });
 });
 

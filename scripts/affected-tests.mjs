@@ -7,7 +7,7 @@
 // `--staged` uses the index instead. `--files` replaces Git detection unless `--base`/`--staged` is also given.
 // L1 = non-rig tests whose runtime import closure reaches a changed file. L3 = rig tests (closure reaches
 // tests/helpers/studio-rig.ts; they run serially) and the harness gate, which rigs reach by copying
-// src/harness-seed and src/game-template rather than importing them. tests/test-map.json adds explicit edges.
+// src/harness-seed and the game templates rather than importing them. tests/test-map.json adds explicit edges.
 import ts from "@typescript/typescript6";
 import fs from "node:fs";
 import path from "node:path";
@@ -16,8 +16,10 @@ import { pathToFileURL } from "node:url";
 import { packageBin } from "./package-bin.ts";
 
 export const RIG_HELPER = "tests/helpers/studio-rig.ts";
+/** Imported by every test file that starts real games on this machine's GPU (see {@link gpuTests}). */
+export const GPU_HELPER = "tests/helpers/gpu-games.ts";
 export const HARNESS_GATE = ["tests/conformance/harness-incidents.test.ts", "tests/conformance/scoreboard.test.ts"];
-const COPIED_TREES = /^src\/(harness-seed|game-template)\//;
+const COPIED_TREES = /^src\/(harness-seed|game-template(-cpp|-rust)?)\//;
 const CODE = /\.(?:[cm]?[jt]sx?)$/;
 const posix = (file) => file.split(path.sep).join("/");
 
@@ -160,6 +162,16 @@ export function importGraph(root, entries = testFiles(root)) {
 export function rigTests(root, graph = importGraph(root), tests = testFiles(root)) {
   const reverse = reverseEdges(graph.edges);
   const reached = upward(reverse, [RIG_HELPER]);
+  return tests.filter((t) => reached.has(t));
+}
+
+/**
+ * L1 tests whose runtime closure reaches the GPU helper: they start real games on this machine's
+ * GPU, each against its own ready deadline, and share the GPU, the Metal compiler and the cargo
+ * target's game binaries. They run one at a time, after the parallel files.
+ */
+export function gpuTests(root, graph = importGraph(root), tests = testFiles(root)) {
+  const reached = upward(reverseEdges(graph.edges), [GPU_HELPER]);
   return tests.filter((t) => reached.has(t));
 }
 
@@ -414,22 +426,38 @@ export function testEnv(env = process.env) {
  */
 export const TEST_PRELOAD = ["--import", new URL("../tests/helpers/leftover-children.ts", import.meta.url).href];
 
-/** Pure tests run with Node's default parallelism; rig files one at a time. */
+/** `files` split into the ones run with Node's default parallelism and the GPU files run one at a time. */
+export function parallelAndGpu(root, files) {
+  if (!files.length) return { parallel: [], gpu: [] };
+  const gpu = new Set(gpuTests(root));
+  return { parallel: files.filter((t) => !gpu.has(t)), gpu: files.filter((t) => gpu.has(t)) };
+}
+
+/**
+ * Pure tests run with Node's default parallelism, then the GPU files one at a time (even when a
+ * parallel file failed: both are L1); rig files one at a time, only after L1 passed.
+ */
 export function runSelection(root, { L1, L3 }, tier, parentEnv = process.env, stdio = "inherit") {
+  const l1 = tier === "L3" ? { parallel: [], gpu: [] } : parallelAndGpu(root, L1);
   const batches = [];
-  if (tier !== "L3" && L1.length) batches.push([...TEST_PRELOAD, "--test", ...L1]);
-  if (tier !== "L1" && L3.length) batches.push([...TEST_PRELOAD, "--test", "--test-concurrency=1", ...L3]);
+  if (l1.parallel.length) batches.push({ args: [...TEST_PRELOAD, "--test", ...l1.parallel], stops: false });
+  if (l1.gpu.length)
+    batches.push({ args: [...TEST_PRELOAD, "--test", "--test-concurrency=1", ...l1.gpu], stops: true });
+  if (tier !== "L1" && L3.length)
+    batches.push({ args: [...TEST_PRELOAD, "--test", "--test-concurrency=1", ...L3], stops: true });
   if (!batches.length) {
     console.log("affected-tests: nothing to run for this change");
     return 0;
   }
   const env = testEnv(parentEnv);
-  for (const args of batches) {
+  let failed = 0;
+  for (const { args, stops } of batches) {
     const result = spawnSync(process.execPath, args, { cwd: root, stdio, env });
     if (result.error) console.error(result.error.message);
-    if (result.status !== 0) return result.status ?? 1;
+    if (result.status !== 0) failed ||= result.status ?? 1;
+    if (failed && stops) return failed;
   }
-  return 0;
+  return failed;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

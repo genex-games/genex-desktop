@@ -1,0 +1,141 @@
+name: Linux user namespaces
+# Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor: an unconfined bubblewrap
+# (Genex's process sandbox) and Chromium's namespace sandbox get no capabilities in theirs. This
+# job switches the restriction on explicitly, checks that it bites, installs the deb (whose
+# postinst loads Genex's AppArmor profile), boots the installed app through the packaged smoke,
+# checks that a zip copy no profile names stops at Chromium's sandbox and that the command in its
+# README-LINUX.txt loads its profile, does the same boot for a portable copy set up through Set
+# up's own install (sudo in pkexec's place), and checks that removing the deb removes its profile. The
+# installed deb's own resources are also held to the bundle pins (the ANGLE builds, the SwiftShader
+# split and the Linux sysroot: scripts/ci/rust-linux-host.ts bundle-pins). Linux only, on changes to the fix and on
+# demand; it never changes a system-wide setting outside this disposable runner. Dependency bumps
+# (package.json, package-lock.json) do not trigger it, to keep the deb build off every such PR
+# into dev; dispatch it for an Electron or sandbox-runtime upgrade.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/linux-userns.yml
+      - forge.config.cjs
+      - scripts/ci-linux-userns.ts
+      - scripts/ci/rust-linux-host.ts
+      - src/main/boot-gate.ts
+      - src/main/index.ts
+      - src/shared/boot.ts
+      - src/substrate/linux-apparmor.ts
+      - src/substrate/linux-userns-setup.ts
+      - src/substrate/sandbox-unavailable.ts
+      - src/substrate/shell-quote.ts
+      - src/substrate/spawn.ts
+      - tests/e2e/run-packaged-smoke.mjs
+  push:
+    branches: [dev, main]
+    paths:
+      - .github/workflows/linux-userns.yml
+      - forge.config.cjs
+      - scripts/ci-linux-userns.ts
+      - scripts/ci/rust-linux-host.ts
+      - src/main/boot-gate.ts
+      - src/main/index.ts
+      - src/shared/boot.ts
+      - src/substrate/linux-apparmor.ts
+      - src/substrate/linux-userns-setup.ts
+      - src/substrate/sandbox-unavailable.ts
+      - src/substrate/shell-quote.ts
+      - src/substrate/spawn.ts
+      - tests/e2e/run-packaged-smoke.mjs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-userns-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  ubuntu-24-04:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # actions: read lets the token download another run's artifacts (the pinned ANGLE builds).
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Desktop, sandbox and AppArmor prerequisites
+        run: sudo apt-get update && sudo apt-get install -y xvfb bubblewrap socat ripgrep apparmor
+      - run: npm ci
+      - run: npm run rebuild:terminal
+      # Every Genex build bundles the pinned ANGLE (native/angle/bundle-lock.json): download the
+      # lock's angle.yml run; the release build verifies every file and fails closed without them.
+      - name: Fetch the pinned ANGLE builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
+      - name: Make the deb and the zip (unsigned)
+        run: npm run make -- --platform linux --arch x64 --targets @electron-forge/maker-deb,@electron-forge/maker-zip
+      - name: Switch Ubuntu's user-namespace restriction on, and check that it bites
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+          # An unconfined bubblewrap must fail now, or this job proves nothing.
+          if bwrap --ro-bind / / --unshare-user --unshare-pid --proc /proc --dev /dev true; then
+            echo "::error::an unconfined bubblewrap still works: the restriction is not in effect"
+            exit 1
+          fi
+          node scripts/ci-linux-userns.ts restricted
+      - name: Install the deb (its postinst loads Genex's AppArmor profile)
+        run: |
+          sudo apt-get install -y ./out/make/deb/x64/genex_*_amd64.deb
+          test -f /etc/apparmor.d/genex
+          sudo grep -qx 'genex (unconfined)' /sys/kernel/security/apparmor/profiles
+      - name: The installed deb's pinned ANGLE builds, SwiftShader split and Linux sysroot
+        run: node scripts/ci/rust-linux-host.ts --step bundle-pins --resources /usr/lib/genex/resources/app.asar.unpacked/dist/resources --evidence .studio-dev/evidence/rust-linux-host
+      - name: Packaged smoke of the installed app, under the restriction
+        env:
+          STUDIO_PACKAGE_DIR: /usr/lib/genex
+        run: xvfb-run -a npm run test:packaged
+      - name: A zip copy stops at Chromium's sandbox until README-LINUX.txt's command adds its profile
+        run: |
+          # In the runner's home, as the README asks: a folder only this user can write to.
+          unzipped="$HOME/Genex zip"
+          mkdir -p "$unzipped"
+          unzip -q out/make/zip/linux/x64/Genex-linux-x64-*.zip -d "$unzipped"
+          copy="$unzipped/Genex-linux-x64"
+          test -f "$copy/README-LINUX.txt"
+          xvfb-run -a node scripts/ci-linux-userns.ts unprofiled "$copy/genex"
+          # The lines between the README's two rules, run where the person would run them.
+          sed -n '/^-\{78\}$/,/^-\{78\}$/p' "$copy/README-LINUX.txt" | sed '1d;$d' > "$RUNNER_TEMP/readme-command.sh"
+          (cd "$copy" && bash "$RUNNER_TEMP/readme-command.sh")
+          sudo grep -qx 'genex-portable (unconfined)' /sys/kernel/security/apparmor/profiles
+          sudo grep -qF "$copy/genex" /etc/apparmor.d/genex-portable
+      - name: A portable copy in a folder with a space, set up as the setup screen does
+        run: |
+          # In the runner's home: Set up refuses a folder others can write to, such as /tmp.
+          portable="$HOME/Genex portable"
+          cp -a out/Genex-linux-x64 "$portable"
+          node scripts/ci-linux-userns.ts install "$portable/genex"
+          sudo grep -qx 'genex-portable (unconfined)' /sys/kernel/security/apparmor/profiles
+          STUDIO_PACKAGE_DIR="$portable" xvfb-run -a npm run test:packaged
+      - name: Removing the deb unloads and deletes its profile
+        run: |
+          sudo apt-get remove -y genex
+          test ! -e /etc/apparmor.d/genex
+          if sudo grep -q '^genex (' /sys/kernel/security/apparmor/profiles; then
+            echo "::error::the genex profile is still loaded after removal"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: linux-userns-evidence
+          path: .studio-dev/evidence
+          if-no-files-found: ignore

@@ -26,12 +26,13 @@ import os from "node:os";
 import { constants, type Dirent } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import { allowedFile, specOf, entryFiles } from "../ownership.ts";
 import type { Ownership } from "../ownership.ts";
 import { openNoFollow, readRegularFile } from "../fsx.ts";
+import { isWindows } from "../toolchain.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
 
 const execFileAsync = promisify(execFile);
@@ -181,10 +182,10 @@ async function chmodInside(root: string, rel: unknown, next: (mode: number) => n
       // Never through a link, on Windows too, where there is no O_NOFOLLOW (`openNoFollow`).
       handle = await openNoFollow(full, constants.O_RDONLY | constants.O_NONBLOCK);
     } catch (err) {
-      // A file its owner cannot read (mode 0o200 locked to 0o000) cannot be opened; check by
-      // name instead. Everything else — a link (ELOOP), a missing file — is not ours to touch.
+      // A file its owner cannot read (mode 0o200 locked to 0o000) cannot be opened for reading;
+      // change it without reading. Everything else — a link (ELOOP), a missing file — is not ours.
       if ((err as NodeJS.ErrnoException).code !== "EACCES") return;
-      await chmodByName(full, next);
+      await chmodUnreadable(full, next);
       return;
     }
     try {
@@ -198,24 +199,92 @@ async function chmodInside(root: string, rel: unknown, next: (mode: number) => n
   }
 }
 
+/** A handle {@link chmodUnreadable} opens on Linux: Node's `FileHandle` is one. */
+export interface UnreadableHandle {
+  fd: number;
+  stat(): Promise<{ isFile(): boolean; mode: number }>;
+  chmod(mode: number): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** What {@link chmodUnreadable} reaches the file system through; tests stand in another platform or opener. */
+export interface ChmodUnreadableIo {
+  platform: NodeJS.Platform;
+  lstat(file: string): Promise<{ isFile(): boolean; mode: number }>;
+  chmod(file: string, mode: number): Promise<void>;
+  execFile(file: string, args: readonly string[]): Promise<unknown>;
+  open(file: string, flags: number): Promise<UnreadableHandle>;
+}
+
+const HOST_IO: ChmodUnreadableIo = {
+  platform: process.platform,
+  lstat: (file) => lstat(file),
+  chmod: (file, mode) => chmod(file, mode),
+  execFile: (file, args) => execFileAsync(file, [...args]),
+  open: (file, flags) => open(file, flags),
+};
+
+/** Linux's `O_PATH`, which Node does not export: a handle that names a file without reading or writing it. */
+const LINUX_O_PATH = 0o10000000;
+/** Where Linux shows a process its own open files: a path handle's mode is changed through it. */
+const PROC_SELF_FD = "/proc/self/fd";
+
 /**
- * Change the mode of a regular file that cannot be opened, by name and never through a link (L4).
+ * Change the mode of a regular file its owner cannot read, never through a link (L4).
  * macOS: `chmod -h` is lchmod(2), so a link swapped in after the lstat has its own mode changed,
  * never its target's (Node's lchmod opens the file first, which is exactly what EACCES ruled out;
- * `full` is absolute: no option). Linux and Windows have no lchmod (GNU chmod has no `-h`, and
- * Windows' chmod only sets the read-only attribute): the path is changed right after the lstat
- * found a regular file there.
+ * `full` is absolute: no option). Linux: GNU chmod has no `-h`, so the file is opened without
+ * following links — write-only and non-blocking (never truncating or creating) for a write-only
+ * file, `O_PATH` for a mode-0 one — checked to be a regular file, and changed through that handle.
+ * Windows has no lchmod and its chmod only sets the read-only attribute: the path is changed right
+ * after the lstat found a regular file there.
  */
-async function chmodByName(
+export async function chmodUnreadable(
   full: string,
   next: (mode: number) => number,
-  platform: NodeJS.Platform = process.platform,
+  io: ChmodUnreadableIo = HOST_IO,
 ): Promise<void> {
-  const info = await lstat(full);
+  if (io.platform === StudioPlatform.Linux) return chmodUnreadableOnLinux(full, next, io);
+  const info = await io.lstat(full);
   if (!info.isFile()) return;
   const mode = next(info.mode & 0o7777);
-  if (platform === StudioPlatform.Mac) await execFileAsync("/bin/chmod", ["-h", mode.toString(8), full]);
-  else await chmod(full, mode);
+  if (isWindows(io.platform)) await io.chmod(full, mode);
+  else await io.execFile("/bin/chmod", ["-h", mode.toString(8), full]);
+}
+
+/** Linux: through a write-only handle, or a path handle when even writing is not allowed; never by name. */
+async function chmodUnreadableOnLinux(
+  full: string,
+  next: (mode: number) => number,
+  io: ChmodUnreadableIo,
+): Promise<void> {
+  let handle: UnreadableHandle;
+  try {
+    handle = await io.open(full, constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  } catch (err) {
+    // Not writable either (mode 0): a path handle. Anything else — a link (ELOOP), a FIFO with no
+    // reader (ENXIO), a folder (EISDIR) — is not ours to touch.
+    if ((err as NodeJS.ErrnoException).code !== "EACCES") return;
+    await chmodThroughPath(full, next, io);
+    return;
+  }
+  try {
+    const info = await handle.stat();
+    if (info.isFile()) await handle.chmod(next(info.mode & 0o7777));
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Linux: `fchmod` refuses an `O_PATH` handle, so the mode changes through `/proc/self/fd/<n>`, which is that file. */
+async function chmodThroughPath(full: string, next: (mode: number) => number, io: ChmodUnreadableIo): Promise<void> {
+  const handle = await io.open(full, LINUX_O_PATH | constants.O_NOFOLLOW);
+  try {
+    const info = await handle.stat();
+    if (info.isFile()) await io.chmod(`${PROC_SELF_FD}/${handle.fd}`, next(info.mode & 0o7777));
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Undo a marker left behind by a build that never got to release its own locks. */

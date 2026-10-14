@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { request, requestWhenReachable } from "../../scripts/studio-dev/client.ts";
 import { sourceIdentity, maintained, hash, writeJson } from "../../scripts/studio-dev/files.mjs";
+import { pendingReadinessTurn } from "./readiness-events.mjs";
 const root = fs.realpathSync(fileURLToPath(new URL("../..", import.meta.url)));
 const runId = `accept-${Date.now()}`,
   evidence = path.join(root, ".studio-dev/evidence", runId);
@@ -386,10 +387,11 @@ try {
     "engine AbortSignal rejection and durable turn end",
     async () => {
       const coreLog = async () => (await op(a, "logs", { surface: "core", limit: 200 })).entries;
-      const before = new Set((await coreLog()).filter((e) => e.data.type === "turn_started").map((e) => e.turn_id));
+      const before = new Set((await coreLog()).map((e) => e.id));
+      const pendingText = "fixture:pending cancellation proof";
       await op(a, "type", {
         selector: '[aria-label="Prompt"]',
-        text: "fixture:pending cancellation proof",
+        text: pendingText,
         replace: true,
       });
       await op(a, "click", { selector: 'button[aria-label="Send"]' });
@@ -398,14 +400,12 @@ try {
       // engine runs, which is not the abort this check is about. An earlier turn is never taken for it.
       const pending = await until(async () => {
         const entries = await coreLog();
-        const started = entries.findIndex((e) => e.data.type === "turn_started" && !before.has(e.turn_id));
-        if (started < 0) return false;
-        const working = entries
-          .slice(started)
-          .some((e) => e.data.event_type === "session_activity" && e.data.payload?.phase === "thinking");
-        return working ? entries[started].turn_id : false;
+        return pendingReadinessTurn(entries, before, pendingText);
       }, "the controlled pending turn's engine to start");
       assert.ok(pending, "the controlled pending turn started");
+      // The composer ignores pointer clicks for 600 ms after Send while its control morphs.
+      // This is a separate Stop click after that existing guard, not the original Send gesture.
+      await sleep(600);
       await op(a, "click", { selector: '[data-promptbar] button[aria-label="Stop"]' });
       const entries = await until(async () => {
         const entries = (await op(a, "logs", { surface: "core", limit: 200 })).entries;

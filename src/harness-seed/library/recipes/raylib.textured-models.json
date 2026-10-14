@@ -1,0 +1,44 @@
+{
+  "id": "raylib.textured-models",
+  "runtime": "raylib-cpp",
+  "title": "Textured, modelled geometry instead of flat-coloured cubes, in raylib",
+  "tags": [
+    "texture",
+    "textured",
+    "model",
+    "mesh",
+    "material",
+    "mipmap",
+    "flat",
+    "colour",
+    "glb",
+    "assets",
+    "tag",
+    "raylib",
+    "cpp"
+  ],
+  "checkClass": "materials",
+  "kind": "technique",
+  "pack": "raylib",
+  "note": "Load models and textures through studio::asset, mipmap them and tag every draw: a flat colour is a defect.",
+  "intent": "A flat-coloured DrawCube is a placeholder, never the game. Load each model once in reset (studio::assetModel for GLB/glTF without Draco or OBJ, studio::asset for PNG/JPEG textures), give textures mipmaps and trilinear filtering so they hold up at distance, and draw through studio::drawModel or studio::drawModelEx after studio::tag(\"<thing>\") so the runtime counts each draw under its name. Procedural detail is fine when it is textured: GenImageChecked, GenImagePerlinNoise or a gradient image turned into a mipmapped texture reads as a surface, a bare colour does not. A missing asset shows as a magenta checker, which is a visible bug to fix, not a crash.",
+  "sketch": "#include \"studio.h\"\n\nnamespace {\nModel crate{};\nTexture2D bark{};\n}  // namespace\n\nvoid loadProps() {\n  crate = studio::assetModel(\"models/crate.glb\");\n  Image image = GenImagePerlinNoise(256, 256, 0, 0, 4.0f);\n  bark = LoadTextureFromImage(image);\n  UnloadImage(image);\n  GenTextureMipmaps(&bark);\n  SetTextureFilter(bark, TEXTURE_FILTER_TRILINEAR);\n}\n\nvoid drawProps() {\n  studio::tag(\"crate\");\n  studio::drawModel(crate, {2.0f, 0.0f, 1.0f}, 1.0f, WHITE);\n}\n",
+  "port": "Assets live under assets/ and are loaded only through studio::asset/assetModel/assetSound, which resolve the same path on every destination.",
+  "evidence": [
+    {
+      "source": "src/game-template-cpp/CLAUDE.md (C++ template, wave 1)",
+      "note": "A flat colour with no texture is a defect: use textures and models from assets/ via studio::asset()."
+    },
+    {
+      "source": "src/game-template-cpp/src/main.cpp",
+      "note": "The starter itself draws a mipmapped procedural checker on a plane and a cube, tagged ground and block."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

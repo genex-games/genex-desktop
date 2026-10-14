@@ -14,7 +14,9 @@ unchanged. Where it disagrees with this preface, this preface wins.
   report its actual state rather than claiming publication.
 - Studio exports and uploads the game itself. Glue step 3 (the CLI as a dev dependency) and
   `init --convert` do not apply, and `npx genex pull` is not available. Glue steps 1 and 2 still
-  apply; for step 2 read `genex__skill {"name":"genex-threejs-embed-auth"}`.
+  apply to a three.js game; for step 2 read `genex__skill {"name":"genex-threejs-embed-auth"}`.
+  A C++ · raylib game needs neither: Studio builds its Browser build itself, and it can be
+  published only when Browser is one of its destinations. Player identity is not available to it.
 - Studio does not pass on the CLI's preflight lines. `warnings` in `genex__publish-status` carries
   lines about the game's Genex cover instead (no shot sent, a frame refused or not sent, a frame too
   small or not 16:9): after the link, relay each one as the card says to relay the preflight.

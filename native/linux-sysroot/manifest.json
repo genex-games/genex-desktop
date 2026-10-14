@@ -1,0 +1,28 @@
+{
+  "$comment": "The link stubs scripts/toolchains/linux-sysroot.ts adds to the Linux sysroot so a Rust · wgpu game links from a Mac or the Linux Studio: cpal (alsa-sys) needs libasound and gilrs-core (libudev-sys) needs libudev, each found through pkg-config. Each stub is built by the pinned zig for glibc 2.28 with the library's real SONAME and one empty function per `pub fn <prefix>…` the binding crate declares (their bindings are pre-generated, so no headers are needed); it is linked against and never run: players' systems provide the real libraries. The .pc versions are AlmaLinux 8.10's alsa-lib and systemd. Changing a row changes the sysroot's manifest pin (native/linux-sysroot/bundle-lock.json).",
+  "schema": 1,
+  "glibc": "2.28",
+  "zig": "0.16.0",
+  "stubs": [
+    {
+      "crate": "alsa-sys",
+      "version": "0.4.0",
+      "prefix": "snd_",
+      "soname": "libasound.so.2",
+      "link": "asound",
+      "pc": {
+        "name": "alsa",
+        "version": "1.2.10",
+        "description": "ALSA library link stub (alsa-lib 1.2.10, AlmaLinux 8.10)"
+      }
+    },
+    {
+      "crate": "libudev-sys",
+      "version": "0.1.4",
+      "prefix": "udev_",
+      "soname": "libudev.so.1",
+      "link": "udev",
+      "pc": { "name": "libudev", "version": "239", "description": "libudev link stub (systemd 239, AlmaLinux 8.10)" }
+    }
+  ]
+}

@@ -17,7 +17,7 @@ Read the [product overview](docs/agent/context.md), then only the relevant page 
 area. Use the [glossary](docs/agent/glossary.md) for house terms and the
 [recipes](docs/agent/recipes.md) for common changes; [src](src/AGENTS.md) and
 [tests](tests/AGENTS.md) have folder notes. Engineering skills in `.agents/skills/` (mirrored byte for byte in
-`.claude/skills/`): `add-ipc-channel`, `add-event-type`, `add-plugin-tool`, `run-area-tests`,
+`.claude/skills/`): `add-ipc-channel`, `add-event-type`, `add-plugin-tool`, `add-genex-api`, `run-area-tests`,
 `verify-ui-via-dev-control`, `harness-incident-fix`. Do not read the whole documentation set or
 historical task records at startup.
 
@@ -25,7 +25,12 @@ historical task records at startup.
 
 - The renderer is a browser: no Node, Electron, main, preload or substrate imports. It talks
   only through the fixed named calls in `src/shared/studio-api.ts`.
-- Every spawned agent or game process goes through ProcessSandbox.
+- Every spawned agent or game process goes through ProcessSandbox. The one exception: the person
+  launching an admitted mobile build on the Simulator, an emulator or a phone from Studio
+  (`studio:native.launchDevice`, native-classified, recorded as `device_launch`). No harness
+  method reaches it, and agents never start a device run; sandboxed commands are denied the adb
+  port and `~/.android` ([devices](docs/tool-permissions.md#devices-and-emulators)). Adding a
+  device or emulator method to the harness is a design change.
 - Seed upgrades keep the in-app agent's harness edits.
 - Every new IPC channel is classified fixture-safe or native in `src/main/dev/native-policy.ts`.
 - Preserve the normal profile and `~/AI Games`; use owned `studio:dev` profiles. Automated

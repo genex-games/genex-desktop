@@ -1,0 +1,48 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.4, M2.5, M2.6, M2.19. Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-render"
+description = "The wgpu renderer on WebGPU core: adapter floor, GPU-driven-ready instance path, capture readback. GPU-facing structs are explicit [f32; N] arrays with bytemuck, never glam types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Puts rapier3d (and its `enhanced-determinism` glam features) into this crate's graph, so
+# tests/layout.rs can show the GPU struct sizes equal with and without Rapier (M0a.4).
+rapier-layout-check = ["dep:rapier3d"]
+
+[dependencies]
+# The digest and the world-size range are genex-core's golden-checked values (M0a review).
+genex-core = { workspace = true }
+wgpu = { workspace = true }
+naga = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+gltf = { workspace = true }
+# Every CPU transcendental that reaches a capture (sphere mesh, sRGB curve, cascades, mips) is
+# libm's, the same bits on every target (clippy.toml).
+libm = { workspace = true }
+rapier3d = { workspace = true, optional = true }
+# The adapter probe's GPU-visible memory (the desktop memory budget; None on the web): FFI, so its
+# own crate, which an eject leaves in the store when it forks this one into a game.
+genex-gpu-memory = { workspace = true }
+
+# Headless native runs block on adapter and device requests; the web awaits them instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# tests/layout.rs emits every renderer shader through the back ends the destinations compile it
+# with (HLSL SM 5.1 for FXC, MSL, SPIR-V). Features of the already vendored naga, test builds only:
+# no crate is added and the shipped renderer's naga stays `wgsl-in` (crate-policy unchanged).
+naga = { workspace = true, features = ["hlsl-out", "msl-out", "spv-out"] }

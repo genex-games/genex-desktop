@@ -1,0 +1,5 @@
+error[E0599]: no method named `advance_ms` found for reference `&Ctx<'_>` in the current scope
+  --> tests/ui/fail/advance_method_in_update.rs:10:13
+   |
+10 |         ctx.advance_ms(16);
+   |             ^^^^^^^^^^ method not found in `&Ctx<'_>`

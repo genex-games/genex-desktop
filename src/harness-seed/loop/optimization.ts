@@ -18,11 +18,13 @@ import { TurnStatus, TurnStop } from "./turn-record.ts";
 import { optimizationBrief } from "./optimization-prompts.ts";
 import { CheckKind } from "./spec.ts";
 import { DEFAULT_WALL_CLOCK_MS, PAGE_SEED } from "./config.ts";
+import { acquireFor } from "./native-contract.ts";
 import { OptimizationOutcome } from "./outcomes.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CheckResult } from "./checks.ts";
 import type { Evidence, Shot } from "./evidence.ts";
+import type { AcquireCall, LeaseGame } from "./native-contract.ts";
 import type { FacetSpec } from "./spec.ts";
 
 /** Where the stage stands (`checkpoint.phase`, `result.phase`). Persisted: never rename a value. */
@@ -94,6 +96,20 @@ const PromotionOutcome = {
   BaselineChanged: "baseline_changed",
   Failed: "failed",
 } as const;
+
+/**
+ * This stage leases a raylib game's preview naming the build it profiles and reviews a C++ diff by
+ * the run's stack: a raylib night refuses to run on a copy kept from before (native-contract.ts
+ * `servesNative`), whose lease the host refuses and whose review reads C++ by three.js rules.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * This stage leases a Rust · wgpu game's preview naming the build it profiles, as a raylib one's,
+ * and reviews its diff by the run's own stack: a Rust night refuses a copy kept from before Rust
+ * games (native-contract.ts `servesRust`), which reviewed a Rust diff as a three.js one.
+ */
+export const SERVES_RUST = true;
 
 /** The stage's id in its artifacts, its preview profile sessions and its worker's ownership. */
 const STAGE_ID = "optimization";
@@ -513,6 +529,21 @@ function callBounded(stage: Stage, method: HostMethod, params?: unknown): Promis
   return (stage.bounded.call as ForwardedCall)(method, params);
 }
 
+/**
+ * The stage's preview: a lease naming the build it judges (native-contract.ts `acquireFor`), since
+ * the host refuses a raylib game's preview on a lease that names none. A game the library does not
+ * describe, or a host that says nothing of itself, is judged in the browser.
+ */
+async function acquireStagePreview(stage: Stage): Promise<string> {
+  const { run } = stage;
+  const games = await callBounded(stage, HostMethod.GameList, {}).catch(() => []);
+  const listed = Array.isArray(games) ? games.find((g: AnyRecord) => g?.name === run.project) : null;
+  const game: LeaseGame = listed?.destinations ? { destinations: listed.destinations } : {};
+  const capacity = (await callBounded(stage, HostMethod.PreviewCapacity, {}).catch(() => null)) ?? {};
+  const call: AcquireCall = (method, params) => callBounded(stage, method, params);
+  return (await acquireFor(call, game, capacity, { label: `optimization:${run.runId}`, purpose: STAGE_ID })).handle;
+}
+
 /** Save the stage's phase: its result, the run's journal and the checkpoint artifact. */
 async function persist(stage: Stage, phase: OptimizationPhase): Promise<void> {
   const { ctx, checkpoint, result, journal, threadId, run } = stage;
@@ -674,9 +705,7 @@ async function openCandidate(stage: Stage): Promise<null> {
   };
   result.startedAt ??= new Date().toISOString();
   await persist(stage, OptimizationPhase.VerifyingBaseline);
-  stage.handle = (
-    await callBounded(stage, HostMethod.PreviewAcquire, { label: `optimization:${run.runId}`, purpose: STAGE_ID })
-  ).handle;
+  stage.handle = await acquireStagePreview(stage);
   await callBounded(stage, HostMethod.PreviewCall, { method: PageMethod.Pause });
   stage.changedLive = true;
   return null;
@@ -1011,7 +1040,13 @@ async function reviewCandidate(stage: Stage): Promise<OptimizationResult | null>
   // A game the user brought is judged by the contract rules only (M4.6): its own Math.random
   // and its own clock are the game, and a single one of them used to discard the whole
   // optimized candidate.
-  const violations = mechanicalReview(frozen.diff, spec, { ownsMain: true, template: run.ownShape !== true });
+  const violations = mechanicalReview(frozen.diff, spec, {
+    ownsMain: true,
+    template: run.ownShape !== true,
+    // The run's stack, whichever it is (review.ts reads it as `reviewAttempt` does): a Rust
+    // game's diff is never read by rules the night's stack does not have.
+    stack: typeof run.stack === "string" ? run.stack : null,
+  });
   if (violations.length)
     return finish(
       stage,

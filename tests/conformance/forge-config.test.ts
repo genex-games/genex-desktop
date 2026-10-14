@@ -19,6 +19,16 @@ test("the deb and rpm makers point at the packaged executable, not the npm packa
   for (const maker of linuxMakers) assert.equal(maker.config.options.bin, executable, maker.name);
 });
 
+test("Linux packages install the decompressor used by managed C++ toolchains", () => {
+  const config = require("../../forge.config.cjs");
+  const deb = config.makers.find((maker: { name: string }) => maker.name === "@electron-forge/maker-deb");
+  const rpm = config.makers.find((maker: { name: string }) => maker.name === "@electron-forge/maker-rpm");
+  assert.ok(deb, "a deb maker is configured");
+  assert.ok(rpm, "an rpm maker is configured");
+  assert.ok(deb.config.options.depends.includes("xz-utils"), "Debian installs xz-utils with Genex");
+  assert.ok(rpm.config.options.requires.includes("xz"), "RPM installs xz with Genex");
+});
+
 test("Windows packages as a per-user Squirrel installer named Genex-Setup.exe, with Genex's own metadata and icon", () => {
   const config = require("../../forge.config.cjs");
   const squirrel = config.makers.find((maker: { name: string }) => maker.name === "@electron-forge/maker-squirrel");

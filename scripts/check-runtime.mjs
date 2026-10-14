@@ -1,6 +1,8 @@
 import { patchSandboxRuntime } from "./patch-sandbox-runtime.mjs";
+import { patchRpmInstaller } from "./patch-rpm-installer.mjs";
 import { prepareTerminalHelpers } from "./terminal-runtime.mjs";
 await patchSandboxRuntime();
+await patchRpmInstaller();
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolveElectron } from "./electron-runtime.mjs";

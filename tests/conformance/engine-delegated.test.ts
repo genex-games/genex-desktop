@@ -1,4 +1,4 @@
-import { baseDenyRead } from "../../src/substrate/spawn.ts";
+import { baseDenyRead, phoneDenyRead } from "../../src/substrate/spawn.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 /**
  * Delegated engine + registry conformance.
@@ -840,8 +840,10 @@ describe("claude code delegated engine", () => {
           ...credentialHomes(),
           ...baseDenyRead(),
         ],
+        // Flipped (C1 review): the phone keys and device tools join the shell's read denies.
         denyRead: [
           ...baseDenyRead(),
+          ...phoneDenyRead(),
           path.join(root, "secrets"),
           path.join(root, "engine-homes"),
           ...credentialHomes(),

@@ -15,7 +15,13 @@ import {
   queueGenexPromo,
   type PromoInput,
 } from "../../src/renderer/genex-promo.ts";
+import { Overlay, type StageCover, webViewBounds } from "../../src/renderer/panels/stage/native-bounds.ts";
 import { STORAGE_KEYS } from "../../src/renderer/storage.ts";
+
+/** A rectangle as `getBoundingClientRect` reports it. */
+function box(left: number, top: number, width: number, height: number) {
+  return { left, top, width, height, right: left + width, bottom: top + height };
+}
 
 function memory(initial: string | null = null) {
   const values = new Map<string, string>();
@@ -70,6 +76,11 @@ describe("Genex promo", () => {
     );
   });
 
+  it("waits while a dialog needs the person's attention", () => {
+    assert.equal(visible({ overlayOpen: true }), false, "New game and tools stay uncovered");
+    assert.equal(visible({ overlayOpen: false }), true, "the queued offer can return over Home or a game's stage");
+  });
+
   it("settles once a Genex account is connected", () => {
     assert.equal(genexPromoSettled("unlocked"), true);
     assert.equal(genexPromoSettled("locked"), false, "locked is also how a never-connected profile starts");
@@ -92,5 +103,43 @@ describe("Genex promo", () => {
     assert.equal(promoPhase("not connected", signingIn), PromoPhase.Failed, "a sign-in that ended without an account");
     assert.equal(promoPhase("not connected", { ...opening, error: "Sign-in cancelled" }), PromoPhase.Failed);
     assert.equal(promoPhase("failed", idle), PromoPhase.Failed, "the host says the last sign-in failed");
+  });
+});
+
+describe("Native game visibility", () => {
+  it("a floating promo over Live gives the view back to the DOM for Three.js and C++ web games", () => {
+    const slot = box(620, 48, 820, 852);
+    const promo = { kind: Overlay.Floating, rect: box(1064, 484, 360, 400) };
+    const live: StageCover = {
+      project: "my-first-game",
+      visible: true,
+      sidebarOverlay: false,
+      buildsOpen: false,
+      assetsOpen: false,
+      fileOpen: false,
+      showEmpty: false,
+      liveLoading: false,
+      toolbarOpen: false,
+      cardOnStage: false,
+      stillsOnStage: false,
+      stopped: false,
+      watching: true,
+      native: false,
+    };
+    const shown = { x: 620, y: 48, width: 820, height: 852 };
+    const hidden = { x: 0, y: 0, width: 0, height: 0 };
+    assert.deepEqual(webViewBounds(live, slot, [promo]), hidden, "the game cannot paint over the floating promo");
+    assert.deepEqual(
+      webViewBounds({ ...live, project: "bounce-mac" }, slot, [promo]),
+      hidden,
+      "a C++ web build gives the same rectangle back",
+    );
+    const beside = { kind: Overlay.Floating, rect: box(1460, 484, 360, 400) };
+    assert.deepEqual(webViewBounds(live, slot, [beside]), shown, "a panel beside the stage keeps the web view");
+    assert.deepEqual(
+      webViewBounds({ ...live, project: "bounce-mac", native: true }, slot, [promo]),
+      hidden,
+      "a C++ native canvas never exposes the web view",
+    );
   });
 });

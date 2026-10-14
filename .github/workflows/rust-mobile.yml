@@ -1,0 +1,241 @@
+name: Rust mobile
+# The phone rows of the Rust · wgpu runtime (M2.10, M5.6). Every check is a step of
+# scripts/ci/rust-mobile.ts (its step table, `--check-workflow` and tests/conformance/rust-mobile-ci.test.ts
+# hold this file to it); the jobs only install what a step needs. The same Play checks run on the
+# developer's Mac with `GENEX_REQUIRE_TOOLCHAINS=1 npm test -- tests/conformance/rust-mobile-ci.test.ts`.
+#
+# ios-simulator (macOS runner, billed: runs only on an owner dispatch, M5.10): from the committed pins
+# (scripts/spike/rust-wgpu/pins.md) it
+# - cross-compiles the Rust template offline for aarch64-apple-ios and aarch64-apple-ios-sim and
+#   reads LC_BUILD_VERSION back (platform IOS / IOSSIMULATOR, minos 16.0), and checks that rustc's
+#   own deployment target is older, so a build without the lane's setting would be refused;
+# - packages the spike's pond on the iOS shell as an ad hoc signed Simulator .app
+#   (scripts/spike/rust-wgpu/ios-app.sh). The core's export (exportIosGame, the
+#   mobile-export-real row) needs the published genex release's vendored crates on the runner, so
+#   this job does not prove src/substrate/ios-package.ts yet: TODO(M5-F4);
+# - ios-sim-boot, ios-sim-install, ios-sim-capture, ios-sim-delete: boots a fresh Simulator on this
+#   runner only, installs and launches the app, reads the shell's lifecycle log from the app's
+#   Documents (a WebGPU-core Metal adapter in the receipt and a frame presented, or the typed `gpu-unsupported` record whose
+#   reason goes in the summary: the Simulator's Metal is below core), takes a screenshot, and deletes the
+#   Simulator even when a step failed. After a refusal the log must say the designed refusal screen is
+#   shown with the record's code, and the screenshot must be that screen in the colours the log names;
+#   after a render it must be a scene that is not blank. No secrets, no signing identity, no device.
+#
+# android-emulator (Linux runner, KVM, free: runs on the pull requests and pushes below and on dispatch):
+# - builds the pond's NativeActivity APK with the spike script for its arm64 library (not the
+#   lane's cargo build, src/main/rust-build-mobile.ts: TODO(M5-F4)), then
+#   android-package runs the lane (src/substrate/android-package.ts) over that library as a dev APK
+#   and an AAB with throwaway keys made on the runner, and bundletool derives the universal APK;
+# - the Play checks: aab-validate (bundletool validate; the bundle is targetSdk 36, minSdk 29, no
+#   permission, 16 KB aligned) and zipalign-16k (zipalign -c -P 16 over both APKs). bundletool is
+#   the pinned release below, its digest checked here and again by the step;
+# - the 16 KB emulator: the pinned x86_64 Google APIs 16 KB page system image (the arm64 library runs
+#   under the image's ARM translation; Vulkan comes from the emulator's SwiftShader). emulator-page-size
+#   asserts the kernel's page, emulator-smoke installs and starts the lane's dev APK and reads its
+#   lifecycle log (a WebGPU-core Vulkan adapter whose shell then presented a frame, or the typed
+#   `gpu-unsupported` record; a failure event, a crash or neither fails it), emulator-capture closes
+#   system dialogs (an emulator's "System UI isn't responding") and requires a screenshot taken with
+#   the game's own window in focus that is not blank.
+#   An emulator without a compliant Vulkan is a recorded result: the Android GPU rows then rest on
+#   the owner's device row. The SDK, NDK and JDK 21 are the runner image's; the emulator and its
+#   system image are the only SDK downloads, under the image's accepted licences. Nothing is signed
+#   with a real identity.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/rust-mobile.yml
+      - scripts/ci/rust-mobile.ts
+      - scripts/ci/android-emulator.sh
+      - tests/conformance/rust-mobile-ci.test.ts
+      - src/substrate/android-package.ts
+      - src/substrate/ios-package.ts
+      - src/substrate/mobile-sign.ts
+      - src/main/rust-build-mobile.ts
+      - scripts/spike/rust-wgpu/android-apk.sh
+      - scripts/spike/rust-wgpu/android/**
+      - scripts/spike/rust-wgpu/ios-app.sh
+      - scripts/spike/rust-wgpu/ios/**
+      - scripts/spike/rust-wgpu/pins.md
+      - native/genex-rust/**
+      - src/game-template-rust/**
+  push:
+    # Changes that reach dev run the Linux job too; the macOS job never runs on a push.
+    branches: [dev]
+    paths:
+      - .github/workflows/rust-mobile.yml
+      - scripts/ci/rust-mobile.ts
+      - scripts/ci/android-emulator.sh
+      - tests/conformance/rust-mobile-ci.test.ts
+      - src/substrate/android-package.ts
+      - src/substrate/ios-package.ts
+      - src/substrate/mobile-sign.ts
+      - src/main/rust-build-mobile.ts
+      - scripts/spike/rust-wgpu/android-apk.sh
+      - scripts/spike/rust-wgpu/android/**
+      - scripts/spike/rust-wgpu/ios-app.sh
+      - scripts/spike/rust-wgpu/ios/**
+      - scripts/spike/rust-wgpu/pins.md
+      - native/genex-rust/**
+      - src/game-template-rust/**
+permissions:
+  contents: read
+concurrency:
+  group: rust-mobile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+  GENEX_MOBILE_OUT: ${{ github.workspace }}/.studio-dev/spike-mobile/out
+  EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-mobile-ci
+jobs:
+  ios-simulator:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      IOS_APP_ID: games.genex.spike.pond
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Pinned application dependencies
+        run: npm ci --ignore-scripts
+      - name: Xcode and the iOS Simulator runtime on this runner
+        run: |
+          mkdir -p "$EVIDENCE"
+          xcodebuild -version | tee "$EVIDENCE/xcode.txt"
+          xcrun simctl list runtimes --json > "$EVIDENCE/runtimes.json"
+          xcrun --sdk iphonesimulator --show-sdk-path
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: The template cross-compiles for the iOS device and the Simulator with minos 16.0
+        env:
+          GENEX_REQUIRE_TOOLCHAINS: "1"
+        run: node --test --test-name-pattern "aarch64-apple-ios|rustc's own" tests/conformance/rust-mobile-build.test.ts
+      - name: The pond's Simulator .app (ad hoc signed, nothing booted by the script)
+        run: bash scripts/spike/rust-wgpu/ios-app.sh --simulator --no-boot
+      - name: A fresh Simulator, booted
+        run: node scripts/ci/rust-mobile.ts --step ios-sim-boot --evidence "$EVIDENCE"
+      - name: Install and launch the app, read its lifecycle log
+        run: |
+          app=$(find "$GENEX_MOBILE_OUT/ios" -maxdepth 3 -name '*.app' -path '*simulator*' | head -1)
+          [ -n "$app" ] || { echo "::error::no Simulator .app under $GENEX_MOBILE_OUT/ios"; exit 1; }
+          node scripts/ci/rust-mobile.ts --step ios-sim-install --app "$app" --app-id "$IOS_APP_ID" --evidence "$EVIDENCE"
+      - name: A screenshot of the scene, or of the typed refusal screen after a refusal
+        run: node scripts/ci/rust-mobile.ts --step ios-sim-capture --evidence "$EVIDENCE"
+      - name: Delete the Simulator
+        if: always()
+        run: node scripts/ci/rust-mobile.ts --step ios-sim-delete --evidence "$EVIDENCE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-mobile-ios-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+  android-emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PLAY_OUT: ${{ github.workspace }}/.studio-dev/spike-mobile/out/android-lane
+      BUNDLETOOL_JAR: ${{ github.workspace }}/.studio-dev/bundletool/bundletool.jar
+      BUNDLETOOL_URL: https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+      BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+      AVD_IMAGE: system-images;android-36;google_apis_ps16k;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (the facade's graph, the packages and the emulator image)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Pinned application dependencies
+        run: npm ci --ignore-scripts
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: |
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh
+          bash scripts/spike/rust-wgpu/setup-toolchain.sh --verify
+      - name: The runner's Android SDK, NDK and JDK, and the build-tools and platform the lane pins
+        run: |
+          mkdir -p "$EVIDENCE"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --install "build-tools;36.0.0" "platforms;android-36" > "$EVIDENCE/sdkmanager-play.txt"
+          {
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+            ls "$ANDROID_HOME/build-tools" "$ANDROID_HOME/platforms"
+            "$JAVA_HOME_21_X64/bin/java" -version 2>&1
+          } | tee "$EVIDENCE/sdk.txt"
+          # android-apk.sh reads the spike JDK at tools/jdk/Contents/Home (the macOS layout of the
+          # pinned Temurin); on Linux it is the runner's Temurin 21.
+          jdk=.studio-dev/spike-toolchain/tools/jdk/Contents
+          if [ ! -x "$jdk/Home/bin/java" ]; then mkdir -p "$jdk" && ln -s "$JAVA_HOME_21_X64" "$jdk/Home"; fi
+      - name: The pond's NativeActivity APK (its arm64 library is what the lane packages)
+        run: |
+          # android-apk.sh is the macOS spike's: it asks df for gigabytes with -g, which GNU df
+          # spells -BG.
+          shims="$RUNNER_TEMP/macos-shims"
+          mkdir -p "$shims"
+          cat > "$shims/df" <<'SHIM'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = -g ]; then shift; /usr/bin/df -BG "$@" | sed -E 's/([0-9]+)G/\1/g'; else exec /usr/bin/df "$@"; fi
+          SHIM
+          chmod +x "$shims/df"
+          PATH="$shims:$PATH" bash scripts/spike/rust-wgpu/android-apk.sh --activity native
+      - name: bundletool at the pinned release and digest
+        run: |
+          mkdir -p "$(dirname "$BUNDLETOOL_JAR")" "$PLAY_OUT"
+          curl --fail --location --silent --show-error --output "$BUNDLETOOL_JAR" "$BUNDLETOOL_URL"
+          echo "$BUNDLETOOL_SHA256  $BUNDLETOOL_JAR" | sha256sum --check -
+      - name: The lane packages the pond's library as a dev APK and an AAB
+        run: |
+          spike=$(find "$GENEX_MOBILE_OUT/android" -name '*native*.apk' | head -1)
+          [ -n "$spike" ] || { echo "::error::no NativeActivity APK under $GENEX_MOBILE_OUT/android"; exit 1; }
+          node scripts/ci/rust-mobile.ts --step android-package --library-apk "$spike" --out "$PLAY_OUT" --bundletool "$BUNDLETOOL_JAR" --evidence "$EVIDENCE"
+      - name: Play check, bundletool validate at targetSdk 36
+        run: node scripts/ci/rust-mobile.ts --step aab-validate --out "$PLAY_OUT" --bundletool "$BUNDLETOOL_JAR" --evidence "$EVIDENCE"
+      - name: Play check, zipalign -c -P 16
+        run: node scripts/ci/rust-mobile.ts --step zipalign-16k --out "$PLAY_OUT" --evidence "$EVIDENCE"
+      - name: The 16 KB page emulator, booted (KVM)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          # The emulator's qemu links PulseAudio even with -no-audio; the runner image lacks it.
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libpulse0
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" --install emulator platform-tools "$AVD_IMAGE" > "$EVIDENCE/sdkmanager-emulator.txt"
+          # The AVD folder is named for avdmanager and the emulator alike, and the boot is bounded;
+          # the emulator outlives this step: the page-size, smoke and capture steps below use it.
+          bash scripts/ci/android-emulator.sh "$EVIDENCE"
+      - name: The emulator's kernel page is 16 KB
+        run: node scripts/ci/rust-mobile.ts --step emulator-page-size --image "$AVD_IMAGE" --evidence "$EVIDENCE"
+      - name: Smoke the lane's dev APK on the 16 KB emulator
+        run: |
+          node scripts/ci/rust-mobile.ts --step emulator-smoke --out "$PLAY_OUT" --evidence "$EVIDENCE"
+      - name: A screenshot that is not blank
+        run: node scripts/ci/rust-mobile.ts --step emulator-capture --evidence "$EVIDENCE"
+      - name: Stop the emulator
+        if: always()
+        run: '"$ANDROID_HOME/platform-tools/adb" emu kill || true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-mobile-android-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn

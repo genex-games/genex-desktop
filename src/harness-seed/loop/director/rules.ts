@@ -44,6 +44,7 @@ import { parseVision } from "../vision.ts";
 import { visionRefusalWords } from "../vision-prompts.ts";
 import { NoteKind } from "./wake-schedule.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
+import type { GameStack } from "../native-contract.ts";
 import type { Check, FacetSpec } from "../spec.ts";
 // Type-only: erased at runtime, so rules.ts still imports no part of the run.
 import type { Worker } from "./loop-run.ts";
@@ -71,6 +72,15 @@ export { clampBoard, iterationDigest, loopDigest, loopNote, waitDigest, workerDi
 export { clampDirectorMemory, directorMemoryKeep, MAX_DIRECTOR_MEMORY } from "./memory.ts";
 export { DIRECTOR_TOOLS, DirectorTool, directors, directorTool, headSynced } from "./tool-specs.ts";
 export { minutes } from "../time.ts";
+
+/**
+ * This part compiles a raylib run's worker boards and monitor by its stack (no DOM checks, the
+ * C++ review rules): a raylib run refuses to start on a copy kept from before (native-contract.ts
+ * `servesNative`), which would judge a C++ game by a web page's rules.
+ */
+export const SERVES_NATIVE = true;
+/** Worker boards and reviews take the run's stack (`run.stack`) through to spec.ts and review.ts, so a Rust · wgpu board carries no DOM checks and its review reads the Rust rules. */
+export const SERVES_RUST = true;
 
 /**
  * How a landing came to be claimed (`landingWords`): a token the screen reads beside the
@@ -442,6 +452,7 @@ export function monitorFindings({
   main = null,
   studio = null,
   template = true,
+  stack = null,
 }: {
   status?: string;
   diff?: string | null;
@@ -450,6 +461,8 @@ export function monitorFindings({
   main?: string | null;
   studio?: string | null;
   template?: boolean;
+  /** The run's stack (`run.stack`): the C++ rules are a raylib game's. */
+  stack?: GameStack | null;
 }): { files: string[]; violations: string[] } {
   const files = [...new Set(String(status).split("\n").map(porcelainFile).filter(Boolean))].sort();
   const violations: string[] = [];
@@ -471,7 +484,8 @@ export function monitorFindings({
     )
       say(`edited a file outside this facet's ownership (${file})`);
   }
-  for (const violation of mechanicalReview(diff, spec, { ownsMain, main, studio, template })) say(violation.what);
+  for (const violation of mechanicalReview(diff, spec, { ownsMain, main, studio, template, stack }))
+    say(violation.what);
   return { files, violations };
 }
 
@@ -607,6 +621,8 @@ export interface WorkerSpecInput {
   screen?: boolean;
   index?: number;
   forkedFrom?: string | null;
+  /** The run's stack (`run.stack`): a raylib board carries no DOM checks. Absent: three.js. */
+  stack?: GameStack | null;
   /** "finish" for a worker that finishes what exists (facet/stage.ts); absent or anything else, the build stage. */
   stage?: string | null;
   /** This part draws the HUD (spec.ts `withHarnessChecks`): its coverage and overlap are its own; absent, it does. */
@@ -628,6 +644,7 @@ function withDeclaredGame<S extends FacetSpec>(
     screen,
     keepsFrontEnd,
     drawsHud,
+    stack,
   }: {
     kind: string | null;
     traits: string[];
@@ -635,6 +652,7 @@ function withDeclaredGame<S extends FacetSpec>(
     screen: boolean;
     keepsFrontEnd: boolean;
     drawsHud: boolean;
+    stack: GameStack | null;
   },
 ): S {
   const kindName = isGameKind(kind) ? kind : null;
@@ -642,7 +660,7 @@ function withDeclaredGame<S extends FacetSpec>(
   const declared: AnyRecord = { ...(kindName ? { kind: kindName } : {}) };
   for (const trait of Object.values(GameTrait)) if (traits.includes(trait)) declared[trait] = true;
   const game = normalizeGameTraits(declared);
-  return withHarnessChecks(spec, { ownsMain, game, screen, keepsFrontEnd, drawsHud });
+  return withHarnessChecks(spec, { ownsMain, game, screen, keepsFrontEnd, drawsHud, stack });
 }
 
 /**
@@ -700,6 +718,7 @@ export function compileWorkerSpec(
     index = 0,
     forkedFrom = null,
     stage = null,
+    stack = null,
     drawsHud = true,
   }: WorkerSpecInput,
   base: AnyRecord | null = null,
@@ -712,7 +731,15 @@ export function compileWorkerSpec(
     { id, title: title || id, intent: brief, owns, identity, cameras, checks, done, milestones: rungs, budgetShare: 0 },
     index,
   );
-  spec = withDeclaredGame(spec, { kind, traits, ownsMain, screen, keepsFrontEnd: setup?.begin === false, drawsHud });
+  spec = withDeclaredGame(spec, {
+    kind,
+    traits,
+    ownsMain,
+    screen,
+    keepsFrontEnd: setup?.begin === false,
+    drawsHud,
+    stack,
+  });
   const expr = setupVerifyExpr(setup?.verify);
   if (expr) spec = withRequestedStateCheck(spec, { expr, note: setup?.note ?? "" });
   // Before validation: a screen part's board may be mostly vision (spec.ts visionHeavy).

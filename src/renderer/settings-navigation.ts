@@ -9,6 +9,8 @@ export const SettingsSection = {
   Harness: "harness",
   /** Claude Code's "always allow" rules saved in game chats. */
   Permissions: "permissions",
+  /** The C++ toolchains: versions, disk use and "Remove old versions". */
+  Toolchains: "toolchains",
   /** Share build metrics: off by default (`panels/PrivacySection.tsx`). */
   Privacy: "privacy",
   /** The running version and Check for Updates (`panels/AboutSection.tsx`). */

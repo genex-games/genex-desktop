@@ -12,7 +12,8 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
-import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
+import { createPrewarmSandbox } from "../../src/main/core/toolchains.ts";
+import { mergeOverlay, ProcessSandbox, type SandboxPolicy, type SandboxRuntime } from "../../src/substrate/spawn.ts";
 import { type AncestorGrants, WindowsSandboxSession } from "../../src/substrate/windows-sandbox.ts";
 import { posixShell } from "../helpers/posix-shell.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -196,5 +197,121 @@ describe("PH-3: a per-run domain reaches the proxy for the run, and only the run
     }) as typeof update;
     await sandbox.run({ command: "true", cwd: root });
     assert.equal(pushes, 0);
+  });
+});
+
+/**
+ * A prewarm runs in a sandbox of its own, and creating one pushes its config (no domain) into the
+ * one process-wide runtime. A domain the core's sandbox opened for a run in flight (a package
+ * install, a Genex CLI call) must stay open for that run, and stay open once the prewarm's
+ * sandbox is let go.
+ */
+describe("a prewarm's own sandbox beside the core's", {
+  skip: process.platform === "win32" && "no prewarm on Windows",
+}, () => {
+  it("leaves a domain the core's run opened open, while the prewarm sandbox lives and after it goes", async (t) => {
+    const fake = fakeRuntime();
+    const { sandbox, root } = await sandboxWith(t, fake);
+    const install = sandbox.run({ command: "sleep 0.5", cwd: root, policy: { allowedDomains: [REGISTRY] } });
+    await fake.firstWrap;
+    const prewarm = await createPrewarmSandbox({
+      scratchDir: path.join(root, "prewarm-scratch"),
+      secretPaths: [],
+      runtime: fake.runtime,
+      alongside: sandbox,
+    });
+    assert.deepEqual(fake.domains(), [REGISTRY], "the install keeps its registry while a prewarm starts");
+    await prewarm.dispose();
+    assert.deepEqual(fake.domains(), [REGISTRY], "and after the prewarm's sandbox goes");
+    await install;
+    assert.deepEqual(fake.domains(), [], "closed once the install ends");
+  });
+});
+
+/**
+ * A per-run overlay never lifts a deny. On macOS Seatbelt's deny wins whatever the overlay allows;
+ * on Linux bubblewrap mounts a writable `allowWrite` inside a read-only `denyWrite` and the write
+ * goes through (the CI failure of `toolchains-service.test.ts:606`). So the merge drops every
+ * overlay `allowWrite` that is a deny or lies inside one, on every platform.
+ */
+describe("mergeOverlay: a deny is never lifted by a run's overlay", () => {
+  const base: SandboxPolicy = {
+    allowedDomains: [],
+    allowLocalBinding: true,
+    allowWrite: ["/work/games", "/work/scratch"],
+    allowRead: ["/work/resources"],
+    denyRead: ["/home/me/.ssh"],
+    denyWrite: ["/work/toolchains", "/work/judges"],
+  };
+
+  it("drops an allowWrite inside a base denyWrite and keeps one outside", () => {
+    const merged = mergeOverlay(base, {
+      allowWrite: ["/work/toolchains/.staging/abc", "/work/games/pong/build", "/work/toolchains-other/x"],
+    });
+    assert.deepEqual(merged.allowWrite, [
+      "/work/games",
+      "/work/scratch",
+      "/work/games/pong/build",
+      "/work/toolchains-other/x",
+    ]);
+  });
+
+  it("drops an allowWrite equal to a deny, spelled with a trailing slash or a dot segment", () => {
+    const merged = mergeOverlay(base, {
+      allowWrite: ["/work/judges", "/work/judges/", "/work/games/../judges/rubric", "/work/./toolchains"],
+    });
+    assert.deepEqual(merged.allowWrite, base.allowWrite);
+  });
+
+  it("drops an allowWrite inside the overlay's own denyWrite too", () => {
+    const merged = mergeOverlay(base, { allowWrite: ["/work/out/bin"], denyWrite: ["/work/out"] });
+    assert.deepEqual(merged.allowWrite, base.allowWrite);
+  });
+
+  it("keeps the deny lists a union and the domains added, as before", () => {
+    const merged = mergeOverlay(base, {
+      allowedDomains: ["registry.npmjs.org"],
+      denyRead: ["/work/secrets"],
+      denyWrite: ["/work/games/pong/.claude"],
+      allowRead: ["/work/extra"],
+    });
+    assert.deepEqual(merged.denyRead, ["/home/me/.ssh", "/work/secrets"]);
+    assert.deepEqual(merged.denyWrite, ["/work/toolchains", "/work/judges", "/work/games/pong/.claude"]);
+    assert.deepEqual(merged.allowedDomains, ["registry.npmjs.org"]);
+    assert.deepEqual(merged.allowRead, ["/work/resources", "/work/extra"]);
+    assert.equal(merged.allowLocalBinding, true);
+  });
+
+  it("is what a run's wrapped config carries", {
+    skip: process.platform === "win32" && "Windows grants writes per session, never per run",
+  }, async () => {
+    const fake = fakeRuntime();
+    const configs: Array<Parameters<SandboxRuntime["updateConfig"]>[0]> = [];
+    const wrap = fake.runtime.wrapWithSandboxArgv;
+    fake.runtime.wrapWithSandboxArgv = ((
+      command: string,
+      shell: string,
+      config: (typeof configs)[number],
+      ...rest: unknown[]
+    ) => {
+      configs.push(config);
+      return (wrap as (...args: unknown[]) => unknown)(command, shell, config, ...rest);
+    }) as never;
+    const root = await tmpDir("sandbox-overlay-deny-");
+    const store = path.join(root, "toolchains");
+    const sandbox = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      denyWrite: [store],
+      runtime: fake.runtime,
+    });
+    const staging = path.join(store, ".staging", "abc");
+    await sandbox.run({ command: "true", cwd: root, policy: { allowWrite: [staging, path.join(root, "out")] } });
+    assert.equal(configs.length, 1);
+    assert.ok(!configs[0]?.filesystem.allowWrite.includes(staging), "the store's staging stays write-denied");
+    assert.ok(configs[0]?.filesystem.allowWrite.includes(path.join(root, "out")));
+    assert.ok(configs[0]?.filesystem.denyWrite.includes(store));
+    await sandbox.dispose();
   });
 });

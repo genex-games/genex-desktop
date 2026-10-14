@@ -10,6 +10,7 @@
  *
  * `file` is always posix-relative to the game root: the renderer never receives absolute game paths.
  */
+import { type CompiledStack, GameStack, isCompiledStack } from "./game-project.ts";
 
 import type { CallMaking, MakingJob } from "./asset-making.ts";
 import type { CallCutOff } from "./plugins.ts";
@@ -82,7 +83,8 @@ export interface AssetDeliveredPayload {
   source: AssetSource;
   pluginId?: string;
   jobId: string;
-  files: Array<{ file: string; bytes: number; kind: AssetKind }>;
+  /** `refused`: the file landed, but the game's stack cannot load its format (`stackAcceptsAsset`). */
+  files: Array<{ file: string; bytes: number; kind: AssetKind; refused?: AssetRefusal }>;
   at: string;
   threadId?: string;
   render?: string | null;
@@ -199,6 +201,20 @@ export interface PluginToolFinishedPayload extends PluginToolStartedPayload {
 /** How the app shows a file: the viewer it opens in, or none (unknown files stay metadata). */
 export type AssetPreviewMode = "image" | "audio" | "video" | "model" | "texture" | "text" | "unsupported";
 
+/** How a compiled stack takes a format. Wire values: never rename one. */
+export const AssetSupport = {
+  /** The game loads the file as it is. */
+  Loads: "loads",
+  /** The studio's import step converts it first (Rust · wgpu: OBJ, STL and PLY to GLB; Opus and AAC to OGG). */
+  Converts: "converts",
+  /** The game cannot use it: a delivered file is marked refused. */
+  Refused: "refused",
+} as const;
+export type AssetSupport = (typeof AssetSupport)[keyof typeof AssetSupport];
+
+/** How each compiled stack takes one format. Three.js loads whatever the browser loads, so it has no column. */
+export type StackAssetSupport = Readonly<Record<CompiledStack, AssetSupport>>;
+
 export interface AssetFormat {
   /** What the file is, for the inventory and the cards. */
   kind: AssetKind;
@@ -210,70 +226,145 @@ export interface AssetFormat {
   raster: boolean;
   /** A picture a model file can name as its texture (preloaded beside an FBX). */
   texture?: true;
+  /** An equirectangular HDR map a Rust · wgpu game lights its scene with (its environment). */
+  environment?: true;
+  /**
+   * How each compiled stack takes it: raylib 6.0 as Genex builds it (its `config.h`, `raudio.c`
+   * and model loaders), and the Rust · wgpu runtime with the studio's import step (plan "Game services").
+   */
+  stacks: StackAssetSupport;
 }
 
-const image = (mime: string, extra: { raster?: boolean; texture?: true } = {}): AssetFormat => ({
+/** Why a file is refused for a game's stack. Sent to the renderer: never rename a value. */
+export const AssetRefusal = {
+  /** A C++ · raylib game cannot load this format. */
+  UnsupportedByRaylib: "unsupported-by-raylib",
+  /** A Rust · wgpu game cannot load this format, and the import step does not convert it. */
+  UnsupportedByRust: "unsupported-by-rust",
+} as const;
+export type AssetRefusal = (typeof AssetRefusal)[keyof typeof AssetRefusal];
+
+/** The refusal each compiled stack marks a file it cannot use with. */
+const STACK_ASSET_REFUSAL = {
+  [GameStack.RaylibCpp]: AssetRefusal.UnsupportedByRaylib,
+  [GameStack.RustWgpu]: AssetRefusal.UnsupportedByRust,
+} as const satisfies Record<CompiledStack, AssetRefusal>;
+
+const { Loads, Converts, Refused } = AssetSupport;
+/** Both compiled stacks load it. */
+const BOTH = { [GameStack.RaylibCpp]: Loads, [GameStack.RustWgpu]: Loads } as const satisfies StackAssetSupport;
+/** raylib refuses it; the Rust runtime loads it. */
+const RUST_ONLY = { [GameStack.RaylibCpp]: Refused, [GameStack.RustWgpu]: Loads } as const satisfies StackAssetSupport;
+/** raylib refuses it; the Rust import step converts it. */
+const RUST_CONVERTS = {
+  [GameStack.RaylibCpp]: Refused,
+  [GameStack.RustWgpu]: Converts,
+} as const satisfies StackAssetSupport;
+/** raylib loads it; the Rust import step converts it. */
+const RAYLIB_LOADS_RUST_CONVERTS = {
+  [GameStack.RaylibCpp]: Loads,
+  [GameStack.RustWgpu]: Converts,
+} as const satisfies StackAssetSupport;
+/** Only raylib loads it. */
+const RAYLIB_ONLY = {
+  [GameStack.RaylibCpp]: Loads,
+  [GameStack.RustWgpu]: Refused,
+} as const satisfies StackAssetSupport;
+/** Neither compiled stack can use it. */
+const NEITHER = { [GameStack.RaylibCpp]: Refused, [GameStack.RustWgpu]: Refused } as const satisfies StackAssetSupport;
+
+const image = (
+  mime: string,
+  stacks: StackAssetSupport,
+  extra: { raster?: boolean; texture?: true } = {},
+): AssetFormat => ({
   kind: "image",
   preview: "image",
   mime,
   raster: extra.raster ?? false,
   ...(extra.texture ? { texture: true } : {}),
+  stacks,
 });
-const as = (kind: AssetKind, preview: AssetPreviewMode, mime: string): AssetFormat => ({
+const as = (kind: AssetKind, preview: AssetPreviewMode, mime: string, stacks: StackAssetSupport): AssetFormat => ({
   kind,
   preview,
   mime,
   raster: false,
+  stacks,
 });
+/** A format Chromium shows in no viewer (raylib's own containers and trackers). */
+const unshown = (kind: AssetKind, stacks: StackAssetSupport): AssetFormat =>
+  as(kind, "unsupported", "application/octet-stream", stacks);
 
 /**
  * Every file format the studio knows, by lowercase extension: one table for the inventory's kind,
- * the preview's viewer, the reader's MIME type and the thumbnail reader. A new format is one row
- * here (see docs/agent/recipes.md, "Asset format"). Anything else is `other` and unsupported.
+ * the preview's viewer, the reader's MIME type, the thumbnail reader and how each compiled stack
+ * takes it. A new format is one row here (see docs/agent/recipes.md, "Asset format"). Anything
+ * else is `other` and unsupported.
  */
 export const ASSET_FORMATS: Readonly<Record<string, AssetFormat>> = Object.freeze({
-  png: image("image/png", { raster: true, texture: true }),
-  jpg: image("image/jpeg", { raster: true, texture: true }),
-  jpeg: image("image/jpeg", { raster: true, texture: true }),
-  webp: image("image/webp", { raster: true, texture: true }),
-  gif: image("image/gif", { raster: true }),
-  avif: image("image/avif"),
-  svg: image("image/svg+xml"),
-  bmp: image("image/bmp", { texture: true }),
+  png: image("image/png", BOTH, { raster: true, texture: true }),
+  // JPEG loads in raylib too: the Genex prebuild turns SUPPORT_FILEFORMAT_JPG on.
+  jpg: image("image/jpeg", BOTH, { raster: true, texture: true }),
+  jpeg: image("image/jpeg", BOTH, { raster: true, texture: true }),
+  webp: image("image/webp", RUST_ONLY, { raster: true, texture: true }),
+  gif: image("image/gif", BOTH, { raster: true }),
+  // The Rust runtime's `image` build has no AVIF or SVG decoder.
+  avif: image("image/avif", NEITHER),
+  svg: image("image/svg+xml", NEITHER),
+  bmp: image("image/bmp", BOTH, { texture: true }),
   // High-dynamic-range and GPU textures are images, shown on a plane by the model viewer.
-  hdr: as("image", "texture", "image/vnd.radiance"),
-  exr: as("image", "texture", "image/x-exr"),
-  ktx2: as("image", "texture", "image/ktx2"),
-  glb: as("model", "model", "model/gltf-binary"),
-  gltf: as("model", "model", "model/gltf+json"),
-  obj: as("model", "model", "text/plain"),
-  fbx: as("model", "model", "application/octet-stream"),
-  stl: as("model", "model", "application/octet-stream"),
-  ply: as("model", "model", "application/octet-stream"),
+  // raylib 6.0 ships SUPPORT_FILEFORMAT_HDR 0 and reads neither EXR nor KTX2; the Rust runtime keeps all three.
+  // A Radiance `.hdr` is also the Rust runtime's environment map format (image-based lighting).
+  hdr: { ...as("image", "texture", "image/vnd.radiance", RUST_ONLY), environment: true },
+  exr: as("image", "texture", "image/x-exr", RUST_ONLY),
+  ktx2: as("image", "texture", "image/ktx2", RUST_ONLY),
+  // raylib's own texture containers: DDS and QOI (the Rust runtime's `image` reads both too).
+  dds: unshown("image", BOTH),
+  qoi: unshown("image", BOTH),
+  glb: as("model", "model", "model/gltf-binary", BOTH),
+  gltf: as("model", "model", "model/gltf+json", BOTH),
+  // OBJ, STL and PLY become GLB in the Rust import step; FBX is refused there.
+  obj: as("model", "model", "text/plain", RAYLIB_LOADS_RUST_CONVERTS),
+  fbx: as("model", "model", "application/octet-stream", NEITHER),
+  stl: as("model", "model", "application/octet-stream", RUST_CONVERTS),
+  ply: as("model", "model", "application/octet-stream", RUST_CONVERTS),
   // An authoring app's own files: listed by name, opened in that app.
-  blend: as("model", "unsupported", "application/octet-stream"),
-  mp3: as("audio", "audio", "audio/mpeg"),
-  wav: as("audio", "audio", "audio/wav"),
-  ogg: as("audio", "audio", "audio/ogg"),
-  oga: as("audio", "audio", "audio/ogg"),
-  opus: as("audio", "audio", "audio/ogg"),
-  m4a: as("audio", "audio", "audio/mp4"),
-  aac: as("audio", "audio", "audio/aac"),
-  flac: as("audio", "audio", "audio/flac"),
-  mp4: as("video", "video", "video/mp4"),
-  webm: as("video", "video", "video/webm"),
-  mov: as("video", "video", "video/quicktime"),
-  ogv: as("video", "video", "video/ogg"),
-  // A model's companions and plain data: readable as text, not assets of their own kind.
-  mtl: as("other", "text", "text/plain"),
-  json: as("other", "text", "application/json"),
-  txt: as("other", "text", "text/plain"),
-  csv: as("other", "text", "text/plain"),
-  atlas: as("other", "text", "text/plain"),
-  bin: as("other", "unsupported", "application/octet-stream"),
+  blend: as("model", "unsupported", "application/octet-stream", NEITHER),
+  // raylib's own model formats beside glTF and OBJ.
+  iqm: unshown("model", RAYLIB_ONLY),
+  m3d: unshown("model", RAYLIB_ONLY),
+  vox: unshown("model", RAYLIB_ONLY),
+  mp3: as("audio", "audio", "audio/mpeg", BOTH),
+  wav: as("audio", "audio", "audio/wav", BOTH),
+  ogg: as("audio", "audio", "audio/ogg", BOTH),
+  // raudio matches `.ogg` only, and has no Opus, AAC or (as Genex builds it) FLAC decoder. The Rust
+  // runtime decodes Ogg and FLAC with symphonia, and its import step turns Opus and AAC into OGG.
+  oga: as("audio", "audio", "audio/ogg", RUST_ONLY),
+  opus: as("audio", "audio", "audio/ogg", RUST_CONVERTS),
+  m4a: as("audio", "audio", "audio/mp4", RUST_CONVERTS),
+  aac: as("audio", "audio", "audio/aac", RUST_CONVERTS),
+  flac: as("audio", "audio", "audio/flac", RUST_ONLY),
+  // raudio's own formats: QOA, and the XM and MOD trackers. The Rust runtime refuses them.
+  qoa: unshown("audio", RAYLIB_ONLY),
+  xm: unshown("audio", RAYLIB_ONLY),
+  mod: unshown("audio", RAYLIB_ONLY),
+  // Neither compiled runtime plays video.
+  mp4: as("video", "video", "video/mp4", NEITHER),
+  webm: as("video", "video", "video/webm", NEITHER),
+  mov: as("video", "video", "video/quicktime", NEITHER),
+  ogv: as("video", "video", "video/ogg", NEITHER),
+  // A model's companions and plain data: readable as text, not assets of their own kind. An MTL
+  // goes into the GLB its OBJ becomes in the Rust import step.
+  mtl: as("other", "text", "text/plain", RAYLIB_LOADS_RUST_CONVERTS),
+  json: as("other", "text", "application/json", BOTH),
+  txt: as("other", "text", "text/plain", BOTH),
+  csv: as("other", "text", "text/plain", BOTH),
+  atlas: as("other", "text", "text/plain", BOTH),
+  bin: as("other", "unsupported", "application/octet-stream", BOTH),
   // Unreal's packages and levels: only the editor reads them.
-  uasset: as("other", "unsupported", "application/octet-stream"),
-  umap: as("other", "unsupported", "application/octet-stream"),
+  uasset: as("other", "unsupported", "application/octet-stream", NEITHER),
+  umap: as("other", "unsupported", "application/octet-stream", NEITHER),
 });
 
 /** The kinds of asset that are media: what an engine's asset folder shows besides its own formats. */
@@ -314,7 +405,32 @@ export function assetKind(file: string): AssetKind {
   return assetFormat(file)?.kind ?? "other";
 }
 
+/** An HDR environment map a Rust · wgpu game can light its scene with, by extension. */
+export function isEnvironmentAsset(file: string): boolean {
+  return assetFormat(file)?.environment === true;
+}
+
 /** A sound the game can play, by extension: the files whose playback an asset check observes. */
 export function isAudioFile(file: string): boolean {
   return assetKind(file) === "audio";
+}
+
+/**
+ * How a game of `stack` takes `file`, by its row: null for a format the table does not know (it
+ * stays metadata). Three.js loads every known format.
+ */
+export function stackAssetSupport(stack: GameStack, file: string): AssetSupport | null {
+  const format = assetFormat(file);
+  if (!format) return null;
+  return isCompiledStack(stack) ? format.stacks[stack] : AssetSupport.Loads;
+}
+
+/**
+ * Whether a game of `stack` can use `file`, by its row: null when it can (loaded or converted at
+ * import, and for a format the table does not know, which stays metadata), else why not.
+ * Three.js refuses nothing.
+ */
+export function stackAcceptsAsset(stack: GameStack, file: string): AssetRefusal | null {
+  if (!isCompiledStack(stack)) return null;
+  return stackAssetSupport(stack, file) === AssetSupport.Refused ? STACK_ASSET_REFUSAL[stack] : null;
 }

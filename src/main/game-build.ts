@@ -16,6 +16,12 @@
  * than a black rectangle — but only the *live* stage may fall back to it. A judge scoring a
  * stale build would be scoring a lie, which is why {@link servedAfterBuild} takes the decision
  * away from the caller's memory and puts it in one testable rule.
+ *
+ * A compiled game (C++ · raylib, and Rust once its lane lands) is built by its stack's lane
+ * instead, reached through one seam: {@link GameBuildLanes} dispatches `ensure(game, target,
+ * purpose)` by the stack the game's files make it, and refuses a stack with no lane
+ * `lane-missing` before anything runs. The raylib lane is `CppBuilds` itself ({@link raylibLane});
+ * the Rust lane is `RustBuilds` (`rust-build.ts`), which is a `GameBuildLane` as it stands.
  */
 import { constants } from "node:fs";
 import { cp, mkdir, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -27,8 +33,13 @@ import { ensureDir, pathExists } from "../substrate/fsx.ts";
 import { HOST_GIT_CONFIG } from "../substrate/snapshots.ts";
 import { packageCommandsIn } from "../substrate/toolchain.ts";
 import type { ProjectShape } from "../substrate/game-workspace.ts";
+import { type BuildTarget, type GameDestinations, type GameStack, stackOf } from "../shared/game-project.ts";
+import type { ToolchainLock } from "../shared/toolchain.ts";
+import type { CppBuildInput, CppBuilds } from "./cpp-build.ts";
+import type { RustLaneReport } from "./rust-build-diagnostics.ts";
 import { type RunRequest, type RunResult, shellQuote } from "../substrate/spawn.ts";
-import type { BuildProblem, InstallResult } from "../shared/build-problem.ts";
+import { type NativeAdmissionFacts, NativeRefusal } from "../shared/native-contract.ts";
+import type { BuildProblem, CppBuildPurpose, InstallResult } from "../shared/build-problem.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GENEX_GAME_PACKAGES, isGenexGamePackage } from "../shared/genex.ts";
 
@@ -70,6 +81,8 @@ export interface BuildSource {
 }
 
 export interface BuildOutcome {
+  /** Host-read facts retained when a cross build is refused; refused output is never served. */
+  nativeAdmission?: NativeAdmissionFacts;
   ok: boolean;
   /** The folder holding the page to serve, when the build succeeded. */
   output: string | null;
@@ -78,6 +91,8 @@ export interface BuildOutcome {
   problem: BuildProblem | null;
   /** The build command actually ran. False means memoised, or the game needs no build. */
   ran: boolean;
+  /** The Rust lane's typed refusal, first diagnostics and receipt (`rust-build.ts`); absent from every other lane. */
+  rust?: RustLaneReport;
 }
 
 /**
@@ -387,7 +402,7 @@ export class GameBuilds {
   }
 }
 
-/** The last lines a failed command printed — stderr first, because that is where the error is. */
+/** The first lines a failed command printed — stderr first, because that is where the error is. */
 export function outputLines(result: Pick<RunResult, "stdout" | "stderr">, max: number): string[] {
   const lines = `${result.stderr ?? ""}\n${result.stdout ?? ""}`
     .split("\n")
@@ -481,4 +496,132 @@ async function gitOut(dir: string, args: string[]): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// ── The build-lane seam: one ensure for every compiled stack ─────────────────────────────────
+
+/** Why the build-lane seam refused a game before any lane ran. Typed; the stage owns the words. Never rename a value. */
+export const GameBuildRefusal = {
+  /**
+   * No lane is registered for the stack the game's files make it: a Rust game in a core built
+   * without `RustBuilds` (`rust-build.ts`), or a browser game, which {@link GameBuilds} builds instead.
+   */
+  LaneMissing: NativeRefusal.LaneMissing,
+} as const;
+export type GameBuildRefusal = (typeof GameBuildRefusal)[keyof typeof GameBuildRefusal];
+
+/** One game a compiled lane builds: who it is, where its sources are, what it is and where it may go. */
+export interface GameBuildGame {
+  project: string;
+  /** Where the sources are: the game folder, or a worktree the app made. */
+  dir: string;
+  /** What the folder is: its kind decides the stack, and so the lane. */
+  shape: ProjectShape;
+  /** The game's destinations: a lane refuses a desktop target outside them. */
+  destinations: GameDestinations;
+  /** The lock to build with; null or absent is the store's current lock. */
+  lock?: ToolchainLock | null;
+  /** `dir` is the game folder itself, whose lock a build that worked records; a worktree's or a snapshot's records nothing. */
+  recordLock?: boolean;
+}
+
+/** What one caller hands a build besides the game: its own signal, which ends only its own wait. */
+export interface GameBuildOptions {
+  signal?: AbortSignal;
+}
+
+/** One compiled stack's build lane, as the seam drives it. */
+export interface GameBuildLane {
+  /** Build `game` for `target` and `purpose`, and answer the served output or the problem. */
+  ensure(
+    game: GameBuildGame,
+    target: BuildTarget,
+    purpose: CppBuildPurpose,
+    options?: GameBuildOptions,
+  ): Promise<BuildOutcome>;
+  /** Abort every build in flight or waiting (Composer Stop, the app's stop); nothing in flight is no error. */
+  cancelAll(): void;
+  /** Remove the build folders nothing will build again; answer how many went. */
+  sweep(): Promise<number>;
+}
+
+/** What the seam was asked for: the stack it dispatched on, the destination and why. */
+interface GameBuildAsked {
+  stack: GameStack;
+  target: BuildTarget;
+  purpose: CppBuildPurpose;
+}
+
+/** What the seam answers: the lane's own outcome, or why no lane ran. */
+export type GameBuildReceipt =
+  | (GameBuildAsked & { refusal: null; outcome: BuildOutcome })
+  | (GameBuildAsked & { refusal: GameBuildRefusal; outcome: null });
+
+/** The lanes registered per stack; a stack with none is refused `lane-missing`. */
+export type GameBuildLaneTable = Partial<Record<GameStack, GameBuildLane>>;
+
+/** The build-lane seam: every compiled stack's lane, dispatched by the stack the game's files make it. */
+export class GameBuildLanes {
+  readonly #lanes: GameBuildLaneTable;
+
+  constructor(lanes: GameBuildLaneTable) {
+    this.#lanes = { ...lanes };
+  }
+
+  /** The lane registered for `stack`, or null when it has none. */
+  laneFor(stack: GameStack): GameBuildLane | null {
+    return this.#lanes[stack] ?? null;
+  }
+
+  /**
+   * Build `game` for `target` with its stack's lane and answer that lane's outcome as it was. The
+   * stack is the one its files make it (`stackOf`), as every caller decided before the seam: a
+   * studio.json that says otherwise does not pick the lane. No lane for it: refused, nothing run.
+   */
+  async ensure(
+    game: GameBuildGame,
+    target: BuildTarget,
+    purpose: CppBuildPurpose,
+    options: GameBuildOptions = {},
+  ): Promise<GameBuildReceipt> {
+    const stack = stackOf(game.shape);
+    const lane = this.laneFor(stack);
+    if (!lane) return { stack, target, purpose, refusal: GameBuildRefusal.LaneMissing, outcome: null };
+    const outcome = await lane.ensure(game, target, purpose, options);
+    return { stack, target, purpose, refusal: null, outcome };
+  }
+
+  /** Composer Stop and the app's stop: every lane aborts what it has in flight or waiting. */
+  cancelAll(): void {
+    for (const lane of this.#registered()) lane.cancelAll();
+  }
+
+  /** Every lane sweeps its unused build folders; answers how many went in all. */
+  async sweep(): Promise<number> {
+    const removed = await Promise.all(this.#registered().map((lane) => lane.sweep()));
+    return removed.reduce((sum, count) => sum + count, 0);
+  }
+
+  #registered(): GameBuildLane[] {
+    return Object.values(this.#lanes).filter((lane): lane is GameBuildLane => lane !== undefined);
+  }
+}
+
+/**
+ * The C++ · raylib lane behind the seam: `CppBuilds` itself, untouched, handed exactly the input
+ * its callers built for it before the seam, with the caller's own signal.
+ */
+export function raylibLane(cpp: Pick<CppBuilds, "ensure" | "cancelAll" | "sweep">): GameBuildLane {
+  return {
+    ensure: (game, target, purpose, options) => cpp.ensure(cppBuildInput(game, target, purpose), options),
+    cancelAll: () => cpp.cancelAll(),
+    sweep: () => cpp.sweep(),
+  };
+}
+
+/** The C++ lane's input for one build of `game`: `recordLock` only when the caller said. */
+function cppBuildInput(game: GameBuildGame, target: BuildTarget, purpose: CppBuildPurpose): CppBuildInput {
+  const { project, dir, shape, destinations } = game;
+  const input: CppBuildInput = { project, dir, shape, target, destinations, purpose, lock: game.lock ?? null };
+  return game.recordLock === undefined ? input : { ...input, recordLock: game.recordLock };
 }

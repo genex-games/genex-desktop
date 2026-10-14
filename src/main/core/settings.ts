@@ -1,5 +1,6 @@
 /** The studio's own settings (Studio's header and Settings → Harness) and the bounds they are read within. */
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
+import { parseStackDefaultSwitch, type StackDefaultSwitch } from "../../shared/game-project.ts";
 import { DEFAULT_POOL_MAX, MAX_POOL_MAX } from "../../substrate/preview-pool.ts";
 
 /** 1..MAX_POOL_MAX; anything unusable is the default. */
@@ -66,4 +67,16 @@ export interface StudioSettings {
    * bounded per run, never after the user's Stop or Finish (`core/auto-resume.ts`).
    */
   autoResume: boolean;
+  /**
+   * The new-game stack switch (`stackDefault` in settings.json; no Settings control: the owner's
+   * rollback). Absent is the shipped switch (`host-conditional`); `three-js` starts Create game on
+   * Three.js everywhere, with Rust · wgpu still an explicit choice. Never re-enables raylib.
+   */
+  stackDefault?: StackDefaultSwitch;
+}
+
+/** The switch a saved `stackDefault` names, when it names one; anything else leaves the setting absent. */
+export function savedStackDefault(saved: unknown): { stackDefault?: StackDefaultSwitch } {
+  const parsed = parseStackDefaultSwitch(saved);
+  return saved === parsed ? { stackDefault: parsed } : {};
 }

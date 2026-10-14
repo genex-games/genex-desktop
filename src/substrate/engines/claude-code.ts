@@ -33,6 +33,7 @@ import { claudeAuthStatus, type ClaudeAuthStatus } from "./claude-cli.ts";
 import { steerFeed, steerSession, userFrame, type SteerFeed, type SteerSession } from "./claude-steer.ts";
 import { autoModeRules } from "./claude-auto-mode.ts";
 import {
+  absoluteRule,
   askingOptions,
   leadAskingOptions,
   leadScreenHook,
@@ -71,8 +72,11 @@ import {
   type WorkerAsks,
 } from "./types.ts";
 import {
+  type CaptureToolWords,
   CHECKPOINT_TOOL,
   CLAUDE_CAPTURE_TOOL,
+  compiledSessionOf,
+  compiledShellEnv,
   intakeToolReply,
   STUDIO_MCP_SERVER,
   STUDIO_TOOL_PREFIX,
@@ -95,7 +99,7 @@ import {
   CompletionStop,
 } from "./common.ts";
 import { isInside, relativizeWorkspace } from "../paths.ts";
-import { baseDenyRead, claudeFoldersIn } from "../spawn.ts";
+import { baseDenyRead, claudeFoldersIn, phoneDenyRead } from "../spawn.ts";
 import { isCommandScript, spawnCommand } from "../command-launch.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -904,7 +908,9 @@ export class ClaudeCodeEngine implements Engine {
       version: "1.0.0",
       tools: [
         checkpointTool(kit, request),
-        ...(onCapture ? [captureTool(kit, onCapture)] : []),
+        ...(onCapture
+          ? [captureTool(kit, onCapture, compiledSessionOf(request)?.claudeCapture ?? CLAUDE_CAPTURE_TOOL)]
+          : []),
         ...(onLiveTool ? (request.liveTools ?? []).map((spec) => liveTool(kit, spec, onLiveTool)) : []),
         ...interviewTools.map((spec) => intakeTool(kit, spec)),
       ],
@@ -1203,7 +1209,10 @@ export class ClaudeCodeEngine implements Engine {
       // the finished build open until the deadline — a minute after the main thread goes
       // idle, background shells get 5s of grace and the run ends. (0 means wait forever,
       // never that.)
-      env: this.#sessionEnv(cliInstallation.env, login, { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS }),
+      env: this.#sessionEnv(cliInstallation.env, login, {
+        CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: BG_WAIT_CEILING_MS,
+        ...compiledSessionEnv(request, cliInstallation.env.PATH),
+      }),
       stderr: (data: string) => request.onEvent?.({ type: DelegateEventType.Stderr, payload: data }),
       abortController: controller,
     };
@@ -1244,7 +1253,12 @@ export class ClaudeCodeEngine implements Engine {
       // What the Claude home fence left readable, in the session's own log.
       warn: (message) => request.onEvent?.({ type: DelegateEventType.Stderr, payload: message }),
     });
-    return { cwd, directories: [...new Set([...additional, ...granted])], protectedPaths, rules };
+    return {
+      cwd,
+      directories: [...new Set([...additional, ...granted])],
+      protectedPaths,
+      rules: readOnlyStore(rules, request),
+    };
   }
 
   /**
@@ -2160,10 +2174,44 @@ function unattendedSandbox(request: DelegateRequest, protectedPaths: string[]): 
     autoAllowBashIfSandboxed: true,
     allowUnsandboxedCommands: false,
     filesystem: {
-      denyWrite: [...protectedPaths, ...(request.optimization?.denyWrites ?? [])],
-      denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
+      // A compiled session reads the toolchain store and never writes it: the host copies its ANGLE
+      // into every C++ game, and a Rust session's CARGO_HOME is the store's.
+      denyWrite: [...protectedPaths, ...(request.optimization?.denyWrites ?? []), ...compiledStore(request)],
+      // C1: the phone keys and sign-ins and the SDK's device tools, here only: the permission
+      // rules (one Windows command-line argument) stay without them. This sandbox grants no
+      // local binding, so loopback reaches only its own proxy, never adb's or an emulator's port.
+      denyRead: [...baseDenyRead(), ...phoneDenyRead(), ...(request.denyReads ?? []), ...protectedPaths],
     },
   };
+}
+
+/**
+ * A compiled game's session shell: the lock's environment with its tools ahead of the login PATH,
+ * and Bash's timeout raised to the stack's command timeout (a C++ configure and a first build, or
+ * a first cargo check, take minutes). Nothing for a Three.js session.
+ */
+function compiledSessionEnv(request: DelegateRequest, loginPath: string | undefined): Record<string, string> {
+  const compiled = compiledSessionOf(request);
+  if (!compiled) return {};
+  const timeout = String(compiled.shell.commandTimeoutMs);
+  return {
+    ...compiledShellEnv(compiled.shell, loginPath ?? process.env.PATH),
+    BASH_DEFAULT_TIMEOUT_MS: timeout,
+    BASH_MAX_TIMEOUT_MS: timeout,
+  };
+}
+
+/** A compiled session's toolchain store, as the one-folder list its sandbox and rules deny writing; empty otherwise. */
+function compiledStore(request: DelegateRequest): string[] {
+  const compiled = compiledSessionOf(request);
+  return compiled ? [compiled.shell.store] : [];
+}
+
+/** The session's permission rules, with a compiled session's toolchain store closed to its file tools. */
+function readOnlyStore(rules: ContractorReach["rules"], request: DelegateRequest): ContractorReach["rules"] {
+  const store = compiledStore(request);
+  if (!store.length) return rules;
+  return { ...rules, deny: [...(rules.deny ?? []), ...store.map((dir) => absoluteRule("Edit", dir))] };
 }
 
 /** The session's sandbox: none for a session that asks; a worker's box, in every mode; else the unattended one. */
@@ -2203,8 +2251,21 @@ async function workerSandbox(
     allowUnsandboxedCommands: box.unsandboxed,
     filesystem: {
       ...(box.writes && writes.length ? { allowWrite: writes } : {}),
-      denyWrite: [...protectedPaths, ...fence.writes, ...workerClaudeFolders(request.cwd, roots)],
-      denyRead: [...baseDenyRead(), ...(request.denyReads ?? []), ...protectedPaths, ...fence.reads],
+      // A compiled session reads the toolchain store and never writes it, as unattended (`compiledStore`).
+      denyWrite: [
+        ...protectedPaths,
+        ...fence.writes,
+        ...workerClaudeFolders(request.cwd, roots),
+        ...compiledStore(request),
+      ],
+      // C1: the phone keys and sign-ins and the SDK's device tools, as an unattended session's box denies them.
+      denyRead: [
+        ...baseDenyRead(),
+        ...phoneDenyRead(),
+        ...(request.denyReads ?? []),
+        ...protectedPaths,
+        ...fence.reads,
+      ],
     },
   };
 }
@@ -2303,26 +2364,27 @@ function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | 
   );
 }
 
-/** `capture`: the contractor looks at its own build. */
-function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapture"]>) {
+/** `capture`: the contractor looks at its own build (a C++ game's, built first: `words`). */
+function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapture"]>, words: CaptureToolWords) {
   const { tool, z } = kit;
-  return tool(
-    StudioTool.Capture,
-    CLAUDE_CAPTURE_TOOL.description,
-    {
-      cameras: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.cameras),
-      page: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.page),
-    },
-    async (args: { cameras?: string; page?: string }) => {
-      try {
-        const text = await onCapture(captureArgs(args));
-        return { content: [{ type: "text" as const, text }] };
-      } catch (err) {
-        // The tool reports failure as a result marked failed — a thrown capture must not end the build.
-        return { content: [{ type: "text" as const, text: `capture failed: ${errorMessage(err)}` }], isError: true };
-      }
-    },
-  );
+  // A compiled game's capture names the destination it builds; a Three.js game's may name a bench page.
+  const cameras = z.string().optional().describe(words.cameras);
+  const shape: Record<string, typeof cameras> = { cameras };
+  if (words.target) shape.target = z.string().optional().describe(words.target);
+  if (words.page) shape.page = z.string().optional().describe(words.page);
+  type CaptureCall = { cameras?: string; target?: string; page?: string };
+  return tool(StudioTool.Capture, words.description, shape, async (args: CaptureCall) => {
+    try {
+      const text = await onCapture({
+        ...captureArgs(words.page ? args : { cameras: args?.cameras }),
+        ...(words.target && args?.target ? { target: String(args.target) } : {}),
+      });
+      return { content: [{ type: "text" as const, text }] };
+    } catch (err) {
+      // The tool reports failure as a result marked failed — a thrown capture must not end the build.
+      return { content: [{ type: "text" as const, text: `capture failed: ${errorMessage(err)}` }], isError: true };
+    }
+  });
 }
 
 /**

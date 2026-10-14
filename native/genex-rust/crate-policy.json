@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "about": "The crate policy Genex ships beside the Rust payload's lock line (owner decision 2026-10-08, option C). A crate an agent requests is added only when the person approves it; the checks below run offline on the approved closure. src/substrate/toolchain-store/crate-policy.ts pins this file's sha256 (CRATE_POLICY_SHA256) and refuses any other bytes (crate-policy-tampered). scripts/toolchains/crate-policy.ts refresh moves the snapshot and rewrites every pin.",
+  "mode": "person-decides",
+  "advisories": {
+    "source": "https://github.com/rustsec/advisory-db",
+    "commit": "550efd3d587a29b2e2c2b21b17a440da4fede999",
+    "archive": "https://github.com/rustsec/advisory-db/archive/550efd3d587a29b2e2c2b21b17a440da4fede999.tar.gz",
+    "sha256": "2b757db4827f9b974a06be9f0267114527af2d5d93395f06f90fb42eeaa89c03",
+    "bytes": 494628,
+    "pinnedAt": "2026-10-08",
+    "blocks": ["vulnerability", "unsound", "notice"],
+    "passes": ["unmaintained", "withdrawn"],
+    "rule": "A RustSec advisory of the pinned snapshot against any crate of the closure refuses it (crate-advisory) even when the person approved it, unless the advisory is withdrawn (its author took it back) or is an informational unmaintained notice (no vulnerability: shown in the advisory database, never blocking). Vulnerabilities, informational unsound advisories and informational notices block. cargo-deny applies it as unmaintained = \"none\", unsound = \"all\" (it never reports a withdrawn advisory); the built-in rules apply the same table."
+  },
+  "licences": {
+    "source": "native/genex-rust/deny.toml [licenses] allow",
+    "allow": [
+      "0BSD",
+      "Apache-2.0",
+      "Apache-2.0 WITH LLVM-exception",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "BSL-1.0",
+      "ISC",
+      "MIT",
+      "MPL-2.0",
+      "OFL-1.1",
+      "Ubuntu-font-1.0",
+      "Unicode-3.0",
+      "Unlicense",
+      "Zlib"
+    ],
+    "rule": "Every crate of the closure is under an expression the allow list satisfies, or it is refused (crate-licence)."
+  },
+  "bans": {
+    "source": "native/genex-rust/deny.toml [bans] deny (GL backends)",
+    "deny": ["glow", "khronos-egl", "glutin", "glutin_egl_sys", "glutin_wgl_sys"],
+    "rule": "A banned crate anywhere in the closure refuses it (crate-banned)."
+  },
+  "audits": {
+    "criteria": "safe-to-deploy",
+    "blocks": false,
+    "rule": "cargo-vet reads each trusted source's pinned audit list; the result is shown to the person and never refuses on its own. A source whose sha256 is null is not pinned yet: it is shown as not asked until scripts/toolchains/crate-policy.ts refresh --audits pins it.",
+    "imports": [
+      {
+        "source": "bytecode-alliance",
+        "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/1bde3f9423234fe9e725ff55288d995e144b971b/supply-chain/audits.toml",
+        "sha256": null
+      },
+      {
+        "source": "embark-studios",
+        "url": "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/bc9f6c527108a8b79b74d44121aed574e7b5e526/audits.toml",
+        "sha256": null
+      },
+      {
+        "source": "google",
+        "url": "https://raw.githubusercontent.com/google/supply-chain/508eb72be7ab7a40b9d80bf2215e2118dd84f98d/audits.toml",
+        "sha256": null
+      },
+      {
+        "source": "mozilla",
+        "url": "https://raw.githubusercontent.com/mozilla/supply-chain/b4537c1fad598dfd8d236365335a5f1f754d90ea/audits.toml",
+        "sha256": null
+      },
+      {
+        "source": "zcash",
+        "url": "https://raw.githubusercontent.com/zcash/rust-ecosystem/ce132d7abdd52f2b3b0d55ed5dc9f152331535c2/supply-chain/audits.toml",
+        "sha256": null
+      }
+    ]
+  },
+  "approvals": {
+    "rule": "The person's approval is the deciding vote. A closure with a build script or a proc macro also needs the person's separate approval of that kind (crate-build-script, crate-proc-macro); the build sandbox is unchanged."
+  }
+}

@@ -1,0 +1,183 @@
+name: ANGLE
+# Genex's pinned ANGLE builds for the C++/raylib destinations (plan D9 = A, D17 = B), from the one
+# recipe in native/angle/recipe.json: Metal-only arm64 on macOS, D3D11-only x64 on Windows, and
+# Vulkan-only x64 with SwiftShader on Linux. Runs on a push that itself changes the recipe or this
+# workflow (a push paths filter looks at that push only, so later pushes to the same PR do not rebuild),
+# and on demand; a dispatch with `only` builds one target (billed minutes: macOS costs ten times Linux).
+# Each job stages the libraries, headers and licences with a sha256 manifest (build_angle.py), uploads
+# them, then runs the EGL probe on the runner's GPU or software device. The Linux job also splits the
+# software Vulkan out for Rust · wgpu games (swiftshader-linux-x64-<commit12>). No secrets. The Windows gate
+# reads the DLLs' PE headers itself (native/angle/pe_imports.py, tested by test_windows_gate.py).
+on:
+  push:
+    paths:
+      # The recipe only. Not this workflow file, and not the bundle lock that pins a finished run's
+      # artifacts: changing either must not start a billed rebuild (dispatch one when needed).
+      - native/angle/**
+      - "!native/angle/bundle-lock.json"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: One target to build (macos-arm64-metal, windows-x64-d3d11 or linux-x64-vulkan); empty for all three
+        required: false
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: angle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  plan:
+    # The matrix comes from the recipe, so a target's runner and pin live in one file.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      commit12: ${{ steps.plan.outputs.commit12 }}
+      depot-tools: ${{ steps.plan.outputs.depot-tools }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          recipe = json.load(open("native/angle/recipe.json"))
+          only = os.environ.get("ONLY", "")
+          names = [name for name in recipe["targets"] if only in ("", name)]
+          if not names:
+              raise SystemExit(f"unknown target {only!r}; the recipe has {', '.join(recipe['targets'])}")
+          include = [{"target": name, "os": recipe["targets"][name]["runner"]} for name in names]
+          print("matrix=" + json.dumps({"include": include}))
+          print("commit12=" + recipe["angle"]["commit"][:12])
+          print("depot-tools=" + recipe["depotTools"]["commit"])
+          EOF
+  angle:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    # A cold sync plus build: about an hour on the 4-core Linux and Windows runners (SwiftShader
+    # compiles its own LLVM), less on macOS.
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      STAGE: ${{ github.workspace }}/angle-stage/${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Work directory and disk
+        run: |
+          # Linux runners keep most free space on the /mnt scratch disk; elsewhere the temp drive is enough.
+          if [ "$RUNNER_OS" = Linux ] && [ -d /mnt ]; then
+            sudo mkdir -p /mnt/angle && sudo chown "$(id -u):$(id -g)" /mnt/angle && echo "ANGLE_WORK=/mnt/angle" >> "$GITHUB_ENV"
+          else
+            echo "ANGLE_WORK=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
+          fi
+          echo "DEPOT_TOOLS=$RUNNER_TEMP/depot_tools" >> "$GITHUB_ENV"
+          echo "PYTHON=$([ "$RUNNER_OS" = Windows ] && echo python || echo python3)" >> "$GITHUB_ENV"
+          df -h
+      - name: Linux prerequisites (pkg-config for the sysroot, Xvfb for the probe)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config xvfb
+      - name: Metal toolchain (Xcode 26 ships it separately; ANGLE compiles its internal shaders with it)
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -version
+          xcodebuild -showComponent MetalToolchain | grep -q "Status: installed" || xcodebuild -downloadComponent MetalToolchain
+          xcodebuild -showComponent MetalToolchain
+      - name: Git settings for a Chromium-style checkout
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.filemode false
+          git config --global core.longpaths true
+      # depot_tools is pinned in the recipe and bootstraps its own Python and CIPD tools, so it is
+      # cached by pin. The ANGLE checkout (several GB per target) is not: it would crowd the repo's
+      # 10 GB cache out, and this workflow runs only when the recipe changes.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/depot_tools
+          key: depot-tools-${{ runner.os }}-${{ needs.plan.outputs.depot-tools }}
+      - name: Build and stage ANGLE
+        run: |
+          "$PYTHON" native/angle/build_angle.py --target "${{ matrix.target }}" \
+            --depot-tools "$DEPOT_TOOLS" --work "$ANGLE_WORK" --out "$STAGE"
+      - name: Disk after the build
+        if: always()
+        run: df -h
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        # A gate failure still uploads: the manifest records which fact failed.
+        if: ${{ !cancelled() }}
+        with:
+          name: angle-${{ matrix.target }}-${{ needs.plan.outputs.commit12 }}
+          path: ${{ env.STAGE }}
+          if-no-files-found: warn
+      # Rust · wgpu Linux games ship only the software Vulkan (the Vulkan loader, SwiftShader, its
+      # ICD and their licences), split out of this build with a manifest derived from those files'
+      # bytes alone (src/substrate/toolchain-store/swiftshader-bundle.ts). The step prints the pin
+      # native/angle/bundle-lock.json records as `swiftshader`; the owner publishes the artifact.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ !cancelled() && matrix.target == 'linux-x64-vulkan' }}
+        with:
+          node-version: 24
+      - name: Split SwiftShader and the Vulkan loader (Rust Linux games)
+        if: ${{ !cancelled() && matrix.target == 'linux-x64-vulkan' }}
+        run: |
+          node scripts/toolchains/swiftshader-split.ts --angle "$STAGE" \
+            --out "${{ github.workspace }}/swiftshader-stage/linux-x64-swiftshader" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() && matrix.target == 'linux-x64-vulkan' }}
+        with:
+          name: swiftshader-linux-x64-${{ needs.plan.outputs.commit12 }}
+          path: ${{ github.workspace }}/swiftshader-stage/linux-x64-swiftshader
+          if-no-files-found: error
+      - name: Manifest summary
+        if: ${{ !cancelled() && hashFiles(format('angle-stage/{0}/manifest.json', matrix.target)) != '' }}
+        run: |
+          "$PYTHON" - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          manifest = json.load(open(os.path.join(os.environ["STAGE"], "manifest.json")))
+          print(f"### {manifest['target']} at ANGLE {manifest['commit'][:12]} (Chromium {manifest['chromium']})")
+          print("| File | Bytes | sha256 |\n| --- | --- | --- |")
+          for name, entry in manifest["files"].items():
+              if "/" not in name:
+                  print(f"| {name} | {entry['size']} | `{entry['sha256']}` |")
+          print("\n```json\n" + json.dumps({"facts": manifest["facts"], "gateFailures": manifest["gateFailures"]}, indent=2) + "\n```")
+          EOF
+      # The probe loads the staged libraries, renders with an ES 3.0 context on a pbuffer and asserts
+      # the backend's EGL device extension.
+      - name: EGL probe (macOS, Metal)
+        if: runner.os == 'macOS'
+        # Metal in the hosted macOS VM is not guaranteed (plan spike S5); the build above is the gate.
+        continue-on-error: true
+        run: |
+          xcrun clang -std=c11 -O2 -I "$STAGE/include" native/angle/egl_probe.c -o "$RUNNER_TEMP/egl_probe" -lobjc
+          "$RUNNER_TEMP/egl_probe" "$STAGE" --expect metal | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: EGL probe (Linux, SwiftShader under Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          cc -std=c11 -O2 -I "$STAGE/include" native/angle/egl_probe.c -o "$RUNNER_TEMP/egl_probe" -ldl
+          xvfb-run -a "$RUNNER_TEMP/egl_probe" "$STAGE" --expect vulkan --swiftshader | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Visual Studio location (for the probe's compiler)
+        if: runner.os == 'Windows'
+        run: |
+          echo "VSDIR=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -property installationPath)" >> "$GITHUB_ENV"
+      - name: EGL probe (Windows, D3D11 on WARP)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /std:c11 /O2 /I "%STAGE%\include" native\angle\egl_probe.c /Fe:"%RUNNER_TEMP%\egl_probe.exe" || exit /b 1
+          "%RUNNER_TEMP%\egl_probe.exe" "%STAGE%" --expect d3d11 --warp > "%RUNNER_TEMP%\probe.json"
+          set PROBE_EXIT=%ERRORLEVEL%
+          type "%RUNNER_TEMP%\probe.json"
+          type "%RUNNER_TEMP%\probe.json" >> "%GITHUB_STEP_SUMMARY%"
+          exit /b %PROBE_EXIT%

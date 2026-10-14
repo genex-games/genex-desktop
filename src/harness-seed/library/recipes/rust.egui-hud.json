@@ -1,0 +1,40 @@
+{
+  "id": "rust.egui-hud",
+  "runtime": "rust-wgpu",
+  "title": "The whole HUD in egui, labelled widgets the checks can find, in Rust",
+  "tags": [
+    "hud",
+    "ui",
+    "egui",
+    "button",
+    "label",
+    "score",
+    "menu",
+    "screen",
+    "widget",
+    "overlay",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "hud",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "All UI in on_ui with egui; give every widget its visible label (state().hud.items) and keep the state in the world.",
+  "intent": "A Rust game has one UI path: on_ui draws egui widgets inside the tick, one egui point is one world pixel, and egui reads only the merged input (keys, touches, the pointer as touch 0) and the simulated clock, so a scripted click replays exactly. Painting is display only: keep the score, the menu's choice and the button's effect in the world, and let on_ui read and change it. Give each widget its visible label: state().hud.items lists the label of every widget the last tick drew, which is how a check finds a button. On a phone keep tap targets large and clear of the screen edges.",
+  "sketch": "use genex::prelude::*;\n\npub fn wire(game: &mut Game<super::World>) {\n    game.on_ui(|sim, ui, _ctx| {\n        let world = &mut sim.world;\n        ui.label(format!(\"Score {}\", world.score));\n        if ui.add_enabled(world.score > 0, egui::Button::new(\"Buy bait\")).clicked() {\n            world.score -= 1;\n            world.bait += 1;\n        }\n    });\n}\n",
+  "port": "The facet that owns a screen owns its on_ui; another facet shows its numbers through the world, never with a second UI path.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (UI)",
+      "note": "on_ui is the whole HUD; hud.items lists widget labels; painting never changes what a later tick sees."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

@@ -1,0 +1,2 @@
+# Raw BGRA captures: never text, whatever bytes they hold (eol=lf would rewrite a CR LF pair).
+*.bgra binary

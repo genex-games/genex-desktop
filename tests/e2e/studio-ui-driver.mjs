@@ -1,5 +1,6 @@
 /** Real Studio input in a disposable app. Model responses and history are explicitly synthetic. */
 import { app, BrowserWindow } from "electron";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +10,9 @@ const out = arg("studio-out"),
 const launch = JSON.parse(fs.readFileSync(arg("studio-dev-launch"), "utf8"));
 const profile = path.dirname(arg("studio-dev-launch"));
 const build = JSON.parse(fs.readFileSync(path.resolve(main, "../../build.json"), "utf8"));
+const driverDigest = createHash("sha256")
+  .update(fs.readFileSync(new URL(import.meta.url)))
+  .digest("hex");
 const checks = [],
   captures = [],
   measurements = [],
@@ -28,6 +32,12 @@ const until = async (code) => {
   return false;
 };
 const click = async (selector) => {
+  // The fixture opens its game through Home's view transition. A visible row can still be
+  // covered by that transition or the startup loader, so wait for its actual hit target.
+  const hittable = await until(
+    `(() => { const e=document.querySelector(${JSON.stringify(selector)}); if(!e)return false; e.scrollIntoView({block:'nearest'}); const r=e.getBoundingClientRect(); return r.width>0 && r.height>0 && e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })()`,
+  );
+  if (!hittable) throw new Error(`Control did not become clickable: ${selector}`);
   const point = await js(
     `(() => { const e=document.querySelector(${JSON.stringify(selector)}); if(!e)throw Error('Missing '+${JSON.stringify(selector)}); e.scrollIntoView({block:'nearest'}); const r=e.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`,
   );
@@ -90,6 +100,12 @@ async function acceptance() {
     if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
     await until(`!!document.querySelector('nav [data-thread="studio"]')`);
     await click('nav [data-thread="studio"]');
+    check(
+      "Harness navigation opens the Studio room",
+      await until(
+        `document.querySelector('[data-studio-state]')?.dataset.room==='studio' && !!document.querySelector('[data-studio-chat]') && !!document.querySelector('[data-testid="review-panel"]')`,
+      ),
+    );
     check(
       "feed loads runs from both games beyond the bootstrap tail",
       await until(`document.querySelectorAll('[data-activity-kind="run"]').length===3`),
@@ -157,9 +173,28 @@ async function acceptance() {
     check(
       "suggestion rows and their icons use pointer",
       await js(
-        `getComputedStyle(document.querySelector(${JSON.stringify(suggestion)})).cursor==='pointer' && getComputedStyle(document.querySelector(${JSON.stringify(suggestion + " svg")})).cursor==='pointer'`,
+        `getComputedStyle(document.querySelector(${JSON.stringify(suggestion)})).cursor==='pointer' && getComputedStyle(document.querySelector(${JSON.stringify(`${suggestion} svg`)})).cursor==='pointer'`,
       ),
     );
+    await capture("studio-suggestion-expanded");
+    await click("[data-suggestion] [data-exact-edit] button[aria-expanded]");
+    check(
+      "the exact edit opens with readable marked diff lines",
+      await until(
+        `(() => {const edit=document.querySelector('[data-suggestion] [data-exact-edit]');const button=edit?.querySelector('button[aria-expanded]');const lines=[...edit.querySelectorAll('.diff-line')].filter(e=>e.getClientRects().length && getComputedStyle(e).visibility==='visible');return button?.getAttribute('aria-expanded')==='true' && lines.length>0 && lines.every(e=>{const sign=e.querySelector('.diff-sign'),r=sign?.getBoundingClientRect();return r?.width>0 && ['+','−',' '].includes(sign.textContent) && getComputedStyle(e).color!==getComputedStyle(e).backgroundColor;});})()`,
+      ),
+    );
+    await capture("studio-suggestion-exact-edit");
+    await click('nav [aria-label="Settings"]');
+    await click("#settings-tab-appearance");
+    const originalAppearance = await js(`document.querySelector('input[name="appearance-mode"]:checked')?.value`);
+    await click('input[name="appearance-mode"][value="light"]');
+    await key("Escape");
+    await capture("studio-suggestion-exact-edit-light");
+    await click('nav [aria-label="Settings"]');
+    await click("#settings-tab-appearance");
+    await click(`input[name="appearance-mode"][value="${originalAppearance}"]`);
+    await key("Escape");
     await click('[data-suggestion] [role="checkbox"]');
     check(
       "the check mark excludes a suggestion from Apply",
@@ -167,6 +202,7 @@ async function acceptance() {
         `document.querySelector('[data-suggestion] [role="checkbox"]').getAttribute('aria-checked')==='false' && document.querySelector('[data-suggestions]').textContent.includes('1 of 2 selected') && document.querySelector('[data-suggestions] footer').textContent.includes('Apply 1 change')`,
       ),
     );
+    await capture("studio-suggestion-excluded");
     await key("Enter");
     check(
       "keyboard includes it again",
@@ -399,10 +435,14 @@ async function acceptance() {
 
     await click('nav [aria-label="Settings"]');
     await click("#settings-tab-harness");
+    const harnessSettings = await js(
+      `(() => {const b=document.querySelector('[data-harness-settings]');return {label:b?.querySelector('#harness-builders')?.textContent.trim(),workers:b?.querySelector('[aria-labelledby="harness-builders"] output')?.textContent,automatic:!!b?.querySelector('#harness-self-improving[role="switch"]')};})()`,
+    );
+    measurements.push({ harnessSettings });
     check(
       "Maximum workers and automatic suggestions live in Settings",
       await until(
-        `(() => {const b=document.querySelector('[data-harness-settings]');return !!b && b.textContent.includes('Maximum concurrent workers') && b.querySelector('output')?.textContent==='4' && !!b.querySelector('[role="switch"]');})()`,
+        `(() => {const b=document.querySelector('[data-harness-settings]');return !!b && b.textContent.includes('Maximum concurrent workers') && b.textContent.includes('Apply suggestions automatically') && b.querySelector('[aria-labelledby="harness-builders"] output')?.textContent==='4' && !!b.querySelector('#harness-self-improving[role="switch"]');})()`,
       ),
     );
     const autoResume = (state) =>
@@ -459,6 +499,7 @@ async function acceptance() {
           buildId: build.buildId,
           sourceDigest: build.sourceDigest,
           outputDigest: build.outputDigest,
+          driverDigest,
           profile: launch.profileId,
           providers: "fixture; no accounts or network",
           electron: process.versions.electron,

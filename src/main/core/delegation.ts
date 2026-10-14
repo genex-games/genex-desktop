@@ -26,9 +26,12 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coordinatorTools, isGrantedRunControl, isRunControl, runControlsFor } from "../../shared/coordinator.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
-import { ensureDir, realpathNearest } from "../../substrate/fsx.ts";
-import { isImageFile } from "../../substrate/game-workspace.ts";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
+import { promisify } from "node:util";
+import { atomicWriteText, ensureDir, readRegularFile, realpathNearest } from "../../substrate/fsx.ts";
+import { confinedCaptureDir } from "../../substrate/build-preview.ts";
+import { assertWritableGame, isImageFile, readOnlyRefusal } from "../../substrate/game-workspace.ts";
 import type { HostMethod, HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import { git } from "../../substrate/snapshots.ts";
@@ -42,7 +45,7 @@ import {
   type WorkerSeat,
 } from "../../substrate/engines/types.ts";
 import { credentialHomes } from "../../substrate/credential-homes.ts";
-import { baseDenyRead } from "../../substrate/spawn.ts";
+import { baseDenyRead, shellQuote } from "../../substrate/spawn.ts";
 import { WorkerTool, type WorkerType, workerLockKey } from "../../shared/workers.ts";
 import { neverTouchList } from "./never-touch-list.ts";
 import { EngineKind } from "../../shared/engine-descriptor.ts";
@@ -54,6 +57,30 @@ import { type JobOwner, JobRole, JobScopeKind, JobStopper } from "../../shared/j
 import { WORKER_TOOL_ANSWER } from "./worker-tools-prompts.ts";
 import { DispatchActionType, HarnessCapability, type ReferenceFrame } from "../../shared/protocol.ts";
 import { COMPUTER_TOOL_NAME } from "../../substrate/computer-tool.ts";
+import {
+  BuildTarget,
+  destinationsOf,
+  type GameDestinations,
+  type GameProject,
+  GameStack,
+  stackOf,
+} from "../../shared/game-project.ts";
+import { hostOf, hostTarget } from "../../shared/game-targets.ts";
+import {
+  CHECKPOINT_TOOL,
+  CPP_COMMAND_TIMEOUT_MS,
+  type CppSession,
+  RUST_COMMAND_TIMEOUT_MS,
+  type RustSession,
+  RustSessionVariable,
+} from "../../substrate/engines/studio-tool-prompts.ts";
+import type { LocatedToolchain } from "../../substrate/toolchain-store/locate.ts";
+import { type LocatedRust, locateRust } from "../../substrate/toolchain-store/rust-locate.ts";
+import { cloneRustTarget, readWarmLock } from "../../substrate/toolchain-store/rust-prewarm.ts";
+import { readGenexToml } from "../../substrate/genex-toml.ts";
+import { cargoManifest, gameCargoLock, genexReleaseOf } from "../rust-manifest.ts";
+import { RUST_LOCK_LINE_FILE, rustPayloadDir } from "./rust-lane.ts";
+import { cloneArgv } from "../../substrate/toolchain-store/prewarm.ts";
 import { WorkClass, workClassOf } from "../../substrate/budget.ts";
 import type { OptimizationCandidate } from "../../shared/optimization.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
@@ -92,7 +119,6 @@ import { workerHolder } from "./plugin-locks.ts";
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
 import { checkpointWords } from "./plugin-hooks.ts";
-import { CHECKPOINT_TOOL } from "../../substrate/engines/studio-tool-prompts.ts";
 import { HookEvent } from "../../shared/plugin-hooks.ts";
 
 /**
@@ -104,6 +130,47 @@ export const DEFAULT_CHAT_DELEGATION_TIMEOUT_MS = 6 * HOUR_MS;
 
 /** A director tool answers within this (the Codex bridge shim waits ten minutes; a wait is capped at four). */
 export const DIRECTOR_TOOL_TIMEOUT_MS = 11 * MINUTE_MS;
+
+/**
+ * Where a C++ session's own Emscripten cache lives: `<scratch>/cpp-sessions/<game>/em-cache`, the
+ * core's, one folder per game. Never the store's, and never the game folder: a clone of the
+ * prewarmed cache is about 600 MB, which a person's folder (its backups, its sync) must not carry.
+ */
+const SESSION_CACHES = "cpp-sessions";
+const SESSION_EM_CACHE = "em-cache";
+/** The prefix of a session cache's clone while it is made beside it: a failed clone leaves nothing. */
+const SESSION_EM_CACHE_CLONE = ".em-cache-";
+/** The workspace's ignored folder, where the session's `-B` Python wrapper is written. */
+const SESSION_STUDIO = ".studio";
+/**
+ * The session's Python for emcc, in the workspace's `.studio/`: emsdk's own with `-B`. emcc starts
+ * Python with `-E`, which ignores PYTHONDONTWRITEBYTECODE, and a person's own shell is not
+ * sandboxed, so only `-B` keeps `__pycache__` out of the store.
+ */
+const SESSION_PYTHON = "emsdk-python";
+
+/**
+ * A Rust session's own folders live in the host's `layout.rustSessions` (under no writable root):
+ * `<rustSessions>/<game>/<key>/`, one per (destination, lock, worktree, who drives it), holding the
+ * host-written `Cargo.toml` and `Cargo.lock` the shell checks with (a game folder holds none) and
+ * `target/`, the session's CARGO_TARGET_DIR cloned from the store's prewarm: the one folder it
+ * writes besides its workspace. A session the person attends (no sandbox: every command is asked
+ * about) never shares a `target/` with a sandboxed one, so build-script and proc-macro binaries a
+ * sandboxed session compiled never run unsandboxed.
+ */
+const RUST_SESSION_TARGET = "target";
+/** The last part of a Rust session's key: who drives it. */
+const RustSessionDriver = { Person: "person", Agent: "agent" } as const;
+const RUST_SESSION_MANIFEST = "Cargo.toml";
+const RUST_SESSION_LOCK = "Cargo.lock";
+/** The hex digits of a lock digest and of a worktree's path hash in a session's key. */
+const RUST_SESSION_KEY_HEX = 12;
+/** The most of the payload's lock line the host reads (as the lane does). */
+const RUST_LOCK_LINE_MAX_BYTES = 4 * 1024 * 1024;
+/** The entry the host's manifest names, as `cargoManifest` writes it for a stage (`[[bin]] path`). */
+const RUST_STAGE_ENTRY = "src/main.rs";
+
+const execFileAsync = promisify(execFile);
 
 /** Told to a session that can set the game's cover. Model-facing: it reads this as written. */
 const COVER_TOOL_GUIDANCE =
@@ -335,9 +402,10 @@ interface DelegationSession {
 /** The run and message a chat's own session keeps the run's controls for. */
 type RunControlGrant = NonNullable<DelegateParams["runControls"]>;
 
-/** The session-long windows: the builder's own, and the director's. */
+/** The session-long windows: the builder's own (and its headless Mac run, taken by a `macos` capture), and the director's. */
 interface SessionWindows {
   self: SessionPort | null;
+  selfMac: SessionPort | null;
   director: SessionPort | null;
 }
 
@@ -359,6 +427,8 @@ interface SessionTools {
   /** Whom its looks answer to; null for a session without `app_look`. */
   lookCaller: LookCaller | null;
   mcp: McpLiveTool[];
+  /** The game's stack: which skills the session is handed, and what its plugin calls say they are bound to. */
+  stack: GameStack | null;
   /** The plugin tools, their guidance and the set behind them: one registry snapshot, taken as the session began. */
   plugins: PluginTool[];
   pluginGuidance: string;
@@ -674,6 +744,346 @@ function pluginAnswer(result: unknown): LiveToolResult {
     text: JSON.stringify(record),
     images: images as Array<{ mimeType: string; data: string; label?: string }>,
   };
+}
+
+/** The destination a C++ session's shell builds for: Browser when it is one, else this computer's own, else Browser. */
+function sessionTarget(destinations: GameDestinations): BuildTarget {
+  if (destinations.targets.includes(BuildTarget.Web)) return BuildTarget.Web;
+  const host = hostOf(process.platform);
+  const own = host ? hostTarget(host) : null;
+  return own && destinations.targets.includes(own) ? own : BuildTarget.Web;
+}
+
+/** What a web session's emcc writes with: its own cache (in the core's scratch) and its `-B` Python (in the workspace). */
+interface SessionEmscripten {
+  cache: string;
+  python: string;
+}
+
+/** Where a game's session cache goes: the core's scratch, as its real path, and the game's name. */
+export interface SessionCacheHome {
+  scratch: string;
+  game: string;
+}
+
+/**
+ * The lock's C++ environment for one destination: its tools for PATH, and the variables CMake and
+ * emcc read — GENEX_CMAKE, and for the web EM_CONFIG, the session's own EM_CACHE (never the
+ * store's) and its `-B` Python. Nothing when the store has no prewarm for it, nor for the web
+ * without a cache and Python of the session's own: emcc would otherwise write the store.
+ */
+function cppToolchainEnv(
+  toolchain: LocatedToolchain | null,
+  target: BuildTarget,
+  own: SessionEmscripten | null,
+): Pick<CppSession, "env" | "path"> {
+  const none = { env: {}, path: [] };
+  const genex = toolchain?.genexCmake[target];
+  if (!toolchain || !genex) return none;
+  const tools = [path.dirname(toolchain.cmake), path.dirname(toolchain.ninja)];
+  const env: Record<string, string> = { GENEX_CMAKE: genex, CMAKE_GENERATOR: "Ninja" };
+  const emscripten = target === BuildTarget.Web ? toolchain.emscripten : null;
+  if (!emscripten) return { env, path: tools };
+  if (!own) return none;
+  return {
+    path: [...tools, emscripten.root, path.dirname(emscripten.node)],
+    env: {
+      ...env,
+      CMAKE_TOOLCHAIN_FILE: emscripten.toolchainFile,
+      EM_CONFIG: emscripten.config,
+      EM_CACHE: own.cache,
+      EMSDK_PYTHON: own.python,
+      EMCC_SKIP_SANITY_CHECK: "1",
+      PYTHONDONTWRITEBYTECODE: "1",
+    },
+  };
+}
+
+/**
+ * A C++ · raylib game's session for one destination, from the store's located toolchain (null when
+ * it has no prewarm for it): the store it reads, its shell's environment — for the web with an
+ * Emscripten cache of the game's own in the core's scratch (`home`), cloned from the store's — and
+ * the C++ command timeout.
+ */
+export async function cppSessionFor(
+  store: string,
+  toolchain: LocatedToolchain | null,
+  target: BuildTarget,
+  workCwd: string,
+  home: SessionCacheHome,
+): Promise<CppSession> {
+  const emscripten = target === BuildTarget.Web ? toolchain?.emscripten : null;
+  const own = emscripten ? await sessionEmscripten(emscripten, workCwd, home) : null;
+  return { store, ...cppToolchainEnv(toolchain, target, own), commandTimeoutMs: CPP_COMMAND_TIMEOUT_MS };
+}
+
+/** A web session's own Emscripten cache and `-B` Python, or null when either cannot be made. */
+async function sessionEmscripten(
+  emscripten: NonNullable<LocatedToolchain["emscripten"]>,
+  workCwd: string,
+  home: SessionCacheHome,
+): Promise<SessionEmscripten | null> {
+  // The wrapper first: without it emcc gets no environment, and no cache is cloned for nothing.
+  const python = await sessionPython(emscripten.python, workCwd);
+  const cache = python ? await sessionEmCache(emscripten.cache, home) : null;
+  return cache && python ? { cache, python } : null;
+}
+
+/**
+ * The session's Python for emcc: a wrapper in `.studio/` that runs emsdk's own with `-B`, written
+ * by rename (a link at its name is replaced, never written through) and only while `.studio` is a
+ * plain folder inside the workspace. Windows' emcc has no shell to run one: emsdk's own Python.
+ */
+async function sessionPython(python: string, workCwd: string): Promise<string | null> {
+  if (process.platform === "win32") return python;
+  const studio = path.join(workCwd, SESSION_STUDIO);
+  if (!(await plainFolderOrNone(studio))) return null;
+  await mkdir(studio).catch(() => {});
+  const found = await lstat(studio).catch(() => null);
+  if (!found?.isDirectory()) return null;
+  if (!isInside(await realpath(workCwd), await realpath(studio))) return null;
+  const wrapper = path.join(studio, SESSION_PYTHON);
+  const written = await atomicWriteText(wrapper, `#!/bin/sh\nexec ${shellQuote(python)} -B "$@"\n`, { mode: 0o755 })
+    .then(() => true)
+    .catch(() => false);
+  return written ? wrapper : null;
+}
+
+/** Whether `dir` is absent or a plain folder: never a link, a file or anything else. */
+async function plainFolderOrNone(dir: string): Promise<boolean> {
+  const found = await lstat(dir).catch(() => null);
+  return !found || found.isDirectory();
+}
+
+/** Whether `name` is one plain path segment: a game's name, never a way up or across. */
+function isPlainSegment(name: string): boolean {
+  return name !== "" && name !== "." && name !== ".." && path.basename(name) === name;
+}
+
+/**
+ * `dir` as a folder of its own: a link or a file planted at its name (scratch is writable to agent
+ * shells) is removed — the link itself, never what it points at — and the folder made. Null unless
+ * `dir` then is a real folder at its own real path.
+ */
+async function ownFolder(dir: string): Promise<string | null> {
+  const found = await lstat(dir).catch(() => null);
+  if (found && !found.isDirectory()) await unlink(dir).catch(() => {});
+  await mkdir(dir).catch(() => {});
+  const made = await lstat(dir).catch(() => null);
+  if (!made?.isDirectory()) return null;
+  return (await realpath(dir).catch(() => null)) === dir ? dir : null;
+}
+
+/**
+ * The session's own Emscripten cache: the store's prewarmed one (`source`), cloned once into
+ * `<scratch>/cpp-sessions/<game>/em-cache` (an APFS or reflink clone; a plain copy where the volume
+ * has none), so the session's first emcc does not rebuild the sysroot and the store is only read.
+ * Each folder on the way is made a folder of its own first, and a link or file planted at the
+ * cache's own name is replaced by the clone. A clone that fails leaves nothing, and the cache's
+ * place stays empty for emcc to fill. A game's `.studio/em-cache` from before is left as it is.
+ */
+async function sessionEmCache(source: string, home: SessionCacheHome): Promise<string | null> {
+  if (!isPlainSegment(home.game)) return null;
+  const sessions = await ownFolder(path.join(home.scratch, SESSION_CACHES));
+  const folder = sessions ? await ownFolder(path.join(sessions, home.game)) : null;
+  if (!folder) return null;
+  const cache = path.join(folder, SESSION_EM_CACHE);
+  const found = await lstat(cache).catch(() => null);
+  if (found?.isDirectory()) return cache;
+  if (found) await unlink(cache).catch(() => {});
+  const contents = `${source}${path.sep}.`;
+  const cloned = await copyFolderInto(cache, folder, (fresh) => cloneArgv(process.platform, contents, fresh));
+  // A volume that cannot clone (or a cp without the flag) still copies.
+  if (!cloned) await copyFolderInto(cache, folder, (fresh) => ["cp", "-R", contents, fresh]);
+  return cache;
+}
+
+/**
+ * A folder's contents copied (`argvFor` the fresh folder) into a fresh folder made beside `cache`,
+ * then renamed to it: whole or not at all. A fresh folder that lies outside `folder` (a folder on
+ * the way swapped for a link since it was checked) is removed unfilled.
+ */
+async function copyFolderInto(cache: string, folder: string, argvFor: (fresh: string) => string[]): Promise<boolean> {
+  const fresh = await mkdtemp(path.join(path.dirname(cache), SESSION_EM_CACHE_CLONE)).catch(() => null);
+  if (!fresh) return false;
+  try {
+    if (!isInside(await realpath(folder), await realpath(fresh))) throw new Error(MESSAGE.outsideProject(fresh));
+    const [command = "cp", ...args] = argvFor(fresh);
+    await execFileAsync(command, args);
+    await rename(fresh, cache);
+    return true;
+  } catch {
+    await rm(fresh, { recursive: true, force: true });
+    return false;
+  }
+}
+
+// ── a Rust · wgpu game's session ───────────────────────────────────────────────────────────
+
+/** A Rust session's own folders: its target folder and the manifest it checks with. */
+export interface RustSessionFolders {
+  targetDir: string;
+  manifest: string;
+}
+
+/**
+ * The lock's Rust environment for one destination, beside {@link cppToolchainEnv}: the store's
+ * sysroot `bin` for PATH (cargo, rustc), the store's CARGO_HOME (read-only: its `config.toml`
+ * names the vendored tree, offline), the session's own CARGO_TARGET_DIR and manifest, the
+ * destination's triple and the flags the prewarm was built with, so the clone's dependencies are
+ * fresh and only the game's crate is checked.
+ */
+export function rustToolchainEnv(located: LocatedRust, own: RustSessionFolders): Pick<RustSession, "env" | "path"> {
+  return {
+    path: [path.dirname(located.cargo)],
+    env: {
+      CARGO_HOME: located.cargoHome,
+      CARGO_TARGET_DIR: own.targetDir,
+      CARGO_BUILD_TARGET: located.triple,
+      CARGO_ENCODED_RUSTFLAGS: (located.record?.rustflags ?? []).join("\u001f"),
+      CARGO_NET_OFFLINE: "true",
+      CARGO_TERM_COLOR: "never",
+      RUSTC: located.rustc,
+      [RustSessionVariable.Manifest]: own.manifest,
+    },
+  };
+}
+
+/**
+ * Where a Rust session's folders go: the host's `layout.rustSessions` (as its real path), the game,
+ * and whether the person attends it (an unsandboxed session that asks about every command).
+ */
+export interface RustSessionHome {
+  root: string;
+  game: string;
+  attended: boolean;
+}
+
+/** What a Rust session is made from: the store, its located lock (prewarmed), the workspace and the lock lines to check with. */
+export interface RustSessionInput {
+  /** The store, as its real path. */
+  store: string;
+  /** The store's Rust toolchain for the session's destination with its prewarm, or null. */
+  located: LocatedRust | null;
+  workCwd: string;
+  home: RustSessionHome;
+  /** Lock lines the session's `Cargo.lock` may be derived from, in order: the prewarm's warm lock, then the payload's. */
+  lockLines: ReadonlyArray<string | null>;
+}
+
+/**
+ * A Rust · wgpu game's session for one destination: the store it reads and, when the store has
+ * that destination prewarmed, its shell's environment — the store's cargo and CARGO_HOME, a
+ * target folder of its own cloned from the prewarm, and the manifest and lock the host writes
+ * from the workspace's `genex.toml`. Anything missing (no prewarm, no readable `genex.toml`, no
+ * lock line holding its crates, a folder that cannot be made its own) sets nothing: capture,
+ * through the lane, is then its only build.
+ */
+export async function rustSessionFor(input: RustSessionInput): Promise<RustSession> {
+  const none: RustSession = {
+    store: input.store,
+    path: [],
+    env: {},
+    commandTimeoutMs: RUST_COMMAND_TIMEOUT_MS,
+    targetDir: null,
+  };
+  const { located } = input;
+  if (!located?.targetDir || !located.record) return none;
+  const folder = await rustSessionFolder(located, input.workCwd, input.home);
+  const manifest = folder ? await writeRustSessionManifest(folder, input.workCwd, input.lockLines) : null;
+  const targetDir = folder && manifest ? await rustSessionTarget(folder, input.store, located) : null;
+  if (!manifest || !targetDir) return none;
+  return { ...none, ...rustToolchainEnv(located, { targetDir, manifest }), targetDir };
+}
+
+/** `<rustSessions>/<game>/<destination>-<lock>-<worktree>-<driver>`, each folder on the way a folder of its own. */
+async function rustSessionFolder(located: LocatedRust, workCwd: string, home: RustSessionHome) {
+  if (!isPlainSegment(home.game)) return null;
+  const real = await realpath(workCwd).catch(() => null);
+  if (!real) return null;
+  const worktree = createHash("sha256").update(real).digest("hex").slice(0, RUST_SESSION_KEY_HEX);
+  const driver = home.attended ? RustSessionDriver.Person : RustSessionDriver.Agent;
+  const key = `${located.target}-${located.lock.digest.slice(0, RUST_SESSION_KEY_HEX)}-${worktree}-${driver}`;
+  const sessions = await ownFolder(home.root);
+  const game = sessions ? await ownFolder(path.join(sessions, home.game)) : null;
+  return game ? ownFolder(path.join(game, key)) : null;
+}
+
+/**
+ * The session's target folder: the one already there, or the store's prewarm cloned into place
+ * (`cloneRustTarget`, copy-on-write where the disk can). A link or file planted at its name is
+ * removed — the link itself — first; a clone that fails leaves nothing and sets nothing.
+ */
+async function rustSessionTarget(folder: string, store: string, located: LocatedRust): Promise<string | null> {
+  const target = path.join(folder, RUST_SESSION_TARGET);
+  const found = await lstat(target).catch(() => null);
+  if (found?.isDirectory()) return target;
+  if (found) await unlink(target).catch(() => {});
+  const cloned = await cloneRustTarget(store, located.lock, located.target, target).catch(() => null);
+  return cloned ? target : null;
+}
+
+/**
+ * Writes the session's `Cargo.toml` and `Cargo.lock` into its folder (by rename: a link planted at
+ * either name is replaced, never written through): the manifest the lane writes for a stage from
+ * the workspace's `genex.toml`, its one binary at the workspace's own `src/main.rs`, and the lock
+ * derived from the first lock line that holds the facade and the crates it asks for. Null when
+ * either cannot be written.
+ */
+async function writeRustSessionManifest(
+  folder: string,
+  workCwd: string,
+  lockLines: ReadonlyArray<string | null>,
+): Promise<string | null> {
+  const workspace = await realpath(workCwd).catch(() => null);
+  const parsed = workspace ? await readGenexToml(workspace) : null;
+  if (!workspace || !parsed?.ok) return null;
+  const files = rustSessionFiles(parsed.manifest, path.join(workspace, ...RUST_STAGE_ENTRY.split("/")), lockLines);
+  if (!files) return null;
+  const manifest = path.join(folder, RUST_SESSION_MANIFEST);
+  const written = await atomicWriteText(manifest, files.manifest)
+    .then(() => atomicWriteText(path.join(folder, RUST_SESSION_LOCK), files.lock))
+    .then(
+      () => true,
+      () => false,
+    );
+  return written ? manifest : null;
+}
+
+/** The session's manifest and lock texts, from the first lock line that pins genex and holds the game's crates. */
+function rustSessionFiles(
+  genex: Parameters<typeof cargoManifest>[0],
+  entry: string,
+  lockLines: ReadonlyArray<string | null>,
+): { manifest: string; lock: string } | null {
+  for (const line of lockLines) {
+    const genexVersion = line ? genexReleaseOf(line) : null;
+    if (!line || !genexVersion) continue;
+    const lock = gameCargoLock(genex, { genexVersion, baseLock: line });
+    const manifest = lock.ok ? withEntry(cargoManifest(genex, genexVersion), entry) : null;
+    if (lock.ok && manifest) return { manifest, lock: lock.text };
+  }
+  return null;
+}
+
+/**
+ * The stage's manifest with its one binary at `entry` (an absolute path in the workspace) instead
+ * of the stage's `src/main.rs`; null unless that line is there exactly once.
+ */
+function withEntry(manifest: string, entry: string): string | null {
+  const stageLine = `path = ${JSON.stringify(RUST_STAGE_ENTRY)}`;
+  const lines = manifest.split("\n");
+  const at = lines.indexOf(stageLine);
+  if (at < 0 || lines.indexOf(stageLine, at + 1) >= 0) return null;
+  lines[at] = `path = ${JSON.stringify(entry)}`;
+  return lines.join("\n");
+}
+
+/** The lock line the app ships (`<resources>/native/genex-rust/Cargo.lock`), or null. */
+async function shippedLockLine(resources: string): Promise<string | null> {
+  const file = path.join(rustPayloadDir(resources), RUST_LOCK_LINE_FILE);
+  const bytes = await readRegularFile(file, RUST_LOCK_LINE_MAX_BYTES).catch(() => null);
+  return bytes ? bytes.toString("utf8") : null;
 }
 
 export class DelegationService {
@@ -1006,8 +1416,9 @@ export class DelegationService {
     const context: PlaytestContext = {
       frame: (port, jpeg, caption, act) => this.#x.previews.frame(port, computer.screen(), jpeg, caption, act),
       shotFile: async (camera) => {
-        await ensureDir(iterDir);
-        return path.join(iterDir, `p${++shots}_${safePathSegment(camera ?? "view")}.jpg`);
+        // The runs folder is the agents' to write: the host writes only into a folder it checked.
+        const dir = await confinedCaptureDir(this.#core.layout.runs, iterDir);
+        return path.join(dir, `p${++shots}_${safePathSegment(camera ?? "view")}.jpg`);
       },
       sleep: async (ms) => {
         await sleep(ms);
@@ -1064,6 +1475,8 @@ export class DelegationService {
   }
 
   async #writableGameFile(c: CheckedGameFile): Promise<string> {
+    // A newer Genex's game opens read-only: nothing is written into it.
+    await assertWritableGame(c.realBase);
     if (!isInside(c.base, c.target)) throw c.outside();
     if (c.link) throw new Error(MESSAGE.symlink(c.file));
     if (!isInside(c.realBase, await realpathNearest(path.dirname(c.target)))) throw c.outside();
@@ -1188,6 +1601,9 @@ export class DelegationService {
 
   async delegate(sent: DelegateParams): Promise<HarnessResult<typeof HostMethod.EngineDelegate>> {
     const asked = await this.#briefed(sent);
+    // A newer Genex's game is refused before anything is resolved; its stack decides which plugin
+    // skills the session is handed (a Rust game none for Three.js).
+    const stack = await this.#writableStackOf(asked.project);
     const target = await this.#resolveTarget(asked);
     const { engineId, workClass, cwd } = target;
     // Read before the lock is taken: nothing may await between the free check and the lock.
@@ -1207,10 +1623,11 @@ export class DelegationService {
     const plugins = this.#core.plugins.snapshot(
       { facts: seat.facts, holds: seat.holds },
       toolAllowRule(p.toolAllow) ?? undefined,
+      stack,
     );
     const releaseMcp = this.#core.mcp.lease(p.project);
     const session = this.#session(p, target, grants, seat, worker);
-    const tools = sessionTools(plugins);
+    const tools = sessionTools(plugins, stack);
     // Take the lock before any await — an async deny-list walk used to leave a gap
     // where a second brief into the same folder could also pass the running check.
     const delegation = {
@@ -1263,8 +1680,7 @@ export class DelegationService {
       await releasePlugins().catch((error) => this.#logCleanupFailure("plugin lease", error));
       await releaseMcp().catch((error) => this.#logCleanupFailure("connector lease", error));
       if (tools.playtest) await tools.playtest.release().catch(() => {});
-      if (windows.self) await windows.self.release().catch(() => {});
-      if (windows.director) await windows.director.release().catch(() => {});
+      await releaseWindows(windows);
       await this.#stopTurnJobs(p, session);
       this.#core.budget.endWork(workClass);
       // Nothing more is handed in; a steer still waiting to hear from the engine hears no.
@@ -2154,6 +2570,13 @@ export class DelegationService {
             label: `build:${selfCapture.facetId ?? selfCapture.project}`,
           })
         : null,
+      // A C++ builder's capture that names `macos` runs the Mac build headless in a lease of its own.
+      selfMac: selfCapture
+        ? this.#x.previews.sessionPortFor({
+            label: `build-mac:${selfCapture.facetId ?? selfCapture.project}`,
+            target: BuildTarget.Mac,
+          })
+        : null,
       // The pool label keeps the run id — that is what the window strip shows, and two
       // concurrent runs have to stay apart there.
       director: director ? this.#x.previews.sessionPortFor({ label: `director:${director.runId}` }) : null,
@@ -2217,7 +2640,8 @@ export class DelegationService {
       tools.capabilityFacts = facts?.text ?? "";
     }
     // Awaits live under the lock — an await before it once let two briefs into one folder.
-    if (grants.selfShotsDir) await ensureDir(grants.selfShotsDir);
+    // Never through a link an agent planted in the runs folder: the host makes this folder.
+    if (grants.selfShotsDir) await confinedCaptureDir(this.#core.layout.runs, grants.selfShotsDir);
     if (session.hostTools) await this.#offerConnectors(p, session, tools);
     if (session.hostTools) await this.#applyPlugins(p, session, engineId, tools);
     await this.#prepareWindowTools(p, cwd, grants, windows, tools);
@@ -2255,6 +2679,96 @@ export class DelegationService {
     await this.#x.recordToolRevision(session.threadId, engineId);
   }
 
+  /**
+   * What the session reads beyond its folder: the folders it was given, and a compiled game's
+   * toolchain environment. The store joins the reads of unattended work only, whose sandbox never
+   * writes it: a folder a session the person answers reads is one Accept edits (and Auto) writes
+   * without asking (`#reach`), and its unsandboxed shell reads the store's tools anyway. A
+   * session's own folders join every session's reads, because Claude Code's sandbox writes the
+   * folders it is handed (the store is denied by name): a web C++ session's cache folder, which
+   * emcc writes, and a Rust session's target folder, which cargo writes — never the folder of its
+   * manifest, which it only reads.
+   */
+  async #readFields(
+    project: string,
+    tools: SessionTools,
+    workCwd: string,
+    reach: SessionReach,
+  ): Promise<Pick<DelegateRequest, "extraReads" | "cpp" | "rust">> {
+    const { extraReads } = reach;
+    const cpp = tools.stack === GameStack.RaylibCpp ? await this.#cppSession(project, workCwd) : null;
+    const unattended = !reach.person && !reach.lead;
+    const rust = tools.stack === GameStack.RustWgpu ? await this.#rustSession(project, workCwd, !unattended) : null;
+    const cache = cpp?.env.EM_CACHE;
+    const own = [...(cache ? [path.dirname(cache)] : []), ...(rust?.targetDir ? [rust.targetDir] : [])];
+    const compiledStore = (cpp ?? rust)?.store;
+    const store = compiledStore && unattended ? [compiledStore] : [];
+    const reads = [...new Set([...extraReads, ...own, ...store])];
+    return { ...(reads.length ? { extraReads: reads } : {}), ...(cpp ? { cpp } : {}), ...(rust ? { rust } : {}) };
+  }
+
+  /** The game a delegation works on, as the library lists it; undefined for a name it does not list. */
+  async #gameOf(project: string): Promise<GameProject | undefined> {
+    const games = await this.#core.games.list().catch((): GameProject[] => []);
+    return games.find((game) => game.name === project);
+  }
+
+  /**
+   * The stack of the game a delegation works on; null for a name the library does not list. A newer
+   * Genex's game opens read-only: no agent is started in it, so it is refused here.
+   */
+  async #writableStackOf(project: string): Promise<GameStack | null> {
+    const game = await this.#gameOf(project);
+    if (!game) return null;
+    const refusal = readOnlyRefusal(game.shape);
+    if (refusal) throw refusal;
+    return stackOf(game.shape);
+  }
+
+  /**
+   * A C++ · raylib game's session: the toolchain store it reads, its shell's environment for the
+   * lock new builds use, and the C++ command timeout. A store with no prewarmed lock for the
+   * session's destination still gives the store and the timeout, with no environment to build
+   * with: capture builds through the lane, which says what is missing.
+   */
+  async #cppSession(project: string, workCwd: string): Promise<CppSession | null> {
+    const game = await this.#gameOf(project);
+    if (!game) return null;
+    const configured = this.#core.layout.toolchains;
+    const store = await realpath(configured).catch(() => path.resolve(configured));
+    const target = sessionTarget(destinationsOf(game));
+    const lock = await this.#core.toolchains.currentLock().catch(() => null);
+    const located = lock ? await this.#core.toolchains.locate(lock, [target]).catch(() => null) : null;
+    const { scratch } = this.#core.layout;
+    const home = { scratch: await realpath(scratch).catch(() => path.resolve(scratch)), game: game.name };
+    return cppSessionFor(store, located?.ok ? located.toolchain : null, target, workCwd, home);
+  }
+
+  /**
+   * A Rust · wgpu game's session: the toolchain store it reads and, when the game's Rust lock (its
+   * recorded one while the store keeps it, else the current) has the session's destination prewarmed, its shell's environment with a target folder of
+   * its own in the host's `layout.rustSessions` (apart for a session the person attends) and the
+   * manifest it checks with (`rustSessionFor`).
+   */
+  async #rustSession(project: string, workCwd: string, attended: boolean): Promise<RustSession | null> {
+    const game = await this.#gameOf(project);
+    if (!game) return null;
+    const configured = this.#core.layout.toolchains;
+    const store = await realpath(configured).catch(() => path.resolve(configured));
+    const target = sessionTarget(destinationsOf(game));
+    const lock = await this.#core.toolchains.currentLock(GameStack.RustWgpu, project).catch(() => null);
+    const found = lock ? await locateRust(store, lock, target) : null;
+    const located = found?.ok ? found.located : null;
+    // Made on first use, so its real path is its parent's real path and its own name.
+    const { rustSessions } = this.#core.layout;
+    const parent = await realpath(path.dirname(rustSessions)).catch(() => null);
+    const root = parent ? path.join(parent, path.basename(rustSessions)) : path.resolve(rustSessions);
+    const home: RustSessionHome = { root, game: game.name, attended };
+    const warm = located ? await readWarmLock(store, located.lock, target) : null;
+    const lockLines = [warm, await shippedLockLine(this.#core.options.paths.resources)];
+    return rustSessionFor({ store, located, workCwd, home, lockLines });
+  }
+
   async #offerCover(project: string, tools: SessionTools): Promise<void> {
     const cover = (await this.#core.games.presentation(project)).cover;
     if (replaceableCover(cover)) tools.cover = [COVER_TOOL];
@@ -2282,11 +2796,12 @@ export class DelegationService {
       );
     }
     if (playtest && playShotsDir) {
-      await ensureDir(playShotsDir);
+      await confinedCaptureDir(this.#core.layout.runs, playShotsDir);
       tools.playtest = await this.#core._playtestToolsFor(playtest, cwd, playShotsDir);
     }
     if (director && directorShotsDir) {
-      if (directorWindow) await ensureDir(directorShotsDir);
+      // Never through a link an agent planted in the runs folder: the host makes this folder.
+      if (directorWindow) await confinedCaptureDir(this.#core.layout.runs, directorShotsDir);
       // Its window, its capture and its computer are on the build it leads, wherever it sits — a
       // lead's by the real path its seat checked (`honouredDirector`), never the name it was sent.
       const root = path.resolve(director.root);
@@ -2317,7 +2832,7 @@ export class DelegationService {
     reach: SessionReach,
   ): Promise<DelegateRequest> {
     const { engineId, workCwd, optimization } = target;
-    const { extraReads, denyReads } = reach;
+    const { denyReads } = reach;
     const ownership = normalizeOwnership(p.ownership);
     return {
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
@@ -2335,7 +2850,7 @@ export class DelegationService {
       timeoutMs: p.timeoutMs ?? DEFAULT_CHAT_DELEGATION_TIMEOUT_MS,
       ...(p.resume ? { resume: p.resume } : {}),
       ...(p.compact ? { compact: true } : {}),
-      ...(extraReads.length ? { extraReads } : {}),
+      ...(await this.#readFields(p.project, tools, workCwd, reach)),
       ...(denyReads.length ? { denyReads } : {}),
       ...askFields(reach),
       ...(p.interviewTools?.length ? { interviewTools: p.interviewTools } : {}),
@@ -2454,7 +2969,15 @@ export class DelegationService {
       ...(selfCapture && selfShotsDir && windows.self
         ? {
             selfCapture,
-            onCapture: this.#x.previews.captureFor(selfCapture, target.cwd, selfShotsDir, windows.self),
+            onCapture: this.#x.previews.captureFor(
+              selfCapture,
+              target.cwd,
+              selfShotsDir,
+              windows.self,
+              undefined,
+              undefined,
+              windows.selfMac,
+            ),
           }
         : {}),
       ...(builder ? { liveTools: builder.liveTools, onLiveTool: builder.onLiveTool } : {}),
@@ -2544,7 +3067,7 @@ export class DelegationService {
     // A lead's plugins act on the build it leads, never the live game folder it sits in, and its
     // calls outlive the chat's turns, ending with its own session instead.
     const directory = session.leads ?? target.cwd;
-    const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
+    const binding = callBinding(p, directory, tools.stack);
     const lead = session.leads !== null;
     const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
@@ -2716,9 +3239,13 @@ interface CheckedGameFile {
   outside: () => Error;
 }
 
-/** A session's tools before they are prepared: the plugins of the snapshot it began with, and nothing else yet. */
-function sessionTools(plugins: Pick<PluginSnapshot, "tools" | "guidance" | "applied">): SessionTools {
+/** A session's tools before they are prepared: the plugins of the snapshot it began with and the game's stack, nothing else yet. */
+function sessionTools(
+  plugins: Pick<PluginSnapshot, "tools" | "guidance" | "applied">,
+  stack: GameStack | null,
+): SessionTools {
   return {
+    stack,
     cover: [],
     project: [],
     workers: [],
@@ -2738,6 +3265,25 @@ function sessionTools(plugins: Pick<PluginSnapshot, "tools" | "guidance" | "appl
     builder: null,
     playtest: null,
     director: null,
+  };
+}
+
+/** The session's windows given back: each it took (the builder's, its Mac run's, the director's). */
+async function releaseWindows(windows: SessionWindows): Promise<void> {
+  for (const window of [windows.self, windows.selfMac, windows.director]) await window?.release().catch(() => {});
+}
+
+/**
+ * What a session's plugin or connector call is bound to: the game, the folder it acts on and the
+ * chat. The game's stack rides with the call (`PluginContext.stack`): a plugin picks formats for
+ * it, and the skill tool withholds a card that is not for it.
+ */
+function callBinding(p: Pick<DelegateParams, "project" | "threadId">, directory: string, stack: GameStack | null) {
+  return {
+    project: p.project,
+    directory,
+    ...(p.threadId ? { threadId: p.threadId } : {}),
+    ...(stack ? { stack } : {}),
   };
 }
 

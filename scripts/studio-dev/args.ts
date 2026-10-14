@@ -1,8 +1,9 @@
 import { DevMethod, operationSchema, type Operation } from "../../src/main/dev/protocol.ts";
 export const USAGE =
-  "Usage: studio:dev -- fixtures | start|status|stop|restart|clean|shell|capture|snapshot|logs|runs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
+  "Usage: studio:dev -- fixtures | builds [--prune] | start|status|stop|restart|clean|shell|capture|snapshot|logs|runs|ui|diagnostics --profile SLUG; start --providers live --fresh-machine meets the app as a new Mac account, shell opens that account's terminal; capture/logs take --surface desktop|game|native (a native capture takes --frame pinned|live); ui/diagnostics take --request FILE, --request - (stdin) or --json '{\"method\":...}'";
 export const COMMANDS = [
   "fixtures",
+  "builds",
   "start",
   "status",
   "stop",
@@ -26,6 +27,8 @@ export type StudioDevArgs = {
   fixture?: string;
   /** `start --fresh-machine`: an empty home, the system PATH and no sign-in to borrow. */
   freshMachine?: true;
+  /** `builds --prune`: remove the dev builds no owned profile launches (`builds.ts`). */
+  prune?: true;
   operation?: Operation;
   requestFile?: string;
 };
@@ -68,7 +71,11 @@ const INLINE_OPERATIONS: Partial<Record<StudioDevCommand, (flags: Flags, now: nu
   capture: (flags, now) =>
     operationSchema.parse({
       method: "capture",
-      params: { surface: flags.get("surface") ?? "desktop", name: flags.get("name") ?? `capture-${now}` },
+      params: {
+        surface: flags.get("surface") ?? "desktop",
+        name: flags.get("name") ?? `capture-${now}`,
+        ...given("frame", flags.get("frame")),
+      },
     }),
   snapshot: (flags) =>
     operationSchema.parse({
@@ -101,6 +108,8 @@ export function parseStudioDevArgs(args: string[], now = Date.now()): StudioDevA
   const command = args[0] as StudioDevCommand;
   const flags = flagsOf(args);
   if (command === "fixtures") return { command, profile: "", reuse: false };
+  if (command === "builds")
+    return { command, profile: "", reuse: false, ...(args.includes("--prune") ? { prune: true as const } : {}) };
   const profile = flags.get("profile");
   if (!profile) throw new Error(USAGE);
   if (!(COMMANDS as readonly string[]).includes(command)) throw new Error(`unknown command ${command}`);

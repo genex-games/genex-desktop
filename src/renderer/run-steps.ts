@@ -14,6 +14,7 @@
  *
  * Pure: no DOM, no window. `panels/RunGraph.tsx` draws it and the tests read it directly.
  */
+import type { CaptureManifest } from "../shared/build-preview.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GameEngine } from "../shared/game-engine.ts";
 import { comparedWithNothing, ExecutionStatus, type RunWorked, VerdictPass, workedMs } from "../shared/run-state.ts";
@@ -22,6 +23,7 @@ import { plural } from "../shared/skill-words.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { WorkerEnd, WorkerStopCode, WorkerVerdict } from "../shared/workers.ts";
 import {
+  type BaseNode,
   boundsOf,
   type FacetNode,
   finalNodeOf,
@@ -35,6 +37,8 @@ import {
   type Rect,
   type RunGraph,
   type RunNode,
+  type Shot,
+  thumbShot,
   truncate,
   type VerdictRecord,
   WorkerState,
@@ -89,9 +93,50 @@ export type Gate = (typeof Gate)[keyof typeof Gate];
 export const CheckedBy = { Judges: "judges", Lead: "lead" } as const;
 export type CheckedBy = (typeof CheckedBy)[keyof typeof CheckedBy];
 
+/** Where a step's card picture comes from. */
+export const PictureSource = {
+  /** A frame the judges looked at: the shown try's verdict shots. */
+  Judged: "judged",
+  /** The newest capture the step's own builder saved, read from that builder's own folder. */
+  Builder: "builder",
+  /** Nothing that is the step's own: a judged try whose build showed no frame. */
+  None: "none",
+} as const;
+export type PictureSource = (typeof PictureSource)[keyof typeof PictureSource];
+
+/** Where the run started, and when its build first moved past it (a merge landed on another commit). */
+export interface StartingPoint {
+  commit: string;
+  movedOnAt: string;
+}
+
+/** A builder's own captures: the worker that saved them and its own number for the round. */
+export interface BuilderCapture {
+  worker: string;
+  iteration: number;
+  /** Labels a frame still standing on the starting point after the build moved on; null before. */
+  start: StartingPoint | null;
+}
+
+/**
+ * The picture a step's card shows: the judged frame when its verdict carried one, else its own
+ * builder's newest capture, else nothing — never the capture of another worker, such as the one a
+ * restart replaced, and never an older capture standing in for a judged build that showed nothing.
+ */
+export type StepPicture =
+  | { source: typeof PictureSource.Judged; shot: Shot }
+  | ({ source: typeof PictureSource.Builder } & BuilderCapture)
+  | { source: typeof PictureSource.None };
+
 export interface Step {
   id: string;
   facetId: string;
+  /** the worker whose screen and captures are the step's own: a restart's replacement, not the part it folded into */
+  builder: string;
+  /** what the card shows */
+  picture: StepPicture;
+  /** each try's own picture, in the order of `tries` (empty for a session) */
+  tryPictures: StepPicture[];
   /** a part built in one session: one node for the whole part, no tries */
   session: boolean;
   /** oldest first; empty for a session */
@@ -247,21 +292,86 @@ function shownTry(tries: IterationNode[], merged: Set<IterationNode>, latest: It
   return [...tries].reverse().find((node) => node.shots.length > 0) ?? latest;
 }
 
-function roundStep(
-  tries: IterationNode[],
-  merged: Set<IterationNode>,
-  { active, mayStillAdd }: { active: boolean; mayStillAdd: boolean },
-): Step {
+/** One worker of a part, and how far the graph shifted its rounds when it folded them in. */
+interface WorkerSpan {
+  worker: string;
+  offset: number;
+}
+
+/**
+ * Who built a part. A restart (`director_worker.replaces`) is folded into the part it replaced,
+ * its rounds counted on after the replaced worker's, while its captures land in its own folder.
+ * The graph records how far it shifted each restart's rounds (`RunGraph.restarts`), and that is
+ * the one mapping read here: a round the graph saw only through a flag or a note still shifts
+ * the next worker's rounds, which no count of recorded attempts can know.
+ */
+interface PartWorkers {
+  facetId: string;
+  /** oldest first: the part's own worker at offset 0, then each restart the graph folded in */
+  spans: WorkerSpan[];
+  /** the worker on the part now: the newest replacement, else the part itself */
+  latest: string;
+}
+
+/** The workers of a part as the graph folded them, oldest first. */
+function partWorkers(graph: RunGraph, facetId: string): PartWorkers {
+  const folds = (graph.restarts ?? []).filter((fold) => fold.part === facetId);
+  const spans = [{ worker: facetId, offset: 0 }, ...folds.map(({ worker, offset }) => ({ worker, offset }))];
+  return { facetId, spans, latest: spans.at(-1)?.worker ?? facetId };
+}
+
+/** The worker that ran a part's (folded) round, and its own number for it: the newest worker whose rounds come before it. */
+function roundOwner(part: PartWorkers, round: number): Omit<BuilderCapture, "start"> {
+  const span = part.spans.findLast((row) => row.offset < round) ?? { worker: part.facetId, offset: 0 };
+  return { worker: span.worker, iteration: round - span.offset };
+}
+
+/**
+ * A judged try shows what the judges saw. An undone one that showed them no frame (its build
+ * failed) shows nothing: an older capture is not it. Any other try, a kept one whose pass saved
+ * no frame included, shows its own builder's newest capture.
+ */
+function roundPicture(shown: IterationNode, part: PartWorkers, start: StartingPoint | null): StepPicture {
+  const shot = thumbShot(shown);
+  if (shot) return { source: PictureSource.Judged, shot };
+  if (shown.status === IterationStatus.Rolled) return { source: PictureSource.None };
+  return { source: PictureSource.Builder, ...roundOwner(part, shown.iteration), start };
+}
+
+/** The picture of one try of a step: its own, or nothing when the step does not hold that try. */
+export function tryPicture(step: Step, node: IterationNode): StepPicture {
+  return step.tryPictures[step.tries.indexOf(node)] ?? { source: PictureSource.None };
+}
+
+/**
+ * What a part's steps share: what was merged, whether the run goes on or can still add its kept
+ * work (`mayStillAdd`), who built the part and where the run started.
+ */
+interface PartContext {
+  merged: Set<IterationNode>;
+  active: boolean;
+  mayStillAdd: boolean;
+  workers: PartWorkers;
+  start: StartingPoint | null;
+}
+
+function roundStep(tries: IterationNode[], part: PartContext): Step {
+  const { merged, active, mayStillAdd, workers } = part;
   const first = tries[0];
   const latest = tries.at(-1);
   if (!first || !latest) throw new Error("a step folds at least one try");
   const standing = stepStanding(tries, merged, mayStillAdd);
+  const shown = shownTry(tries, merged, latest);
   return {
     id: `step:${first.facetId}:${first.iteration}`,
     facetId: first.facetId,
+    // The worker on the step now: its newest try's, never that of the attempt a restart replaced.
+    builder: roundOwner(workers, latest.iteration).worker,
+    picture: roundPicture(shown, workers, part.start),
+    tryPictures: tries.map((node) => roundPicture(node, workers, part.start)),
     session: false,
     tries,
-    shown: shownTry(tries, merged, latest),
+    shown,
     name: stepName(first),
     asked: first.fix?.what ?? first.move?.what ?? null,
     state: standing.state,
@@ -276,12 +386,58 @@ function roundStep(
 export function partRows(graph: RunGraph, summary: RunSummary | null = graph.summary ?? null): PartRow[] {
   const integration = graph.nodes.find((node): node is IntegrationNode => node.kind === GraphNodeKind.Integration);
   const merges = (integration?.merges ?? []).filter((merge) => !merge.conflict);
-  return graph.facets.map((facet) => partRow(graph, facet, merges, summary));
+  const start = startingPoint(graph, summary);
+  return graph.facets.map((facet) => partRow(graph, facet, { merges, summary, start }));
+}
+
+/**
+ * Where the run started (the commit every first worker forks from) and when the build first moved
+ * past it; null before anything else was merged, when the start is the build. The first merge's
+ * `previousHead` names that commit: a lead commits its setup (stub facets) on top of the run's
+ * base before the first workers fork, so the base alone misses their frames (M-1.3's incident).
+ */
+export function startingPoint(graph: RunGraph, summary: RunSummary | null): StartingPoint | null {
+  const integration = graph.nodes.find((node): node is IntegrationNode => node.kind === GraphNodeKind.Integration);
+  const merges = (integration?.merges ?? [])
+    .filter((merge) => !merge.conflict && merge.head !== null)
+    .sort((a, b) => a.seq - b.seq);
+  const base = graph.nodes.find((node): node is BaseNode => node.kind === GraphNodeKind.Base);
+  const commit = merges[0]?.previousHead ?? base?.commit ?? finalNodeOf(graph)?.baseCommit ?? summary?.base ?? null;
+  if (!commit) return null;
+  const moved = merges.find((merge) => merge.head !== commit);
+  return moved ? { commit, movedOnAt: moved.at } : null;
+}
+
+/**
+ * Whether a builder frame shows the starting point now that the build has moved past it: its
+ * workspace stood at the start's commit (a worker forked from the starter), so the card says so
+ * instead of passing it off as the build. Edits beyond that commit do not change it: they are
+ * the worker's own work drawn on the starting point, not on the build that moved on (the v1
+ * report's fishing HUD over the starter world). The label is decided when the card is read, not
+ * by when the frame was taken: a frame from before the first merge still stands on the start.
+ * A capture saved before manifests carries no label.
+ */
+export function onStartingPoint(manifest: CaptureManifest | undefined, start: StartingPoint | null): boolean {
+  return Boolean(manifest?.commit && start && manifest.commit === start.commit);
+}
+
+/** Whether a builder capture is the asked worker's of this run; one saved before manifests, or naming neither, is. */
+export function capturedBy(manifest: CaptureManifest | undefined, runId: string, worker: string): boolean {
+  if (!manifest) return true;
+  const ofRun = manifest.runId === null || manifest.runId === runId;
+  return ofRun && (manifest.workerId === null || manifest.workerId === worker);
 }
 
 type RunTask = RunSummary["tasks"][number];
 
-function partRow(graph: RunGraph, facet: FacetNode, merges: MergeInfo[], summary: RunSummary | null): PartRow {
+/** What every row of a graph reads: its merges, the recorded outcome, and where the run started. */
+interface RowContext {
+  merges: MergeInfo[];
+  summary: RunSummary | null;
+  start: StartingPoint | null;
+}
+
+function partRow(graph: RunGraph, facet: FacetNode, { merges, summary, start }: RowContext): PartRow {
   const rounds = graph.nodes
     .filter((node): node is IterationNode => node.kind === GraphNodeKind.Iteration && node.facetId === facet.facetId)
     .sort((a, b) => a.iteration - b.iteration);
@@ -295,10 +451,11 @@ function partRow(graph: RunGraph, facet: FacetNode, merges: MergeInfo[], summary
     rounds.some((round) => round.status === IterationStatus.Building);
   const working = graph.active && busy;
   const merged = mergedRounds(rounds, partMerges);
-  const run = { active: graph.active, mayStillAdd: runMayStillAdd(graph) };
+  const workers = partWorkers(graph, facet.facetId);
+  const part = { merged, active: graph.active, mayStillAdd: runMayStillAdd(graph), workers, start };
   const steps = rounds.length
-    ? foldTries(rounds).map((tries) => roundStep(tries, merged, run))
-    : [sessionStep(graph, facet, task, { integrated, working })];
+    ? foldTries(rounds).map((tries) => roundStep(tries, part))
+    : [sessionStep(graph, facet, task, { integrated, working, workers, start })];
   const inBuild = steps.filter((step) => step.state === StepState.InBuild).length;
   return { facet, steps, inBuild, integrated, working };
 }
@@ -315,13 +472,18 @@ function sessionStep(
   graph: RunGraph,
   facet: FacetNode,
   task: RunTask | null,
-  part: { integrated: boolean; working: boolean },
+  part: { integrated: boolean; working: boolean; workers: PartWorkers; start: StartingPoint | null },
 ): Step {
   const verdict = sessionVerdict(graph, facet, task);
   const state = sessionState(graph, facet, task, part);
+  const builder = part.workers.latest;
   return {
     id: `session:${facet.facetId}`,
     facetId: facet.facetId,
+    builder,
+    // A single session saves its captures as its first round, in its own folder.
+    picture: { source: PictureSource.Builder, worker: builder, iteration: 1, start: part.start },
+    tryPictures: [],
     session: true,
     tries: [],
     shown: null,

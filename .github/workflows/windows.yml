@@ -6,11 +6,27 @@ name: Windows
 # fails the job); one with `files` runs just those test files after the sandbox setup. The hosted
 # runner is elevated and disposable, so the sandbox install needs no UAC prompt. No secrets;
 # pull_request runs with the fork's read-only token.
+#
+# The Rust · wgpu runtime's WARP row (M4.4) is separate and billed: a dispatch with `rust_warp`
+# (or the `windows-smoke` label on a pull request into main) builds the gnullvm pond.exe and a
+# decoy dxcompiler.dll on Linux (the spike's `cross-builds`, from the committed pins), then runs it
+# on windows-2025 under D3D12 WARP with the decoy first on PATH, beside the exe and as the working
+# folder (scripts/ci/rust-spike.ts `windows-warp`): the adapter must be WebGPU-compliant (tier core
+# on D3D12) and FXC, never the decoy, must still compile its shaders. That dispatch skips the gate
+# below, and a label event never starts the gate. Windows exports stay "untested on real GPUs"
+# until a real machine runs the row. scripts/ci/rust-linux-host.ts --check-windows holds this file
+# to that shape.
 on:
   pull_request:
     branches: [main]
+    # `labeled` lets the windows-smoke label start the Rust WARP row; the gate ignores label events.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
+      rust_warp:
+        description: Run only the Rust runtime's D3D12 WARP row (a Linux build job, then a Windows run with a decoy dxcompiler.dll)
+        type: boolean
+        default: false
       files:
         description: Test files to run instead of the gate (space-separated); skips typecheck, lint and both passes
         required: false
@@ -22,10 +38,13 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # The Rust WARP row (a dispatch with rust_warp, or a label event) has a group of its own, so a push
+  # to the pull request never cancels a billed WARP run midway; a new push makes a running gate stale.
+  group: windows-${{ (inputs.rust_warp || github.event.action == 'labeled') && 'rust-warp-' || '' }}${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' && !inputs.rust_warp }}
 jobs:
   windows:
+    if: ${{ !inputs.rust_warp && github.event.action != 'labeled' }}
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -62,3 +81,75 @@ jobs:
           name: windows-tests
           path: .studio-dev/evidence/windows-tests
           if-no-files-found: ignore
+  rust-warp-build:
+    # Builds the gnullvm binary and its decoy on Linux; billed only through the Windows job it feeds.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.rust_warp) || (github.event_name == 'pull_request' && github.event.label.name == 'windows-smoke') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+      SPIKE_EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-warp-build
+      SPIKE_ARTIFACTS: ${{ github.workspace }}/.studio-dev/ci/artifacts
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (the Windows and Android builds share one target folder)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: System packages (Vulkan headers and audio/udev headers the facade links)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libudev-dev xz-utils
+      - run: npm ci --ignore-scripts
+      # The spike toolchain from the committed pins (scripts/spike/rust-wgpu/pins.md), as rust-spike.yml.
+      - name: Rust toolchain and vendored crates from the committed pins
+        run: node scripts/ci/rust-spike.ts --step toolchain --evidence "$SPIKE_EVIDENCE"
+      - name: Cross-build the gnullvm pond.exe, its decoy dxcompiler.dll and the Android library
+        run: node scripts/ci/rust-spike.ts --step cross-builds --evidence "$SPIKE_EVIDENCE" --artifacts "$SPIKE_ARTIFACTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-warp-windows
+          path: ${{ env.SPIKE_ARTIFACTS }}/windows
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-warp-build-evidence-${{ github.sha }}
+          path: ${{ env.SPIKE_EVIDENCE }}
+          if-no-files-found: ignore
+  rust-warp:
+    # Billed Windows minutes: an owner dispatch or the windows-smoke label only.
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.rust_warp) || (github.event_name == 'pull_request' && github.event.label.name == 'windows-smoke') }}
+    needs: rust-warp-build
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rust-warp-windows
+          path: windows-artifact
+      - name: gnullvm pond.exe on D3D12 WARP with a decoy dxcompiler.dll first on PATH
+        run: node scripts/ci/rust-spike.ts --step windows-warp --windows-dir windows-artifact --evidence evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-warp-windows-evidence-${{ github.sha }}
+          path: evidence
+          if-no-files-found: warn

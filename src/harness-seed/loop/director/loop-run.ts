@@ -43,6 +43,7 @@ import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
 import type { HarnessResult, ProjectShape } from "../../types/host-api.d.ts";
 import type { Evidence, GatherOptions, Shot } from "../evidence.ts";
 import type { LedgerRecord } from "../ledger.ts";
+import type { LeaseGame } from "../native-contract.ts";
 import type { EngineLimit } from "../outage.ts";
 import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { RunInbox } from "../run-inbox.ts";
@@ -316,6 +317,12 @@ export interface LoopRunData {
    */
   game?: HookedGame;
   capacity: HarnessResult<"preview.capacity"> | null;
+  /**
+   * The game the run's windows judge (its destinations, from the library once the game is
+   * ready): every lease names that game's judging target (native-contract.ts `acquireFor`).
+   * Absent on a run a kept older setup.ts made: judged in the browser.
+   */
+  leaseGame?: LeaseGame;
   contractMissing: boolean;
   gameKind: string;
   priorLedger: LedgerRecord[];
@@ -735,8 +742,8 @@ export function withLease<T>(
   fn: (handle: string | null) => Promise<T>,
   { borrow = false }: { borrow?: boolean } = {},
 ): Promise<T | { noWindow: string }> {
-  const { ctx, pooledWindows } = loopRun;
-  return leaseWindow(ctx, label, fn, { borrow, pooled: pooledWindows });
+  const { ctx, pooledWindows, leaseGame = {} } = loopRun;
+  return leaseWindow(ctx, label, fn, { borrow, pooled: pooledWindows, game: leaseGame });
 }
 
 /**

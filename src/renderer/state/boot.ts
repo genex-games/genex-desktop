@@ -2,8 +2,9 @@
  * Where startup stands, as the window sees it. Before the studio's stores bootstrap, the renderer
  * asks main (`bootState`): the platform (the window chrome is laid out by it) and whether the
  * protected workspace is ready. While it is not, the window shows the sandbox setup screen, whose
- * Retry re-runs core startup in main (and on Windows, Set up installs it first); once it is,
- * `onReady` starts the studio, exactly once.
+ * Retry re-runs core startup in main (and on Windows, Set up installs it first; on Linux under
+ * Ubuntu's user-namespace restriction, Set up installs Genex's AppArmor profile and main restarts
+ * the app); once it is, `onReady` starts the studio, exactly once.
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import {
@@ -33,10 +34,12 @@ export interface BootStoreState {
   problem: SandboxProblem | null;
   /** A Retry is running. */
   retrying: boolean;
-  /** Set up (Windows) is waiting on the install and its administrator prompt. */
+  /** Set up is waiting on the install and its administrator prompt. */
   settingUp: boolean;
   /** The last Set up ended with the administrator prompt dismissed. */
   setupCancelled: boolean;
+  /** Set up installed Genex's AppArmor profile and main is restarting the app (Linux). */
+  restarting: boolean;
   /** Why the last Retry or Set up failed, other than the sandbox still being unavailable. */
   error: string | null;
 }
@@ -48,6 +51,7 @@ export const initialBoot = (): BootStoreState => ({
   retrying: false,
   settingUp: false,
   setupCancelled: false,
+  restarting: false,
   error: null,
 });
 
@@ -61,6 +65,7 @@ export function bootAnswered(state: BootStoreState, boot: BootState): BootStoreS
     retrying: false,
     settingUp: false,
     setupCancelled: false,
+    restarting: false,
     error: null,
   };
 }
@@ -77,19 +82,29 @@ export function setupStarted(state: BootStoreState): BootStoreState {
   return { ...state, settingUp: true, setupCancelled: false, error: null };
 }
 
-/** Set up answered: installed (main has retried, so this is its state) or the prompt dismissed. */
+/** Set up answered: installed (main has retried, so this is its state), restarting, or the prompt dismissed. */
 export function setupAnswered(state: BootStoreState, result: SandboxSetupResult): BootStoreState {
   const after = bootAnswered(state, result.state);
-  return { ...after, setupCancelled: result.outcome === SandboxSetupOutcome.Cancelled };
+  return {
+    ...after,
+    setupCancelled: result.outcome === SandboxSetupOutcome.Cancelled,
+    restarting: result.outcome === SandboxSetupOutcome.Restarting,
+  };
 }
 
 export function setupFailed(state: BootStoreState, error: string): BootStoreState {
   return { ...state, settingUp: false, error };
 }
 
-/** Whether the setup screen offers Set up: a Windows sandbox that has not been installed yet. */
+/**
+ * Whether the setup screen offers Set up: a Windows sandbox that has not been installed yet, or on
+ * Linux Ubuntu's user-namespace restriction with a profile that can name this copy of Genex.
+ */
 export function canSetUp(state: Pick<BootStoreState, "platform" | "problem">): boolean {
-  return state.platform === StudioPlatform.Windows && state.problem?.code === SandboxProblemCode.NotProvisioned;
+  const { platform, problem } = state;
+  if (platform === StudioPlatform.Windows) return problem?.code === SandboxProblemCode.NotProvisioned;
+  if (platform !== StudioPlatform.Linux) return false;
+  return problem?.code === SandboxProblemCode.UsernsRestricted && problem.apparmor !== undefined;
 }
 
 /** The screen the state calls for. */
@@ -108,7 +123,7 @@ export interface Boot {
   load(): Promise<void>;
   /** Re-run core startup from the setup screen; presses while one runs share it. */
   retry(): Promise<void>;
-  /** Install the Windows sandbox, then start; presses while one runs share it. */
+  /** Install what the sandbox is missing, then start (Linux: main restarts); presses while one runs share it. */
   setUp(): Promise<void>;
 }
 

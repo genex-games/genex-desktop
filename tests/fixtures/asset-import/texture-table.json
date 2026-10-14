@@ -1,0 +1,18 @@
+{
+  "comment": "The per-destination texture table both sides keep: src/substrate/asset-import/texture-table.ts and genex-assets (texture.rs). Each row is best first; the last family is always uncompressed.",
+  "destinations": {
+    "macos": ["bc", "rgba8"],
+    "windows": ["bc", "rgba8"],
+    "linux": ["bc", "rgba8"],
+    "ios": ["astc", "etc2", "rgba8"],
+    "android": ["astc", "etc2", "rgba8"],
+    "web": ["bc", "astc", "etc2", "rgba8"]
+  },
+  "features": {
+    "bc": "texture-compression-bc",
+    "astc": "texture-compression-astc",
+    "etc2": "texture-compression-etc2",
+    "rgba8": null
+  },
+  "basisFormats": { "bc": 6, "astc": 10, "etc2": 1, "rgba8": 13 }
+}

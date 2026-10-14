@@ -10,6 +10,8 @@
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { GameLocation } from "../../shared/game-project.ts";
+import { cppLaneRunsOn } from "../../shared/toolchain.ts";
+import { hostPlatform } from "../platform.ts";
 import { UserMessage } from "../chat/UserMessage.tsx";
 import { chatPlaceholder, HOME_PLACEHOLDER } from "../composer-placeholder.ts";
 import { ShowSidebarButton } from "../panels/ChatHeader.tsx";
@@ -41,6 +43,7 @@ const MESSAGE = {
   namingStatus: "Naming your game…",
   openingStatus: "Opening your game…",
   suggest: "Suggest prompt",
+  compiledGame: "Rust game…",
 } as const;
 
 /** Home's fade over the game it launched takes 250ms (`--duration-fast`); past this it is done anyway. */
@@ -96,7 +99,7 @@ function HomeScreen({
   const [draft, setDraft] = useState("");
   const suggestion = useSuggestion(draft, setDraft, handoff);
   const leaving = launch?.phase === LaunchPhase.Handed;
-  useHomeComposerWords(app, handoff, launch === null);
+  useHomeComposerWords(app, handoff, launch === null && !dialogs.state.creating);
   const finish = (id: string): void => {
     app.launchFinished(id);
     // The message is the chat's now; so is the cursor.
@@ -159,6 +162,19 @@ function HomeScreen({
               onInspect={(inspection) => dialogs.dispatch({ type: "picked", inspection })}
               onProblem={(words) => app.notify(words, ToastTone.Error)}
             />
+            {cppLaneRunsOn(hostPlatform()) && (
+              <button
+                type="button"
+                data-home-cpp
+                className="home-suggest"
+                onClick={() => {
+                  handoff.holdIdea(draft || null);
+                  dialogs.dispatch({ type: "create", location });
+                }}
+              >
+                {MESSAGE.compiledGame}
+              </button>
+            )}
             {/* Only while the box is empty or still holds a suggestion: it never replaces the user's words. */}
             <button
               type="button"
@@ -199,14 +215,17 @@ function useSuggestion(draft: string, setDraft: (text: string) => void, handoff:
  */
 function useHomeComposerWords(app: Studio, handoff: ComposerHandoff, atHome: boolean): void {
   const returned = useLaunch((s) => s.returned);
+  const opened = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the handoff is new each render; its refs are not
   useEffect(() => {
     if (!atHome) return;
+    const first = !opened.current;
+    opened.current = true;
     const words = returned?.text ?? handoff.takeIdea();
     if (returned) app.returnTaken();
     const frame = requestAnimationFrame(() => {
       if (words) handoff.homeComposer.current?.compose(words);
-      else handoff.homeComposer.current?.focus();
+      else if (first) handoff.homeComposer.current?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [app, atHome, returned]);

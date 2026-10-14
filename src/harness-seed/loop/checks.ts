@@ -26,6 +26,29 @@ import { appliesToBuild } from "./applies-to-build.ts";
 import type { ElidedKind, StateShape } from "./state-shape.ts";
 import type { AnyRecord, HarnessCtx } from "../types/harness.d.ts";
 import type { PreviewPixelStats } from "../types/host-api.d.ts";
+import type { BuildTarget, CheckSupport, GameStack, NativeRefusal, TargetRefusal } from "./native-contract.ts";
+import type { ParityVerdict } from "./native-evidence.ts";
+
+/**
+ * The deterministic checks know a C++ · raylib game (`runDeterministicChecks` `stack`): what its
+ * page cannot be measured by reports `unmeasured`. run-dispatch.ts and chat-dispatch.ts refuse a
+ * raylib night on a kept copy without this mark (`servesNative`, native-contract.ts).
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * The deterministic checks know a Rust · wgpu game by the same per-stack table: its scene checks
+ * are unmeasured, a frameless look fails its vision and play checks, and a web parity row refused
+ * `gpu-unsupported` is unavailable rather than failed. run-dispatch.ts refuses a Rust night on a
+ * kept copy without this mark (`servesRust`, native-contract.ts).
+ */
+export const SERVES_RUST = true;
+
+/** What a board row says when it could not be measured here. Model-facing: a brief quotes it. */
+const MESSAGE = {
+  webWithoutWebGpu:
+    "the web build could not run here: this preview offers no WebGPU (gpu-unsupported), so parity is unavailable, not failed",
+} as const;
 
 /** The state paths a check may name as its needs. */
 const MAX_CHECK_NEEDS = 4;
@@ -84,6 +107,12 @@ export interface CheckEvidence {
   stateEarly?: AnyRecord | null;
   demos?: Record<string, { ok?: boolean; error?: string; result?: unknown; [field: string]: unknown } | undefined>;
   demoStates?: Record<string, AnyRecord | undefined>;
+  /** The stack of the game the pass looked at (`gatherEvidence` copies the run's): what its checks can be measured by. */
+  stack?: GameStack | null;
+  /** A compiled game's look (C++ · raylib, Rust · wgpu) whose capture failed, or that took no frame at all: its vision and play checks fail. */
+  captureFailed?: boolean;
+  /** The parity gates a compiled game's look owes its other destinations: one board row. */
+  parity?: ParityVerdict | null;
   [field: string]: unknown;
 }
 
@@ -102,6 +131,8 @@ export interface CheckResult {
   tol?: number;
   nearest?: string;
   unavailable?: boolean;
+  /** The parity destinations this host could not answer (a web build without WebGPU), named on the row. */
+  unavailableTargets?: string[];
   missing?: string[];
   /**
    * The studio could not read the state whole: an older studio cut its text, or the check reads
@@ -148,6 +179,79 @@ const Kind = {
 } as const satisfies Record<string, CheckKind>;
 const Weight = { Identity: "identity", Normal: "normal" } as const satisfies Record<string, CheckWeight>;
 const Origin = { Judge: "judge" } as const satisfies Record<string, CheckOrigin>;
+/**
+ * The members of native-contract.ts's vocabularies this module reads, copied for the same reason:
+ * native-contract.ts imports spec.ts, which imports this module.
+ */
+const Stack = {
+  ThreeJs: "three-js",
+  RaylibCpp: "raylib-cpp",
+  RustWgpu: "rust-wgpu",
+} as const satisfies Record<string, GameStack>;
+/** native-contract.ts `TargetRefusal`'s refusals that say a destination is not run on this host at all. */
+const NotRunHere = {
+  NotRunnableHere: "not-runnable-here",
+  NoGameBox: "no-game-box",
+} as const satisfies Record<string, TargetRefusal>;
+/** A gate refused only by these is unavailable here, not owed. */
+const NOT_RUN_HERE: ReadonlySet<string> = new Set(Object.values(NotRunHere));
+/** native-contract.ts `NativeRefusal.GpuUnsupported`: the device offers no WebGPU-core adapter. */
+const Refusal = { GpuUnsupported: "gpu-unsupported" } as const satisfies Record<string, NativeRefusal>;
+/** native-contract.ts `BuildTarget.Web`: the destination whose missing WebGPU is the preview's limit, not the game's. */
+const Target = { Web: "web" } as const satisfies Record<string, BuildTarget>;
+const Support = { Measured: "measured", Unmeasured: "unmeasured" } as const satisfies Record<string, CheckSupport>;
+
+/** A compiled game's row: no three.js scene graph to inspect, everything that reads pixels, `state()` or plays. */
+const COMPILED_SUPPORT: Readonly<Record<CheckKind, CheckSupport>> = {
+  [Kind.Scene]: Support.Unmeasured,
+  [Kind.Pixel]: Support.Measured,
+  [Kind.Metric]: Support.Measured,
+  [Kind.Probe]: Support.Measured,
+  [Kind.Demo]: Support.Measured,
+  [Kind.Vision]: Support.Measured,
+  [Kind.Play]: Support.Measured,
+};
+
+/**
+ * native-contract.ts `STACK_CHECK_SUPPORT`, as this module applies it: a three.js page measures
+ * every kind; a C++ · raylib or Rust · wgpu game has no scene graph, so its scene checks are
+ * unmeasured, never a pass. loop-modes-stack.test.ts holds the two tables together.
+ */
+const STACK_SUPPORT = {
+  [Stack.ThreeJs]: {
+    [Kind.Scene]: Support.Measured,
+    [Kind.Pixel]: Support.Measured,
+    [Kind.Metric]: Support.Measured,
+    [Kind.Probe]: Support.Measured,
+    [Kind.Demo]: Support.Measured,
+    [Kind.Vision]: Support.Measured,
+    [Kind.Play]: Support.Measured,
+  },
+  [Stack.RaylibCpp]: COMPILED_SUPPORT,
+  [Stack.RustWgpu]: COMPILED_SUPPORT,
+} as const satisfies Record<GameStack, Readonly<Record<CheckKind, CheckSupport>>>;
+
+/**
+ * How each stack's game is judged on its frames, by name, or null when a look that captured no
+ * frame leaves its vision and play checks to the judge (a three.js page has other evidence).
+ */
+const JUDGED_ON_FRAMES = {
+  [Stack.ThreeJs]: null,
+  [Stack.RaylibCpp]: "a C++ · raylib game",
+  [Stack.RustWgpu]: "a Rust · wgpu game",
+} as const satisfies Record<GameStack, string | null>;
+
+/** Whether `stack` is one this module knows (native-contract.ts `GameStack`). */
+function isKnownStack(stack: unknown): stack is GameStack {
+  return typeof stack === "string" && Object.hasOwn(STACK_SUPPORT, stack);
+}
+
+/** Can a check of `kind` be measured on a game of `stack`? Every kind can on a three.js game, or an unknown one. */
+function measurableOn(stack: GameStack | null | undefined, kind: string): boolean {
+  if (!isKnownStack(stack)) return true;
+  const row: Readonly<Record<string, CheckSupport>> = STACK_SUPPORT[stack];
+  return !Object.hasOwn(row, kind) || row[kind] !== Support.Unmeasured;
+}
 /** The markers of a state the studio could not read whole; state-shape.ts imports this module too. */
 const Shape = {
   Truncated: "__truncated",
@@ -1283,8 +1387,18 @@ type DeterministicInput = {
 
 type Evaluator = (ctx: HarnessCtx, check: Check, input: DeterministicInput) => CheckResult | Promise<CheckResult>;
 
-/** How a deterministic kind is evaluated, or null for a kind the harness does not evaluate itself. */
-function deterministicEvaluator(kind: string): Evaluator | null {
+/** A check of a kind this game's stack cannot be measured by: unmeasured, never a pass. */
+const unsupportedOnStack: Evaluator = (_ctx, check) =>
+  unmeasured(check, `a ${check.kind} check cannot be measured on a C++ · raylib game (it reads a three.js page)`, {
+    unavailable: true,
+  });
+
+/**
+ * How a deterministic kind is evaluated on a game of `stack`, or null for a kind the harness does
+ * not evaluate itself. A kind the stack cannot be measured by is unmeasured, whoever evaluates it.
+ */
+function deterministicEvaluator(kind: string, stack: GameStack | null | undefined): Evaluator | null {
+  if (!measurableOn(stack, kind)) return unsupportedOnStack;
   switch (kind) {
     case Kind.Pixel:
       return (_ctx, check, { evidence, diffs, references }) =>
@@ -1309,7 +1423,8 @@ const needsModel = (kind: string): boolean => kind === Kind.Vision || kind === K
 /**
  * Evaluate every deterministic check in a spec. Vision and play checks are returned as
  * `pending` for the model-backed evaluators; diffs are per-camera diff results when the
- * caller computed them (see facet-loop's invisible-diff detection).
+ * caller computed them (see facet-loop's invisible-diff detection). `stack` is the game's (else
+ * the evidence's): a C++ · raylib game's scene checks are unmeasured and never reach its page.
  */
 export async function runDeterministicChecks(
   ctx: HarnessCtx,
@@ -1319,24 +1434,104 @@ export async function runDeterministicChecks(
     diffs = {},
     handle,
     references = null,
+    stack = null,
   }: {
     spec: { checks?: readonly Check[] } | null | undefined;
     evidence: CheckEvidence | null | undefined;
     diffs?: Record<string, CameraDiff | null | undefined>;
     handle?: string | null;
     references?: ReferenceStats[] | null;
+    stack?: GameStack | null;
   },
 ): Promise<{ results: CheckResult[]; pending: Check[] }> {
   const results: CheckResult[] = [];
   const pending: Check[] = [];
   const input: DeterministicInput = { evidence, diffs, handle, references };
+  // A caller that does not name the stack scores on the one the evidence pass looked at.
+  const onStack = stack ?? evidence?.stack ?? null;
   for (const check of spec?.checks ?? []) {
-    const evaluate = deterministicEvaluator(check.kind);
+    const evaluate = deterministicEvaluator(check.kind, onStack);
+    const frameless = needsModel(check.kind) ? withoutFrames(check, evidence, onStack) : null;
     if (evaluate) results.push(await evaluate(ctx, check, input));
+    else if (frameless) results.push(frameless);
     else if (needsModel(check.kind)) pending.push(check);
     else results.push(result(check, false, `unknown check kind ${check.kind}`));
   }
+  const parity = parityResult(evidence);
+  if (parity) results.push(parity);
   return { results, pending };
+}
+
+/**
+ * A vision or play check on a compiled game's look whose capture failed: the judges see exactly
+ * the frames a player would, so a build that gave none fails the check instead of leaving it unasked.
+ */
+function withoutFrames(
+  check: Check,
+  evidence: CheckEvidence | null | undefined,
+  stack: GameStack | null | undefined,
+): CheckResult | null {
+  const judgedOnFrames = isKnownStack(stack) ? JUDGED_ON_FRAMES[stack] : null;
+  if (judgedOnFrames === null || evidence?.captureFailed !== true) return null;
+  return result(
+    check,
+    false,
+    `no frame was captured from the judged build — ${judgedOnFrames} is judged on its frames, so the check fails`,
+  );
+}
+
+/** The board row of a look's native parity gate (native-evidence.ts): its id. */
+export const PARITY_CHECK_ID = "native-parity";
+
+/**
+ * The parity gate's verdict as one deterministic identity row: it fails a board like a failed
+ * check, and an unmeasured gate is never a pass. A gate whose every destination is not run on
+ * this host at all is `unavailable`: the build cannot answer it here. So is a web build refused
+ * `gpu-unsupported` (a Studio preview without WebGPU, such as Linux Electron): that is the
+ * preview's limit, never a failed game, and the gate is weighed over the other destinations, so
+ * judging stays on the host's own build.
+ */
+function parityResult(evidence: CheckEvidence | null | undefined): CheckResult | null {
+  const parity = evidence?.parity;
+  if (!isRecord(parity)) return null;
+  const check: CheckLike = { id: PARITY_CHECK_ID, kind: Kind.Probe, weight: Weight.Identity };
+  const targets: unknown[] = Array.isArray(parity.targets) ? parity.targets : [];
+  const webless = targets.filter(webWithoutWebGpu);
+  if (webless.length) return weighWithoutWeb(check, targets, webless);
+  const reason = String(parity.reason ?? "");
+  if (parity.pass === true || parity.pass === false) return result(check, parity.pass, reason);
+  return unmeasured(check, reason, notRunHere(targets) ? { unavailable: true } : {});
+}
+
+/** The gate weighed over every destination but the web builds refused `gpu-unsupported`, which it names. */
+function weighWithoutWeb(check: CheckLike, targets: readonly unknown[], webless: readonly unknown[]): CheckResult {
+  const unavailableTargets = webless.map((target) => String(isRecord(target) ? target.target : ""));
+  const answered = targets.filter((target) => !webless.includes(target)).filter(isRecord);
+  const said = (target: AnyRecord): string => `${String(target.target)}: ${String(target.reason ?? "")}`;
+  const failing = answered.find((target) => target.pass === false);
+  if (failing) return result(check, false, said(failing), { unavailableTargets });
+  const open = answered.find((target) => target.pass !== true);
+  if (open) {
+    const unavailable = notRunHere(answered);
+    return unmeasured(check, said(open), unavailable ? { unavailable, unavailableTargets } : { unavailableTargets });
+  }
+  if (answered.length) return result(check, true, "", { unavailableTargets });
+  return unmeasured(check, MESSAGE.webWithoutWebGpu, { unavailable: true, unavailableTargets });
+}
+
+/** Whether a destination's gate is a web build this host's preview could not run for want of WebGPU. */
+function webWithoutWebGpu(target: unknown): boolean {
+  if (!isRecord(target) || target.target !== Target.Web) return false;
+  const rows: unknown[] = Array.isArray(target.rows) ? target.rows : [];
+  return rows.some((row) => isRecord(row) && row.refusal === Refusal.GpuUnsupported);
+}
+
+/** Whether every row of every destination's gate was refused as not run on this host. */
+function notRunHere(targets: unknown): boolean {
+  const rows = (Array.isArray(targets) ? targets : []).flatMap((target) =>
+    isRecord(target) && Array.isArray(target.rows) ? target.rows : [],
+  );
+  return rows.length > 0 && rows.every((row) => isRecord(row) && NOT_RUN_HERE.has(String(row.refusal)));
 }
 
 // ── scoreboard ─────────────────────────────────────────────────────────────────────────────

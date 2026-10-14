@@ -187,6 +187,12 @@ export interface PreviewPortStatus {
   loadError: string | null;
   consoleErrors: number | null;
   consoleAvailable?: boolean;
+  /**
+   * Why the window does not show the build it was asked for, or null: the build failed, and the
+   * window shows no page (a judged load) or the last build that worked (Live). Absent from a port
+   * that cannot say. A page that loaded is never this, whatever else failed on it (a subframe).
+   */
+  buildFailed?: string | null;
 }
 
 export type PreviewInputAction =
@@ -227,6 +233,32 @@ export type PreviewInputAction =
   /** One key or a `+`-joined chord ("ctrl+s", "shift+Return"), `repeat` times. */
   | { type: "press"; combo: string; repeat?: number }
   | { type: "wait"; ms: number };
+
+/** Where one finger is in its touch. Wire values (play scripts, Live, the native `input` op): never rename one. */
+export const TouchPhase = {
+  Start: "start",
+  Move: "move",
+  End: "end",
+} as const;
+export type TouchPhase = (typeof TouchPhase)[keyof typeof TouchPhase];
+
+/**
+ * One finger's step (contract v2): `id` ties a start to its moves and end (a uint32 the sender
+ * picks), `x`/`y` are world coordinates, the game's own world size before any letterbox. A Rust ·
+ * wgpu game takes it through the native `input` op; desktop builds also emulate one touch from
+ * the primary mouse button. The harness's play-script `touch` action reaches a native run through
+ * `preview.input`; a protocol 1 game and the browser preview take none, and refuse the whole call
+ * `unsupported` with nothing applied.
+ */
+export interface PreviewTouchAction {
+  type: "touch";
+  phase: TouchPhase;
+  id: number;
+  x: number;
+  y: number;
+  /** Live's embedded ring: `x`/`y` are ring pixels from the top-left, which the game maps through its letterbox to world coordinates. */
+  px?: true;
+}
 
 /**
  * The state a run is about, reached the way a player reaches it, after every load and before

@@ -1950,6 +1950,22 @@ describe("an agent's call answers within the engine bridge's deadline", () => {
   const untilDone = async (state: { done: boolean }) => {
     for (let tries = 0; tries < 300 && !state.done; tries++) await sleep(10);
   };
+  /** Whether a call waits on the person now: the last the chat heard of such a wait says it goes on. */
+  const waitingOnPerson = () => {
+    const last = events.findLast((event) => event.type === UiEvent.PersonFirst);
+    return last?.type === UiEvent.PersonFirst && last.payload.waiting;
+  };
+  /**
+   * Waits (in real time, bounded) until a call answers, moving the clock a poll at a time only
+   * while it waits on the person: their time, not Genex's work. Once that wait ended the clock
+   * stands still, however long the answer then takes to come back on a slow machine.
+   */
+  const untilDoneWaitingOnPerson = async (state: { done: boolean }) => {
+    for (let tries = 0; tries < 400 && !state.done; tries++) {
+      await sleep(10);
+      if (waitingOnPerson()) await clock.advance(PERSON_FIRST_POLL_MS);
+    }
+  };
 
   it("a card answered late leaves the call's wait for the person only what is left of the call's time", async () => {
     await person({ personActive: true });
@@ -1959,12 +1975,7 @@ describe("an agent's call answers within the engine bridge's deadline", () => {
     // The person reads the card for seven and a half minutes.
     await clock.advance(450_000);
     lite.core.resolveConsent(card.consentId, true);
-    // The clock moves only while the call waits on the person: their time, not Genex's work.
-    const waitingOnPerson = () => events.some((event) => event.type === UiEvent.PersonFirst);
-    for (let tries = 0; tries < 300 && !varnish.done; tries++) {
-      await sleep(10);
-      if (waitingOnPerson()) await clock.advance(PERSON_FIRST_POLL_MS);
-    }
+    await untilDoneWaitingOnPerson(varnish);
     assert.ok(varnish.done, "the call answered");
     assert.equal(
       (varnish.outcome as { blocker?: string }).blocker,
@@ -2019,15 +2030,11 @@ describe("an agent's call answers within the engine bridge's deadline", () => {
     await clock.advance(300_000);
     const answeredAt = clock.now();
     lite.core.resolveConsent(card.consentId, true);
-    const waitingOnPerson = () => events.some((event) => event.type === UiEvent.PersonFirst);
-    for (let tries = 0; tries < 400 && !varnish.done; tries++) {
-      await sleep(10);
-      if (waitingOnPerson()) await clock.advance(PERSON_FIRST_POLL_MS);
-    }
+    await untilDoneWaitingOnPerson(varnish);
+    assert.ok(varnish.done, "the call answered");
     assert.equal((varnish.outcome as { blocker?: string }).blocker, PluginCallBlocker.Lock, String(varnish.outcome));
     // What is left after the card (295 s) less the call's own ceiling (190 s) and one short ask:
-    // about 100 s (the test moves the clock a few polls more while the answer comes back), never
-    // an agent's whole wait.
+    // about 100 s, never an agent's whole wait.
     const waited = clock.now() - answeredAt;
     assert.ok(waited < AGENT_LOCK_WAIT_MS - 60_000, `waited ${waited} ms for the person`);
     assert.deepEqual(await paintLog(), [], "the call never ran");

@@ -239,6 +239,58 @@ describe("the virtual clock", () => {
     assert.equal(r.clock.steppedFrames(), 0);
   });
 
+  it("hands a live frame's callbacks the frame's own time, however late a busy page runs them", () => {
+    const r = rig();
+    const seen: number[][] = [];
+    const loops = [0, 1].map((slot) => {
+      const loop = (time: number) => {
+        (seen[slot] ??= []).push(time);
+        r.clock.wrappers.requestAnimationFrame(loop);
+      };
+      return loop;
+    });
+    for (const loop of loops) r.clock.wrappers.requestAnimationFrame(loop);
+    // Two vsyncs 8⅓ ms apart (a 120 Hz display); the page reaches them 0.2-3.1 ms late, and
+    // each callback of a frame later than the one before it.
+    const VSYNC_MS = 1000 / 120;
+    for (const [vsync, late] of [
+      [1, 0.2],
+      [2, 3.1],
+      [3, 0.4],
+    ] as const) {
+      const frameTime = vsync * VSYNC_MS;
+      r.advance(frameTime + late - r.clock.now());
+      const jobs = [...r.frames.values()];
+      r.frames.clear();
+      for (const cb of jobs) {
+        cb(frameTime);
+        r.advance(0.5);
+      }
+    }
+    const expected = [1, 2, 3].map((vsync) => vsync * VSYNC_MS);
+    assert.deepEqual(seen[0], expected, "the game loop's frame times are its vsyncs");
+    assert.deepEqual(seen[1], expected, "every callback of one frame gets the same time");
+  });
+
+  it("never hands a resumed frame a time before the last stepped one", async () => {
+    const r = rig();
+    const seen: number[] = [];
+    const loop = (time: number) => {
+      seen.push(time);
+      r.clock.wrappers.requestAnimationFrame(loop);
+    };
+    r.clock.wrappers.requestAnimationFrame(loop);
+    r.advance(100);
+    await r.clock.step(1000);
+    const stepped = seen.at(-1) ?? 0;
+    // Resumed at native time 100; the first native frame after it began 20 ms before.
+    r.clock.start();
+    const jobs = [...r.frames.values()];
+    r.frames.clear();
+    for (const cb of jobs) cb(80);
+    assert.ok((seen.at(-1) ?? 0) >= stepped, `a resumed frame went back to ${seen.at(-1)} from ${stepped}`);
+  });
+
   it("closes a frame after the last of the page's own callbacks", () => {
     const r = rig();
     const order: string[] = [];

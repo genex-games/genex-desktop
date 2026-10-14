@@ -1,0 +1,1301 @@
+{
+ "saveRoots": [
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/runs/r1/state"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "C:\\runs\\r1\\state\\"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {},
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/runs/r1/state///"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/a/./b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/Users/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {},
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/Users/ada/"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "C:\\Users\\Ada\\AppData\\Roaming"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "\\\\server\\share\\ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {},
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "c:/Users/Ada/"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "Z:\\"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "/home/ada/data/",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {},
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "web",
+   "env": {
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "web",
+   "env": {},
+   "name": "",
+   "bundleId": ""
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "relative/data",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "/home/ada/../eve",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "/home/ada/data/..",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "./data",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": "/a\\..\\b",
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "XDG_DATA_HOME": {
+     "hex": "2f61006200"
+    },
+    "HOME": "/home/ada"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": ""
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": ""
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": ""
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "relative"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "relative"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "relative"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/../root"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/../root"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/home/../root"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": ".."
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": ".."
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": ".."
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": {
+     "hex": "2f686f6d652f610062"
+    }
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": {
+     "hex": "2f686f6d652f610062"
+    }
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": {
+     "hex": "2f686f6d652f610062"
+    }
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/a\\b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/a\\b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "genex-run",
+   "env": {
+    "GENEX_STATE_DIR": "/home/a\\b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": ""
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "Roaming"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "C:"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "C:relative"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "\\\\?\\C:\\x"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "\\\\.\\pipe\\x"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "C:\\a\\..\\b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "/unix"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "C:/a/../b"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "\\\\"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": "1:\\x"
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "APPDATA": {
+     "hex": "433a5c610062"
+    }
+   },
+   "name": "Pong",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": ".",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": ".",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "..",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "..",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "../x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "../x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "a/b",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "a/b",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "a\\b",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "a\\b",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": ".hidden",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": ".hidden",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "CON",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "CON",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nul",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nul",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "com1",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "com1",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "lpt9",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "lpt9",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "trailing ",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "trailing ",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "tab\tname",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "tab\tname",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "My Game-2_v1.0",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "My Game-2_v1.0",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "con.txt",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "con.txt",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Con .x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Con .x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "COM10",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "COM10",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "x.",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "x.",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": " x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": " x",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "linux",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "é",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "windows",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "é",
+   "bundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": ""
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "nodots"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a..b"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": ".a.b"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a.b."
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a/b.c"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a.b c"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "../x.y"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a.b"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "A-1.b-2.c"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "a_b.c"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.abcd"
+  },
+  {
+   "destination": "mac",
+   "env": {
+    "HOME": "/home/ada",
+    "APPDATA": "C:\\A"
+   },
+   "name": "Pong",
+   "bundleId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.abcde"
+  }
+ ],
+ "assetPaths": [
+  "hero.png",
+  "models/ship.glb",
+  "a/b/c.ogg",
+  "sfx/hit-1.wav",
+  "My Save 2.dat",
+  "console.png",
+  "",
+  "/etc/passwd",
+  "../secret.png",
+  "a/../../b",
+  "a/./b",
+  "C:\\x.png",
+  "a\\b.png",
+  "a//b",
+  "a/",
+  "..",
+  "~/x",
+  ".. /x",
+  "a/... ",
+  "a/...",
+  "x.",
+  "x ",
+  "con.png",
+  "NUL",
+  "a/Lpt1.txt",
+  "com9.sav",
+  "con .png",
+  {
+   "hex": "610062"
+  },
+  ".hidden",
+  "a/.b",
+  "...a",
+  "a b/c d.e",
+  "é.png",
+  "a:b",
+  "a*b",
+  "COM0",
+  "aux",
+  "prn.x.y",
+  "lpt10"
+ ],
+ "assetClaims": [
+  {
+   "file": "/native-runs/one/assets/fish.glb",
+   "root": "/native-runs/one/assets/"
+  },
+  {
+   "file": "/native-runs/one/assets/audio/bite.wav",
+   "root": "/native-runs/one/assets/"
+  },
+  {
+   "file": "/native-runs/one/assets/other.glb",
+   "root": "/native-runs/one/assets/"
+  },
+  {
+   "file": "/native-runs/two/assets/fish.glb",
+   "root": "/native-runs/two/assets/"
+  },
+  {
+   "file": "/native-runs/two/assets/audio/bite.wav",
+   "root": "/native-runs/two/assets/"
+  },
+  {
+   "file": "/native-runs/two/assets/other.glb",
+   "root": "/native-runs/two/assets/"
+  },
+  {
+   "file": "/assets/fish.glb",
+   "root": "/assets/"
+  },
+  {
+   "file": "/assets/audio/bite.wav",
+   "root": "/assets/"
+  },
+  {
+   "file": "/assets/other.glb",
+   "root": "/assets/"
+  },
+  {
+   "file": "/Applications/Fish.app/Contents/MacOS/../Resources/assets/fish.glb",
+   "root": "/Applications/Fish.app/Contents/MacOS/../Resources/assets/"
+  },
+  {
+   "file": "/Applications/Fish.app/Contents/Resources/assets/fish.glb",
+   "root": "/Applications/Fish.app/Contents/MacOS/../Resources/assets/"
+  },
+  {
+   "file": "C:\\runs\\one\\assets\\fish.glb",
+   "root": "C:\\runs\\one\\assets\\"
+  },
+  {
+   "file": "C:/runs/one/assets/audio/bite.wav",
+   "root": "C:\\runs\\one\\assets\\"
+  },
+  {
+   "file": "\\\\server\\share\\game\\assets\\fish.glb",
+   "root": "\\\\server\\share\\game\\assets\\"
+  },
+  {
+   "file": "/runs/one/assets-other/fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/../other/fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/CON.png",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb ",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "assets/fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/outside/fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": {
+    "hex": "2f72756e732f6f6e652f6173736574732f66697368002e676c62"
+   },
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/./assets/x/../fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets//fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/../runs/one/assets/fish.glb",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/a\\b.png",
+   "root": "/runs/one/assets/"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": ""
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "assets/"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "C:assets/"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "\\\\?\\C:\\assets\\"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": {
+    "hex": "2f72756e732f6f6e652f6173736574732f00"
+   }
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "/runs/one/assets"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "/"
+  },
+  {
+   "file": "/runs/one/assets/fish.glb",
+   "root": "/runs/one/assets/.."
+  }
+ ],
+ "captures": [
+  {
+   "root": "/runs/r1/state/",
+   "seq": 7
+  },
+  {
+   "root": "/runs/r1/state",
+   "seq": 0
+  },
+  {
+   "root": "",
+   "seq": 1
+  },
+  {
+   "root": "state/",
+   "seq": 1
+  },
+  {
+   "root": "/a/../b/",
+   "seq": 1
+  },
+  {
+   "root": "/a/..",
+   "seq": 1
+  },
+  {
+   "root": "/",
+   "seq": 4294967295
+  },
+  {
+   "root": "C:\\s\\",
+   "seq": 1
+  },
+  {
+   "root": "/a//",
+   "seq": 2
+  }
+ ],
+ "claimedFiles": [
+  {
+   "informational": true,
+   "line": "FILEIO: [/assets/hero.png] File loaded successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [/assets/theme.ogg] Music file loaded successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": false,
+   "line": "FILEIO: [/assets/missing.png] Failed to open file",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [/save/slot1] File saved successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [/save/slots/2.dat] File loaded successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "TEXTURE: [ID 3] Texture loaded successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [unterminated",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [] File loaded successfully",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [/save/x] File loaded successfully",
+   "saveRoot": ""
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [/save] x",
+   "saveRoot": "/save/"
+  },
+  {
+   "informational": true,
+   "line": " FILEIO: [/a] x",
+   "saveRoot": ""
+  },
+  {
+   "informational": true,
+   "line": "FILEIO: [a]b] x",
+   "saveRoot": ""
+  }
+ ],
+ "environments": [
+  {
+   "DISPLAY": ":0"
+  },
+  {
+   "DISPLAY": ":0",
+   "WAYLAND_DISPLAY": "wayland-0",
+   "XDG_SESSION_TYPE": "wayland"
+  },
+  {
+   "DISPLAY": ":99",
+   "GENEX_STUDIO_FD": "3"
+  },
+  {
+   "DISPLAY": "",
+   "WAYLAND_DISPLAY": "wayland-0"
+  },
+  {
+   "WAYLAND_DISPLAY": "wayland-genex-0",
+   "GENEX_STUDIO_FD": "3"
+  },
+  {
+   "GENEX_STUDIO_FD": ""
+  }
+ ],
+ "identities": [
+  {
+   "saveName": "",
+   "runningBundleId": ""
+  },
+  {
+   "saveName": "Pong Remix",
+   "runningBundleId": "games.genex.game.0123456789ab"
+  },
+  {
+   "saveName": "x",
+   "runningBundleId": ""
+  },
+  {
+   "saveName": "",
+   "runningBundleId": "a.b"
+  }
+ ]
+}

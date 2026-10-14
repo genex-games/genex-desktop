@@ -247,6 +247,7 @@ describe("autopilot substrate over the real rig", () => {
     await assert.rejects(stat(path.join(harnessWs, "skills", ".probe")), { code: "ENOENT" });
     await assert.rejects(stat(path.join(harnessWs, "prompts", ".probe")), { code: "ENOENT" });
     assert.doesNotMatch(await readFile(path.join(harnessWs, "loop", "main.ts"), "utf8"), /\/\/ bent/);
+    // (prompts/ and skills/ are the agent's operating rules: they change through the host, B7.)
     const notes = (await api["run.exec"]!({
       command: "echo note > library/.probe && cat library/.probe && rm library/.probe",
     })) as { code: number | null };

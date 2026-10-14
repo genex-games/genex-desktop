@@ -83,7 +83,8 @@ export interface PluginNativeResult {
   finishedAt?: string;
 }
 
-export type PluginApiVersion = 1 | 2 | 3;
+/** Each API is additive over the one before; API 4 lets a skill name `rust-wgpu` and sends it to backends. */
+export type PluginApiVersion = 1 | 2 | 3 | 4;
 export type PluginScalar = string | number | boolean;
 
 /** Host services a manifest may declare. `export` is API 2. */
@@ -174,6 +175,12 @@ export type PluginGameEngine = "web" | "unreal";
 export interface PluginInlineSkill {
   name: string;
   text: string;
+  /**
+   * API 3: the games this skill serves, one to three stacks, each once; absent serves every game.
+   * `rust-wgpu` needs API 4; on API 3, naming both `three-js` and `raylib-cpp` serves every game.
+   * A skill that names both `stacks` and `engines` reaches only games that match both.
+   */
+  stacks?: readonly ("three-js" | "raylib-cpp" | "rust-wgpu")[];
   /** API 3: the engines whose games' briefs carry this skill; every engine when absent. */
   engines?: PluginGameEngine[];
 }
@@ -192,6 +199,12 @@ export interface PluginFileSkill {
   file: string;
   /** At most 16, each distinct from `file`. */
   references?: string[];
+  /**
+   * The games this skill serves, one to three stacks, each once; absent serves every game.
+   * `rust-wgpu` needs API 4; on API 3, naming both `three-js` and `raylib-cpp` serves every game.
+   * A skill that names both `stacks` and `engines` reaches only games that match both.
+   */
+  stacks?: readonly ("three-js" | "raylib-cpp" | "rust-wgpu")[];
   /** API 3: the engines whose games' briefs carry this skill; every engine when absent. */
   engines?: PluginGameEngine[];
 }
@@ -576,6 +589,12 @@ export interface PluginContext {
   project?: string;
   /** The bound game's worktree. */
   directory?: string;
+  /**
+   * The bound game's stack, when the host knows it: a Three.js browser game or a C++ · raylib game
+   * (pick formats raylib loads for the latter). Absent for a call with no game. `rust-wgpu` (a Rust
+   * game) is sent only to plugins whose manifest declares API 4; an older one gets no stack for it.
+   */
+  stack?: "three-js" | "raylib-cpp" | "rust-wgpu";
   threadId?: string;
   /** Set when Genex runs this tool at one of its moments; answer a `PluginHookAnswer`. */
   hook?: PluginHookContext;

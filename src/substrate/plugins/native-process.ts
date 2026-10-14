@@ -7,7 +7,8 @@ import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { killProcessTree } from "../process-tree.ts";
-const quote = (s: string) => JSON.stringify(s);
+/** A string as an SBPL literal: JSON's escaping is the profile language's. */
+export const quote = (s: string) => JSON.stringify(s);
 const exec = promisify(execFile);
 /**
  * Mach services every job may look up: logging, notifications, preferences and user lookup, which
@@ -84,7 +85,7 @@ async function gpuCache(binary: string): Promise<string[]> {
  * setsid(2) and setpgid(2), by their macOS syscall numbers: a descendant that could call them
  * would leave the job's process group, and the group is how a job is stopped.
  */
-const LEAVE_GROUP_SYSCALLS = [147, 82];
+export const LEAVE_GROUP_SYSCALLS = [147, 82];
 /**
  * The system programs every job may start besides its runtime: text utilities a shell recipe
  * reaches for (`dirname "$1"`, `yes | head -c`). None opens or lists applications, talks to a
@@ -210,7 +211,7 @@ async function scriptInterpreters(binary: string): Promise<string[]> {
  * Every live descendant of `root`, by parent id. A child posix_spawn()ed into a session of its own
  * is outside the process group; while its parent lives it is still in this tree.
  */
-async function descendants(root: number): Promise<number[]> {
+export async function descendants(root: number): Promise<number[]> {
   const listing = await exec("/bin/ps", ["-axo", "pid=,ppid="], {
     timeout: PROBE_TIMEOUT_MS,
     maxBuffer: PROCESS_LIST_MAX_BYTES,
@@ -297,7 +298,7 @@ async function prepareSandbox(p: NativeProcessRequest): Promise<{ profile: strin
 }
 
 /** Kill a child's whole tree: descendants are listed first, while each still has its parent. */
-function treeKiller(child: ChildProcess) {
+export function treeKiller(child: ChildProcess) {
   const kill = (pid: number) => {
     try {
       process.kill(pid, "SIGKILL");

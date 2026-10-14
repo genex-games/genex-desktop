@@ -1,0 +1,25 @@
+# The custom GPU pass sample's manifest: the WGSL sources its two Level-3 passes (halo, CRT) and its
+# Level-2 material (glow, extension API v2) and post pass (vignette, v1) are written in. In this
+# workspace it is read as data: the facade checks each Level-2 source's row (kind, api) before
+# admitting it. The halo is a v1 in-world pass: it keeps the sample's frame on the LDR scene.
+[game]
+title = "Custom pass"
+world_size = [160, 90]
+
+[[wgsl]]
+path = "shaders/halo.wgsl"
+kind = "pass"
+
+[[wgsl]]
+path = "shaders/crt.wgsl"
+kind = "pass"
+
+[[wgsl]]
+path = "shaders/glow.wgsl"
+kind = "material"
+api = 2
+
+[[wgsl]]
+path = "shaders/vignette.wgsl"
+kind = "post"
+api = 1

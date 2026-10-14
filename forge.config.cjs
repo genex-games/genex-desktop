@@ -14,7 +14,11 @@
  * Runtime resources (including the Genex plugin payload) are unpacked. Coding CLIs are external installations:
  * exclude Codex and Claude SDK native packages; retain the Claude JavaScript SDK only.
  */
+const { execFile } = require("node:child_process");
+const { mkdir, mkdtemp, rm, writeFile } = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
+const { promisify } = require("node:util");
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const {
@@ -24,6 +28,12 @@ const {
   trimSandboxVendor,
 } = require("./scripts/package-prune.cjs");
 const { APP_BUNDLE_ID, localSigningHook, macSigning, windowsSigning } = require("./scripts/package-signing.cjs");
+const {
+  LinuxPackageScript,
+  linuxPackageScriptFiles,
+  portableReadme,
+  writeLinuxPackageScripts,
+} = require("./src/substrate/linux-apparmor.ts");
 const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
@@ -45,9 +55,52 @@ const DMG_ICON_Y = 170;
 const DMG_APP_X = 165;
 const DMG_APPLICATIONS_X = 495;
 const DMG_ICON_SIZE = 128;
-/** What the app refuses to start without on Linux: the process sandbox and code search. */
+/** Linux's process sandbox and code search; package-specific xz supplies C++ archive decoding. */
 const LINUX_DEPENDS = ["bubblewrap", "socat", "ripgrep"];
+const DEB_DEPENDS = [...LINUX_DEPENDS, "xz-utils"];
+const RPM_REQUIRES = [...LINUX_DEPENDS, "xz"];
 const LINUX_CATEGORIES = ["Development", "Game"];
+/**
+ * The rpm's maintainer scripts, written before the makers run (`preMake`): they install
+ * Genex's AppArmor profile where AppArmor 4 is present, so Ubuntu's user-namespace restriction
+ * lets its sandbox work, and remove it with the package (src/substrate/linux-apparmor.ts). The
+ * deb takes `DEB_SCRIPTS` below.
+ */
+const LINUX_PACKAGE_SCRIPTS_DIR = path.join(__dirname, "out", "linux-package-scripts");
+const LINUX_SCRIPTS = linuxPackageScriptFiles(LINUX_PACKAGE_SCRIPTS_DIR);
+/**
+ * The note the Linux zip carries beside `genex`: a zip copy on Ubuntu 23.10 and later stops in
+ * Chromium's sandbox before the setup screen can offer the AppArmor profile, so the command to add
+ * it travels with the zip (`portableReadme`, the same install Set up runs).
+ */
+const LINUX_ZIP_README = "README-LINUX.txt";
+
+/**
+ * Add README-LINUX.txt to each Linux zip the make step produced, inside its top folder. maker-zip
+ * names a zip `<top folder>-<version>.zip` and zips that folder with the `zip` tool, which is
+ * therefore here to append with. Every other artifact is left as it is.
+ */
+async function addLinuxZipReadme(results) {
+  for (const { platform, artifacts, packageJSON } of results) {
+    if (platform !== "linux") continue;
+    for (const zip of artifacts.filter((artifact) => artifact.endsWith(".zip"))) {
+      const suffix = `-${packageJSON.version}.zip`;
+      const name = path.basename(zip);
+      if (!name.endsWith(suffix)) throw new Error(`${name}: not named <folder>${suffix} as maker-zip names a zip`);
+      const staging = await mkdtemp(path.join(os.tmpdir(), "genex-linux-zip-"));
+      try {
+        const entry = path.posix.join(name.slice(0, -suffix.length), LINUX_ZIP_README);
+        await mkdir(path.join(staging, path.dirname(entry)));
+        await writeFile(path.join(staging, entry), portableReadme(), { mode: 0o644 });
+        // -X: no extra file attributes, so the entry is the same wherever the zip is made.
+        await promisify(execFile)("zip", ["-q", "-X", zip, entry], { cwd: staging });
+      } finally {
+        await rm(staging, { recursive: true, force: true });
+      }
+    }
+  }
+  return results;
+}
 /**
  * The deb's maintainer scripts: install and remove the AppArmor profile that lets the sandbox
  * create user namespaces on Ubuntu 24.04 and the distributions built on it.
@@ -137,6 +190,8 @@ module.exports = {
     // A macOS build no identity signs is signed again over its finished Info.plist: the fuses'
     // ad-hoc signature predates it, and macOS then refuses the agents protected folders unasked.
     postPackage: localSigningHook(macSign, PRODUCT_NAME),
+    preMake: () => writeLinuxPackageScripts(LINUX_PACKAGE_SCRIPTS_DIR),
+    postMake: (_forgeConfig, results) => addLinuxZipReadme(results),
   },
   makers: [
     {
@@ -189,7 +244,7 @@ module.exports = {
           maintainer: AUTHORS,
           homepage: HOMEPAGE,
           icon: `${ICON}.png`,
-          depends: LINUX_DEPENDS,
+          depends: DEB_DEPENDS,
           scripts: DEB_SCRIPTS,
         },
       },
@@ -209,8 +264,12 @@ module.exports = {
           categories: LINUX_CATEGORIES,
           homepage: HOMEPAGE,
           icon: `${ICON}.png`,
-          requires: LINUX_DEPENDS,
+          requires: RPM_REQUIRES,
           license: "MIT",
+          scripts: {
+            post: LINUX_SCRIPTS[LinuxPackageScript.RpmPost],
+            postun: LINUX_SCRIPTS[LinuxPackageScript.RpmPostun],
+          },
         },
       },
     },

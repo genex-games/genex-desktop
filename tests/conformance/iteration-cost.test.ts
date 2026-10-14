@@ -753,10 +753,13 @@ describe("a fast self-look at a bench page", () => {
       status: () => ({ project: "hud", url: loads.length ? `game://hud/${loads.at(-1)!.entry}` : "", loadError: null }),
     } as unknown as PreviewPort;
     let games: unknown[] = [];
+    // The host writes a capture only into a folder it checked is the run's own, under the runs folder.
+    const runs = await tmpDir("studio-bench-runs-");
     const core = {
       emit: () => {},
       games: { list: async () => games, dirFor: () => root },
       builds: { ensure: async () => ({ ok: true, output: root }) },
+      layout: { runs },
     } as unknown as StudioCore;
     const service = new PreviewService(core, unservedPreviews() as CoreInternals);
     const session = { loaded: null, handle: () => "w1", get: async () => port, release: async () => {} };
@@ -764,7 +767,7 @@ describe("a fast self-look at a bench page", () => {
       service.captureFor(
         { project: "hud", root, setup: { gesture: true }, ...grant } as never,
         root,
-        path.join(outside, "shots"),
+        path.join(runs, "run_bench", "shots"),
         session as never,
       );
     /** The game turns out to have its own build: the preview serves the bundler's output. */

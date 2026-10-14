@@ -643,6 +643,22 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
   return { ...smoke, project, threadId, runId, append, waitFor };
 }
 
+/** Every launch opens Home; a fixture must select its chat before checking that chat's UI. */
+async function openBuildChat({ wc, threadId, waitFor }: BuildSmoke): Promise<void> {
+  const selector = `nav [data-thread="${threadId}"]`;
+  if (!(await waitFor(`!!document.querySelector(${JSON.stringify(selector)})`))) {
+    throw new Error("The build smoke's game chat never appeared in the sidebar.");
+  }
+  await wc.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.click()`);
+  if (
+    !(await waitFor(
+      `document.querySelector('[data-studio-state]')?.dataset.activeThread === ${JSON.stringify(threadId)} && document.querySelector('[data-studio-state]')?.dataset.room === 'build'`,
+    ))
+  ) {
+    throw new Error("The build smoke could not open its game chat from Home.");
+  }
+}
+
 /** Delayed and failed IPC reads: empty data and unavailable data must never look alike. */
 async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, check, waitFor } = buildSmoke;
@@ -677,6 +693,7 @@ async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
   );
   releaseBootstrap();
   smokeReads.bootstrap = undefined;
+  await openBuildChat(buildSmoke);
   check(
     "games can load while the chat is still pending",
     await waitFor(
@@ -814,6 +831,7 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.removeItem('studio.roles.codex');localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'bonsai::bonsai-2:27b-pq2_0')`,
   );
   wc.reload();
+  await openBuildChat(buildSmoke);
   check(
     "Bonsai selection restores on reload",
     await waitFor(`document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Bonsai')`),
@@ -835,6 +853,7 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'codex::gpt-5.6-sol')`,
   );
   wc.reload();
+  await openBuildChat(buildSmoke);
   check(
     "returning to Codex preserves the project",
     await waitFor(

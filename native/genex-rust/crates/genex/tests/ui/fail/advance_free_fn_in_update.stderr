@@ -1,0 +1,5 @@
+error[E0425]: cannot find function `advance` in crate `genex`
+  --> tests/ui/fail/advance_free_fn_in_update.rs:10:16
+   |
+10 |         genex::advance(16);
+   |                ^^^^^^^ not found in `genex`

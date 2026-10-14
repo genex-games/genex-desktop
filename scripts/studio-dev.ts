@@ -16,6 +16,7 @@ import {
 import { writeJson, readVersion, safeChild } from "./studio-dev/files.mjs";
 import { request } from "./studio-dev/client.ts";
 import { parseStudioDevArgs, parseOperation } from "./studio-dev/args.ts";
+import { listDevBuilds, pruneDevBuilds } from "./studio-dev/builds.ts";
 import { freshMachineEnv, freshMachineShell, linkKeychains } from "./studio-dev/fresh-machine.ts";
 import { gamesRootWarnings, liveEnvStripped, liveLaunchEnv } from "./studio-dev/live-env.ts";
 import { FIXTURE_NAMES } from "../src/main/dev/fixtures.ts";
@@ -274,6 +275,8 @@ export async function main(args = process.argv.slice(2)) {
   const cli = parseStudioDevArgs(args);
   const id = cli.profile;
   if (cli.command === "fixtures") return { fixtures: [...FIXTURE_NAMES] };
+  if (cli.command === "builds")
+    return cli.prune ? pruneDevBuilds(devRoot(checkout), Date.now()) : listDevBuilds(devRoot(checkout), Date.now());
   if (cli.command === "start")
     return startProfile(id, {
       reuse: cli.reuse,

@@ -3,8 +3,8 @@
  * Genex making assets, three lines on what it does and one button that connects it. Over home it
  * sits bottom-left, clear of home's composer, and moves nothing beneath it; over a game it sits
  * bottom-right, over the stage, away from the chat's composer. It never covers the welcome or
- * Plugins, settles for good once dismissed or connected, and hands a running game's rectangle back
- * to the DOM while it is up (`stage/native-bounds.ts`).
+ * Plugins or a dialog, settles for good once dismissed or connected, and hands a running game's
+ * rectangle back to the DOM while it is up (`stage/native-bounds.ts`).
  */
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -294,10 +294,12 @@ export function GenexPromo({
   welcoming,
   pluginsOpen,
   project,
+  overlayOpen,
 }: {
   welcoming: boolean;
   pluginsOpen: boolean;
   project: string | null;
+  overlayOpen: boolean;
 }): JSX.Element | null {
   const plugin = usePlugins((s) => s.list.find((p) => p.manifest.id === GENEX_PLUGIN_ID));
   const atHome = useThreads((s) => roomOf(s) === Room.Home);
@@ -313,7 +315,14 @@ export function GenexPromo({
   const { account, read } = useGenexAccount(project, queued, attempt.started);
   const signIn = useSignIn(plugin, project, read, setAttempt);
   const installed = plugin ? { installed: !plugin.removed && !plugin.unlisted, enabled: plugin.enabled } : undefined;
-  const offered = genexPromoVisible({ stored, plugin: installed, account, welcoming, pluginsOpen });
+  const offered = genexPromoVisible({
+    stored,
+    plugin: installed,
+    account,
+    welcoming,
+    pluginsOpen,
+    overlayOpen,
+  });
   const connected = attempt.started && genexPromoSettled(account);
   const settle = useCallback(() => {
     finishGenexPromo();
@@ -329,12 +338,13 @@ export function GenexPromo({
   }, [attempt.started, attempt.sawSignIn, account]);
   // A closing card stays mounted until its exit has played, though closing already settled the promo.
   const shown = useSettledFlag((offered || connected || closing) && !gone, APPEAR_DELAY_MS);
+  const covered = welcoming || pluginsOpen || overlayOpen;
   const close = (): void => {
     settle();
     setClosing(true);
     window.setTimeout(() => setGone(true), prefersReducedMotion() ? 0 : LEAVE_MS);
   };
-  if (!shown || welcoming || pluginsOpen) return null;
+  if (!shown || covered) return null;
   return (
     <GenexPromoCard
       phase={promoPhase(account, attempt)}

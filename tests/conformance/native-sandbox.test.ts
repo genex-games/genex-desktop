@@ -2,17 +2,30 @@
  * The Seatbelt profile a native job runs under, proven from inside the sandbox with real
  * processes (GPX-1, GPX-2): a job may signal only itself, may start only programs from its
  * runtime's own folder, and leaves nothing running once Studio has recorded its end — not even a
- * descendant that started its own session. Output delivery never follows a link.
+ * descendant that started its own session. Output delivery never follows a link. An embedded
+ * game's profile reaches exactly one frames service: its own run's.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { link, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
+import type { Readable, Writable } from "node:stream";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+import { NativeEnv, NativeRunMode } from "../../src/shared/native-contract.ts";
+import {
+  GameProfileParam,
+  gameProfileDefines,
+  gameSandboxProfile,
+  SANDBOX_EXEC,
+} from "../../src/substrate/game-sandbox-profile.ts";
 import { copyDeclaredOutput, copyRuntimeTree } from "../../src/substrate/plugins/native.ts";
 import { nativeSandboxProfile, runNativeProcess } from "../../src/substrate/plugins/native-process.ts";
+import { macClangSkip, type ProbeRunDir, probeRunDir } from "../helpers/macho.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -107,6 +120,15 @@ describe("native job sandbox profile", { skip: !darwin && "Seatbelt is macOS-onl
     } finally {
       sibling.kill("SIGKILL");
     }
+  });
+
+  it("a job reaches no adb server or emulator port on loopback (C1, characterization: the profile denies network*)", async () => {
+    const connects = [5037, 5554, 5555, 5585].map(
+      (port) => `(exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null && echo "bridge ${port} reached"`,
+    );
+    const result = await job("/bin/bash", ["-c", `${connects.join("; ")}; (exec 3<>/dev/tcp/127.0.0.1/5037)`]);
+    assert.doesNotMatch(result.stdout, /reached/, "a device bridge connected");
+    assert.match(result.stderr, /not permitted/i, "refused by the profile, not merely unanswered");
   });
 
   it("a job starts only programs inside its runtime's folder", async () => {
@@ -275,6 +297,110 @@ describe("declared output delivery", () => {
     ] as const) {
       await assert.rejects(copyDeclaredOutput(output, file, path.join(delivery, path.basename(file))), reason, file);
       await assert.rejects(readFile(path.join(delivery, path.basename(file))), /ENOENT/, `${file} delivered nothing`);
+    }
+  });
+});
+
+const execFileAsync = promisify(execFile);
+/** The frames addon's own build (`native/genex-frames/build.sh`): the addon, the sender library and the test sender. */
+const FRAMES_BUILD = path.resolve(import.meta.dirname, "../../native/genex-frames/build.sh");
+/** Node's own N-API headers, which the addon builds against. */
+const NODE_API_INCLUDE = path.join(path.dirname(path.dirname(process.execPath)), "include", "node");
+/** A build of the addon and the test sender with Apple clang: well inside this. */
+const FRAMES_BUILD_TIMEOUT_MS = 180_000;
+/** What `bootstrap_look_up` answers when the profile refuses the name. */
+const BOOTSTRAP_NOT_PRIVILEGED = 1100;
+
+/** Why the frames rows do not run here, or false: they need Apple clang and Node's N-API headers. */
+function framesSkip(): string | false {
+  const clang = macClangSkip();
+  if (clang) return clang;
+  return existsSync(path.join(NODE_API_INCLUDE, "node_api.h"))
+    ? false
+    : `not run: no node_api.h in ${NODE_API_INCLUDE}`;
+}
+
+/** The addon's receive-only channel: checking a run's name in is all these rows need of it. */
+interface FramesChannel {
+  serviceName: string;
+  close(): void;
+}
+
+/**
+ * The test sender started as an embedded game is: under the generated embedded profile with the
+ * run's own `FRAMES` (or, with `frames` null, under the headless profile), asked to look up
+ * `service`. Resolves with its `ready` line's lookup answer.
+ */
+async function senderLookup(run: ProbeRunDir, frames: string | null, service: string): Promise<number> {
+  const mode = frames === null ? NativeRunMode.Headless : NativeRunMode.Embedded;
+  const runDir = await realpath(run.runDir);
+  const profile = path.join(runDir, "profile.sb");
+  await writeFile(profile, gameSandboxProfile({ mode }), { mode: 0o600 });
+  const exe = await realpath(run.exe);
+  const values = {
+    [GameProfileParam.RunTag]: `genex-game-${run.runId}`,
+    [GameProfileParam.Exe]: exe,
+    [GameProfileParam.Bundle]: await realpath(run.bundle),
+    [GameProfileParam.State]: await realpath(run.state),
+    ...(frames === null ? {} : { [GameProfileParam.Frames]: frames }),
+  };
+  const args = [...gameProfileDefines(values, runDir, mode), "-f", profile, exe];
+  const child = spawn(SANDBOX_EXEC, [...args, "--service", service], {
+    cwd: values[GameProfileParam.State],
+    env: { [NativeEnv.StudioFd]: "3", ...(frames === null ? {} : { [NativeEnv.FramesService]: frames }) },
+    stdio: ["ignore", "ignore", "pipe", "pipe"],
+  });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  const pipe = child.stdio[3] as Readable & Writable;
+  let held = "";
+  const ready = await new Promise<string>((resolve, reject) => {
+    pipe.setEncoding("utf8");
+    pipe.on("data", (chunk: string) => {
+      held += chunk;
+      if (held.includes("\n")) resolve(held.slice(0, held.indexOf("\n")));
+    });
+    child.once("exit", () => reject(new Error(`the sender exited before ready: ${held}`)));
+  });
+  // Closing the control channel ends a sender that connected; one that did not has exited already.
+  pipe.end();
+  await exited;
+  return Number((JSON.parse(ready) as { lookup: unknown }).lookup);
+}
+
+describe("an embedded game's one frames service (darwin)", { skip: framesSkip() }, () => {
+  it("under the generated embedded profile, the test sender looks up its own run's service (kr 0) and gets 1100 for another run's", {
+    timeout: FRAMES_BUILD_TIMEOUT_MS,
+  }, async () => {
+    const base = await realpath(await tmpDir("native-frames-box-"));
+    const out = path.join(base, "frames-build");
+    await execFileAsync("/bin/bash", [FRAMES_BUILD], {
+      env: { ...process.env, OUT: out, NODE_API_INCLUDE },
+      timeout: FRAMES_BUILD_TIMEOUT_MS,
+    });
+    const runs = path.join(base, "native-runs");
+    await mkdir(runs, { mode: 0o700 });
+    const run = await probeRunDir(runs, path.join(out, "gxf_test_sender"));
+    const addon = createRequire(import.meta.url)(path.join(out, "genex-frames.node")) as {
+      open(runId: string, onEvent: () => void): FramesChannel;
+    };
+    // Both names exist: the host checked in this run's and another run's, so a refusal is the profile's.
+    const own = addon.open(run.runId, () => {});
+    const other = addon.open(randomBytes(8).toString("hex"), () => {});
+    try {
+      assert.equal(await senderLookup(run, own.serviceName, own.serviceName), 0, "its own run's service");
+      assert.equal(
+        await senderLookup(run, own.serviceName, other.serviceName),
+        BOOTSTRAP_NOT_PRIVILEGED,
+        "another run's service, checked in and refused by the profile",
+      );
+      assert.equal(
+        await senderLookup(run, null, own.serviceName),
+        BOOTSTRAP_NOT_PRIVILEGED,
+        "the headless profile, which names no frames service, refuses even the run's own",
+      );
+    } finally {
+      own.close();
+      other.close();
     }
   });
 });

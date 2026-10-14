@@ -151,6 +151,8 @@ describe("one record, whatever judged the build", () => {
         landingLine: "made live, a judge preferred it",
       }),
       verdictRecord({ pass: "close", kept: false, rule: "not-landed", notLanded: "does-not-run" }),
+      verdictRecord({ pass: "judge", kept: false, rule: "native-check-failed", ok: false }),
+      verdictRecord({ pass: "close", kept: false, rule: "not-landed", notLanded: "final-check-failed" }),
       // A game with a repository of its own inside it: the run may not add that folder to the
       // user's history, so the build waits for the button that may (`landBuild`).
       verdictRecord({ pass: "close", kept: false, rule: "not-landed", notLanded: "nested-not-versioned" }),

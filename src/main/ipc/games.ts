@@ -1,7 +1,15 @@
 /** The game library: create, update (with its cover image), archive, remove, and what a game holds. */
-import { nativeImage, shell } from "electron";
 import { validateGameCover } from "../../shared/game-library.ts";
+import { isGameStack } from "../../shared/game-project.ts";
+import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import {
+  type CreateOptions,
+  CreationError,
+  creationRefusal,
+  isDestinationList,
+  ScaffoldCaller,
+} from "../../substrate/game-workspace.ts";
 import type { RunSummaryReader } from "../run-summary-reader.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
@@ -17,7 +25,38 @@ const MESSAGE = {
   unreadableCover: "This image could not be read. Choose another image.",
   coverTooLarge: `Cover images must be at most ${COVER_MAX_PX} pixels across.`,
   projectRequired: "Project is required",
+  unknownStack: "Choose a stack the studio knows: Three.js or Rust · wgpu.",
+  badTargets: "Choose one to four destinations the studio knows, each once.",
+  raylibRetired:
+    "New C++ · raylib games can't be made any more; existing ones still open, build and export. Make a Rust · wgpu game instead.",
 } as const;
+
+/**
+ * Electron's main-process modules, loaded by the two handlers that use them, so the registrar
+ * itself loads under plain Node and its payload checks are driven in tests (as `secrets.ts` does).
+ */
+const electron = () => import("electron");
+
+/**
+ * Create game's options from the renderer's payload, checked before anything is written: a stack
+ * the studio knows, and one to four destinations it knows, none twice; never C++ · raylib, named
+ * as the stack or implied by desktop destinations without one (`raylib-creation-retired`). A title
+ * that waits for the game's first idea passes through as `provisional`. The sender is a browser.
+ */
+function createOptions(payload: StudioInvokePayload<"studio:game.create">): CreateOptions {
+  const { parent, provisional, stack, targets } = payload;
+  if (stack !== undefined && !isGameStack(stack)) throw new Error(MESSAGE.unknownStack);
+  if (targets !== undefined && !isDestinationList(targets)) throw new Error(MESSAGE.badTargets);
+  const refusal = creationRefusal({ stack, targets });
+  if (refusal) throw new CreationError(refusal, MESSAGE.raylibRetired);
+  return {
+    ...(parent === undefined ? {} : { parent }),
+    ...(provisional === true ? { provisional: true } : {}),
+    ...(stack === undefined ? {} : { stack }),
+    ...(targets === undefined ? {} : { targets }),
+    caller: ScaffoldCaller.Person,
+  };
+}
 
 export interface GamesIpcDeps {
   core: StudioCore;
@@ -30,19 +69,15 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
   // user opened from elsewhere stays on disk — closing a Cursor workspace does not delete it.
   handle("studio:game.archive", async (payload) => {
     const { dir, trash } = await core.archiveGame(payload.project);
-    if (trash) await shell.trashItem(dir).catch(() => {});
+    if (trash) await (await electron()).shell.trashItem(dir).catch(() => {});
     pushUiEvent({ type: UiEvent.GameChanged, payload: { project: payload.project } });
     return true;
   });
 
   // A chosen folder is the renderer's word for a path: the core checks it by its real path before
-  // anything is written, as it does in `studio:game.location.pick`.
-  handle("studio:game.create", async (payload) =>
-    core.createGame(payload.title, {
-      ...(payload.parent === undefined ? {} : { parent: payload.parent }),
-      ...(payload.provisional === true ? { provisional: true } : {}),
-    }),
-  );
+  // anything is written, as it does in `studio:game.location.pick`. Stack and destinations are
+  // checked here, and again by the library for the person as caller, before a folder is made.
+  handle("studio:game.create", async (payload) => core.createGame(payload.title, createOptions(payload)));
   // The request is the user's own words, read by their own model; the name only names a folder later.
   handle("studio:game.name", async (payload) => core.nameGame(payload));
   handle("studio:backdrop.make", async (payload) => core.makeBackdrop(payload));
@@ -50,7 +85,7 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
     const cover = payload.patch?.cover;
     if (cover?.kind === "image") {
       validateGameCover(cover);
-      const image = nativeImage.createFromDataURL(cover.dataUrl);
+      const image = (await electron()).nativeImage.createFromDataURL(cover.dataUrl);
       if (image.isEmpty()) throw new Error(MESSAGE.unreadableCover);
       const size = image.getSize();
       if (size.width > COVER_MAX_PX || size.height > COVER_MAX_PX) throw new Error(MESSAGE.coverTooLarge);

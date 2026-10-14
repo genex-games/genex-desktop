@@ -21,5 +21,11 @@
     "types": ["node"]
   },
   "include": ["src", "tests", "scripts", "design/genex"],
-  "exclude": ["node_modules", "tests/fixtures/games", "src/harness-seed"]
+  "exclude": [
+    "node_modules",
+    "tests/fixtures/games",
+    "tests/fixtures/raylib-wasm",
+    "tests/fixtures/raylib-wasm-hostile",
+    "src/harness-seed"
+  ]
 }

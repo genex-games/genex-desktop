@@ -1,15 +1,25 @@
 import { rendererBuildOptions, rendererBundleReport } from "./renderer-build.mjs";
 import { mainStartupReport } from "./main-build.mjs";
 import { buildPlugins, vendorEmbedSdk } from "./build-plugins.mjs";
-import { assertThreeLibsListed, stylesheetPackages, writeBundledNotices } from "./third-party-notices.mjs";
+import {
+  assertEguiFontsListed,
+  assertRustCratesListed,
+  assertRustToolchainRuntimeListed,
+  assertThreeLibsListed,
+  stylesheetPackages,
+  writeBundledNotices,
+} from "./third-party-notices.mjs";
 import { patchSandboxRuntime } from "./patch-sandbox-runtime.mjs";
-await patchSandboxRuntime();
+import { patchRpmInstaller } from "./patch-rpm-installer.mjs";
 import fsSync from "node:fs";
 import { sourceIdentity, safeChild, publishBuild } from "./studio-dev/files.mjs";
 import { devRoot, slug } from "./studio-dev/ownership.mjs";
 import { SEED_GENERATED } from "./gen-harness-types.ts";
 import { packageBin } from "./package-bin.ts";
 import { vendorTsc } from "./vendor-tsc.ts";
+import { bundleAngle } from "./bundle-angle.mjs";
+import { bundleLinuxSysroot } from "./bundle-linux-sysroot.mjs";
+import { shipRustPayload } from "./rust-payload.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
@@ -17,17 +27,38 @@ import { vendorTsc } from "./vendor-tsc.ts";
  *   dist/preload/preload.cjs  renderer bridge (sandboxed preloads must be CommonJS)
  *   dist/renderer/*           React UI
  *   dist/resources/*          read-only app resources: the harness seed, the bootstrap, the game
- *                             template, vendored three.js, and the TypeScript 7 compiler the
- *                             in-app type gate runs (dist/resources/tsc, scripts/vendor-tsc.ts)
+ *                             templates (with the Rust lock line, scripts/rust-payload.ts),
+ *                             vendored three.js, and the TypeScript 7 compiler the in-app type
+ *                             gate runs (dist/resources/tsc, scripts/vendor-tsc.ts)
  *
  * esbuild only, deliberately: one tool, no plugin-compatibility surface, and the game workspaces
  * need no bundler at all (import maps + vendored three).
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+
+/**
+ * Whether this module runs as the script `argv1` names (`node scripts/build.mjs`) rather than being
+ * imported (a test reads `nodeBundles`). Both sides are compared as real paths, so a build started
+ * through a link to the script, or from a linked folder, still builds instead of exiting 0 unbuilt.
+ */
+export function runsAsScript(argv1 = process.argv[1], moduleUrl = import.meta.url) {
+  if (!argv1) return false;
+  try {
+    return fsSync.realpathSync(argv1) === fsSync.realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+const isMain = runsAsScript();
+if (isMain) {
+  await patchSandboxRuntime();
+  await patchRpmInstaller();
+}
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const devId = process.argv.find((x) => x.startsWith("--dev-build="))?.slice(12);
@@ -79,15 +110,34 @@ const shared = {
   },
 };
 
-/** The main process, its terminal host and the preload: Node bundles. */
-async function nodeContexts() {
+/**
+ * The utility processes main forks, bundled on their own as CommonJS: the terminal host and the
+ * native supervisor (which `src/main/index.ts` forks only when its bundle exists).
+ */
+export function nodeBundles(repo, out) {
   return [
-    await esbuild.context({
-      ...shared,
-      entryPoints: [path.join(root, "src/main/terminal-host.ts")],
-      outfile: path.join(dist, "resources/terminal/host.cjs"),
+    {
+      entry: path.join(repo, "src", "main", "terminal-host.ts"),
+      outfile: path.join(out, "resources", "terminal", "host.cjs"),
       format: "cjs",
-    }),
+    },
+    {
+      entry: path.join(repo, "src", "main", "native-supervisor.ts"),
+      outfile: path.join(out, "resources", "native", "supervisor.cjs"),
+      format: "cjs",
+    },
+  ];
+}
+
+/** The main process, its utility processes and the preload: Node bundles. */
+async function nodeContexts() {
+  const utilities = await Promise.all(
+    nodeBundles(root, dist).map(({ entry, outfile, format }) =>
+      esbuild.context({ ...shared, entryPoints: [entry], outfile, format }),
+    ),
+  );
+  return [
+    ...utilities,
     await esbuild.context({
       ...shared,
       entryPoints: [path.join(root, "src/main/index.ts")],
@@ -314,13 +364,34 @@ async function copyResources() {
   // The stable bootstrap — shipped, never edited by the agent.
   await cp(path.join(root, "src/genex-host"), path.join(resources, "genex-host"), { recursive: true });
   await cp(path.join(root, "src/harness-boot"), path.join(resources, "harness-boot"), { recursive: true });
-  // The game template.
+  // The game templates: the web one, the C++ · raylib one a C++ game is scaffolded from, and the
+  // Rust · wgpu one a development build scaffolds a Rust game from (a release build refuses it
+  // `stack-gated`), with the lock line its vendored crates are cut from; never cargo or rustc.
   await cp(path.join(root, "src/game-template"), path.join(resources, "game-template"), { recursive: true });
+  await cp(path.join(root, "src/game-template-cpp"), path.join(resources, "game-template-cpp"), { recursive: true });
+  await shipRustPayload({ root, resources });
+  // Genex's headless raylib platform, byte for byte: a user's Mac prewarms its headless build from it.
+  await mkdir(path.join(resources, "native", "raylib-platform"), { recursive: true });
+  await cp(
+    path.join(root, "native/raylib-platform/rcore_genex_headless.c"),
+    path.join(resources, "native/raylib-platform/rcore_genex_headless.c"),
+  );
+  await copyFramesAddon(resources);
+  // Every Genex build ships the pinned ANGLE for macOS, Windows and Linux; a --release build fails closed without it.
+  await bundleAngle({ resources, release });
+  await bundleLinuxSysroot({ resources, root });
 
   // Every library three.js vendors (copied below for games, two decoders for the Assets viewer)
   // has its license in THIRD-PARTY-NOTICES.md, which ships beside each copy.
   const threeLibs = path.join(root, "node_modules/three/examples/jsm/libs");
-  assertThreeLibsListed(threeLibs, await readFile(path.join(root, "THIRD-PARTY-NOTICES.md"), "utf8"));
+  const projectNotices = await readFile(path.join(root, "THIRD-PARTY-NOTICES.md"), "utf8");
+  assertThreeLibsListed(threeLibs, projectNotices);
+  // The Rust payload's lock line: every crate a Rust game can link, the egui fonts the HUD compiles
+  // in and the toolchain runtime every Rust game links are named on the same page.
+  const rustLock = await readFile(path.join(root, "native/genex-rust/Cargo.lock"), "utf8");
+  assertRustCratesListed(rustLock, projectNotices);
+  assertEguiFontsListed(rustLock, projectNotices);
+  assertRustToolchainRuntimeListed(projectNotices);
   await mkdir(path.join(dist, "renderer/decoders"), { recursive: true });
   await cp(path.join(root, "THIRD-PARTY-NOTICES.md"), path.join(dist, "renderer/decoders/THIRD-PARTY-NOTICES.md"));
   // The Assets viewer decodes compressed models entirely offline.
@@ -370,7 +441,64 @@ async function copyResources() {
   await cp(path.join(root, "src/renderer/media"), path.join(dist, "renderer/media"), { recursive: true });
 }
 
-await buildAll();
+/** Where `native/genex-frames/build.sh` writes the addon; reused while no source is newer. */
+const FRAMES_OUT = path.join(root, ".studio-dev", "build", "genex-frames");
+const FRAMES_ADDON = "genex-frames.node";
+
+/**
+ * Why the frames addon cannot be built here, or null: it is macOS-only, compiled with Apple clang
+ * (`xcrun`) against the running Node's N-API headers.
+ */
+export function framesAddonSkipReason({ platform, hasClang, nodeApiHeader }) {
+  if (platform !== "darwin") return "not a Mac";
+  if (!hasClang) return "no Apple clang (xcrun --find clang failed)";
+  if (!nodeApiHeader) return "no node_api.h beside this Node";
+  return null;
+}
+
+/** The newest modification time of any file under `dir`. */
+function newestMtime(dir) {
+  let newest = 0;
+  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    newest = Math.max(newest, entry.isDirectory() ? newestMtime(full) : fsSync.statSync(full).mtimeMs);
+  }
+  return newest;
+}
+
+/**
+ * Live's embedded frames: builds the receive-only addon (`native/genex-frames`) when its sources
+ * changed and copies it to `resources/native/genex-frames.node`, the one path main loads it from.
+ * Where it cannot be built the app ships without it and Live offers Pop out instead.
+ */
+async function copyFramesAddon(resources) {
+  const nodeApi = path.join(path.dirname(path.dirname(process.execPath)), "include", "node");
+  const reason = framesAddonSkipReason({
+    platform: process.platform,
+    hasClang:
+      process.platform === "darwin" && spawnSync("xcrun", ["--find", "clang"], { stdio: "ignore" }).status === 0,
+    nodeApiHeader: fsSync.existsSync(path.join(nodeApi, "node_api.h")),
+  });
+  if (reason) {
+    console.log(`genex-frames: not built (${reason}); embedded Live play will be unavailable`);
+    return;
+  }
+  const built = path.join(FRAMES_OUT, FRAMES_ADDON);
+  const sources = ["src", "include"].map((dir) => newestMtime(path.join(root, "native/genex-frames", dir)));
+  const fresh = fsSync.existsSync(built) && fsSync.statSync(built).mtimeMs > Math.max(...sources);
+  if (!fresh) {
+    const result = spawnSync("bash", [path.join(root, "native/genex-frames/build.sh")], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...process.env, OUT: FRAMES_OUT, NODE_API_INCLUDE: nodeApi },
+    });
+    if (result.status !== 0) throw new Error(`genex-frames build.sh exited ${result.status}`);
+  }
+  await mkdir(path.join(resources, "native"), { recursive: true });
+  await cp(built, path.join(resources, "native", FRAMES_ADDON));
+  console.log(`genex-frames: ${fresh ? "reused" : "built"} ${path.relative(root, built)}`);
+}
+
+if (isMain) await buildAll();
 
 /**
  * Ship the notices of everything bundled: esbuild's inputs, the packages the stylesheet imports

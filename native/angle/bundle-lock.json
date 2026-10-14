@@ -1,0 +1,39 @@
+{
+  "$comment": "The ANGLE builds every Genex build bundles: scripts/bundle-angle.mjs verifies them and copies them into dist/resources/angle/<target>/<commit12>/, and the toolchain store installs that copy only when it matches (src/substrate/toolchain-store/bundled.ts). Each target is pinned by the sha256 of its manifest.json, which lists every file's size and sha256. A build's manifest records when it was built, so a rebuild never matches: all three come from the one angle.yml run named here, which CI downloads (gh run download). GitHub deletes a run's artifacts on the expiry date below: re-pin from a newer run (or publish these) before then. The swiftshader entry pins the software Vulkan a Rust Linux game ships (the Vulkan loader, SwiftShader, its ICD and their licences), split out of linux-x64-vulkan with a manifest derived from those files' bytes alone (src/substrate/toolchain-store/swiftshader-bundle.ts): the app build splits it from its bundled Linux ANGLE copy, and angle.yml uploads the same split for the owner to publish.",
+  "schema": 1,
+  "commit": "c5bf49e78850a5335a8fa2a7bfb53b559fbfc927",
+  "run": {
+    "repository": "genex-games/genex-desktop",
+    "workflow": "angle.yml",
+    "id": 38521179941,
+    "expires": "2027-01-12"
+  },
+  "targets": {
+    "macos-arm64-metal": {
+      "manifestSha256": "bcc4bb790a505e58c30b3586721ef7a63fe945df5103c4bca063a705714ba3f4",
+      "manifestBytes": 8231,
+      "files": 28,
+      "bytes": 7053062
+    },
+    "windows-x64-d3d11": {
+      "manifestSha256": "07e0f306c0bbf880c3ee73842e7e11969c70d7b71c4380f635b52e2bf51c70b2",
+      "manifestBytes": 6480,
+      "files": 29,
+      "bytes": 11994569
+    },
+    "linux-x64-vulkan": {
+      "manifestSha256": "5f3e2089b5b63e4774c984b06015eee652964f27eaf02982b2e74b285841fded",
+      "manifestBytes": 8943,
+      "files": 40,
+      "bytes": 17376008
+    }
+  },
+  "swiftshader": {
+    "target": "linux-x64-swiftshader",
+    "from": "linux-x64-vulkan",
+    "manifestSha256": "13b03b608e0625be075e8b0f17b82131a291f8882c217398f3e0e840dbd032d2",
+    "manifestBytes": 1895,
+    "files": 11,
+    "bytes": 7511879
+  }
+}

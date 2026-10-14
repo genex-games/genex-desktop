@@ -1,9 +1,37 @@
 /** Harness RPC: previews — load, look, drive and measure a game in a window. */
 import { readFile } from "node:fs/promises";
-import { HostMethod, type HarnessHostHandlers, type HarnessParams } from "../../shared/harness-api.ts";
+import path from "node:path";
+import {
+  BuildTarget,
+  GameStack,
+  isBuildTarget,
+  isGameStack,
+  MOBILE_TARGETS,
+  stackOf,
+} from "../../shared/game-project.ts";
+import { hostOf } from "../../shared/game-targets.ts";
+import {
+  type CameraPoseResult,
+  type EmptySceneResult,
+  HostMethod,
+  type HarnessHostHandlers,
+  type HarnessParams,
+  type WitnessResult,
+} from "../../shared/harness-api.ts";
+import {
+  NATIVE_LEASES_MAX,
+  NativeError,
+  NativeInputKind,
+  NativeOp,
+  NativeRefusal,
+  NativeRunMode,
+  parseNativeInput,
+} from "../../shared/native-contract.ts";
+import type { PreviewInputAction, PreviewTouchAction } from "../../shared/preview-contract.ts";
 import { keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { availableMemory } from "../../substrate/hardware.ts";
-import type { CaptureSurface } from "../../substrate/preview-port.ts";
+import type { CaptureSurface, PreviewPort } from "../../substrate/preview-port.ts";
+import { touchPort } from "../../substrate/native-game-port.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture } from "../../substrate/preview-ready.ts";
 import { observeBuild } from "../../substrate/build-probe.ts";
@@ -17,6 +45,9 @@ import {
   captureSurface,
   encodedJpeg,
 } from "../core/capture.ts";
+import { hostRefusal } from "../core/native-prepare.ts";
+import { keptPreRustNotice } from "../seed-upgrade-notice.ts";
+import { seedNightRefusal } from "../../substrate/seed-upgrade.ts";
 
 /** The only stage a profile may be taken for. */
 const OPTIMIZATION_STAGE = "optimization";
@@ -34,17 +65,171 @@ const MESSAGE = {
   otherPreviewsActive: "other studio previews are active",
   pairNeedsTwoImages: "preview.pair needs two images",
   harnessRestarted: "the harness that asked for this preview window has restarted",
+  invalidTarget: (target: string) => `preview.acquire: "${target}" is not a destination`,
+  deviceLease: (target: string) =>
+    `preview.acquire: the ${target} destination runs only on a device or simulator a person starts from Studio, never in an agent's lease`,
+  invalidStacks: (stacks: string) => `preview.acquire: stacks must list stacks the studio knows, not ${stacks}`,
+  harnessPredatesNative: (project: string) =>
+    `"${project}" is a C++ game, and this preview was borrowed without naming the build it judges: this harness predates native support`,
+  harnessPredatesStack: (project: string, stack: string) =>
+    `"${project}" is a ${stack} game, and this preview was borrowed by a harness that does not say it serves ${stack} games: this harness predates them`,
+  noFrameCounter: "the game's state() reports no frame counter, so a step cannot be witnessed",
+  noStep: "the game's step answers no frame counter: only a C++ · raylib game's studio contract can be witnessed",
+  touchNotTaken: "preview.input: this preview takes no touch: only a Rust · wgpu game's native run or web page does",
+  touchInvalid: "preview.input: a touch outside its shape (a finite x and y, a uint32 id, a phase)",
 } as const;
+
+/** `preview.input`'s actions, a play script's `touch` among them. */
+type InputList = ReadonlyArray<PreviewInputAction | PreviewTouchAction>;
+
+/** The actions as a page takes them, or null when one is a touch. */
+function touchless(actions: InputList): PreviewInputAction[] | null {
+  const plain: PreviewInputAction[] = [];
+  for (const action of actions) {
+    if (action.type === NativeInputKind.Touch) return null;
+    plain.push(action);
+  }
+  return plain;
+}
+
+/** What `preview.input` answers: whether it was applied, how many actions, and the surface's size. */
+type InputAnswer = { ok: boolean; applied: number; width: number; height: number };
+
+/**
+ * `preview.input` on one port. A call that holds a touch reaches a native run (its `input` op; a
+ * protocol 1 game refuses it there) or, when `pageTakesTouch` (a Rust · wgpu web build, whose page
+ * `input` verb takes the op's whole argument), that page's `input` verb. Any other preview refuses
+ * the whole call `touch-not-taken` before any action is applied, never applied in part.
+ */
+export async function routePreviewInput(
+  port: PreviewPort,
+  actions: InputList,
+  options: { pageTakesTouch?: boolean } = {},
+): Promise<InputAnswer> {
+  const plain = touchless(actions);
+  if (plain) return port.input(plain);
+  const native = touchPort(port);
+  if (native) return native.input(actions);
+  if (!options.pageTakesTouch) throw new NativeError(NativeRefusal.TouchNotTaken, MESSAGE.touchNotTaken);
+  return pageTouch(port, actions);
+}
+
+/**
+ * A call with a touch through a Rust web page's `input` verb (`{actions}`, as the native op takes
+ * it): checked first, then refused `touch-not-taken` unless the page answered its input (`held`).
+ */
+async function pageTouch(port: PreviewPort, actions: InputList): Promise<InputAnswer> {
+  const checked = parseNativeInput(actions);
+  if (!checked) throw new Error(MESSAGE.touchInvalid);
+  const answer = await port.studioCall(NativeOp.Input, { actions: checked });
+  if (!isRecord(answer) || !Array.isArray(answer.held))
+    throw new NativeError(NativeRefusal.TouchNotTaken, MESSAGE.touchNotTaken);
+  return { ok: true, applied: checked.length, width: 0, height: 0 };
+}
+
+/** Whether `port` shows a Rust · wgpu game's web build: the one page whose `input` verb takes touches. */
+async function servesRustPage(core: StudioCore, port: PreviewPort): Promise<boolean> {
+  if (touchPort(port)) return false;
+  const project = port.status().project;
+  if (!project) return false;
+  const game = (await core.games.list().catch(() => [])).find((listed) => listed.name === project);
+  return game ? stackOf(game.shape) === GameStack.RustWgpu : false;
+}
+
+/** How long `preview.witness` steps a game when the call names no `ms`: the evidence pass's own proof step. */
+export const WITNESS_DEFAULT_MS = 320;
+
+/** A port's studio contract, as the typed probes read it: `state()` and its verbs, never JavaScript. */
+type ProbePort = Pick<PreviewPort, "studioState" | "studioCall">;
+
+/** The draw count of each port's last witnessed step: what `preview.emptyScene` reads when `state()` carries none. */
+const LAST_STEP_DRAWS = new WeakMap<ProbePort, number>();
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A step answer with the C++ runtime's counters (`{frame, simulatedMs, steppedFrames, drawCalls}`). */
+function isStepAnswer(value: unknown): value is { frame: number; simulatedMs: number; drawCalls: number } {
+  return (
+    isRecord(value) &&
+    Number.isFinite(value.frame) &&
+    Number.isFinite(value.simulatedMs) &&
+    Number.isFinite(value.drawCalls)
+  );
+}
+
+/**
+ * `preview.witness`: the game's frame counter, one step of `ms` simulated time, and what the step
+ * answered. A native run and the C++ web build answer it through their studio contract; a page whose
+ * `state()` or `step` carries no frame counter is refused `unsupported` (the gate's unmeasured).
+ */
+export async function witnessOf(port: ProbePort, ms: number = WITNESS_DEFAULT_MS): Promise<WitnessResult> {
+  const before = await port.studioState();
+  const frameBefore = isRecord(before) ? before.frame : undefined;
+  if (typeof frameBefore !== "number" || !Number.isFinite(frameBefore)) {
+    throw new NativeError(NativeRefusal.Unsupported, MESSAGE.noFrameCounter);
+  }
+  const stepped = await port.studioCall(NativeOp.Step, ms);
+  if (!isStepAnswer(stepped)) throw new NativeError(NativeRefusal.Unsupported, MESSAGE.noStep);
+  LAST_STEP_DRAWS.set(port, stepped.drawCalls);
+  return { frameBefore, frameAfter: stepped.frame, simulatedMs: stepped.simulatedMs, drawCalls: stepped.drawCalls };
+}
+
+/**
+ * `preview.emptyScene`: measured exactly when the game's `state().phase` is a string; its draws
+ * are `state().__render.drawCalls` when numeric, else the last witnessed step's.
+ */
+export async function emptySceneOf(port: ProbePort): Promise<EmptySceneResult> {
+  const state = await port.studioState();
+  const phase = isRecord(state) && typeof state.phase === "string" ? state.phase : null;
+  const render = isRecord(state) && isRecord(state.__render) ? state.__render.drawCalls : undefined;
+  const drawCalls =
+    typeof render === "number" && Number.isFinite(render) ? render : (LAST_STEP_DRAWS.get(port) ?? null);
+  return { measured: phase !== null, phase, drawCalls };
+}
+
+/**
+ * `preview.cameraPose`: measured exactly when the game's `state().camera` exists. The camera's
+ * name is the string it reports (or its `name`); the pose is the camera object it reports, else
+ * its `cameraPose`, as untrusted JSON.
+ */
+export async function cameraPoseOf(port: ProbePort): Promise<CameraPoseResult> {
+  const state = await port.studioState();
+  if (!isRecord(state) || state.camera === undefined) return { measured: false, camera: null, pose: null };
+  const reported = state.camera;
+  const named = isRecord(reported) ? reported.name : reported;
+  const camera = typeof named === "string" ? named : null;
+  return { measured: true, camera, pose: isRecord(reported) ? reported : (state.cameraPose ?? null) };
+}
 
 /** A still named by its bytes or by a path the previews may read. */
 type StillSource = { base64?: string; path?: string } | null | undefined;
 
-export function previewRpc(core: StudioCore, x: CoreInternals) {
-  /** A method run in the window the harness means (`inHarnessWindow`). */
-  const routed =
-    <P extends { handle?: string }, R>(fn: (p: P) => Promise<R>) =>
+/** A method run in the window the harness means (`inHarnessWindow`). */
+function routedIn(x: CoreInternals) {
+  return <P extends { handle?: string }, R>(fn: (p: P) => Promise<R>) =>
     (p: P): Promise<R> =>
       inHarnessWindow(x, p?.handle, { mirror: true }, (handle) => fn(withHandle(p, handle)));
+}
+
+/** The typed probes a native run answers over `state()` and `step`, routed by handle like the rest. */
+function typedProbes(x: CoreInternals) {
+  const routed = routedIn(x);
+  return {
+    [HostMethod.PreviewWitness]: routed(async (p: HarnessParams<typeof HostMethod.PreviewWitness>) =>
+      witnessOf(x.previews.preview(p?.handle), p?.ms ?? WITNESS_DEFAULT_MS),
+    ),
+    [HostMethod.PreviewEmptyScene]: routed(async (p: HarnessParams<typeof HostMethod.PreviewEmptyScene>) =>
+      emptySceneOf(x.previews.preview(p?.handle)),
+    ),
+    [HostMethod.PreviewCameraPose]: routed(async (p: HarnessParams<typeof HostMethod.PreviewCameraPose>) =>
+      cameraPoseOf(x.previews.preview(p?.handle)),
+    ),
+  } satisfies Partial<HarnessHostHandlers>;
+}
+
+export function previewRpc(core: StudioCore, x: CoreInternals) {
+  const routed = routedIn(x);
   return {
     // — preview (the senses) — every method takes an optional `handle`. Omitted (or the live
     // view) means the stand-in wherever this build has hidden windows: the live view is the
@@ -52,6 +237,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     // change instead (`PreviewService.offerLive`), and the stage's Reload applies it.
     [HostMethod.PreviewLoad]: async (p) =>
       inHarnessWindow(x, p?.handle, { mirror: false }, async (handle) => {
+        await refuseUntargetedNative(core, x, p.project, handle);
         const url = await x.previews.loadPreview(withHandle(p, handle));
         await offerStandIn(x, handle);
         return url;
@@ -97,9 +283,12 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewCrop]: async (p) => crop(core, x, p),
     // Challenger vs incumbent on one camera: diff fraction + heatmap, the invisible-diff detector.
     [HostMethod.PreviewDiff]: async (p) => diff(core, x, p),
-    [HostMethod.PreviewInput]: routed(async (p: HarnessParams<typeof HostMethod.PreviewInput>) =>
-      x.previews.preview(p?.handle).input(Array.isArray(p?.actions) ? p.actions : []),
-    ),
+    [HostMethod.PreviewInput]: routed(async (p: HarnessParams<typeof HostMethod.PreviewInput>) => {
+      const port = x.previews.preview(p?.handle);
+      const actions = Array.isArray(p?.actions) ? p.actions : [];
+      const pageTakesTouch = touchless(actions) === null && (await servesRustPage(core, port));
+      return routePreviewInput(port, actions, { pageTakesTouch });
+    }),
     [HostMethod.PreviewConsole]: routed(async (p: HarnessParams<typeof HostMethod.PreviewConsole>) =>
       x.previews.preview(p?.handle).consoleEntries(p?.sinceMs ?? 0),
     ),
@@ -133,9 +322,10 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewObserve]: routed(async (p: HarnessParams<typeof HostMethod.PreviewObserve>) =>
       observeBuild(x.previews.preview(p?.handle)),
     ),
-    [HostMethod.PreviewAcquire]: async (p) => acquire(x, p),
+    [HostMethod.PreviewAcquire]: async (p) => acquire(core, x, p),
     [HostMethod.PreviewRelease]: async (p) => {
       x.profileSources.delete(p.handle);
+      forgetStacks(x, p.handle);
       await x.previewPool?.release(p.handle);
       return true;
     },
@@ -153,6 +343,7 @@ export function previewRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.PreviewPair]: async (p) => pair(core, x, p),
     [HostMethod.PreviewScreens]: async () => core.agentScreens(),
     [HostMethod.PreviewCapacity]: async () => capacity(core, x),
+    ...typedProbes(x),
   } satisfies Partial<HarnessHostHandlers>;
 }
 
@@ -209,7 +400,9 @@ async function profile(core: StudioCore, x: CoreInternals, p: HarnessParams<type
     if (!source || !sameRevision) throw new Error(MESSAGE.profileSourceMismatch);
     const registered = await core.candidates.source(source.candidateId, p.expectedRevision);
     if (registered.runId !== p.runId || p.stageId !== OPTIMIZATION_STAGE) throw new Error(MESSAGE.profileRunMismatch);
-    if (x.previews.pool().leaseCount > 1) return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
+    // The stage's own window is one lease; any other (a window, or a native game running) skews the sample.
+    const pool = x.previews.pool();
+    if (pool.leaseCount + pool.nativeLeaseCount > 1) return { sessionId: null, reason: MESSAGE.otherPreviewsActive };
   }
   return port.profile(p);
 }
@@ -229,6 +422,11 @@ async function screenshot(core: StudioCore, x: CoreInternals, p: HarnessParams<t
   const saved = p?.runId ? await core.saveRunArtifact(p.runId, `${label}.jpg`, jpeg) : null;
   if (p?.runId && stats) {
     await core.saveRunArtifact(p.runId, `${label}.stats.json`, Buffer.from(JSON.stringify(stats)));
+  }
+  // A native capture's provenance (seq, digest, camera, run, build) is saved beside its frame, so a
+  // saved picture is never shown as a build it is not.
+  if (p?.runId && shot.provenance) {
+    await core.saveRunArtifact(p.runId, `${label}.provenance.json`, Buffer.from(JSON.stringify(shot.provenance)));
   }
   return { base64: jpeg.toString("base64"), bytes: jpeg.length, path: saved, stats, surface: shot.surface };
 }
@@ -265,18 +463,136 @@ async function pair(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof 
   return encodedJpeg(jpeg, saved);
 }
 
-async function acquire(x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewAcquire>) {
+/**
+ * Whether this host has a game box for its own OS for an agent's headless run: what a native lease
+ * and a judging target need. A box that opens only Play windows offers neither.
+ */
+function gameBoxOf(core: StudioCore): boolean {
+  return core.sandbox?.gameBoxAvailable(NativeRunMode.Headless) === true;
+}
+
+/**
+ * Why this host refuses a native lease for `target`, or null: a refusal for want of a game box
+ * carries the box's own reason for an agent's headless run (`no-headless-build` on Windows and Linux).
+ */
+function leaseRefusal(core: StudioCore, target: BuildTarget): NativeError | null {
+  const refused = hostRefusal(hostOf(process.platform), target, gameBoxOf(core));
+  if (refused?.refusal !== NativeRefusal.NoGameBox) return refused;
+  return new NativeError(refused.refusal, refused.message, null, core.sandbox?.gameBox(NativeRunMode.Headless) ?? null);
+}
+
+/**
+ * The build a lease names: absent, or a host-native or web destination. A phone destination is
+ * refused `not-runnable-here` (containment stage 1: no agent-driven device run), anything else as
+ * no destination, before any lease exists.
+ */
+function acquireTarget(p: HarnessParams<typeof HostMethod.PreviewAcquire> | null | undefined): BuildTarget | undefined {
+  const raw: unknown = p?.target;
+  if (raw === undefined) return undefined;
+  const phone = MOBILE_TARGETS.find((target) => target === raw);
+  if (phone) throw new NativeError(NativeRefusal.NotRunnableHere, MESSAGE.deviceLease(phone));
+  if (!isBuildTarget(raw)) throw new Error(MESSAGE.invalidTarget(String(raw)));
+  return raw;
+}
+
+/** The stacks a lease's harness declared it serves (`preview.acquire {stacks}`), by lease handle, per core. */
+const DECLARED_STACKS = new WeakMap<CoreInternals, Map<string, readonly GameStack[]>>();
+
+/** The stacks the lease `handle` declared; none for a lease whose harness declared none. */
+function declaredStacks(x: CoreInternals, handle: string): readonly GameStack[] {
+  return DECLARED_STACKS.get(x)?.get(handle) ?? [];
+}
+
+/** Remember what the lease `handle` declared; a lease that declared nothing is remembered as nothing. */
+function declareStacks(x: CoreInternals, handle: string, stacks: readonly GameStack[] | undefined): void {
+  const declared = DECLARED_STACKS.get(x) ?? new Map<string, readonly GameStack[]>();
+  DECLARED_STACKS.set(x, declared);
+  if (stacks) declared.set(handle, stacks);
+}
+
+/** Forget what a released lease declared. */
+function forgetStacks(x: CoreInternals, handle: string): void {
+  DECLARED_STACKS.get(x)?.delete(handle);
+}
+
+/** The stacks a lease declares: absent (a harness from before Rust), or a list of known stacks; anything else is refused before any lease exists. */
+function acquireStacks(
+  p: HarnessParams<typeof HostMethod.PreviewAcquire> | null | undefined,
+): readonly GameStack[] | undefined {
+  const raw: unknown = p?.stacks;
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || !raw.every(isGameStack)) throw new Error(MESSAGE.invalidStacks(JSON.stringify(raw)));
+  return Object.freeze([...raw]);
+}
+
+/**
+ * Stacks a harness serves only once it says so: a Rust game reaches a lease only from a harness
+ * that declared `rust-wgpu`. Raylib's backstop is the lease's target, as it always was.
+ */
+const DECLARED_STACK_ONLY: ReadonlySet<GameStack> = new Set([GameStack.RustWgpu]);
+
+/**
+ * The §2.10 backstop: a lease borrowed without a target, loading a C++ game, is a harness from
+ * before native support (every fresh caller names one); a lease whose harness did not declare a
+ * Rust game's stack is a harness from before Rust; and a Rust game's lease, declared or not, on a
+ * harness workspace that kept a part a Rust night runs from before Rust (`seedNightRefusal`), is
+ * refused naming those modules. All refused typed, before anything builds.
+ */
+async function refuseUntargetedNative(
+  core: StudioCore,
+  x: CoreInternals,
+  project: string,
+  handle: string | undefined,
+): Promise<void> {
+  if (handle === undefined || handle === LIVE_HANDLE || handle === STAND_IN_HANDLE) return;
+  const lease = x.previewPool?.leaseOf(handle);
+  if (!lease) return;
+  const declared = declaredStacks(x, handle);
+  const game = (await core.games.list().catch(() => [])).find((listed) => listed.name === project);
+  if (!game) return;
+  const stack = stackOf(game.shape);
+  if (stack === GameStack.RaylibCpp && lease.target === null) {
+    throw new NativeError(NativeRefusal.HarnessPredatesNative, MESSAGE.harnessPredatesNative(project));
+  }
+  await refuseKeptPreRust(core, stack);
+  if (DECLARED_STACK_ONLY.has(stack) && !declared.includes(stack)) {
+    throw new NativeError(NativeRefusal.HarnessPredatesNative, MESSAGE.harnessPredatesStack(project, stack));
+  }
+}
+
+/**
+ * A night on `stack` refused by the harness workspace (seed-upgrade.ts `seedNightRefusal`): a Rust
+ * night whose parts the agent kept from before Rust is never routed to the three.js rows, and the
+ * refusal names each kept module (the notice M3.7 shows with its re-take remedy).
+ */
+async function refuseKeptPreRust(core: StudioCore, stack: GameStack): Promise<void> {
+  const dirs = {
+    seedDir: path.join(core.options.paths.resources, "harness-seed"),
+    workspaceDir: core.layout.harnessWs,
+  };
+  const notice = keptPreRustNotice(await seedNightRefusal(stack, dirs));
+  if (notice) throw new NativeError(NativeRefusal.HarnessPredatesNative, notice.text);
+}
+
+async function acquire(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewAcquire>) {
+  const target = acquireTarget(p);
+  const stacks = acquireStacks(p);
+  const native = target !== undefined && target !== BuildTarget.Web;
+  const refused = native ? leaseRefusal(core, target) : null;
+  if (refused) throw refused;
   const boot = x.harnessBoot;
   const lease = await x.previews.pool().acquire({
     label: p?.label ?? "facet",
     purpose: p?.purpose === OPTIMIZATION_PURPOSE ? OPTIMIZATION_PURPOSE : undefined,
     owner: `harness:${boot}`,
+    ...(target ? { target } : {}),
   });
   // The harness that asked died while the window was opening: nobody is left to release it.
   if (boot !== x.harnessBoot) {
     await x.previewPool?.release(lease.handle);
     throw new Error(MESSAGE.harnessRestarted);
   }
+  declareStacks(x, lease.handle, stacks);
   return { handle: lease.handle };
 }
 
@@ -284,6 +600,9 @@ async function capacity(core: StudioCore, x: CoreInternals) {
   // Memory rides along: six windows of a big game is not a number the pool
   // knows; whoever starts workers reads the free memory beside the free slots.
   const memory = await availableMemory();
+  // The host and its game box pick a C++ game's judging target; native leases have their own budget.
+  const host = hostOf(process.platform);
+  const gameBox = gameBoxOf(core);
   try {
     const pool = x.previews.pool();
     return {
@@ -293,8 +612,11 @@ async function capacity(core: StudioCore, x: CoreInternals) {
       live: Boolean(core.options.preview),
       headless: Boolean(core.options.createHeadlessPreview),
       memory,
+      host,
+      native: { gameBox: gameBox && pool.native, leases: pool.nativeLeaseCount, max: NATIVE_LEASES_MAX },
     };
   } catch {
-    return { max: 0, inUse: 0, free: 0, live: false, headless: false, memory };
+    const native = { gameBox: false, leases: 0, max: NATIVE_LEASES_MAX };
+    return { max: 0, inUse: 0, free: 0, live: false, headless: false, memory, host, native };
   }
 }

@@ -1,7 +1,7 @@
 /**
  * The window's first questions, answered before (and without) a core: where startup stands, Retry
- * and (Windows) Set up from the sandbox setup screen, and the colours of the Windows and Linux
- * title-bar controls.
+ * and Set up (Windows' sandbox, or Genex's AppArmor profile on Ubuntu) from the sandbox setup
+ * screen, and the colours of the Windows and Linux title-bar controls.
  * Registered once per launch, before any window opens.
  */
 import type { WindowControlColors } from "../../shared/studio-api.ts";

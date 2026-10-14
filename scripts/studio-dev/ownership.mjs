@@ -71,6 +71,19 @@ export function removeProfile(owner) {
 function retentionOf(providers, freshMachine) {
   return providers === "live" && !freshMachine ? "retained" : "disposable";
 }
+/**
+ * Clear the owner record a profile folder deleted by hand left behind: it names this checkout,
+ * this id and this folder, and nothing it guarded remains (the lease lived in the folder). Any
+ * other record is refused before anything is made.
+ */
+function clearOrphanRecord(checkout, id, dir) {
+  const file = safeChild(devRoot(checkout), `owners/${id}.json`);
+  if (!fs.existsSync(file)) return;
+  const record = readVersion(file);
+  const orphan = record.profileId === id && record.root === dir && record.checkout === fs.realpathSync(checkout);
+  if (!orphan) throw new Error(`owners/${id}.json does not belong to this profile; inspect it, or pick another id`);
+  fs.unlinkSync(file);
+}
 export function allocateProfile(checkout, id, providers, fixture, reuse = false, freshMachine = false) {
   if (!["fixture", "live"].includes(providers)) throw new Error("providers must be fixture or live");
   if (freshMachine && providers !== "live") throw new Error("a fresh-machine profile needs --providers live");
@@ -84,6 +97,7 @@ export function allocateProfile(checkout, id, providers, fixture, reuse = false,
       throw new Error("reuse cannot change provider mode, fixture or fresh machine");
     return owner;
   }
+  clearOrphanRecord(checkout, id, dir);
   fs.mkdirSync(dir, { mode: 0o700 });
   const owner = {
     version: 1,

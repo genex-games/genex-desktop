@@ -1,0 +1,84 @@
+name: C++ Linux host
+on:
+  pull_request:
+    paths: &cpp-inputs
+      - .github/workflows/cpp-linux-host.yml
+      - scripts/ci-cpp-linux-*
+      - scripts/cpp-linux-browser-witness.mjs
+      - scripts/cpp-linux-evidence.ts
+      - scripts/patch-sandbox-runtime.mjs
+      - scripts/bundle-angle.mjs
+      - scripts/bundle-linux-sysroot.mjs
+      - scripts/electron-runtime.mjs
+      - scripts/studio-dev/files.mjs
+      - native/angle/bundle-lock.json
+      - native/linux-sysroot/**
+      - src/main/core/layout.ts
+      - src/main/core/toolchains.ts
+      - src/main/cpp-*.ts
+      - src/shared/boot.ts
+      - src/shared/cpp-setup.ts
+      - src/shared/game-project.ts
+      - src/shared/game-targets.ts
+      - src/shared/native-contract.ts
+      - src/shared/toolchain.ts
+      - src/substrate/game-workspace.ts
+      - src/substrate/native-*.ts
+      - src/substrate/spawn.ts
+      - src/substrate/toolchain-store/**
+      - src/game-template-cpp/**
+      - tests/conformance/cpp-linux-acceptance.test.ts
+      - package.json
+      - package-lock.json
+  push:
+    branches: [dev, main]
+    paths: *cpp-inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cpp-linux-host-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  fresh-managed-store:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Chromium and process sandbox prerequisites
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 bubblewrap socat ripgrep xz-utils
+      - name: Pinned application dependencies
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/electron/install.js
+          node --input-type=module -e 'import { patchSandboxRuntime } from "./scripts/patch-sandbox-runtime.mjs"; await patchSandboxRuntime();'
+      - name: Fetch the pinned bundled ANGLE artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"
+          echo "GENEX_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
+      - name: Actual setup, reuse, starter builds, browser capture and exports
+        # Keep five minutes of the unchanged job budget for cleanup and evidence upload.
+        run: timeout --signal=TERM --kill-after=15s 40m xvfb-run -a node scripts/ci-cpp-linux-host.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cpp-linux-host-${{ github.event.pull_request.head.sha || github.sha }}
+          path: .studio-dev/evidence/cpp-linux-host
+          if-no-files-found: warn

@@ -1,0 +1,262 @@
+{
+  "schema": "genex-authoring-transcripts/1",
+  "note": "Synthetic fixture for the M0a.14a dry run: no provider produced these. Rust builds are cargo --message-format=json stdout; raylib builds are CMake/Ninja + clang output.",
+  "transcripts": [
+    {
+      "stack": "rust",
+      "ask": "second-species",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"mismatched types\",\"code\":{\"code\":\"E0308\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":181,\"column_start\":31,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"pond 0.1.0\",\"target\":{\"name\":\"pond\"},\"fresh\":false}\n{\"reason\":\"build-finished\",\"success\":true}",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 3800,
+      "probe": "pass"
+    },
+    {
+      "stack": "rust",
+      "ask": "bite-ripple",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"warning\",\"message\":\"unused variable: `t`\",\"code\":{\"code\":\"unused_variables\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":240,\"column_start\":13,\"is_primary\":true}]}}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"pond 0.1.0\",\"target\":{\"name\":\"pond\"},\"fresh\":false}\n{\"reason\":\"build-finished\",\"success\":true}",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 4100,
+      "probe": "pass"
+    },
+    {
+      "stack": "rust",
+      "ask": "round-timer",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"no method named `elapsed` found for struct `Ctx` in the current scope\",\"code\":{\"code\":\"E0599\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":212,\"column_start\":9,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"cannot find value `round_left` in this scope\",\"code\":{\"code\":\"E0425\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":220,\"column_start\":17,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 2 previous errors\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"cannot borrow `sim.world` as mutable because it is also borrowed as immutable\",\"code\":{\"code\":\"E0502\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":214,\"column_start\":5,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"pond 0.1.0\",\"target\":{\"name\":\"pond\"},\"fresh\":false}\n{\"reason\":\"build-finished\",\"success\":true}",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 3900,
+      "probe": "pass"
+    },
+    {
+      "stack": "rust",
+      "ask": "wind-cast",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"pond 0.1.0\",\"target\":{\"name\":\"pond\"},\"fresh\":false}\n{\"reason\":\"build-finished\",\"success\":true}",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 4000,
+      "probe": "pass"
+    },
+    {
+      "stack": "rust",
+      "ask": "better-rod",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-artifact\",\"package_id\":\"pond 0.1.0\",\"target\":{\"name\":\"pond\"},\"fresh\":false}\n{\"reason\":\"build-finished\",\"success\":true}",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 4200,
+      "probe": "pass"
+    },
+    {
+      "stack": "rust",
+      "ask": "catch-combo",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"mismatched types\",\"code\":{\"code\":\"E0308\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":176,\"column_start\":21,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"cannot multiply `u32` by `f32`\",\"code\":{\"code\":\"E0277\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":176,\"column_start\":21,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"mismatched types\",\"code\":{\"code\":\"E0308\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":178,\"column_start\":13,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "{\"reason\":\"compiler-artifact\",\"package_id\":\"genex 0.1.0\",\"target\":{\"name\":\"genex\"},\"fresh\":true}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"cannot add `f32` to `u32`\",\"code\":{\"code\":\"E0277\"},\"spans\":[{\"file_name\":\"examples/pond/src/pond.rs\",\"line_start\":178,\"column_start\":13,\"is_primary\":true}]}}\n{\"reason\":\"compiler-message\",\"package_id\":\"pond 0.1.0\",\"message\":{\"level\":\"error\",\"message\":\"aborting due to 1 previous error\",\"code\":null,\"spans\":[]}}\n{\"reason\":\"build-finished\",\"success\":false}",
+            "stderr": "error: could not compile `pond` (lib)\n",
+            "exitCode": 101
+          }
+        }
+      ],
+      "warmRebuildMs": null,
+      "probe": "not-run"
+    },
+    {
+      "stack": "raylib",
+      "ask": "second-species",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 1900,
+      "probe": "pass"
+    },
+    {
+      "stack": "raylib",
+      "ask": "bite-ripple",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\nFAILED: CMakeFiles/game.dir/src/main.cpp.o\n",
+            "stderr": "src/main.cpp:142:17: error: no member named 'rippleTimer' in 'Bobber'\n1 error generated.\nninja: build stopped: subcommand failed.\n",
+            "exitCode": 1
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 2100,
+      "probe": "pass"
+    },
+    {
+      "stack": "raylib",
+      "ask": "round-timer",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 2000,
+      "probe": "pass"
+    },
+    {
+      "stack": "raylib",
+      "ask": "wind-cast",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\nFAILED: game\n",
+            "stderr": "Undefined symbols for architecture arm64:\n  \"Wind::push(raylib::Vector3&)\", referenced from:\n      _main in main.cpp.o\nld: symbol(s) not found for architecture arm64\nclang++: error: linker command failed with exit code 1 (use -v to see invocation)\nninja: build stopped: subcommand failed.\n",
+            "exitCode": 1
+          }
+        },
+        {
+          "prompt": "repair",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 2050,
+      "probe": "pass"
+    },
+    {
+      "stack": "raylib",
+      "ask": "better-rod",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 1950,
+      "probe": "pass"
+    },
+    {
+      "stack": "raylib",
+      "ask": "catch-combo",
+      "turns": [
+        {
+          "prompt": "ask",
+          "build": {
+            "stdout": "[1/2] Building CXX object CMakeFiles/game.dir/src/main.cpp.o\n[2/2] Linking CXX executable game\n",
+            "stderr": "",
+            "exitCode": 0
+          }
+        }
+      ],
+      "warmRebuildMs": 2000,
+      "probe": "pass"
+    }
+  ]
+}

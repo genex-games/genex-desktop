@@ -1,0 +1,10 @@
+{
+  "texts": ["", "a", "foobar", "genex capture", {"hex": "00"}, {"hex": "ff00fe7f80"}, "{\"seed\":1,\"frame\":0,\"probes\":{}}", {"repeat": "abc", "count": 1000}],
+  "chained": [
+    {"text": "genex capture", "split": 6},
+    {"text": "genex capture", "split": 0},
+    {"text": "genex capture", "split": 13},
+    {"text": {"hex": "000102030405060708090a0b0c0d0e0f"}, "split": 9}
+  ],
+  "hex64": [0, 1, 255, "0xaf63dc4c8601ec8c", "0xffffffffffffffff", "0x0123456789abcdef"]
+}

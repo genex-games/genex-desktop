@@ -1,3 +1,4 @@
+import { GameStack } from "./game-project.ts";
 import type { PluginToolAsset } from "./asset-making.ts";
 import type { GameEngine } from "./game-engine.ts";
 import type { RuntimeInstallPhase } from "./model-install.ts";
@@ -109,9 +110,21 @@ export const PluginCapability = {
 } as const;
 export type PluginCapability = (typeof PluginCapability)[keyof typeof PluginCapability];
 
-/** Public Studio plugin API. Backend plugins are trusted executable code. API 2 is additive over API 1. */
-export const PLUGIN_API_VERSION = 3;
-export type PluginApiVersion = 1 | 2 | 3;
+/**
+ * Public Studio plugin API. Backend plugins are trusted executable code. Each API is additive over
+ * the one before; API 4 adds `rust-wgpu` to the stacks a skill names and a backend is sent.
+ */
+export const PLUGIN_API_VERSION = 4;
+export type PluginApiVersion = 1 | 2 | 3 | 4;
+
+/**
+ * Every stack a plugin skill could name before Rust · wgpu. A manifest on an API before
+ * {@link RUST_SKILL_STACKS_API} whose skill lists all of them serves every stack, Rust included.
+ */
+export const PRE_RUST_SKILL_STACKS: readonly GameStack[] = Object.freeze([GameStack.ThreeJs, GameStack.RaylibCpp]);
+
+/** The first plugin API whose skills may name `rust-wgpu` among their stacks. */
+export const RUST_SKILL_STACKS_API = 4;
 /**
  * A typed reason a panel request failed, carried beside its text so a panel never matches words:
  * `cancelled` when the person declined Studio's confirmation. Wire values: never rename.
@@ -204,6 +217,8 @@ export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean
 export interface PluginInlineSkill {
   name: string;
   text: string;
+  /** The stacks this skill serves; absent = every stack. Applies on top of `engines`/`facts`. */
+  stacks?: readonly GameStack[];
   /** API 3, the older spelling of `facts`: the engines whose games' briefs carry this skill. */
   engines?: GameEngine[];
   /** API 3: the facts of the games whose briefs carry this skill; every game when absent (and no `engines`). */
@@ -222,6 +237,8 @@ export interface PluginFileSkill {
   file: string;
   /** Further package-relative `.md` files the skill points its reader to. */
   references?: string[];
+  /** The stacks this skill serves; absent = every stack. Applies on top of `engines`/`facts`. */
+  stacks?: readonly GameStack[];
   /** API 3, the older spelling of `facts`: the engines whose games' briefs carry this skill. */
   engines?: GameEngine[];
   /** API 3: the facts of the games whose briefs carry this skill; every game when absent (and no `engines`). */

@@ -19,16 +19,23 @@ import { tmpdir } from "node:os";
 import {
   ARTEFACT_MARKER,
   CRITIC_PRINCIPLES,
+  RUST_REVIEW_FALLBACK,
   VISION_BATCH_FALLBACK,
   artefactTokens,
   filterArtefactClasses,
   judgePrompt,
+  reviewDiff,
 } from "../../src/harness-seed/loop/judge.ts";
+import { GameStack } from "../../src/harness-seed/loop/native-contract.ts";
+import type { HarnessCtx, Run } from "../../src/harness-seed/types/harness.d.ts";
+import { createHash } from "node:crypto";
 
 const judgeDir = pathMod.resolve(fileURLToPath(new URL("../../src/harness-seed/judge", import.meta.url)));
 const loopDir = pathMod.resolve(fileURLToPath(new URL("../../src/harness-seed/loop", import.meta.url)));
 const fixtureDir = pathMod.resolve(fileURLToPath(new URL("../fixtures", import.meta.url)));
 const SHARED = ["blind-compare.md", "facet-compare.md", "taste-veto.md"];
+/** What the Three.js code reviewer was asked before C++ games (see "asks the Three.js reviewer exactly…"). */
+const PRE_NATIVE_REVIEW = "2ab4ff1e9a9197db";
 
 function rubric(name: string): string {
   return readFileSync(pathMod.join(judgeDir, name), "utf8");
@@ -240,5 +247,195 @@ describe("judgePrompt expands the marker against a workspace", () => {
       await judgePrompt({ workspace: ws } as never, "liveness.md", "fallback", ["fps"]),
       rubric("liveness.md"),
     );
+  });
+});
+
+describe("the code reviewer of a C++ · raylib game", () => {
+  /** A workspace with the shipped rubrics, and a ctx whose judge answers at once and is recorded. */
+  function reviewer() {
+    const root = mkdtempSync(pathMod.join(tmpdir(), "judge-review-"));
+    cpSync(judgeDir, pathMod.join(root, "judge"), { recursive: true });
+    const asked: Array<Record<string, unknown>> = [];
+    const fake = {
+      workspace: root,
+      threadId: "thread-review",
+      cancelled: false,
+      call: async (_method: string, params: Record<string, unknown>) => {
+        asked.push(params);
+        return { message: { content: '{"violations":[],"summary":"ok"}' } };
+      },
+      notify() {},
+      setStatus() {},
+    };
+    // The one cast: a recorder answers every host method with the judge's reply.
+    return { ctx: fake as unknown as HarnessCtx, asked };
+  }
+  const run: Run = {
+    runId: "run_v",
+    project: "plaza",
+    goal: "a plaza",
+    engine: "claude-code",
+    reference: { name: "", shots: [] },
+    budgets: { wallClockMs: 60_000 },
+  };
+  const spec = {
+    id: "plaza",
+    title: "The plaza",
+    owns: ["src/plaza.cpp"],
+    checks: [{ id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" }],
+  };
+
+  it("ships its own rubric, which names the C++ rules and never the Three.js ones", () => {
+    const text = rubric("code-review-cpp.md");
+    assert.match(text, /^You are reviewing ONE diff of a C\+\+ · raylib game/);
+    for (const rule of ["studio::install", "SetTargetFPS", "FetchContent_Declare", "-ffast-math", "#version"])
+      assert.ok(text.includes(rule), `the C++ rubric names ${rule}`);
+    // The gaming flag (dev's review change) is asked of a C++ diff as of a Three.js one.
+    for (const asks of ['`"gaming": true`', '"gaming":false}'])
+      assert.ok(text.includes(asks), `the C++ rubric asks ${asks}`);
+    for (const word of ["Math.random", "installStudio", "userData.tag", "__studio"])
+      assert.equal(text.includes(word), false, `and not the Three.js ${word}`);
+  });
+
+  it("reads code-review-cpp.md for a raylib game and code-review.md for a Three.js one", async () => {
+    const { ctx, asked } = reviewer();
+    await reviewDiff(ctx, { run, diff: "+rand();", spec, stack: GameStack.RaylibCpp });
+    await reviewDiff(ctx, { run, diff: "+x", spec });
+    await reviewDiff(ctx, { run, diff: "+x", spec, stack: GameStack.ThreeJs });
+    assert.equal(asked[0]?.systemPrompt, rubric("code-review-cpp.md"), "the C++ rubric, whole");
+    assert.equal(asked[1]?.systemPrompt, rubric("code-review.md"), "the Three.js rubric, as before");
+    assert.equal(asked[2]?.systemPrompt, rubric("code-review.md"), "and for a Three.js game named as one");
+  });
+
+  it("reads the C++ rubric for a night that stamped its run raylib, though its caller names no stack", async () => {
+    // review.ts's model pass passes no stack; the night stamps `run.stack` where it learns its game.
+    const { ctx, asked } = reviewer();
+    await reviewDiff(ctx, { run: { ...run, stack: GameStack.RaylibCpp }, diff: "+rand();", spec });
+    await reviewDiff(ctx, { run: { ...run, stack: GameStack.ThreeJs }, diff: "+x", spec });
+    assert.equal(asked[0]?.systemPrompt, rubric("code-review-cpp.md"), "a raylib night's diff");
+    assert.equal(asked[1]?.systemPrompt, rubric("code-review.md"), "a Three.js night's diff");
+  });
+
+  it("asks the Three.js reviewer exactly what it asked before C++ games", async () => {
+    // The first 16 hex of sha256 over every request, in origin/dev cf4b2c56's seed (the one the
+    // compiled stacks were ported onto): the Three.js words, unchanged by C++ games.
+    const { ctx, asked } = reviewer();
+    const js = { ...spec, owns: ["src/plaza.js"] };
+    await reviewDiff(ctx, { run, diff: "+x", spec: js });
+    await reviewDiff(ctx, { run, diff: "+x", spec: js, template: false });
+    const digest = createHash("sha256")
+      .update(JSON.stringify(asked.map(({ systemPrompt, messages }) => ({ systemPrompt, messages }))))
+      .digest("hex")
+      .slice(0, 16);
+    assert.equal(digest, PRE_NATIVE_REVIEW);
+  });
+});
+
+describe("the code reviewer of a Rust · wgpu game", () => {
+  /** A workspace with the shipped rubrics minus `drop`, and a ctx whose judge answers at once and is recorded. */
+  function reviewer(drop: string[] = []) {
+    const root = mkdtempSync(pathMod.join(tmpdir(), "judge-review-rust-"));
+    mkdirSync(pathMod.join(root, "judge"));
+    for (const name of readdirSync(judgeDir)) {
+      if (!drop.includes(name)) cpSync(pathMod.join(judgeDir, name), pathMod.join(root, "judge", name));
+    }
+    const asked: Array<Record<string, unknown>> = [];
+    const fake = {
+      workspace: root,
+      threadId: "thread-review-rust",
+      cancelled: false,
+      call: async (_method: string, params: Record<string, unknown>) => {
+        asked.push(params);
+        return { message: { content: '{"violations":[],"summary":"ok"}' } };
+      },
+      notify() {},
+      setStatus() {},
+    };
+    // The one cast: a recorder answers every host method with the judge's reply.
+    return { ctx: fake as unknown as HarnessCtx, asked };
+  }
+  const run: Run = {
+    runId: "run_r",
+    project: "pond",
+    goal: "a pond",
+    engine: "claude-code",
+    reference: { name: "", shots: [] },
+    budgets: { wallClockMs: 60_000 },
+  };
+  const spec = {
+    id: "ripples",
+    title: "Ripples",
+    owns: ["src/facets/ripples.rs"],
+    checks: [{ id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" }],
+  };
+  const userText = (asked: Array<Record<string, unknown>>, index: number) =>
+    JSON.stringify((asked[index]?.messages as unknown[] | undefined) ?? []);
+
+  it("ships its own rubric, which names the Rust rules and neither the C++ nor the Three.js ones", () => {
+    const text = rubric("code-review-rust.md");
+    assert.match(text, /^You are reviewing ONE diff of a Rust · wgpu game/);
+    for (const rule of ["genex::install", "std::time", "thread_rng", "HashMap", "genex::math", "unsafe", "Cargo.toml"])
+      assert.ok(text.includes(rule), `the Rust rubric names ${rule}`);
+    for (const asks of ['`"gaming": true`', '"gaming":false}'])
+      assert.ok(text.includes(asks), `the Rust rubric asks ${asks}`);
+    for (const word of ["SetTargetFPS", "studio::install", "FetchContent_Declare", "Math.random", "installStudio"])
+      assert.equal(text.includes(word), false, `and not ${word}`);
+  });
+
+  it("flags the renderer's per-device rules: no fixed quality, no custom pass over the look, v2 sources, honest history", () => {
+    const text = rubric("code-review-rust.md");
+    for (const rule of [
+      "QualityPreset::Ultra",
+      "render_scale",
+      "[render.look]",
+      "api = 2",
+      "frame.camera_cut()",
+      "frame.id(",
+    ])
+      assert.ok(text.includes(rule), `the Rust rubric names ${rule}`);
+  });
+
+  it("leaves the template's own render wiring alone: the settings panel in on_ui and [render.class.*] keys are named as allowed", () => {
+    const text = rubric("code-review-rust.md").replace(/\s+/g, " ");
+    const allowed = text.slice(text.indexOf("Not violations:"));
+    for (const exemption of [
+      "`genex::render::settings_panel(ui)` in `on_ui`",
+      "`[render.class.<class>]` in `genex.toml`",
+    ])
+      assert.ok(allowed.includes(exemption), `the Rust rubric allows ${exemption}`);
+    for (const rule of [
+      "render_scale",
+      "on_update",
+      "settings_panel(ui) in on_ui",
+      "[render.class.<class>]",
+      "api = 2",
+    ])
+      assert.ok(RUST_REVIEW_FALLBACK.includes(rule), `the fallback rubric names ${rule}`);
+  });
+
+  it("reads code-review-rust.md for a Rust game, named by its caller or stamped on its run", async () => {
+    const { ctx, asked } = reviewer();
+    await reviewDiff(ctx, { run, diff: "+let t = std::time::Instant::now();", spec, stack: GameStack.RustWgpu });
+    await reviewDiff(ctx, { run: { ...run, stack: GameStack.RustWgpu }, diff: "+x", spec });
+    assert.equal(asked[0]?.systemPrompt, rubric("code-review-rust.md"), "the Rust rubric, whole");
+    assert.equal(asked[1]?.systemPrompt, rubric("code-review-rust.md"), "for a night that stamped its run Rust");
+  });
+
+  it("falls back to the in-code Rust rubric when the file is missing, never to the C++ one", async () => {
+    const { ctx, asked } = reviewer(["code-review-rust.md"]);
+    await reviewDiff(ctx, { run, diff: "+x", spec, stack: GameStack.RustWgpu });
+    assert.equal(asked[0]?.systemPrompt, RUST_REVIEW_FALLBACK);
+    assert.notEqual(asked[0]?.systemPrompt, rubric("code-review-cpp.md"));
+    assert.match(RUST_REVIEW_FALLBACK, /Rust · wgpu/);
+    for (const word of ["SetTargetFPS", "FetchContent", "Math.random"])
+      assert.equal(RUST_REVIEW_FALLBACK.includes(word), false, `the fallback names no ${word}`);
+  });
+
+  it("tells the reviewer of a Rust game the studio did not scaffold which Rust rules stand down", async () => {
+    const { ctx, asked } = reviewer();
+    await reviewDiff(ctx, { run, diff: "+x", spec, stack: GameStack.RustWgpu, template: false });
+    const told = userText(asked, 0);
+    assert.match(told, /user's own Rust code/);
+    assert.equal(told.includes("raylib"), false, "not the C++ note");
   });
 });

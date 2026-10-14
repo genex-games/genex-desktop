@@ -74,10 +74,13 @@ joins it only once it is signed and its job passed (`distributionPlatforms` in `
 unsigned Windows packages, remain Actions artifacts. Each packaged platform
 also exercises its terminal; Windows checks
 the installer/uninstaller and a scripted packaged chat turn. Apps and DMGs both
-need notarization/stapling. Platform provenance records the source and lock digest alongside
-artifact hashes; `SHA256SUMS` covers the final inventory. Download links use
-`releases/latest/download/<name>`, so every release, prereleases included, also carries
-version-free names: `Genex.dmg`, byte-identical copies of the Linux packages
+need notarization/stapling. Platform provenance records the source, the lockfile digest and
+`toolchainLockSha256` (the C++ toolchain recipe, pins, ANGLE recipe and headless raylib platform,
+the Rust pins and the Rust lock line this source expects), `rustStore` (every Rust store download
+with its sha256 and durable release URL, and the components not pinned yet) alongside artifact
+hashes; upload refuses a platform built for another; `SHA256SUMS` covers the final inventory.
+Download links use `releases/latest/download/<name>`, so every release, prereleases included, also
+carries version-free names: `Genex.dmg`, byte-identical copies of the Linux packages
 (`Genex-linux-amd64.deb`, `Genex-linux-x86_64.rpm`, `Genex-linux-x64.zip`, made by
 `scripts/release-downloads.mjs` beside the versioned files, which keep their names) and, once
 Windows ships, `Genex-Setup.exe`. A draft missing one is refused (`assertStableDownloads`).
@@ -90,12 +93,91 @@ mismatched tags. A draft
 release is reviewed before publication. Maintain release notes that
 name behavior changes, migration requirements and known limitations.
 
+## C++ games in the package
+
+The package ships the C++ · raylib template, the headless raylib platform file (a user's Mac
+prewarms from it) and, on macOS, the receive-only frames addon `genex-frames.node`; it ships no
+toolchain program (CMake, Ninja, emcc, zig, clang, emsdk's Node or Python): the toolchain store
+installs those. `npm run test:packaged` checks all of this, and in signed mode the addon's team.
+
+What a person installs, only on **Install** in the Toolchain sheet (each SHA-256-pinned): for the
+browser on a Mac, CMake 4.4.3 (85 MB), Ninja 1.13.2 and Emscripten 6.0.10 with Node and Python
+(356 MB), plus the raylib 6.0 source (50 MB); Mac builds need Apple's Command Line Tools, which the
+sheet offers. Genex ships ANGLE, so Mac games play and export without downloading it; C++ games
+don't build on Windows yet. Unpacked, with raylib prebuilt and Emscripten's cache warmed, the tools
+take about 2.7 GB in `toolchains/` in Genex's data folder (one per `studio:dev` profile); builds go
+to `cpp-builds/`. **Settings → Toolchains** shows the space; **Remove old versions** deletes
+versions the current toolchain replaced, never one a game still builds with.
+
+## Rust games in the package
+
+The package ships the Rust · wgpu template and the lock line its vendored crates are cut from
+(`native/genex-rust/Cargo.lock`, byte for byte; `scripts/rust-payload.ts`), and no cargo, rustc or
+other Rust tool: the store installs those from the pinned downloads inlined in the main bundle.
+`npm run test:packaged` checks the payload and, on macOS arm64 and Linux x64, launches the packaged
+Rust acceptance (`--studio-smoke --studio-rust-acceptance`, `src/main/smoke/rust-acceptance.ts`):
+the template and lock line read back, the Rust store starts cold, Rust · wgpu is the default, Create
+game starts on Rust with Three.js beside it and no raylib offer, and the real creation IPC makes a
+Rust game (downloading nothing) and refuses raylib, as the library does by its typed code. Its report lands in `.studio-dev/evidence/rust-packaged/`.
+
+The Toolchain sheet's **Install** downloads Rust 1.99.0 with the browser standard library,
+wasm-bindgen 0.2.129 and Binaryen 133, each SHA-256-pinned and shared by every Rust game. Games
+build offline from the vendored crate set and keep the lock they were created with across
+updates. Phones need the person's own Xcode (iPhone) or Android SDK (Android): Genex builds their
+Simulator app and development APK, never runs a device, and labels those exports **Untested on
+real devices**. Rust Mac, Windows and Linux app exports are not built yet, and Windows and Linux
+builds wait for their pinned cross components.
+
+### Default stack and rollback
+
+A new game starts on the stack `defaultStackFor` picks: Rust · wgpu on an Apple-silicon Mac and
+Linux x64, Three.js on Windows, an Intel Mac and an offline first launch with no Rust toolchain
+installed. The `stackDefault` key in the profile's `settings.json` (`StackDefaultSwitch`; no
+Settings control; `SHIPPED_STACK_DEFAULT_SWITCH` in `src/shared/game-project.ts` is the shipped
+value) is the rollback: main reads it into the bootstrap, and `three-js` starts Create game on
+Three.js everywhere, Rust · wgpu one choice away where it is offered. Chat intakes still pick by
+destination (`stackForTargets`). C++ · raylib creation is never
+re-enabled by any switch (`raylib-creation-retired`); existing raylib games keep opening,
+building and exporting. `tests/conformance/stack-default.test.ts` holds the four rollback cases:
+a downgraded Studio opens a Rust game read-only, the game's lock is read back, a kind only a
+newer Genex knows stays read-only, and a reverted switch restores the Three.js default from
+`settings.json` through the bootstrap to Create game's offer (`create-game-ui` drives the dialog). Before a
+release that changes the default or the Rust lock, run `node tests/e2e/run-update-acceptance.mjs`
+([Install, update and recovery acceptance](#install-update-and-recovery-acceptance)).
+
+### Bundle pins
+
+Every package carries pinned native bytes the app verifies before use: the ANGLE builds and the
+SwiftShader split (the Vulkan loader, SwiftShader and its ICD manifest a Rust Linux game ships,
+`resources/swiftshader/linux-x64-swiftshader/<commit12>/`), both pinned in
+`native/angle/bundle-lock.json`, and the Linux sysroot pinned in
+`native/linux-sysroot/bundle-lock.json`. On the `.deb`, `release.yml`, `linux-userns.yml` and
+`rust-linux-host.yml` run `node scripts/ci/rust-linux-host.ts --step bundle-pins` over the
+extracted resources and fail on any byte that is not the pinned one. A new ANGLE build re-pins
+both: `angle.yml` prints the split's `swiftshader` pin and uploads it as
+`swiftshader-linux-x64-<commit12>`. The owner publishes the split and the sysroot archive as
+public release assets; until then the Rust recipe pins no Windows or Linux cross component, so a
+Rust game's Windows and Linux builds stay refused `target-unbuilt` and the export run refuses them
+`lane-missing`. Rust Windows and Linux exports say they were never run on a real GPU.
+
+A game exported as a Mac app is signed ad hoc on the person's Mac. Signing exported games with a
+Developer ID, notarizing and stapling them stays with the owner: the argv exists and runs only for
+a person with `GENEX_EXPORT_SIGN_IDENTITY_OK=1`, and has never been accepted.
+
 ## Install, update and recovery acceptance
 
 Test clean install, launch, terminal, first game, upgrade from the previous supported version,
 data migration, quit during work, relaunch and uninstall on each supported platform. Back up
 owned test games/profile before migration and prove the backup restores. Verify failed or
 partial update recovery separately from a successful download.
+
+`node tests/e2e/run-update-acceptance.mjs` holds the Rust lock rule in disposable profiles: a game
+built on release N's Rust lock builds offline on that lock after N+1 makes a newer one current and
+sweeps (Live and the web export), a sweep that drops a lock a game names fails the build (its
+negative control; `--sweep-referenced-lock` makes the whole run fail), and a fresh profile
+installs the pinned Rust parts from the shared download cache with every download refused (with
+the archives in `.studio-dev/spike-toolchain/downloads`; `GENEX_REQUIRE_TOOLCHAINS=1` fails
+without them). Evidence: `.studio-dev/evidence/update-acceptance/`.
 
 Automatic updates are on from the public launch; see
 [Automatic updates](#automatic-updates). Renamed forks fail the official-feed

@@ -15,6 +15,7 @@
  * exported, so a harness file the in-app agent edited before the move keeps its imports.
  */
 import { applyPlayScript } from "./play-script.ts";
+import { touchesSkipped } from "./native-refusal.ts";
 // A namespace, not named imports: a seed upgrade may keep an older kinds.ts the agent edited, which
 // has no `cruiseFor` or `startKeysFor`, and a missing named import would stop this file loading.
 import * as kinds from "./kinds.ts";
@@ -27,9 +28,30 @@ import { clip } from "./text.ts";
 import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { isRecord } from "./json.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
+import { BuildTarget, type LeaseCapacity, type LeaseGame, acquireFor, leasedJudging } from "./native-contract.ts";
+import { stampedStack } from "./native-loop.ts";
+import { templateMainOf } from "./native-review.ts";
+import { weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
+import { nativeEvidence, withParity } from "./native-evidence.ts";
 import { CORNER_CAMERA, isPassFrame } from "./pass-frames.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CheckEvidence } from "./checks.ts";
+
+/**
+ * The frame verdicts moved to frame-verdicts.ts, so the native evidence pass runs the very same
+ * functions; they are exported from here too, under their old home, for a harness file the
+ * in-app agent edited before the move.
+ */
+export { sameFrameEverywhere, weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
+
+/**
+ * Every window a look is taken through names the build it judges (`acquireWindow` `game`): the
+ * host refuses a C++ · raylib game's preview to a lease that names none. run-dispatch.ts and
+ * chat-dispatch.ts refuse a raylib night on a kept copy without this mark (`servesNative`).
+ */
+export const SERVES_NATIVE = true;
+/** A Rust · wgpu look names its own entry (`src/main.rs`) and carries its stack's facts, never a raylib game's. */
+export const SERVES_RUST = true;
 
 /** One photographed frame: the camera, where the file is, its pixels and the surface it came off. */
 export interface Shot {
@@ -119,6 +141,8 @@ export interface GatherOptions {
   scaffold?: boolean;
   setup?: AnyRecord | null;
   inheritedConsole?: string[];
+  /** The waits before each retry of a native capture refused `device-lost` (native-evidence.ts's default when absent). */
+  deviceLostRetriesMs?: readonly number[];
   /** The state paths the board reads (`statePathsNamedByChecks`): the studio cuts them last. */
   keepPaths?: string[];
   /** Look at this size: a leased window is sized before it loads (`preview.viewport`), never the live view. */
@@ -170,8 +194,6 @@ export interface StepProof {
 
 /** Above this fraction of differing pixels, the user's page and the canvas are two pictures. */
 const USER_VIEW_MISMATCH = 0.02;
-/** Below this lit fraction on every camera, a build renders effectively black. */
-const BLACK_LIT_FRACTION = 0.005;
 /** A page that takes longer than this to say it is ready is warned about: every pass pays that boot. */
 const SLOW_BOOT_MS = 5 * SECOND_MS;
 /** How long a setup waits for the game to settle after its actions: 400 ms unless it says, never over ten seconds. */
@@ -245,6 +267,8 @@ const RENDERER_CRASHED = "the renderer crashed";
 
 /** The sentence a pass with no frame owes its reader; also an observation problem. */
 const NO_FRAME = /^no camera produced a frame/;
+/** A failed capture, as the cameras phase words it: an observation problem, and on a C++ game a failed look. */
+const FAILED_SCREENSHOT = /^screenshot\(.+\) failed/;
 
 /**
  * Every way a look can come back unjudgeable without the build being at fault, in one table —
@@ -283,7 +307,7 @@ export const EvidenceFailure = {
 export type EvidenceFailure = (typeof EvidenceFailure)[keyof typeof EvidenceFailure];
 
 const EVIDENCE_FAILURES: ReadonlyArray<{ match: RegExp; means: readonly ProblemMeaning[] }> = [
-  { match: /^screenshot\(.+\) failed/, means: [ProblemMeaning.Observation, ProblemMeaning.Load] },
+  { match: FAILED_SCREENSHOT, means: [ProblemMeaning.Observation, ProblemMeaning.Load] },
   { match: /could not be attached/, means: [ProblemMeaning.Observation, ProblemMeaning.Load] },
   { match: /no compositor/i, means: [ProblemMeaning.Observation, ProblemMeaning.Load] },
   { match: /display surface/i, means: [ProblemMeaning.Observation, ProblemMeaning.Load] },
@@ -754,8 +778,19 @@ function photographed(shot: { surface?: unknown } | null | undefined, asked = "c
  * Exported for the Autopilot facet loop, which probes a worktree (`root`) through a pooled
  * observation port (`handle`) and files its shots under its own label (`labelPrefix`). With
  * none of those set, this is byte-for-byte the gauntlet's own evidence pass on the live view.
+ *
+ * A lease whose judging target is a desktop build (a Mac-only C++ game on a Mac) is looked at by
+ * the native pass instead (native-evidence.ts): no page probe reaches a native run. A C++ game's
+ * web look carries the parity gates its desktop destinations owe (`withParity`).
  */
-export async function gatherEvidence(
+export async function gatherEvidence(ctx: HarnessCtx, options: GatherOptions): Promise<Evidence> {
+  const leased = leasedJudging(options.handle);
+  if (leased && leased.target !== BuildTarget.Web) return nativeEvidence(ctx, options, { applySetup, consoleProblems });
+  return withParity(ctx, options, await webEvidence(ctx, options), leased);
+}
+
+/** The evidence pass on a page: the web build of any game, as it has always been. */
+async function webEvidence(
   ctx: HarnessCtx,
   {
     run,
@@ -956,6 +991,12 @@ async function loadPage(look: Look): Promise<LookEnd> {
   look.machineKilled = killedByMachine(status);
   if (status.loadError) problems.push(status.loadError);
   if (status.crashed) problems.push(RENDERER_CRASHED);
+  // A load that built nothing leaves no page, or the last good build Live keeps. None of it is
+  // this build, so nothing is driven or photographed (M-1.2: a round's failed challenger once
+  // went out with the older build's frames as its shots). The host's typed fact decides, never
+  // the load error: a page whose subframe failed still built, and is looked at.
+  look.builtNothing = Boolean(status.buildFailed);
+  if (look.builtNothing) look.bootedFor = false;
 }
 
 /**
@@ -1239,7 +1280,8 @@ function driveScriptOf(look: Look): unknown {
  */
 async function driveGame(look: Look): Promise<void> {
   const { ctx, h, run } = look;
-  await applyPlayScript(ctx, driveScriptOf(look), { clock: "step", runId: run.runId, ...h });
+  const played = await applyPlayScript(ctx, driveScriptOf(look), { clock: "step", runId: run.runId, ...h });
+  if (played.refused > 0) look.warnings.push(touchesSkipped(played.refused));
   // A menu is never held on the throttle: the front-end's own worker, or a game that never got into play.
   const onMenu = Boolean(look.play && !look.play.reached);
   const cruise = onMenu ? [] : cruiseOf(run?.game);
@@ -1683,6 +1725,8 @@ async function photographCameras(look: Look): Promise<LookEnd> {
   await chooseCameras(look);
   look.missingCameras = [] as string[];
   look.registeredDefault = true;
+  // The window still shows an older build (loadPage): no frame of it is this build's.
+  if (look.builtNothing) return;
   for (const camera of look.cameraNames) {
     try {
       await shootCamera(look, camera);
@@ -1989,104 +2033,6 @@ async function driveRace(look: Look): Promise<{ state: unknown; ms: number }> {
   return { state, ms };
 }
 
-/**
- * Whose count is this? The facade delegates `capture()` to the game, so a frame the page
- * labelled `game` — and the draw count beside it — is the build's claim about itself, not the
- * studio's read of the canvas. A verdict is only made on the studio's own reads.
- */
-const claimedByGame = (shot: Shot): boolean => shot.stats?.provenance === "game";
-
-/**
- * A frame that drew nothing is not evidence of blankness — it is evidence of no frame. It leaves
- * the blankness census and says so; but if EVERY frame drew nothing, dropping them all would
- * silently delete the verdict, so that is the verdict. Answers the frames the census counts.
- */
-function weighDraws(look: Look): Shot[] {
-  const { problems, shots, warnings } = look;
-  const counted = shots.filter((shot: Shot) => shot.stats);
-  look.counted = counted;
-  const zeroDraw = counted.filter((shot: Shot) => shot.stats?.drawCalls === 0);
-  look.zeroDraw = zeroDraw;
-  look.claimed = claimedByGame;
-  if (counted.length > 0 && zeroDraw.length === counted.length) {
-    // An empty shared base draws nothing because there is nothing in it — the same exemption
-    // the no-draw proof above waits for. Anywhere else it is the verdict.
-    if (look.emptyScene) warnings.push("the game drew nothing for any camera");
-    else if (zeroDraw.every(claimedByGame))
-      warnings.push(
-        "no camera frame reported a draw, and every frame is the game's own picture rather than the studio's read of the canvas — the count is the build's claim about itself, not a verdict",
-      );
-    else problems.push("the game drew nothing for any camera");
-    return counted;
-  }
-  if (!zeroDraw.length) return counted;
-  warnings.push(
-    `${zeroDraw.length} camera frame(s) drew nothing (${zeroDraw.map((shot: Shot) => shot.camera).join(", ")}) — those frames are not evidence of blankness`,
-  );
-  return counted.filter((shot: Shot) => shot.stats?.drawCalls !== 0);
-}
-
-/**
- * The pictures themselves can lie to a vision judge (it politely describes a black JPEG), so the
- * pixel counts are the verdict on blankness — but only when every camera agrees: one dark angle
- * is composition, three is a build that renders nothing.
- */
-function weighBlackness(look: Look, statBearing: Shot[]): void {
-  const blackEverywhere =
-    statBearing.length > 0 &&
-    statBearing.every((shot: Shot) => shot.stats?.canvas && shot.stats.litFraction < BLACK_LIT_FRACTION);
-  if (!look.emptyScene && blackEverywhere)
-    look.problems.push("every camera renders effectively black (<0.5% pixels above luma 8)");
-}
-
-/** When every camera returned the same frame: an overlay, a dead camera contract, a stale picture, or one viewpoint. */
-function sameFrameEverywhere(look: Look): void {
-  const { canvasSourced, declaredViewpoints, problems, uiEntries, uiPrimary, warnings } = look;
-  // Several viewpoints drawn on the canvas, all one picture: the camera wiring switches nothing.
-  const wiringDead = declaredViewpoints.length > 1 && canvasSourced;
-  if (uiPrimary) {
-    warnings.push(
-      `a full-screen overlay covers the game (${uiEntries.slice(0, MAX_UI_ENTRIES).join(", ") || "the page"}) — every camera frame is the same picture behind it; judge user:view`,
-    );
-  } else if (wiringDead && look.camerasOwned === false) {
-    warnings.push(
-      "every camera returned the same frame — the camera wiring is the entry owner's, not this part's: judge it on its other evidence",
-    );
-  } else if (wiringDead) {
-    problems.push("every camera returned the same frame — debugCamera switches nothing, the cameras contract is dead");
-  } else if (declaredViewpoints.length > 1) {
-    warnings.push(
-      "every camera returned the same frame, but the frames came off the compositor and not the canvas — the picture may be stale rather than the camera wiring dead",
-    );
-  } else {
-    warnings.push("this build declares one viewpoint — identical frames are its design, not a dead debugCamera");
-  }
-}
-
-/**
- * Different cameras returning byte-identical frames is one view wearing several labels — but
- * only when the game declares more than one viewpoint and the frames came off the canvas. A game
- * with one camera is photographed three times by the floor, and identical frames there are its
- * design; a full-screen overlay is a different sentence again.
- */
-function weighDuplicates(look: Look): void {
-  const { declaredViewpoints, shots, warnings } = look;
-  const withPixels = shots.filter((shot: Shot) => shot.base64);
-  look.withPixels = withPixels;
-  look.canvasSourced = shots.every((shot: Shot) => shot.surface !== "page");
-  const duplicate = shots.find((shot: Shot, index: number) =>
-    shots.slice(0, index).some((other: Shot) => other.base64 && other.base64 === shot.base64),
-  );
-  look.duplicate = duplicate;
-  if (look.emptyScene) return;
-  const allSame = withPixels.length > 1 && withPixels.every((shot: Shot) => shot.base64 === withPixels[0].base64);
-  if (allSame) sameFrameEverywhere(look);
-  else if (duplicate && declaredViewpoints.length > 1)
-    warnings.push(
-      `the ${duplicate.camera} camera returned the same frame as another camera — each named camera must frame a distinct view; fix the camera wiring in main.js`,
-    );
-}
-
 /** An empty shared base: its cameras must at least be placed apart, and nothing visual has been validated. */
 function weighEmptyBase(look: Look): void {
   const { cameraPoses, problems, warnings } = look;
@@ -2100,6 +2046,9 @@ function weighEmptyBase(look: Look): void {
 
 /** Frames that drew nothing, blank pixels on every camera, and one view wearing several labels. */
 async function weighFrames(look: Look): Promise<LookEnd> {
+  // A compiled game's cameras are wired in its own entry (main.cpp, main.rs), never in a main.js.
+  const compiled = stampedStack(look.run);
+  if (compiled) look.entry = templateMainOf(compiled);
   weighBlackness(look, weighDraws(look));
   weighDuplicates(look);
   weighEmptyBase(look);
@@ -2246,6 +2195,9 @@ async function reportLook(look: Look): Promise<LookEnd> {
       surface: judged?.surface ?? "canvas",
       pageUi: look.pageUi ? { entries: uiEntries, coverage: uiCoverage, primary: uiPrimary } : null,
       canvas: judgedCanvas(judged),
+      // A compiled game's pass says so: its checks are scored on what its page can measure, and
+      // its parity gate reads which viewpoints it declares and whether its build loaded at all.
+      ...(stampedStack(look.run) ? compiledFacts(look) : {}),
       // Only when there is something to say, so a game with no front-end, on a window nobody
       // killed, reports exactly what it always did.
       ...(look.play ? { play: look.play } : {}),
@@ -2257,6 +2209,17 @@ async function reportLook(look: Look): Promise<LookEnd> {
   };
 }
 
+/** What a compiled game's look adds: its stack, its declared viewpoints, its load error and whether a capture failed. */
+function compiledFacts(look: Look): AnyRecord {
+  const { problems, shots } = look;
+  return {
+    stack: stampedStack(look.run),
+    viewpoints: look.declaredViewpoints ?? [],
+    loadError: look.status?.loadError ?? null,
+    captureFailed: shots.length === 0 || problems.some((problem: unknown) => FAILED_SCREENSHOT.test(String(problem))),
+  };
+}
+
 // ── windows: the preview a look is taken through ─────────────────────────────────────────────
 
 /**
@@ -2264,19 +2227,38 @@ async function reportLook(look: Look): Promise<LookEnd> {
  * no queue — `preview.acquire` throws the instant every window is leased — so a few asks a few
  * seconds apart usually find one. Null when there is none, or when this studio has no pool at all
  * (`pooled: false`: its only window is the live one, and there is nothing to wait for).
+ *
+ * Every ask names the build the window judges (native-contract.ts `acquireFor`): `game`'s judging
+ * target, the web build for a game that names no destinations.
  */
 export async function acquireWindow(
   ctx: HarnessCtx,
   label: string,
-  { pooled = true, retriesMs = WINDOW_RETRIES_MS }: { pooled?: boolean; retriesMs?: readonly number[] } = {},
+  {
+    pooled = true,
+    retriesMs = WINDOW_RETRIES_MS,
+    game = {},
+  }: { pooled?: boolean; retriesMs?: readonly number[]; game?: LeaseGame } = {},
 ): Promise<string | null> {
   if (!pooled) return null;
+  const capacity = await judgingCapacity(ctx, game);
+  const call = (method: typeof HostMethod.PreviewAcquire, params: AnyRecord) => ctx.call(method, params);
   for (let attempt = 0; ; attempt++) {
-    const lease = await ctx.call(HostMethod.PreviewAcquire, { label }).catch(() => null);
+    const lease = await acquireFor(call, game, capacity, { label }).catch(() => null);
     if (lease?.handle) return lease.handle;
     if (attempt >= retriesMs.length || ctx.cancelled) return null;
     await sleep(retriesMs[attempt]);
   }
+}
+
+/**
+ * What the host says about itself, asked only when the judging target depends on it: a game
+ * whose destinations leave out Browser is judged on a build this host runs, if it has one.
+ */
+async function judgingCapacity(ctx: HarnessCtx, game: LeaseGame): Promise<LeaseCapacity> {
+  const targets = game.destinations?.targets;
+  if (!targets || targets.includes(BuildTarget.Web)) return {};
+  return (await ctx.call(HostMethod.PreviewCapacity, {}).catch(() => null)) ?? {};
 }
 
 /**
@@ -2297,13 +2279,16 @@ export async function withLease<T>(
     borrow = false,
     pooled = true,
     retriesMs = WINDOW_RETRIES_MS,
+    game = {},
   }: {
     borrow?: boolean;
     pooled?: boolean;
     retriesMs?: readonly number[];
+    /** The game the look judges: its window names that game's judging target. */
+    game?: LeaseGame;
   } = {},
 ): Promise<T | { noWindow: string }> {
-  const handle = await acquireWindow(ctx, label, { pooled, retriesMs });
+  const handle = await acquireWindow(ctx, label, { pooled, retriesMs, game });
   const noneFree = !handle && pooled;
   if (noneFree && !borrow) return noWindowFree(ctx);
   try {

@@ -7,7 +7,7 @@
 import { lstat, readdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { saysIgnoreLine } from "../shared/project-workspace.ts";
-import { pathExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
+import { pathExists, readRegularFile, writeFileNoFollow, writeNewFile } from "./fsx.ts";
 import { isScannedChild } from "./project-shape.ts";
 import { git, gitOrNull } from "./snapshots.ts";
 
@@ -117,15 +117,20 @@ export async function ignoreRulesToWrite(dir: string, extra: readonly string[] =
 /**
  * Top up a folder's `.gitignore` with the rules the studio needs and `extra` (the facts' lines);
  * what the user wrote is kept. A `.gitignore` that is a link or no plain file is left alone, and
- * nothing is ever written through a link.
+ * nothing is ever written through a link. A missing one is created exclusively, so a link or file
+ * that appears at its name meanwhile (even a dangling link) is neither written through nor replaced.
  */
 export async function ensureIgnoreRules(dir: string, header = "", extra: readonly string[] = []): Promise<void> {
   const current = await ownIgnoreFile(dir);
   if (current === undefined) return;
   const missing = missingIgnoreRules(current, extra);
   if (missing.length === 0) return;
-  const before = current === null ? header : `${current.replace(/\s*$/, "")}\n`;
-  await writeFileNoFollow(path.join(dir, IGNORE_FILE), `${before}${missing.join("\n")}\n`);
+  const file = path.join(dir, IGNORE_FILE);
+  if (current === null) {
+    await writeNewFile(file, `${header}${missing.join("\n")}\n`);
+    return;
+  }
+  await writeFileNoFollow(file, `${current.replace(/\s*$/, "")}\n${missing.join("\n")}\n`);
 }
 
 /**

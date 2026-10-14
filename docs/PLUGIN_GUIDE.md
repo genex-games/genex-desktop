@@ -72,9 +72,10 @@ export async function activate(host) {
   runs. Studio records no call pair for it: it is a step of the harness's loop, and it runs in Plan
   mode unless the harness marks it a write (`checkpoint: true`: a save, a shot, a play or an editor change). `"agents"` is the default; any other value is refused.
 - `action` is never an agent tool. It is what a button or a panel invokes.
-- `ctx` carries `project`, `directory`, `threadId`, an `AbortSignal`, a `callId` and `host`. **Do
-  not store it**: concurrent calls can belong to different games and different workers, and host
-  services answer only during an active invocation.
+- `ctx` carries `project`, `directory`, `threadId`, an `AbortSignal`, a `callId` and `host`, and
+  the bound game's `stack` when the host knows it (see [Games of three stacks](#games-of-three-stacks)).
+  **Do not store it**: concurrent calls can belong to different games and different workers, and
+  host services answer only during an active invocation.
 - The host never retries a failed invocation. Persist a remote reference before you return, and
   reconcile an uncertain submission instead of creating it again. Cancellation stops local
   waiting; it promises nothing about remote work or refunds.
@@ -167,6 +168,8 @@ inline and put a long guide in a file:
   16 references per skill, 128 KiB per file and 1 MiB of skill files in all. `plugin:doctor`
   checks them with the real validator. API 1 and 2 manifests keep their old leniency: a repeated
   skill name is dropped, empty text is allowed and other skill keys are ignored.
+- A skill may name the game stacks it serves with `stacks`; `rust-wgpu` needs `apiVersion: 4`.
+  The rules are in [plugins.md](plugins.md#skills).
 - A skill for one kind of project names its facts (API 3): `"facts": ["toy-project"]` keeps it out
   of every other game's brief, and `"tools": ["build"]` keeps it only while one of your tools it
   explains reaches the session. A tool may name `facts` the same way, and so may an MCP server
@@ -180,6 +183,23 @@ inline and put a long guide in a file:
 - The trust dialog lists your skills, and an update marks each new or changed one and names each
   removed one. A hot reload that edits a skill reports the change on the plugin's page instead of
   applying it silently.
+
+### Games of three stacks
+
+A game is one of three stacks: `three-js` (a browser game on Three.js), `raylib-cpp` (a C++ ·
+raylib game) or `rust-wgpu` (a Rust game on the genex facade, built for desktop, phones and the
+web). `ctx.stack` names it on a call bound to a game, so a backend can deliver formats that stack
+loads; a skill's `stacks` keeps guidance from games it does not fit.
+
+- `rust-wgpu` exists from `apiVersion: 4`. API 4 changes nothing else, so moving a plugin up is
+  one line. The scaffold still declares API 2, and the catalog accepts API 1–3 for now: a plugin
+  you submit there stays on API 3 or earlier until the catalog check learns API 4.
+- A plugin on API 1–3 keeps working for every game. Bound to a Rust game, its backend gets no
+  `stack` at all, never a value its SDK does not name; and a skill listing both `three-js` and
+  `raylib-cpp` still reaches Rust games, because on those APIs that list meant every game.
+- When your guidance differs per stack, write one skill per stack, as Local Blender does: its
+  `local-modeling` card (Three.js and C++ · raylib) loads the model with `GLTFLoader`, and
+  `local-modeling-rust` loads it with `gfx.assets().model`.
 
 ### Knowing your kind of project
 
@@ -513,7 +533,8 @@ its catalog policy lists, at an address ending in `/<id>/<version>/<sha256>.json
 
 ## 9. An independent native plugin
 
-Use `src/plugins/blender/plugin.json` and `backend.ts` as the complete API 3 example. Its backend
+Use `src/plugins/blender/plugin.json` and `backend.ts` as the complete example (API 4; its native
+declarations need API 3 or later). Its backend
 imports only the public SDK type and its own wrapper. Adapt the runtime/version/pin and fixed job
 recipe, not Studio internals. Keep credentials, process launch parameters and permission grants
 out of agent tool schemas. Tools receive relative input references and return delivered relative

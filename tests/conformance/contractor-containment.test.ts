@@ -10,11 +10,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { closeSync, constants as fsConstants, openSync } from "node:fs";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import {
+  type ChmodUnreadableIo,
+  chmodUnreadable,
   LOCK_MARKER,
   lockUnowned,
   releaseLocks,
@@ -289,6 +291,124 @@ describe("PH-2: the lock marker is hostile input", () => {
     await releaseLocks(ctx.cwd, record);
     assert.equal(await modeOf(file), 0o200);
   });
+});
+
+/**
+ * A file its owner cannot read is locked and released without reading it. GNU coreutils' chmod
+ * (8.32 on the CI runner) has no `-h`, so on Linux the lock left a write-only file writable and the
+ * release left a locked one unwritable: there the mode changes through a handle opened without
+ * following links (write-only, or Linux's `O_PATH` for a mode-0 file, through `/proc/self/fd`).
+ */
+describe("a file its owner cannot read is locked and released on Linux without chmod -h", () => {
+  /** Linux's O_PATH, which Node does not export. */
+  const LINUX_O_PATH = 0o10000000;
+  const lockBits = (mode: number) => mode & ~0o222;
+  const releaseBits = (mode: number) => mode | 0o200;
+
+  /** A Linux file system that records what is asked of it; `opens` answers each open in turn. */
+  function linuxIo(opens: Array<{ fd: number; mode: number; file?: boolean } | { code: string }>) {
+    const seen = {
+      opened: [] as number[],
+      handleModes: [] as number[],
+      pathModes: [] as Array<{ file: string; mode: number }>,
+      execs: [] as string[][],
+      closed: 0,
+    };
+    const io: ChmodUnreadableIo & { open(file: string, flags: number): Promise<unknown> } = {
+      platform: "linux",
+      lstat: async () => ({ isFile: () => true, mode: 0o100200 }),
+      chmod: async (file, mode) => void seen.pathModes.push({ file, mode }),
+      execFile: async (file, args) => void seen.execs.push([file, ...args]),
+      open: async (_file, flags) => {
+        seen.opened.push(flags);
+        const answer = opens.shift();
+        if (!answer) throw new Error("unexpected open");
+        if ("code" in answer) throw Object.assign(new Error(answer.code), { code: answer.code });
+        return {
+          fd: answer.fd,
+          stat: async () => ({ isFile: () => answer.file ?? true, mode: answer.mode }),
+          chmod: async (mode: number) => void seen.handleModes.push(mode),
+          close: async () => void seen.closed++,
+        };
+      },
+    };
+    return { io, seen };
+  }
+
+  it("locks a write-only file through a write-only handle that follows no link, never chmod -h", async () => {
+    const { io, seen } = linuxIo([{ fd: 7, mode: 0o100200 }]);
+    await chmodUnreadable("/work/index.html", lockBits, io);
+    assert.deepEqual(seen.execs, [], "no chmod -h, which GNU chmod does not have");
+    assert.equal(seen.opened.length, 1);
+    const [flags = 0] = seen.opened;
+    for (const [name, bit] of Object.entries({
+      O_WRONLY: fsConstants.O_WRONLY,
+      O_NONBLOCK: fsConstants.O_NONBLOCK,
+      O_NOFOLLOW: fsConstants.O_NOFOLLOW,
+    }))
+      if (typeof bit === "number") assert.equal(flags & bit, bit, `opened with ${name}`);
+    for (const [name, bit] of Object.entries({ O_TRUNC: fsConstants.O_TRUNC, O_CREAT: fsConstants.O_CREAT }))
+      assert.equal(flags & bit, 0, `never with ${name}`);
+    assert.deepEqual(seen.handleModes, [0o000], "the write bit goes, through the handle");
+    assert.equal(seen.closed, 1);
+  });
+
+  it("releases a mode-0 file through an O_PATH handle and /proc/self/fd, never chmod -h", async () => {
+    const { io, seen } = linuxIo([{ code: "EACCES" }, { fd: 9, mode: 0o100000 }]);
+    await chmodUnreadable("/work/index.html", releaseBits, io);
+    assert.deepEqual(seen.execs, []);
+    assert.equal(seen.opened[1], LINUX_O_PATH | fsConstants.O_NOFOLLOW, "a path handle that follows no link");
+    assert.deepEqual(seen.pathModes, [{ file: "/proc/self/fd/9", mode: 0o200 }]);
+    assert.equal(seen.closed, 1);
+  });
+
+  it("changes nothing that is not a regular file once opened", async () => {
+    const { io, seen } = linuxIo([{ fd: 7, mode: 0o010200, file: false }]);
+    await chmodUnreadable("/work/index.html", lockBits, io);
+    assert.deepEqual(seen.handleModes, []);
+    assert.deepEqual(seen.pathModes, []);
+    assert.deepEqual(seen.execs, []);
+  });
+
+  // The first open is the real one: a link, a FIFO or a folder at the name never reaches its
+  // target, never blocks, and nothing is changed or run.
+  const hostile: Array<{ name: string; plant(at: string, outside: string): Promise<void> }> = [
+    { name: "a link to an outside write-only file", plant: (at, outside) => symlink(outside, at) },
+    {
+      name: "a FIFO",
+      plant: async (at) => {
+        execFileSync("/usr/bin/mkfifo", [at]);
+        await chmod(at, 0o200);
+      },
+    },
+    { name: "a folder", plant: (at) => mkdir(at, { mode: 0o300 }) },
+    { name: "a dangling link", plant: (at) => symlink(path.join(path.dirname(at), "gone"), at) },
+  ];
+  for (const row of hostile) {
+    it(`refuses ${row.name} without following it`, { skip: WINDOWS && "Windows has no write-only files" }, async () => {
+      const root = await tmpDir("locks-linux-hostile-");
+      const outside = path.join(root, "outside");
+      await writeFile(outside, "secret");
+      await chmod(outside, 0o200);
+      const at = path.join(root, "work", "index.html");
+      await mkdir(path.dirname(at));
+      await row.plant(at, outside);
+      const before = (await lstat(at)).mode;
+      const execs: string[][] = [];
+      const io = {
+        platform: "linux" as const,
+        lstat: (file: string) => lstat(file),
+        chmod: (file: string, mode: number) => chmod(file, mode),
+        execFile: async (file: string, args: readonly string[]) => void execs.push([file, ...args]),
+        open: (file: string, flags: number) => open(file, flags),
+      };
+      await chmodUnreadable(at, lockBits, io).catch(() => {});
+      assert.equal((await stat(outside)).mode & 0o7777, 0o200, "the outside file keeps its mode");
+      assert.equal((await lstat(at)).mode, before, "the planted entry keeps its mode");
+      assert.deepEqual(execs, [], "nothing was run");
+      await chmod(outside, 0o600);
+    });
+  }
 });
 
 /** M4: a FIFO opened for reading blocks until a writer comes, and holds a threadpool thread meanwhile. */

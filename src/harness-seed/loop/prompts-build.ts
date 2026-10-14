@@ -7,8 +7,22 @@
  * from there.
  */
 import { roleEngine, RoleKey, toolCall } from "./model-roles.ts";
+import { cppBaseBrief, cppContractWiringAsk, isNativeShape } from "./native-briefs.ts";
+import { isRustShape, rustBaseBrief, rustContractWiringAsk } from "./rust-briefs.ts";
 import { scopeLines } from "./scope-prompts.ts";
 import type { AnyRecord, Run } from "../types/harness.d.ts";
+
+/**
+ * A raylib run reads its briefs here (`native-briefs.ts` for a C++ game's words): a copy of this
+ * module kept from before C++ games has no such branch, so a raylib run refuses to start on it.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * A Rust · wgpu run reads its base brief and contract sentence here (`rust-briefs.ts`): a copy
+ * kept from before Rust games would hand a Rust game JavaScript words, so a Rust run refuses it.
+ */
+export const SERVES_RUST = true;
 
 /**
  * The one job that makes somebody's own game judgeable: its entry loads the studio contract, so
@@ -16,7 +30,9 @@ import type { AnyRecord, Run } from "../types/harness.d.ts";
  * this sentence, and so is the step a director's run takes first when the game arrived without
  * it (director.ts `contractBrief`) — one wording, because the two are the same task.
  */
-export function contractWiringAsk(shape: { main?: string } | null | undefined): string {
+export function contractWiringAsk(shape: { main?: string; kind?: string } | null | undefined): string {
+  if (isRustShape(shape)) return rustContractWiringAsk(shape);
+  if (isNativeShape(shape)) return cppContractWiringAsk(shape);
   const entryMain = shape?.main ?? "src/main.js";
   return `Add the two lines to ${entryMain} (or a module it imports): \`import { installStudio } from "./studio.js"\` — the contract module the studio keeps in src/, with its types in src/studio.d.ts beside it — and \`installStudio({ renderer, player })\` with this game's real renderer and a player() locator, once the renderer exists. Two lines is the whole ask: the studio's own code is already on the page and finds the scene, the camera and the frames from what the game draws; the renderer and the player are the two it cannot guess.`;
 }
@@ -33,8 +49,8 @@ export interface BasePlan {
   integrationNotes?: string;
 }
 
-/** What the base builder is told about the game's shape: its entry, its page and its build. */
-type BriefShape = { main?: string; entry?: string; build?: string | null } | null;
+/** What the base builder is told about the game's shape: its entry, its page, its build and its kind. */
+type BriefShape = { main?: string; entry?: string; build?: string | null; kind?: string } | null;
 /** The run as the base brief reads it. */
 type BriefRun = Pick<Run, "goal" | "reference" | "engine" | "builderEngine"> & { runId?: string; scope?: unknown };
 /** The base plan's facets. */
@@ -55,6 +71,8 @@ export function baseBrief({
   ownShape?: boolean;
   setup?: AnyRecord | null;
 }): string {
+  if (isRustShape(shape)) return rustBaseBrief({ run, plan, projectLabel, shape, ownShape, setup });
+  if (isNativeShape(shape)) return cppBaseBrief({ run, plan, projectLabel, shape, ownShape, setup });
   const facets = plan.facets ?? [];
   if (!ownShape && facets.length === 0) return startingSceneBrief(run, projectLabel, setup);
   return [

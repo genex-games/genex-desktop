@@ -39,7 +39,7 @@ export class TurnHandle {
   }
 
   /**
-   * Head-checked append inside this turn, with one resync.
+   * Head-checked append inside this turn, with one additive fallback.
    *
    * The optimistic check catches a *lost update* — another writer that advanced the thread while
    * this turn was mid-flight. But a turn is not the thread's only legitimate writer: a tool takes

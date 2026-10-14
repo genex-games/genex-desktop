@@ -1,0 +1,23 @@
+# The adapter's GPU-visible memory, read through wgpu's hal (FFI over `unsafe`). Its own crate so
+# genex-render stays safe Rust: an eject forks genex-render into a game, where the lane's
+# `-F unsafe_code` holds, and leaves this crate the store's (`RUST_ENGINE_KEPT_CRATES`).
+[package]
+name = "genex-gpu-memory"
+description = "The GPU-visible memory a native backend reports for a wgpu adapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wgpu = { workspace = true }
+
+# Metal's recommended working set is read through the Objective-C runtime; objc2 is already in
+# the lock through wgpu's Metal backend.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = { workspace = true }

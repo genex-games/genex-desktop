@@ -1,0 +1,153 @@
+# The genex runtime workspace (M0a spike; M1.12 lands it on dev). The host owns this manifest and
+# its lock: games never carry a Cargo.toml, and crate work packages add dependencies only from
+# `[workspace.dependencies]` below (each pinned to the version `vendor-allowlist.toml` vendored).
+#
+# Every cargo command runs through the env helper, offline, against the vendored tree:
+#   bash scripts/spike/rust-wgpu/rust-env.sh cargo test -p genex --offline --locked
+#
+# Determinism (plan "The game API agents write"): Rapier's `enhanced-determinism` turns on
+# `glamx/scalar-math` and `glamx/libm`, so by feature unification every glam 0.33 user in this
+# lock runs scalar libm math and glam's Vec4/Quat/Mat4 lose `repr(align(16))`. GPU-facing structs
+# therefore never use glam types: they are `#[repr(C)]` structs of explicit `[f32; N]` arrays with
+# bytemuck and hand padding (README.md, "Renderer rule").
+
+[workspace]
+resolver = "3"
+members = [
+  "crates/genex",
+  "crates/genex-core",
+  "crates/genex-studio",
+  "crates/genex-render",
+  "crates/genex-hud",
+  "crates/genex-frames",
+  "crates/genex-gpu-memory",
+  "crates/genex-assets",
+  "crates/genex-audio",
+  "crates/genex-platform-desktop",
+  "crates/genex-platform-web",
+  "crates/genex-platform-ios",
+  "crates/genex-platform-android",
+  # Every example game is a member (the pond, and M2.19's `custom-pass`): an example folder holds
+  # its own Cargo.toml, so a new one needs no edit here, only its lock lines.
+  "examples/*",
+]
+default-members = ["crates/genex"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+repository = "https://github.com/genex-games/genex-desktop"
+
+[workspace.lints.rust]
+# Game code is compiled with `-F unsafe_code` by the lane; runtime crates that need FFI (frames,
+# the iOS and Android shells) allow it in their own lib.rs with the reason next to it.
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+
+[workspace.dependencies]
+# Workspace crates.
+genex = { path = "crates/genex", version = "0.1.0" }
+genex-core = { path = "crates/genex-core", version = "0.1.0" }
+genex-studio = { path = "crates/genex-studio", version = "0.1.0" }
+genex-render = { path = "crates/genex-render", version = "0.1.0" }
+genex-hud = { path = "crates/genex-hud", version = "0.1.0" }
+genex-frames = { path = "crates/genex-frames", version = "0.1.0" }
+genex-gpu-memory = { path = "crates/genex-gpu-memory", version = "0.1.0" }
+genex-assets = { path = "crates/genex-assets", version = "0.1.0" }
+genex-audio = { path = "crates/genex-audio", version = "0.1.0" }
+genex-platform-desktop = { path = "crates/genex-platform-desktop", version = "0.1.0" }
+genex-platform-web = { path = "crates/genex-platform-web", version = "0.1.0" }
+genex-platform-ios = { path = "crates/genex-platform-ios", version = "0.1.0" }
+genex-platform-android = { path = "crates/genex-platform-android", version = "0.1.0" }
+
+# Renderer: WebGPU-core backends only, never a GL feature (the vendored-set gate refuses glow).
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "webgpu", "wgsl", "fragile-send-sync-non-atomic-wasm"] }
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+# glam 0.33.x only (kira and glamx need ^0.33); scalar-math + libm named here too, so the facade
+# keeps libm math even in a crate graph without Rapier.
+glam = { version = "0.33.12", features = ["scalar-math", "libm", "bytemuck", "mint", "serde"] }
+
+# Window, input, HUD.
+winit = { version = "=0.30.13" }
+raw-window-handle = "0.6.2"
+egui = { version = "=0.36.2", features = ["bytemuck"] }
+# Only the painter (`egui_wgpu::Renderer`): its `winit` feature would pull winit, and so
+# android-activity with no activity chosen, into every phone build of the facade.
+egui-wgpu = { version = "=0.36.2", default-features = false, features = ["macos-window-resize-jitter-fix", "fragile-send-sync-non-atomic-wasm"] }
+egui-winit = { version = "=0.36.2", default-features = false, features = ["bytemuck", "clipboard", "wayland", "x11"] }
+gilrs = "0.11.2"
+pollster = "0.4.0"
+
+# Physics.
+rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize"] }
+
+# Audio (symphonia 0.6 is kira's own copy; one in the lock).
+kira = { version = "=0.12.5", default-features = false, features = ["cpal", "mp3", "ogg", "vorbis", "flac", "wav", "pcm"] }
+cpal = { version = "0.18.2" }
+symphonia = { version = "=0.6.1", default-features = false }
+
+# Assets.
+gltf = { version = "=1.4.1", features = ["import", "utils", "names", "extras", "KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "hdr", "exr", "dds", "gif", "bmp", "qoi"] }
+
+# Core, protocol, saves. serde_json keeps object members in insertion order, as the C++ json.h
+# does, so probes merge in registration order and the checksum dump is order-stable.
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+postcard = { version = "1.1.3", features = ["alloc"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
+libm = "0.2.16"
+log = "0.4.34"
+thiserror = "2.0.21"
+toml = "1.1.6"
+
+# macOS / iOS.
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-metal = "=0.3.2"
+objc2-io-surface = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-ui-kit = "0.3.2"
+block2 = "0.6.2"
+mach2 = "0.4.3"
+
+# Windows: the studio pipe is opened overlapped (std has no overlapped I/O). The version is the
+# one the lock already resolves for winit/wgpu.
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+# Unix test doubles only (std has no signal API).
+libc = "=0.2.190"
+
+# Web.
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlCanvasElement", "Navigator", "Gpu", "Storage", "console", "Performance"] }
+console_error_panic_hook = "0.1.7"
+
+# Android (GameActivity pinned to android-activity 0.6.1; M0a.16 picks the activity).
+android-activity = { version = "=0.6.1" }
+ndk = "0.9.0"
+ndk-context = "0.1.1"
+jni = "0.21.1"
+android_logger = "0.15.1"
+
+# The initial game allowlist (plan "Agent policy"): `fastrand` seeded from ctx.rng only.
+noise = "0.9.0"
+fastrand = "2.5.0"
+
+# Tests.
+trybuild = "1.0.121"
+wasm-bindgen-test = "0.3.79"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

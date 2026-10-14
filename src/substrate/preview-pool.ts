@@ -13,6 +13,8 @@
  */
 import { shortId } from "./ids.ts";
 import { DEFAULT_BUILDERS, LEAD_WINDOWS, MAX_BUILDERS } from "../shared/builders.ts";
+import { BuildTarget } from "../shared/game-project.ts";
+import { NATIVE_LEASES_MAX } from "../shared/native-contract.ts";
 import type { PreviewPort } from "./preview-port.ts";
 
 export const LIVE_HANDLE = "live";
@@ -32,6 +34,7 @@ export interface ViewSize {
 
 const MESSAGE = {
   NoHeadless: "this build has no headless preview capability — only the live view exists",
+  NoNative: (target: string) => `this build has no native runs for ${target}`,
   BadViewport: "a window size is two finite positive numbers of pixels (width, height)",
   NotALease: (handle: string) => `only a leased pooled window changes size, never ${handle}`,
   NoViewport: (handle: string) => `preview window ${handle} cannot change size`,
@@ -45,12 +48,30 @@ export interface PreviewLease {
   port: PreviewPort;
 }
 
+/** What a lease was taken for: the build it judges (null when it named none), who gives it back, and its kind. */
+export interface PreviewLeaseFacts {
+  label: string;
+  target: BuildTarget | null;
+  owner: string | null;
+  /** A native lease (a headless run of a C++ game) rather than a hidden window. */
+  native: boolean;
+}
+
+/** A target a native lease serves: any destination but the browser. */
+const isNativeTarget = (target: BuildTarget | undefined): target is BuildTarget =>
+  target !== undefined && target !== BuildTarget.Web;
+
 export interface PreviewPoolOptions {
   live: PreviewPort;
   /** Absent = this build has no headless capability; `acquire` then refuses loudly. */
   createHeadless?: (options?: { purpose?: "optimization" }) => Promise<PreviewPort>;
   /** Max concurrent headless leases (the live view is not counted). */
   max?: number;
+  /**
+   * A native lease for a C++ game's desktop build (a headless run through the native registry):
+   * what `acquire({ target })` opens for a target other than the browser. Absent = no native leases.
+   */
+  createNative?: (options: { target: BuildTarget; owner?: string }) => Promise<PreviewPort>;
 }
 
 /**
@@ -69,9 +90,14 @@ export const DEFAULT_POOL_MAX = DEFAULT_BUILDERS + LEAD_WINDOWS;
 export class PreviewPool {
   readonly #live: PreviewPort;
   readonly #createHeadless: ((options?: { purpose?: "optimization" }) => Promise<PreviewPort>) | undefined;
+  readonly #createNative: PreviewPoolOptions["createNative"];
   #max: number;
   /** Hidden windows held, opening or still closing: what the ceiling (and the overflow past it) counts. */
   #reserved = 0;
+  /** Native leases held, opening or still closing: counted apart, against `NATIVE_LEASES_MAX`. */
+  #nativeReserved = 0;
+  /** Native leases waiting for one to be given back, in the order they asked. */
+  readonly #nativeWaiters = new Set<() => void>();
   readonly #creating = new Set<Promise<PreviewPort>>();
   readonly #retiring = new Map<string, Promise<void>>();
   /** The lease ceiling, for schedulers that size parallelism to it. */
@@ -87,7 +113,7 @@ export class PreviewPool {
    * `owner` names who gives a lease back when its own `finally` can no longer run — a harness
    * boot (see {@link PreviewPool.releaseOwnedBy}). Leases the host holds for itself carry none.
    */
-  readonly #leases = new Map<string, { port: PreviewPort; label: string; owner?: string; resized?: boolean }>();
+  readonly #leases = new Map<string, { port: PreviewPort; facts: PreviewLeaseFacts; resized?: boolean }>();
   /**
    * The stand-in, while it is open. It is not a lease: it replaces the live view the harness used
    * to drive, so it neither takes a builder's window nor counts toward `leaseCount`.
@@ -100,11 +126,23 @@ export class PreviewPool {
   constructor(options: PreviewPoolOptions) {
     this.#live = options.live;
     this.#createHeadless = options.createHeadless;
+    this.#createNative = options.createNative;
     this.#max = Math.max(0, options.max ?? DEFAULT_POOL_MAX);
   }
 
+  /** Hidden windows leased: native leases are counted apart ({@link PreviewPool.nativeLeaseCount}). */
   get leaseCount(): number {
-    return this.#leases.size;
+    return [...this.#leases.values()].filter((lease) => !lease.facts.native).length;
+  }
+
+  /** Native leases held now. */
+  get nativeLeaseCount(): number {
+    return [...this.#leases.values()].filter((lease) => lease.facts.native).length;
+  }
+
+  /** Whether this build opens native leases at all. */
+  get native(): boolean {
+    return Boolean(this.#createNative);
   }
 
   /** Whether this build can open hidden windows at all. */
@@ -112,8 +150,14 @@ export class PreviewPool {
     return Boolean(this.#createHeadless);
   }
 
-  leases(): Array<{ handle: string; label: string }> {
-    return [...this.#leases.entries()].map(([handle, lease]) => ({ handle, label: lease.label }));
+  leases(): Array<{ handle: string } & PreviewLeaseFacts> {
+    return [...this.#leases.entries()].map(([handle, lease]) => ({ handle, ...lease.facts }));
+  }
+
+  /** What the lease `handle` was taken for, or null when no lease has that handle. */
+  leaseOf(handle: string): PreviewLeaseFacts | null {
+    const lease = this.#leases.get(handle);
+    return lease ? { ...lease.facts } : null;
   }
 
   /**
@@ -127,7 +171,10 @@ export class PreviewPool {
     owner?: string;
     overflow?: boolean;
     signal?: AbortSignal;
+    /** The build the lease judges; absent, or the browser, is a hidden window. */
+    target?: BuildTarget;
   }): Promise<PreviewLease> {
+    if (isNativeTarget(options.target)) return this.#acquireNative({ ...options, target: options.target });
     const create = this.#createHeadless;
     if (!create) {
       throw new Error(MESSAGE.NoHeadless);
@@ -149,9 +196,71 @@ export class PreviewPool {
     } finally {
       this.#creating.delete(creation);
     }
+    return this.#lease(port, {
+      label: options.label,
+      target: options.target ?? null,
+      owner: options.owner ?? null,
+      native: false,
+    });
+  }
+
+  #lease(port: PreviewPort, facts: PreviewLeaseFacts): PreviewLease {
     const handle = shortId("pv");
-    this.#leases.set(handle, { port, label: options.label, ...(options.owner ? { owner: options.owner } : {}) });
+    this.#leases.set(handle, { port, facts });
     return { handle, port };
+  }
+
+  /**
+   * A native lease: a headless run of a C++ game, made by `createNative`. It waits (until `signal`
+   * aborts) while `NATIVE_LEASES_MAX` are held, and takes no hidden window's place.
+   */
+  async #acquireNative(options: { label: string; owner?: string; signal?: AbortSignal; target: BuildTarget }) {
+    const create = this.#createNative;
+    if (!create) throw new Error(MESSAGE.NoNative(options.target));
+    while (this.#nativeReserved >= NATIVE_LEASES_MAX) {
+      options.signal?.throwIfAborted();
+      await this.#nextNativeRelease(options.signal);
+    }
+    options.signal?.throwIfAborted();
+    this.#nativeReserved++;
+    let port: PreviewPort;
+    const creation = Promise.resolve().then(() =>
+      create({ target: options.target, ...(options.owner ? { owner: options.owner } : {}) }),
+    );
+    this.#creating.add(creation);
+    try {
+      port = await creation;
+    } catch (error) {
+      this.#nativeReserved--;
+      this.#wakeNative();
+      throw error;
+    } finally {
+      this.#creating.delete(creation);
+    }
+    return this.#lease(port, {
+      label: options.label,
+      target: options.target,
+      owner: options.owner ?? null,
+      native: true,
+    });
+  }
+
+  /** Resolves when a native lease is given back; rejects when `signal` aborts first. */
+  #nextNativeRelease(signal: AbortSignal | undefined): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const done = (): void => {
+        this.#nativeWaiters.delete(done);
+        signal?.removeEventListener("abort", done);
+        if (signal?.aborted) reject(signal.reason);
+        else resolve();
+      };
+      this.#nativeWaiters.add(done);
+      signal?.addEventListener("abort", done, { once: true });
+    });
+  }
+
+  #wakeNative(): void {
+    for (const wake of [...this.#nativeWaiters]) wake();
   }
 
   /**
@@ -196,8 +305,13 @@ export class PreviewPool {
       .then(() => restoreSize(lease))
       .then(() => lease.port.dispose?.())
       .then(() => {
-        this.#reserved--;
         this.#retiring.delete(handle);
+        if (lease.facts.native) {
+          this.#nativeReserved--;
+          this.#wakeNative();
+          return;
+        }
+        this.#reserved--;
         // Only a window really gone makes room for a session waiting past the ceiling.
         this.#wakeWaiters();
       });
@@ -282,7 +396,9 @@ export class PreviewPool {
 
   /** Release every lease `owner` took — a dead harness never reaches its own release. Returns their handles. */
   async releaseOwnedBy(owner: string): Promise<string[]> {
-    const handles = [...this.#leases.entries()].filter(([, lease]) => lease.owner === owner).map(([handle]) => handle);
+    const handles = [...this.#leases.entries()]
+      .filter(([, lease]) => lease.facts.owner === owner)
+      .map(([handle]) => handle);
     for (const handle of handles) await this.release(handle);
     return handles;
   }

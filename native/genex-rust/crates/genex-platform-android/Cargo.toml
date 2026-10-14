@@ -1,0 +1,50 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.16 (spike shell), M2.10, M5.3. Dependencies come from [workspace.dependencies],
+# except the pond dev-dependency the spike example packages (a path inside this workspace).
+# The phone shell both phones run is genex-platform-ios's `mobile` module (M2.10), re-exported.
+[package]
+name = "genex-platform-android"
+description = "Android shell (the activity is chosen in M0a.12): lifecycle, touch, safe area, audio focus, the refusal screen drawn without wgpu."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The two activity candidates M0a.12 chooses between; exactly one is on (android-activity refuses
+# both or neither). The GameActivity build passes `--no-default-features --features game-activity`.
+[features]
+default = ["native-activity"]
+native-activity = ["winit/android-native-activity", "android-activity/native-activity"]
+game-activity = ["winit/android-game-activity", "android-activity/game-activity"]
+
+# The shell is plain winit + wgpu, so it builds (and its unit tests run) on the host too; only
+# the entry, the records folder, the content rect, the audio focus and the JNI bridge are
+# Android-only.
+[dependencies]
+genex = { workspace = true }
+genex-platform-ios = { workspace = true }
+genex-platform-web = { workspace = true }
+winit = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { workspace = true }
+ndk = { workspace = true }
+ndk-context = { workspace = true }
+jni = { workspace = true }
+android_logger = { workspace = true }
+
+# The spike's packaged game (M0a.16): `examples/pond_android.rs` is the APK's `libmain.so`.
+[dev-dependencies]
+pond = { path = "../../examples/pond" }
+
+[[example]]
+name = "pond_android"
+path = "examples/pond_android.rs"
+crate-type = ["cdylib"]
+test = false

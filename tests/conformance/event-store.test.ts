@@ -9,10 +9,10 @@ import assert from "node:assert/strict";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { EventStore } from "../../src/substrate/event-store.ts";
+import { EventStore, type AppendOptions } from "../../src/substrate/event-store.ts";
 import { compareIds, isUuidV7, uuid7Millis, uuidv7 } from "../../src/substrate/ids.ts";
 import { TurnFactory, findInterruptedTurns } from "../../src/substrate/turns.ts";
-import { HeadMismatch, ThreadNotFound } from "../../src/substrate/types.ts";
+import { HeadMismatch, ThreadNotFound, type EventData } from "../../src/substrate/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 async function newStore(): Promise<EventStore> {
@@ -414,6 +414,40 @@ describe("turns: durability rule", () => {
       () => store.appendEvents(thread, [{ type: "error", message: "stale" }], { expectedHead: turn.turnId }),
       HeadMismatch,
     );
+  });
+
+  it("keeps cancellation durable when queue resume advances the head during a turn resync", async (t) => {
+    const store = await newStore();
+    const thread = await store.createThread();
+    const turn = await new TurnFactory(store, "ses_stop").beginTurn(thread);
+    const append = store.appendEvents.bind(store);
+    let raced = false;
+    t.mock.method(store, "appendEvents", async (threadId: string, batch: EventData[], options: AppendOptions = {}) => {
+      if (!raced && options.turnId === turn.turnId && options.expectedHead !== undefined) {
+        raced = true;
+        await append(threadId, [{ type: "custom", event_type: "coordinator_queue_paused", payload: {} }]);
+        try {
+          return await append(threadId, batch, options);
+        } catch (error) {
+          // Stop's resume record lands after the stale head was observed, before the turn retries.
+          await append(threadId, [{ type: "custom", event_type: "coordinator_queue_resumed", payload: {} }]);
+          throw error;
+        }
+      }
+      return append(threadId, batch, options);
+    });
+    await turn.end("cancelled");
+    const events = await store.listEvents(thread);
+    assert.deepEqual(
+      events.slice(-3).map((e) => (e.data.type === "custom" ? e.data.event_type : e.data.type)),
+      ["coordinator_queue_paused", "coordinator_queue_resumed", "turn_ended"],
+    );
+    assert.equal(events.at(-1)?.turn_id, turn.turnId);
+    const ended = events.at(-1)?.data;
+    assert.equal(ended?.type === "turn_ended" && ended.status, "cancelled");
+    assert.deepEqual(await findInterruptedTurns(store, thread), []);
+    assert.equal(turn.resyncs, 1);
+    assert.equal(await store.head(thread), turn.latestEventId);
   });
 
   it("lands a turn write when another writer also slips in between its resync and the retry", async () => {

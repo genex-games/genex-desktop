@@ -4,8 +4,10 @@
  * value, or wrap a selector that builds an object or array in `useShallow`.
  * `tests/conformance/renderer-state.test.ts` refuses a store hook called without one.
  */
+import { useEffect } from "react";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import type { StackDefaultSwitch } from "../../shared/game-project.ts";
 import type { AgentScreensState } from "./agent-screens.ts";
 import type { BootStore, BootStoreState } from "./boot.ts";
 import type { CommandRunsState } from "./command-runs.ts";
@@ -15,6 +17,7 @@ import type { LaunchState } from "./launch.ts";
 import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
+import { type NativeGame, type NativeState, type NativeStore, nativeOf, nativeStoreFor } from "./native.ts";
 import type { PluginsState } from "./plugins.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
 import { studio } from "./studio.ts";
@@ -37,6 +40,8 @@ export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
 export const useCommandRuns = <T>(select: Selector<CommandRunsState, T>): T => useStore(studio().commandRuns, select);
 export const useToasts = <T>(select: Selector<ToastsState, T>): T => useStore(studio().toasts, select);
 export const useLayout = <T>(select: Selector<LayoutState, T>): T => useStore(studio().layout, select);
+/** The native run store lives beside the studio's stores, over the same `window.studio`. */
+export const useNative = <T>(select: Selector<NativeState, T>): T => useStore(nativeStoreFor(studio().api), select);
 export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(studio().launch, select);
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);
@@ -116,6 +121,12 @@ export const useLayoutView = () =>
 /** Whether this is an unpackaged developer run, which offers the developer tools. */
 export const useDeveloperRun = (): boolean => useSession((s) => s.developer);
 
+/** Whether main's Rust · wgpu creation gate is open for this build. */
+export const useRustCreation = (): boolean => useSession((s) => s.rustCreation);
+
+/** The new-game stack switch main read from the settings. */
+export const useStackDefaultSwitch = (): StackDefaultSwitch => useSession((s) => s.stackDefault);
+
 /** The session as the shell reads it: two booleans, so a change of error text never re-renders. */
 export const useSessionView = () =>
   useSession(useShallow((s) => ({ ready: s.status === SessionStatus.Ready, welcoming: s.welcoming })));
@@ -135,3 +146,18 @@ export const useStageThreads = () =>
       };
     }),
   );
+
+/**
+ * A C++ game's own Mac window, while the caller shows `project`: its run is read on mount and on
+ * every change of game, and kept by `native.*` events until the caller lets go. The answer is the
+ * store's own object for that game, so it re-renders only when that game's run changes.
+ */
+export function useNativeRun(project: string | null): NativeGame {
+  useEffect(() => {
+    if (project) return nativeStoreFor(studio().api).watch(project);
+  }, [project]);
+  return useNative((state) => nativeOf(state, project));
+}
+
+/** The native run store's commands (Play on Mac, Stop, Bring to front), over the app's `window.studio`. */
+export const nativeCommands = (): Pick<NativeStore, "play" | "stop" | "front"> => nativeStoreFor(studio().api);

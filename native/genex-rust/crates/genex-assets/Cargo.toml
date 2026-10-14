@@ -1,0 +1,19 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M2.7. Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-assets"
+description = "glTF and image loaders with the safe-path rule and the magenta checker."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+genex-core = { workspace = true }
+gltf = { workspace = true }
+image = { workspace = true }

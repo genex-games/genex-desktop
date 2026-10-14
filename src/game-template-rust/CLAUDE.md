@@ -1,0 +1,125 @@
+This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Rapier 3D physics, egui
+for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source.
+`docs/GENEX_API.md` is the whole API it is written against, and `docs/CONTRACT.md` says which
+file is whose, which verbs the studio drives the game with and which refusals a run can meet.
+
+1. **Read `.studio/BRIEF.md` first when it exists.**
+2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet
+   lives in `src/facets/<slug>.rs` with `pub fn wire(game: &mut Game<super::World>)`; non-owner
+   facets touch `src/main.rs` only inside the FACET WIRING block, with exactly two lines:
+   `#[path = "facets/<slug>.rs"] mod <slug>;` and `<slug>::wire(&mut game);`.
+3. **Only the genex API, only the studio's build.** There is no `Cargo.toml`: the studio writes the
+   manifest and the lock from `genex.toml`, which names the title and any extra crates from the
+   reviewed list. A crate off that list is asked for with the `request_crate` tool (one exact
+   version, and why); only the person approves it, and once approved it is named in `[crates]` at
+   `=<version>`. Never add cargo files, build scripts, `unsafe`, or renderer internals, and never
+   edit `docs/GENEX_API.md` or `web/shell.html`.
+4. **One screen, one input path, phone first.** Draw all UI with egui in `on_ui` (the HUD is egui
+   too). Read input only from `ctx` inside the hooks (`ctx.keys`, `ctx.touches`, `ctx.pointer`,
+   `ctx.look`, `ctx.pads`, `ctx.text`). Touch is a first-class input: the mouse's first button
+   arrives as touch 0, so write one touch path that also serves the desktop, keep tap targets
+   large, and give every action a way to reach it without a keyboard.
+5. **Tag and measure.** `frame.tag("<name>")` before what you draw, a `probe` per mechanic, a
+   camera that shows it, a `demo` when a generic walk cannot reach it. The checks see the game only
+   through these: a mechanic with no probe, tag or camera is unmeasured, and an unmeasured
+   mechanic does not count as built.
+6. **Deterministic.** Randomness only from `ctx.rng` or the reset `rng`; time only from `ctx.tick`
+   and `ctx.dt`; transcendental math from `genex::math`; `genex::Map`/`genex::Set` instead of
+   `HashMap`/`HashSet`; no `std::time`, threads or OS entropy. The studio's build refuses them.
+
+Draw and probe hooks take `&Sim` and no `ctx`, and cannot change the simulation: animation that
+exists only on screen derives from simulation state (a tick counter the world keeps from
+`on_update`). Models come from `assets/`
+(`gfx.assets().model(..)`); `references/` is for you to LOOK at. A studio run gives the game its
+own `state/` folder to save in, never this one. `target/` is scratch: never committed, served or
+judged.
+
+Every device must offer WebGPU core; there is no WebGL path. A game that names a native-enhanced
+feature in `genex.toml` has no web build, so add one only when the brief needs it. A web export
+over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
+32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
+Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
+`invalid-web-budget`.
+When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
+`docs/CONTRACT.md` before changing code.
+
+## Rendering
+
+The game runs on devices from a high-end desktop to an older phone and a browser, and the
+renderer picks each device's quality itself (`docs/GENEX_API.md`, Rendering): you state the look,
+never the quality.
+
+- **Presets, not numbers.** Never hard-code `ultra`, a resolution or a render scale, and never
+  read render settings in `on_update` or a probe. State the look in `genex.toml` `[render]`
+  (`preset = "auto"`, `[render.look]`) and a per-device wish only in `[render.class.<class>]`.
+  Offer `genex::render::settings_panel(ui)` in an options menu: the person's choice is saved per
+  device, outside the simulation. Make content cheap at `low` and let presets add to it.
+- **The look.** Frames are HDR. `khronos-neutral` (the default) keeps authored colours;
+  `agx-punchy` (this template's) suits bright, high-contrast scenes; plain `agx` greys saturated
+  lights. Use `exposure = "auto"` (with `ev_compensation = 0.5` for a sunlit scene, 1.5 under
+  `agx-punchy`, whose look deepens shadows) when light and shade sit together. Bloom, height fog, ambient occlusion and contact shadows are the look's and
+  the preset's: set `bloom_*`, `fog_*`, `ao_*` and `contact_shadow_length` in `[render.look]`,
+  never as custom passes.
+- **Light with the built-ins.** `frame.sun`, `frame.ambient`, `frame.point_light` and
+  `frame.spot_light` (each with the range it needs), `Material::emissive(color, strength)` for a
+  glowing lamp or window (emission lights the picture, not other surfaces: pair it with a light),
+  `frame.environment(Environment::sky())` outdoors (a white sun; the time of day is its elevation)
+  or `Environment::hdri(path)` for a `.hdr` map in `assets/`. Keep `frame.ambient` and
+  `frame.clear` sensible for devices that draw no sky, and retune `ev_compensation` against a
+  capture after adding an environment.
+- **Prefer built-ins to custom passes.** A custom material or pass is for what they cannot draw,
+  written at `api = 2` (linear, pre-exposed colour; a grade of your own goes at `PostHdr`). A
+  Level-3 pass is not fogged, lit by point or spot lights or shadowed yet, and a custom material
+  casts no shadow: keep ground and characters built-in or `api = 2` surfaces. v1 work in the world
+  holds the whole frame on the old LDR scene.
+- **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own (a
+  character, an enemy, a vehicle) under `frame.id(key)` with a key that stays with it, end it with
+  `frame.end_id()`, and call `frame.camera_cut()` on the frame a shot changes (a camera key, a
+  respawn, a teleport), never every frame. In a shader key per-pixel noise to `frame_index`.
+- **Shadows scale themselves.** Never switch `shadows` off or fix a cascade count to save time:
+  ask for more at one preset with
+  `RenderConfig::shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))` and size the
+  reach to the world with `[render.shadows] distance`.
+- **Meshlets and occlusion** are off on every preset because they measured slower; opt in per
+  class only on the game's own measurement (`docs/GENEX_API.md`, Big meshes).
+- **Test as a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
+  `{set: {preset: "low"}}`, look at a capture each time and keep the game readable and playable
+  at both before calling it done. `state().volatile.render.degraded` names, by typed reason, what
+  a device gave up.
+
+## Extension ladder
+
+When the brief needs more than the facade gives, climb one level at a time and stop at the lowest
+level that works. Every level keeps captures, Live, determinism and Stop working, and none loosens
+the sandbox.
+
+0. **Hooks**: `on_reset`, `on_update`, `on_ui`, the draw and probe hooks, demos.
+1. **Your own modules**: any safe Rust in `src/game.rs`, `src/facets/` and modules beside them,
+   against the genex API and the reviewed crates.
+2. **WGSL**: a `[[wgsl]]` source in `genex.toml`, checked by naga against WebGPU core.
+3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/GENEX_API.md`).
+4. **Crate requests**: the `request_crate` tool; only the person approves.
+5. **Eject**: only the person copies the engine into this folder's `engine/`, and only the person
+   sets the game's trust flag for `unsafe` and build scripts, both in Studio's window. You may
+   suggest either in chat with the reason; never ask for `unsafe` or a build script to get past a
+   refusal. After an eject, `engine/` is the entry owner's code (its `Cargo.toml` files are the
+   studio's, so its build scripts never build, trusted or not), engine updates stop, and Live,
+   capture and export wait until the current build passes the `check_conformance` tool: run it
+   after every `engine/` change. Never write or remove the `[engine]` row in `genex.toml`: only
+   the person's eject does, and a build whose row differs from it is refused.
+
+A refusal names its level. Read the code, not the words:
+
+| Code | What to do |
+| --- | --- |
+| `gpu-pass-invalid` | Fix the pass the code names in `state().volatile.customPasses` (its WGSL, layout or limits). |
+| `native-feature-missing`, `native-features-web` | Drop the native feature, or keep it and accept no web build and fewer devices. |
+| `dependency-not-allowed` | Use the facade or a reviewed crate, or ask with `request_crate`. |
+| `crate-declined`, `crate-advisory`, `crate-licence`, `crate-banned`, `crate-build-script`, `crate-proc-macro` | The person or Genex's checks refused the crate (an advisory, a licence or a ban refuses even an approved one): build it from the facade instead. |
+| `crate-unvetted` | From an older ledger: ask for the crate again with `request_crate`; a missing audit no longer refuses. |
+| `crate-checker-unavailable`, `crate-check-failed` | Genex could not check the crate, so nothing was added and the request is still waiting: ask the person to approve it again (once Genex can install its checker, for the first). |
+| `crate-policy-tampered` | Genex's crate policy is not the shipped one, so nothing was added: tell the person what the code says. |
+| `unsafe-code`, `build-script-refused` | Remove the `unsafe` block or the build script; only the person can trust a game. |
+| `trust-person-only` | A game file or `genex.toml` claimed trust: remove the claim. |
+| `conformance-required` | Run `check_conformance` and fix the check it names, then try again. |
+| `eject-target-exists`, `eject-source-tampered`, `eject-lock-missing`, `eject-needs-mac` | The person's eject did nothing; tell them what the code says. |

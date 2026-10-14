@@ -1,11 +1,11 @@
-# Studio plugins — API 3
+# Studio plugins — API 4
 
 The composer's Add panel lists installed plugins with the same global enable switches, plus
 configured MCP connectors. Enabled and connected are separate states. Connect lists tools on
 the registry's live connection (or opens setup when trust/secrets are missing); Manage opens the
 sidebar's Plugins workspace page, which includes MCP servers. Local Blender is an
-independent first-party plugin using the public API 3 managed-native services. It needs no
-Genex account. No connector credentials enter the composer. See [connections and context](connections-and-context.md) for the current setup/session lifecycle.
+independent first-party plugin using the public API 3 managed-native services, declared on API 4
+so it is told when a game is Rust · wgpu and briefs that game for the genex facade. It needs no Genex account. No connector credentials enter the composer. See [connections and context](connections-and-context.md) for the current setup/session lifecycle.
 
 Plugins contribute tools, skills, standard settings, isolated interactive panels and, since API 2,
 buttons in the stage strip beside Live/Builds and MCP servers the host runs as connectors they own. Genex is bundled and enabled by default. Enablement
@@ -14,8 +14,16 @@ exports work with no enabled plugins.
 
 ## Compatibility policy
 
-- `apiVersion` is `1`, `2` or `3`. All are accepted by the same validator (`substrate/plugins/manifest.ts`)
+- `apiVersion` is `1`, `2`, `3` or `4`. All are accepted by the same validator (`substrate/plugins/manifest.ts`)
   and run on the same host; a manifest that names any other version is refused as incompatible.
+- API 4 is additive over API 3: it adds `rust-wgpu` to the stacks a skill may name and a backend
+  may be sent (see `stacks` below). Nothing else changes. Studio's games come in three stacks —
+  `three-js` (a browser game), `raylib-cpp` (a C++ · raylib game) and `rust-wgpu` (a Rust game on
+  the genex facade) — and a plugin on API 3 or earlier still loads and runs for all three; it is
+  simply never told that a game is Rust (see [Backend SDK](#backend-sdk)). Local Blender declares
+  API 4; the bundled Genex plugin is on API 3 and the SDK example on API 2, the API `plugin:new`
+  scaffolds, because the catalog's check (`marketplace/template/scripts/check-catalog.mjs`) still
+  accepts only API 1–3.
 - API 2 is additive over API 1. The new sections (`toolbar`, `network`, `mcpServers`,
   `tools[].confirmation`) are optional. Documented API is never removed; a working API 1 package keeps working.
 - Unknown top-level fields are ignored: the validator returns a **canonical** manifest in a fixed
@@ -144,7 +152,7 @@ and the Plugins page — no polling is needed for a change to show.
 
 | Field | Version | Meaning |
 | --- | --- | --- |
-| `apiVersion` | 1, 2, 3 | Supported SDK major; unrecognized versions are incompatible |
+| `apiVersion` | 1–4 | Supported SDK major; unrecognized versions are incompatible |
 | `id`, `version`, `name`, `publisher`, `description`, `backend` | 1 | Identity, semver, display text and the backend module path |
 | `capabilities` | 1 | Host services the backend may call: `settings`, `project.read`, `project.write`, `jobs` (also `events.emit`), `observe`, `credentials`, `external-auth`, `network`, (API 2) `export`, and (API 3) `native-runtime` |
 | `tools[]` | 1 | `{name, description, parameters}`; scalar properties only; agent-invoked as `<id>__<name>` |
@@ -203,6 +211,16 @@ it is not. Studio serves it from the installed package and never writes it into 
   out). The brief carries one index line, `[<plugin>/<name>] <summary> Read it with
   <plugin>__skill {"name":"<name>"} before that work.`, and the agent reads the body on demand.
   Run planning sees the same index, naming the tool (`readWith`), never the body.
+- **`stacks`** (API 3, either kind): the games a skill serves, one to three of `three-js`,
+  `raylib-cpp` and (API 4 only) `rust-wgpu`, each once; absent serves every game. On API 3 or
+  earlier, `rust-wgpu` is refused, and a list naming both pre-Rust stacks means every stack, a
+  Rust · wgpu game included; an API 3 backend's calls for a Rust game carry no `stack`, a stack its
+  API does not know. A C++ · raylib game's delegated builders,
+  planning and conversation are never handed a skill that names only `three-js`, nor its name in
+  the skill tool, which refuses to read it on any call bound to that game; the bundled Genex plugin
+  marks its two `genex-threejs-*` cards so. Local Blender serves Three.js and C++ · raylib games
+  its `local-modeling` card and Rust · wgpu games `local-modeling-rust`, which loads the delivered
+  GLB with `gfx.assets().model` instead of `GLTFLoader`.
 - **Facts and tools** (API 3, either kind): `facts` limits the skill to the briefs of games that
   hold one of those facts, and `tools` (1–16 of the plugin's own agent tools) keeps it only while
   one of them reaches the session too ([Scope by facts](#scope-by-facts)). `engines`, a non-empty
@@ -228,6 +246,7 @@ page reads the same files over `studio:plugins.skill`, for disabled plugins too.
 | Skills per plugin | 32, unique names (API 1–2: a repeated name is dropped) |
 | Inline text | 1–16,000 characters (API 1–2: 0–16,000, other keys ignored) |
 | Summary | 1–300 characters |
+| Stacks | 1–3 distinct `GameStack` values (`rust-wgpu` from API 4), or absent (API 1–2: ignored) |
 | References per skill | 16, distinct, never the skill's own file |
 | One skill file | 128 KiB, a plain file inside the package |
 | All skill files together | 1 MiB |
@@ -240,11 +259,12 @@ them as `PluginChange.skills` and `PluginInfo.lastSkillChange` (`added`, `change
 which the plugin's page shows. The trust dialog lists the skills, marks each new or changed one
 and names each removed one; digest changes count only for scanned packages, so a bundled update
 is compared by manifest.
-Each builder brief is built from one registry `snapshot(engine)`, so its tools and skill lines agree;
-`engine` is the game's (`studio.json` `engine`, read by the delegation before it takes the plugin
-lease, and by the capability facts a session without plugin tools reads), the web's when no game
-is named. The tools are the same for every engine. The plugins and skills a session was handed ride
-its `tool_registry_applied` event; a resumed session
+Each builder brief is built from one registry `snapshot(scope, offered, stack)`, so its tools and
+skill lines agree; `scope` is the game's kind (its facts, or the older `engine`: `studio.json`
+`engine`, read by the delegation before it takes the plugin lease, and by the capability facts a
+session without plugin tools reads), the web's when no game is named, and `stack` the game's stack
+(`stacks` above). The tools are the same for every engine. The plugins and skills a session was
+handed ride its `tool_registry_applied` event; a resumed session
 that has since lost some is told first to ignore their earlier instructions and not to call their
 tools (`delegation-prompts.ts`).
 
@@ -1133,7 +1153,10 @@ acts beyond the game folder. The host — never the plugin, never the agent — 
 Export `async activate(host)` returning `tool(name, args, context)`, `action(name,args,context)`
 and optionally `review(name,args,context)`. Initialization must be side-effect-free and must not
 need host services: installation probes load the backend without account/project authority.
-Context supplies project/directory/thread binding, an AbortSignal and `host(method,args)`.
+Context supplies project/directory/thread binding, the bound game's `stack` on a builder's call
+(`three-js`, `raylib-cpp` or `rust-wgpu`: pick formats the game's stack loads), an AbortSignal and
+`host(method,args)`. `rust-wgpu` reaches only an API 4 backend; an older backend bound to a Rust
+game gets a context with no `stack`, as for a game whose stack the host does not know.
 Do not save the context globally; concurrent calls can belong to different workers. Host services
 answer only during an active invocation: work that outlives the call (an upload, a long publish)
 must finish detached and be polled through another tool or action, because a detached task's
@@ -2169,10 +2192,13 @@ Run `tests/conformance/plugins.test.ts`, `plugin-toolbar.test.ts`, `plugin-conse
 `genex-plumbing.test.ts`, `genex-plugin-cli.test.ts` and `genex-publish-dialog.test.ts` for real
 backend process, provider-parity, lifecycle, permission and file-boundary regressions.
 `plugin-lifecycle.test.ts` also pins the backend's PATH: the login PATH when Studio has one, its
-own when the login shell cannot answer. `plugin-local-install.test.ts` covers changed
+own when the login shell cannot answer; and the stacks union: an API 1–3 plugin still loads and
+runs with no stack for a Rust game, a bundled tool sees `rust-wgpu` exactly when its manifest
+declares API 4 (Local Blender's does; the example's API 2 tool gets no stack), and Local Blender
+hands a Rust game its Rust card only. `plugin-local-install.test.ts` covers changed
 local packages at reinstall, fresh scan/capability disclosure, cancellation, identity mismatch,
 edits during approval, snapshot cleanup and disabled-state preservation. `plugins.test.ts` pins
-API 1–3 compatibility (`apiVersion: 4` is rejected), canonical key order and unknown-key drop; `toolbar`, `network` and
+API 1–4 compatibility (`apiVersion: 5` is rejected), canonical key order and unknown-key drop; `toolbar`, `network` and
 `tools[].confirmation` rejected under API 1; toolbar validation (reserved labels including
 `Assets`, undeclared targets, confirmed status actions, the four-item cap); `publish-draft` /
 `publish-gallery` needing trusted confirmation; the `toolbar()` accessor and the status action's

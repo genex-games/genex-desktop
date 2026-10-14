@@ -2,13 +2,17 @@
  * What a plugin leaves behind across versions: old package copies and failed-install leftovers are
  * swept (PLG-5), a hot reload cannot change what a plugin's MCP servers run without a new review
  * (PLG-6), stored settings reach a new version only as declared keys of the declared type (PLG-7),
- * and a `node` MCP server is handed its credential as the bare token (PLG-4).
+ * and a `node` MCP server is handed its credential as the bare token (PLG-4). Across the stacks
+ * union: a plugin on an older API still loads and runs, and a bundled plugin that serves Rust ·
+ * wgpu games declares the API that hands its tools the typed `rust-wgpu` stack.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
-import type { PluginChange } from "../../src/shared/plugins.ts";
+import { after, describe, test } from "node:test";
+import { GameStack } from "../../src/shared/game-project.ts";
+import { type PluginChange, RUST_SKILL_STACKS_API } from "../../src/shared/plugins.ts";
 import { PluginRegistry, type PluginMcpLaunch } from "../../src/substrate/plugins/registry.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { scanPackage } from "../../src/substrate/plugins/scan.ts";
@@ -16,6 +20,8 @@ import {
   EXAMPLE_PLUGIN,
   copyOfExample,
   installLocalOn,
+  PLUGIN_SDK_BACKEND,
+  personAllowsLocalTools,
   type PluginFixture,
   pluginFixture,
 } from "../helpers/plugins.ts";
@@ -465,4 +471,100 @@ test("the tokens plugin accounts hold this session are known to the log redactor
   } finally {
     await f.close();
   }
+});
+
+/** A backend whose every tool answers with whether its call context held a stack, and which. */
+const STACK_ECHO_BACKEND = `export async function activate() {
+  return { async tool(_name, _args, ctx) { return { hasStack: "stack" in ctx, stack: ctx.stack ?? null }; } };
+}
+`;
+/**
+ * The bundled plugins whose tools serve every game, a Rust · wgpu game included: a call of each, and
+ * the stack that call sees for a Rust game. Local Blender delivers models a Rust game loads, so it
+ * is told the game is Rust; the SDK example stays on API 2, the API its scaffolds are published on.
+ */
+const BUNDLED_FOR_EVERY_STACK = {
+  example: { tool: "greet", args: { name: "Ada" }, sees: { hasStack: false, stack: null } },
+  blender: { tool: "status", args: {}, sees: { hasStack: true, stack: GameStack.RustWgpu } },
+} as const;
+const REPO_PLUGINS = path.resolve(import.meta.dirname, "../../src/plugins");
+
+/** A throwaway root, removed after the suite. */
+async function scratch(prefix: string): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  after(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
+
+/**
+ * A registry seeded with the bundled plugins exactly as `src/plugins` declares them, each with the
+ * stack-echo backend in place of its own, and a binding to a Rust · wgpu game.
+ */
+async function bundledEchoRegistry() {
+  const root = await scratch("studio-plugin-bundled-");
+  const seeds = path.join(root, "seeds");
+  for (const id of Object.keys(BUNDLED_FOR_EVERY_STACK)) {
+    const dir = path.join(seeds, id);
+    await cp(path.join(REPO_PLUGINS, id), dir, { recursive: true });
+    await writeFile(path.join(dir, "backend.mjs"), STACK_ECHO_BACKEND);
+  }
+  const registry = new PluginRegistry(path.join(root, "installed"), seeds, PLUGIN_SDK_BACKEND, async () => ({}));
+  await registry.init();
+  after(() => registry.cancel());
+  const game = path.join(root, "game");
+  await mkdir(game);
+  return { registry, rust: { project: "game", directory: game, stack: GameStack.RustWgpu } };
+}
+
+/** The example plugin re-declared on `apiVersion`, with only what that API may declare. */
+function onApi(apiVersion: number) {
+  return (m: { id: string; apiVersion: number; toolbar?: unknown; tools: Array<{ confirmation?: string }> }) => {
+    m.id = `api${apiVersion}`;
+    m.apiVersion = apiVersion;
+    if (apiVersion >= 2) return;
+    delete m.toolbar;
+    m.tools = m.tools.filter((t) => t.confirmation === undefined);
+  };
+}
+
+describe("plugins across the stacks union", () => {
+  test("a plugin declaring an older API still loads, runs its tool and gets no stack for a Rust game", async () => {
+    const f = await pluginFixture();
+    after(() => f.close());
+    // A plugin loaded from a folder starts off and asks before each tool: the person turns it on and allows it.
+    personAllowsLocalTools(f.registry);
+    const rust = { ...f.binding, stack: GameStack.RustWgpu };
+    for (const apiVersion of [1, 2, 3]) {
+      const dir = await copyOfExample(f.root, `api${apiVersion}`, onApi(apiVersion));
+      await writeFile(path.join(dir, "backend.mjs"), STACK_ECHO_BACKEND);
+      await installLocalOn(f.registry, dir);
+      assert.equal(f.registry.enabled(`api${apiVersion}`), true, `API ${apiVersion} loads`);
+      assert.deepEqual(
+        await f.registry.tool(`api${apiVersion}__greet`, { name: "Ada" }, rust),
+        { hasStack: false, stack: null },
+        `API ${apiVersion}`,
+      );
+    }
+  });
+
+  test("a bundled tool bound to a Rust game sees the typed rust-wgpu stack exactly when its API knows it", async () => {
+    const { registry, rust } = await bundledEchoRegistry();
+    for (const [id, call] of Object.entries(BUNDLED_FOR_EVERY_STACK)) {
+      const apiVersion = registry.list().find((p) => p.manifest.id === id)?.manifest.apiVersion ?? 0;
+      assert.equal(apiVersion >= RUST_SKILL_STACKS_API, call.sees.hasStack, `${id} declares its API`);
+      assert.deepEqual(await registry.tool(`${id}__${call.tool}`, { ...call.args }, rust), call.sees, id);
+    }
+  });
+
+  test("Local Blender briefs a Rust game on the genex facade and keeps its card for the pre-Rust stacks", async () => {
+    const { registry } = await bundledEchoRegistry();
+    const blenderSkills = (stack: GameStack) =>
+      registry.snapshot([], undefined, stack).applied.skills.filter((s) => s.startsWith("blender/"));
+    assert.deepEqual(blenderSkills(GameStack.ThreeJs), ["blender/local-modeling"]);
+    assert.deepEqual(blenderSkills(GameStack.RaylibCpp), ["blender/local-modeling"]);
+    assert.deepEqual(blenderSkills(GameStack.RustWgpu), ["blender/local-modeling-rust"]);
+    const rustBrief = registry.snapshot([], undefined, GameStack.RustWgpu).guidance;
+    assert.match(rustBrief, /gfx\.assets\(\)\.model/);
+    assert.doesNotMatch(rustBrief, /GLTFLoader/);
+  });
 });

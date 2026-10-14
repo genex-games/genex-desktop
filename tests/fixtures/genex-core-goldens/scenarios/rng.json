@@ -1,0 +1,15 @@
+{
+  "streams": [
+    {"seed": 42, "sequence": 54, "ops": [["next", 6]]},
+    {"ops": [["next", 4], ["unit", 4]]},
+    {"seed": 1, "ops": [["next", 8], ["reseed", 1], ["next", 2], ["reseed", 7, 3], ["next", 3]]},
+    {"seed": 9, "ops": [["nextInt", -3, 3, 40], ["unit", 40], ["nextInt", 5, 5, 3], ["nextInt", 3, -3, 12]]},
+    {"seed": "0xffffffffffffffff", "sequence": "0xffffffffffffffff", "ops": [["next", 8]]},
+    {"seed": 0, "sequence": 0, "ops": [["next", 8]]},
+    {"seed": 12345, "ops": [["below", 0, 4], ["below", 1, 4], ["below", 7, 30], ["below", "0x80000001", 20], ["below", "0xffffffff", 20], ["below", 3000000000, 20]]},
+    {"seed": 77, "ops": [["nextInt", -2147483648, 2147483647, 12], ["nextInt", -2147483648, -2147483648, 2], ["nextInt", 2147483647, -2147483648, 4], ["nextInt", -1000000000, 2000000000, 20]]},
+    {"seed": 5, "ops": [["nextFloat", -3.3, 7.7, 64], ["nextFloat", 0, 1, 16], ["nextFloat", 1, 0, 16], ["nextFloat", -0.5, 0.5, 64], ["nextFloat", -1000, 1000, 64], ["nextFloat", 2, 2, 4]]},
+    {"seed": 6, "ops": [["chance", 0.5, 32], ["chance", 0, 8], ["chance", 1, 8], ["chance", 0.001, 32], ["chance", "nan", 4]]},
+    {"seed": 3141592653, "sequence": 2718281828, "ops": [["next", 16], ["unit", 16], ["nextInt", 1, 6, 32], ["nextFloat", -0.25, 0.75, 16]]}
+  ]
+}

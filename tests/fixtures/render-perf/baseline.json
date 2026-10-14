@@ -1,0 +1,251 @@
+{
+ "harness": "render-perf-matrix",
+ "version": 1,
+ "recordedAt": 1791500000,
+ "build": {
+  "sha": "0e46c323aaaa",
+  "trackedChanges": false,
+  "profile": "test (release)"
+ },
+ "adapter": {
+  "name": "Apple M4 Max",
+  "backend": "metal",
+  "key": "metal/Apple M4 Max"
+ },
+ "timestamps": {
+  "available": true,
+  "periodNs": 1.0
+ },
+ "host": {
+  "power": "Now drawing from 'AC Power'; -InternalBattery-0 (id=21758051)\t100%; charged; 0:00 remaining present: true",
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded"
+ },
+ "deviceClass": "desktop-ultra",
+ "method": {
+  "warmupFrames": 60,
+  "measuredFrames": 600,
+  "runs": 1,
+  "statistic": "nearest-rank p50/p95 per row"
+ },
+ "rows": [
+  {
+   "row": "bench-outdoor",
+   "profile": "off",
+   "size": [
+    1280,
+    720
+   ],
+   "camera": "fixed shot",
+   "frames": 600,
+   "cpuMs": {
+    "p50": 1.1979,
+    "p95": 1.331,
+    "mean": 1.264,
+    "max": 1.863
+   },
+   "frameMs": {
+    "p50": 2.27545,
+    "p95": 2.677,
+    "mean": 2.476,
+    "max": 3.748
+   },
+   "gpuMs": {
+    "p50": 1.1925,
+    "p95": 1.325,
+    "mean": 1.259,
+    "max": 1.855
+   },
+   "nodes": null,
+   "stats": {
+    "logicalDraws": 1930,
+    "instances": 1928,
+    "batches": 19,
+    "views": 3,
+    "indirectDraws": 57,
+    "transparentDraws": 0,
+    "skinJobs": 0
+   },
+   "applied": {
+    "renderScale": 1.0,
+    "wired": true,
+    "featuresRequested": []
+   }
+  },
+  {
+   "row": "bench-outdoor",
+   "profile": "off",
+   "size": [
+    1920,
+    1080
+   ],
+   "camera": "fixed shot",
+   "frames": 600,
+   "cpuMs": {
+    "p50": 1.26,
+    "p95": 1.4,
+    "mean": 1.33,
+    "max": 1.96
+   },
+   "frameMs": {
+    "p50": 3.1195,
+    "p95": 3.67,
+    "mean": 3.395,
+    "max": 5.138
+   },
+   "gpuMs": {
+    "p50": 1.809,
+    "p95": 2.01,
+    "mean": 1.909,
+    "max": 2.814
+   },
+   "nodes": null,
+   "stats": {
+    "logicalDraws": 1930,
+    "instances": 1928,
+    "batches": 19,
+    "views": 3,
+    "indirectDraws": 57,
+    "transparentDraws": 0,
+    "skinJobs": 0
+   },
+   "applied": {
+    "renderScale": 1.0,
+    "wired": true,
+    "featuresRequested": []
+   }
+  },
+  {
+   "row": "bench-city",
+   "profile": "off",
+   "size": [
+    1920,
+    1080
+   ],
+   "camera": "fixed shot",
+   "frames": 600,
+   "cpuMs": {
+    "p50": 2.61,
+    "p95": 2.9,
+    "mean": 2.755,
+    "max": 4.06
+   },
+   "frameMs": {
+    "p50": 7.386499999999999,
+    "p95": 8.69,
+    "mean": 8.038,
+    "max": 12.166
+   },
+   "gpuMs": {
+    "p50": 5.598,
+    "p95": 6.22,
+    "mean": 5.909,
+    "max": 8.708
+   },
+   "nodes": null,
+   "stats": {
+    "logicalDraws": 1930,
+    "instances": 1928,
+    "batches": 19,
+    "views": 3,
+    "indirectDraws": 57,
+    "transparentDraws": 0,
+    "skinJobs": 0
+   },
+   "applied": {
+    "renderScale": 1.0,
+    "wired": true,
+    "featuresRequested": []
+   }
+  },
+  {
+   "row": "stress-plaza",
+   "profile": "off",
+   "size": [
+    1920,
+    1080
+   ],
+   "camera": "fixed shot",
+   "frames": 600,
+   "cpuMs": {
+    "p50": 1.9800000000000002,
+    "p95": 2.2,
+    "mean": 2.09,
+    "max": 3.08
+   },
+   "frameMs": {
+    "p50": 5.3549999999999995,
+    "p95": 6.3,
+    "mean": 5.827,
+    "max": 8.82
+   },
+   "gpuMs": {
+    "p50": 3.69,
+    "p95": 4.1,
+    "mean": 3.895,
+    "max": 5.74
+   },
+   "nodes": null,
+   "stats": {
+    "logicalDraws": 1930,
+    "instances": 1928,
+    "batches": 19,
+    "views": 3,
+    "indirectDraws": 57,
+    "transparentDraws": 0,
+    "skinJobs": 0
+   },
+   "applied": {
+    "renderScale": 1.0,
+    "wired": true,
+    "featuresRequested": []
+   }
+  },
+  {
+   "row": "bench-outdoor",
+   "profile": "high",
+   "size": [
+    1920,
+    1080
+   ],
+   "camera": "fixed shot",
+   "frames": 600,
+   "cpuMs": {
+    "p50": 1.53,
+    "p95": 1.7,
+    "mean": 1.615,
+    "max": 2.38
+   },
+   "frameMs": {
+    "p50": 3.74,
+    "p95": 4.4,
+    "mean": 4.07,
+    "max": 6.16
+   },
+   "gpuMs": {
+    "p50": 2.61,
+    "p95": 2.9,
+    "mean": 2.755,
+    "max": 4.06
+   },
+   "nodes": null,
+   "stats": {
+    "logicalDraws": 1930,
+    "instances": 1928,
+    "batches": 19,
+    "views": 3,
+    "indirectDraws": 57,
+    "transparentDraws": 0,
+    "skinJobs": 0
+   },
+   "applied": {
+    "renderScale": 1.0,
+    "wired": true,
+    "featuresRequested": [
+     "hdr",
+     "tonemap",
+     "bloom"
+    ]
+   }
+  }
+ ]
+}

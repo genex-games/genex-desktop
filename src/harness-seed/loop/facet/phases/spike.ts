@@ -1,5 +1,6 @@
 /** The spike: a hard or twice-failed identity check is solved in isolation before the round builds. */
 import { loadRecipes, recipesForChecks } from "../../library.ts";
+import { stackOfShape, stampedStack } from "../../native-loop.ts";
 import { describeSpike, runSpike, spikeCandidates, type SpikeOutcome } from "../../spike.ts";
 import { MINUTE_MS } from "../../time.ts";
 import type { AnyRecord } from "../../../types/harness.d.ts";
@@ -49,7 +50,10 @@ async function spikeOn(loop: FacetLoop, round: FacetRound, check: Check): Promis
       worktree: loop.worktree,
       incumbentCommit: loop.incumbentCommit ?? undefined,
       tried,
-      recipes: recipesForChecks(loop.recipes, [check], SPIKE_RECIPES),
+      // Written for this game's stack (the run's stamp, else the folder's kind), never the other's.
+      recipes: recipesForChecks(loop.recipes, [check], SPIKE_RECIPES, {
+        stack: stampedStack(run) ?? stackOfShape(shape),
+      }),
       handle: handle ?? undefined,
       deadline,
       iteration: round.iteration,

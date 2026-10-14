@@ -15,12 +15,16 @@ import type { z } from "zod";
 import { StudioPlatform } from "../../src/shared/boot.ts";
 import {
   HARNESS_PARAM_SCHEMAS,
+  HostMethod,
   harnessParamsProblem,
   type HarnessHostHandlers,
   type HarnessParams,
   type PathBearingMethod,
 } from "../../src/shared/harness-api.ts";
+import { MOBILE_TARGETS } from "../../src/shared/game-project.ts";
+import { NativeError, NativeRefusal } from "../../src/shared/native-contract.ts";
 import { encode, LineCodec, type RpcResponse } from "../../src/shared/protocol.ts";
+
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import type { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { coreLite } from "../helpers/core-lite.ts";
@@ -119,6 +123,43 @@ test("malformed params for a path-bearing method are refused with a clear error 
       ["preview.pair", { runId: "r1", left: { path: 9 }, right: {} }, "left.path"],
       ["run.artifact", { runId: "r1", name: null, base64: "" }, "name"],
       ["game.scaffold", undefined, "params"],
+      // Destinations: an array of one to four distinct known targets, nothing else.
+      ["game.scaffold", { name: "pong", targets: ["web", 1] }, "targets.1"],
+      ["game.scaffold", { name: "pong", targets: ["web", "mac"] }, "targets.1"],
+      ["game.scaffold", { name: "pong", targets: "macos" }, "targets"],
+      ["game.scaffold", { name: "pong", targets: [] }, "targets"],
+      ["game.scaffold", { name: "pong", targets: ["web", "macos", "windows", "linux", "web"] }, "targets"],
+      ["game.scaffold", { name: "pong", targets: ["macos", "macos"] }, "targets"],
+      ["game.scaffold", { name: "pong", kind: 7 }, "kind"],
+      // Native runs: a known destination and a game, nothing else; a root is a path.
+      ["native.build", { project: "pong", target: "ios" }, "target"],
+      ["native.build", { project: "pong", target: 1 }, "target"],
+      ["native.build", { project: "pong", target: null }, "target"],
+      ["native.build", { project: "pong" }, "target"],
+      ["native.build", { target: "macos" }, "project"],
+      ["native.build", { project: "pong", target: "macos", root: ["/etc"] }, "root"],
+      ["native.status", { handle: "pv-1" }, "project"],
+      ["native.status", { project: "pong", handle: 7 }, "handle"],
+      ["native.stop", { project: 7 }, "project"],
+      // A lease names a destination it can judge, or none at all. Flipped (C1 review): a phone
+      // destination passes this check and is refused typed by the lease handler (C1 row below).
+      ["preview.acquire", { label: "evidence", target: "simulator" }, "target"],
+      ["preview.acquire", { label: "evidence", target: null }, "target"],
+      ["preview.acquire", { label: "evidence", target: ["macos"] }, "target"],
+      // An export names a known destination; its signing is checked by parseExportSigning.
+      // Flipped (M5.9): a phone is a destination `game.export` may name (the host refuses an IPA
+      // or AAB `harness-may-not-sign`), so only a name outside the vocabulary is malformed.
+      ["game.export", { project: "pong", destination: "iphone" }, "destination"],
+      ["game.export", { project: "pong", destination: 1 }, "destination"],
+      ["game.export", { project: "pong", destination: "../web" }, "destination"],
+      // A typed probe steps a game 1 to 10,000 whole milliseconds, on a handle that is text.
+      ["preview.witness", { ms: 0 }, "ms"],
+      ["preview.witness", { ms: 10_001 }, "ms"],
+      ["preview.witness", { ms: 1.5 }, "ms"],
+      ["preview.witness", { ms: "16" }, "ms"],
+      ["preview.witness", { handle: 7 }, "handle"],
+      ["preview.emptyScene", { handle: 7 }, "handle"],
+      ["preview.cameraPose", { handle: ["pv-1"] }, "handle"],
       ["game.start", { project: "pong", starter: "Web" }, "starter"],
       ["game.start", { project: "pong", starter: "../web" }, "starter"],
       ["game.start", { project: "pong" }, "starter"],
@@ -218,6 +259,25 @@ test("a well-formed call reaches its handler with the params exactly as the harn
         },
       ],
       ["game.setCover", { project: "pong", threadId: "t1", family: "dunes", palette: "dusk", seed: 3 }],
+      ["game.scaffold", { name: "pong", title: "Pong", threadId: "t1" }],
+      ["game.scaffold", { name: "pong", kind: null }],
+      ["game.scaffold", { name: "pong", kind: "raylib-cpp", targets: ["web", "macos"] }],
+      ["game.scaffold", { name: "pong", kind: "raylib-cpp", targets: ["linux", "windows", "macos", "web"] }],
+      ["native.build", { project: "pong", target: "macos" }],
+      ["native.build", { project: "pong", target: "web", root: "/scratch/w1", runId: "r1" }],
+      ["native.status", { project: "pong" }],
+      ["native.status", { project: "pong", handle: "pv-1" }],
+      ["native.stop", { project: "pong", handle: null }],
+      ["preview.acquire", { label: "evidence" }],
+      ["preview.acquire", { label: "evidence", purpose: "optimization", target: "macos" }],
+      ["preview.acquire", undefined],
+      ["game.export", { project: "pong", destination: "macos", signing: { kind: "adhoc" } }],
+      ["game.export", { project: "pong", target: "/exports/pong", destination: "web" }],
+      ["preview.witness", { handle: "pv-1", ms: 250 }],
+      ["preview.witness", { ms: 10_000 }],
+      ["preview.witness", undefined],
+      ["preview.emptyScene", { handle: "pv-1" }],
+      ["preview.cameraPose", undefined],
       ["game.start", { project: "pong", starter: "web", threadId: "t1" }],
       [
         "engine.delegate",
@@ -269,6 +329,105 @@ test("every params schema names a method the core serves, and stop control is de
   for (const method of ["engine.abort", "engine.interrupt"])
     assert.equal(harnessParamsProblem(method, { cwd: 1 }), null, method);
   assert.equal(harnessParamsProblem("not.a.method", { project: 1 }), null);
+});
+
+/**
+ * Containment stage 1: Simulator apps, emulator guests and phones run agent-generated code outside
+ * ProcessSandbox, so no agent-side call may start, lease or reach one. Launching on a device is a
+ * person-initiated Studio action ([tool permissions](../../docs/tool-permissions.md#devices-and-emulators)).
+ * The words are whole segments of a name (split at dots, underscores and camelCase humps), so
+ * `evals.scenarios` or `inputDevices` match only for what they say.
+ */
+const DEVICE_RUN_WORDS: ReadonlySet<string> = new Set([
+  "device",
+  "devices",
+  "simulator",
+  "simulators",
+  "emulator",
+  "emulators",
+  "adb",
+  "android",
+  "ios",
+  "iphone",
+  "ipad",
+  "phone",
+  "phones",
+  "launch",
+]);
+
+/** A method name's words, lower case: `native.launchDevice` is native, launch, device. */
+function nameWords(name: string): string[] {
+  return name
+    .split(/[._\-\s]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+}
+
+/**
+ * The names among `names` that could lease, start or reach a device, simulator or emulator. A
+ * name only: a device run added as a parameter of an existing method is covered by the target
+ * rows below for `preview.acquire`, not by this matcher.
+ */
+function deviceRunMethods(names: readonly string[]): string[] {
+  return names.filter((name) => nameWords(name).some((word) => DEVICE_RUN_WORDS.has(word)));
+}
+
+test("the device-run matcher flags every shape a lease or launch could take", () => {
+  const hostile = [
+    "device.lease",
+    "device.acquire",
+    "simulator.launch",
+    "emulator.start",
+    "native.launchDevice",
+    "native.launch",
+    "preview.acquireDevice",
+    "adb.shell",
+    "android.install",
+    "ios.run",
+    "PreviewAcquireDevice",
+    "IOSRun",
+    "native.run_on_phone",
+  ];
+  assert.deepEqual(deviceRunMethods(hostile), hostile);
+  const harmless = [
+    "preview.acquire",
+    "preview.release",
+    "native.build",
+    "native.status",
+    "evals.scenarios",
+    "render.ratios",
+    "studios.list",
+    "audio.microphone",
+    "game.relaunchable",
+  ];
+  assert.deepEqual(deviceRunMethods(harmless), []);
+});
+
+test("the harness has no device, simulator or emulator lease or launch method", async () => {
+  const members = Object.entries(HostMethod).flat();
+  assert.deepEqual(deviceRunMethods(members), [], "HostMethod keys and wire names");
+  assert.deepEqual(deviceRunMethods(Object.keys(HARNESS_PARAM_SCHEMAS)), [], "params schemas");
+  const { api } = await coreLite({ init: false });
+  assert.deepEqual(deviceRunMethods(Object.keys(api())), [], "methods the core serves");
+  // The leases that do exist are preview leases on a host-native or web build. A word that is no
+  // destination is refused before any handler runs; a phone destination reaches the lease handler,
+  // which refuses it typed (not-runnable-here) before any lease exists.
+  for (const target of ["simulator", "emulator", "device"]) {
+    const problem = harnessParamsProblem("preview.acquire", { label: "evidence", target });
+    assert.ok(
+      problem?.issues.some((issue) => issue.path === "target"),
+      `preview.acquire target ${target}`,
+    );
+  }
+  const acquire = api()[HostMethod.PreviewAcquire];
+  for (const target of MOBILE_TARGETS) {
+    assert.equal(harnessParamsProblem("preview.acquire", { label: "evidence", target }), null, target);
+    await assert.rejects(
+      async () => acquire({ label: "evidence", target }),
+      (error: unknown) => error instanceof NativeError && error.refusal === NativeRefusal.NotRunnableHere,
+      `preview.acquire target ${target}`,
+    );
+  }
 });
 
 // ── compile-time contract: checked by the typecheck, never called ─────────────────────────────

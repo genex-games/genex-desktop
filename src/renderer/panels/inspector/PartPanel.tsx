@@ -1,7 +1,7 @@
 /** The card of one part: its steps as rows, why it stopped, the user's notes and its checks. */
 import type { JSX } from "react";
 import type { RunTask } from "../../../shared/run-summary.ts";
-import { type FacetNode, type RunGraph as RunGraphModel, runIdOf, thumbShot } from "../../run-graph.ts";
+import { type FacetNode, type RunGraph as RunGraphModel, runIdOf } from "../../run-graph.ts";
 import {
   elapsedWords,
   isLiveStep,
@@ -14,7 +14,7 @@ import {
 } from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { checkCounts, ranToItsEnd, stoppedWords } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useStepPicture } from "../run-graph/use-builds-model.ts";
 import { Details, NotesSection, Panel, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
 import { capitalise, joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
@@ -29,14 +29,7 @@ const LEAD_STOPPED_PREFIX = /^stopped by the lead\s*(?:—\s*)?/;
 
 /** A step as one row of its part's panel: thumbnail, name, state and tries. */
 function StepRow({ graph, step, onSelect }: { graph: RunGraphModel; step: Step; onSelect: () => void }): JSX.Element {
-  const node = step.shown;
-  const src = useRoundStill(
-    graph,
-    step.facetId,
-    node?.iteration ?? 1,
-    node ? (thumbShot(node)?.path ?? null) : null,
-    false,
-  );
+  const src = useStepPicture(runIdOf(graph), step.picture, false).src;
   const off = !step.onLine && !isLiveStep(step);
   return (
     <button

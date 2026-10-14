@@ -1,0 +1,5 @@
+error[E0596]: cannot borrow `sim.physics` as mutable, as it is behind a `&` reference
+  --> tests/ui/fail/camera_mutates_physics.rs:10:9
+   |
+10 |         sim.physics.step();
+   |         ^^^^^^^^^^^ `sim` is a `&` reference, so it cannot be borrowed as mutable

@@ -7,6 +7,8 @@ import { runOptimization } from "../../src/harness-seed/loop/optimization.ts";
 import { GameCandidates } from "../../src/substrate/game-candidate.ts";
 import { SnapshotEngine } from "../../src/substrate/snapshots.ts";
 import { createToolRegistry } from "../../src/harness-seed/tools/index.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "optimization-stage-")),
@@ -278,4 +280,26 @@ it("the built-in sampler prepares the scenario, arms the profiler and ends the s
     assert.ok(!f.calls.includes("optimization.promote"), failure);
     assert.equal(await readFile(path.join(f.live, "index.html"), "utf8"), "baseline", failure);
   }
+});
+
+it("the stage's preview names the build it judges: a Mac-only C++ · raylib game's is its judging-only web build", async () => {
+  // The host refuses a raylib game's preview on a lease that names no target
+  // (harness-predates-native), so an untargeted acquire ended every raylib stage at its first look.
+  // A native lease cannot profile (the host refuses a candidate load on one): the stage profiles
+  // the game's web build in a browser window.
+  const f = await fixture();
+  const acquired: Array<Record<string, unknown>> = [];
+  const call = f.ctx.call.bind(f.ctx);
+  f.ctx.call = async (method: string, p: any = {}) => {
+    if (method === "game.list")
+      return [{ name: "game", destinations: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Mac] } }];
+    if (method === "preview.capacity") return { max: 4, inUse: 0, host: StudioPlatform.Mac, native: { gameBox: true } };
+    if (method === "preview.acquire") acquired.push(p);
+    return call(method, p);
+  };
+  await runOptimization(f.ctx, f.options);
+  assert.deepEqual(
+    acquired.map((p) => [p.target, p.label, p.purpose]),
+    [[BuildTarget.Web, "optimization:run_test", "optimization"]],
+  );
 });

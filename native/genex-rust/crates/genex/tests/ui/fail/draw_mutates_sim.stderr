@@ -1,0 +1,5 @@
+error[E0594]: cannot assign to `sim.world.frames`, which is behind a `&` reference
+  --> tests/ui/fail/draw_mutates_sim.rs:12:9
+   |
+12 |         sim.world.frames += 1;
+   |         ^^^^^^^^^^^^^^^^^^^^^ `sim` is a `&` reference, so it cannot be written to

@@ -7,6 +7,7 @@ import { buildPlugins } from "../../scripts/build-plugins.mjs";
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { shipRustPayload } from "../../scripts/rust-payload.ts";
 import { vendorTsc } from "../../scripts/vendor-tsc.ts";
 import { tmpDir } from "./tmp.ts";
 
@@ -23,6 +24,9 @@ export async function makeResources({ tsc = true }: { tsc?: boolean } = {}): Pro
   await cp(path.join(src, "harness-seed"), path.join(dir, "harness-seed"), { recursive: true });
   await cp(path.join(src, "harness-boot"), path.join(dir, "harness-boot"), { recursive: true });
   await cp(path.join(src, "game-template"), path.join(dir, "game-template"), { recursive: true });
+  await cp(path.join(src, "game-template-cpp"), path.join(dir, "game-template-cpp"), { recursive: true });
+  // The Rust template, lock line and lane gate, as the build ships them.
+  await shipRustPayload({ root: path.dirname(src), resources: dir });
   await buildPlugins(path.dirname(src), dir, { dependencies: false });
   // Headless rigs must never contact the real account service after a fixture unlock.
   // genex-creator-mcp.test.ts exercises the actual packaged bridge separately.

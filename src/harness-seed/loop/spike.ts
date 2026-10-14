@@ -27,12 +27,57 @@ import { MINUTE_MS } from "./time.ts";
 import { commitAll, updateRef } from "./git.ts";
 import { GIT_TIMEOUT_MS, PAGE_SEED, RECIPE_ID_CHARS } from "./config.ts";
 import { CLIP_BRIEF, CLIP_QUOTE } from "./text.ts";
+import { cppSpikeBrief, isNativeStack } from "./native-briefs.ts";
+import { stackOfShape } from "./native-loop.ts";
+import { GameStack } from "./native-contract.ts";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
 import type { ProjectShape, SnapshotRecord } from "../types/host-api.d.ts";
 import type { CheckResult } from "./checks.ts";
 import type { Evidence } from "./evidence.ts";
 import type { Recipe, RecipeHit } from "./library.ts";
 import type { ExecAnswer, Trim } from "./git.ts";
+
+/**
+ * A C++ · raylib facet's spike is refused here before it is built, and its brief would come from
+ * here (`cppSpikeBrief`): a copy kept from before C++ games builds a three.js page in a C++ game,
+ * so a raylib night refuses to run on it.
+ */
+export const SERVES_NATIVE = true;
+
+/**
+ * A Rust · wgpu facet's spike is refused here, typed `rust-spike-unbuilt`, before anything is
+ * opened: a copy kept from before Rust games builds a three.js page in a Rust game, so a Rust
+ * night refuses to run on it.
+ */
+export const SERVES_RUST = true;
+
+/** Why a spike opens nothing, by code. Wire values (the outcome's `refusal`): never rename one. */
+export const SpikeRefusal = {
+  /** The game builds into an output folder the studio cannot name, so no spike page could be served. */
+  Unservable: "spike-unservable",
+  /** A C++ · raylib spike would be a CMake project of its own, which nothing here builds or looks at. */
+  NativeSpikeUnbuilt: "native-spike-unbuilt",
+  /** A Rust · wgpu spike needs a workspace-member crate sharing the game's target folder, which nothing builds yet. */
+  RustSpikeUnbuilt: "rust-spike-unbuilt",
+} as const;
+export type SpikeRefusal = (typeof SpikeRefusal)[keyof typeof SpikeRefusal];
+
+/** Why a spike opens nothing. Model-facing: the facet's next brief quotes it. */
+const MESSAGE = {
+  [SpikeRefusal.Unservable]:
+    "this game builds into an output folder the studio cannot name, so a spike page could not be served",
+  [SpikeRefusal.NativeSpikeUnbuilt]:
+    "this is a C++ · raylib game, whose spikes the studio cannot build and look at, so keep working the check in the facet's own sources",
+  [SpikeRefusal.RustSpikeUnbuilt]:
+    "this is a Rust · wgpu game, whose spikes the studio cannot build until a spike crate shares the game's target folder, so keep working the check in the facet's own sources",
+} as const satisfies Record<SpikeRefusal, string>;
+
+/** The refusal a game of each stack's spike meets before it is built, or null for a stack whose spike is a page. */
+const UNBUILT_SPIKE = {
+  [GameStack.ThreeJs]: null,
+  [GameStack.RaylibCpp]: SpikeRefusal.NativeSpikeUnbuilt,
+  [GameStack.RustWgpu]: SpikeRefusal.RustSpikeUnbuilt,
+} as const satisfies Record<GameStack, SpikeRefusal | null>;
 
 /** Consecutive failures as an identity check that earn a check a spike. */
 const SPIKE_CONSECUTIVE_FAILURES = 2;
@@ -47,8 +92,8 @@ const RECIPE_SKETCH_CHARS = 6_000;
 /** The longest name a spike's preview, thread and facet may take. */
 const SPIKE_NAME_CHARS = 60;
 
-/** A game's shape as a spike reads it: where it serves from, what builds it, its entry. */
-type SpikeShape = Partial<Pick<ProjectShape, "serve" | "build" | "main">>;
+/** A game's shape as a spike reads it: where it serves from, what builds it, its entry and what kind of folder it is. */
+type SpikeShape = Partial<Pick<ProjectShape, "serve" | "build" | "main" | "kind">>;
 
 /** Where a spike's page lives (spikeLocation). */
 export interface SpikeLocation {
@@ -58,7 +103,10 @@ export interface SpikeLocation {
   recipeFile: string;
   entry: string;
   contract: string;
+  /** Why no spike opens here, in words the facet's brief quotes; null when one may. */
   refused: string | null;
+  /** The same refusal by its code; null when a spike may open. */
+  code: SpikeRefusal | null;
 }
 
 /** What one spike came to. */
@@ -74,6 +122,8 @@ export interface SpikeOutcome {
   unsatisfiable: string | null;
   /** The user stopped it: no verdict on the check, and nothing to replan. */
   stopped?: boolean;
+  /** Why no spike was opened at all, by code (`SpikeRefusal`). */
+  refusal?: SpikeRefusal;
 }
 
 /** What runSpike is handed by the facet loop. */
@@ -159,16 +209,14 @@ export function spikeLocation({
     entry: `spike/${id}.html`,
     contract: `${"../".repeat(dir.split("/").length)}src/studio.js`,
     refused: null,
+    code: null,
   });
-  if (build) {
-    if (!shape?.serve) {
-      return {
-        ...at("spike"),
-        refused: "this game builds into an output folder the studio cannot name, so a spike page could not be served",
-      };
-    }
-    return at("public/spike");
-  }
+  const refuse = (code: SpikeRefusal): SpikeLocation => ({ ...at("spike"), refused: MESSAGE[code], code });
+  // A compiled game's spike would be a project of its own (CMake, or a cargo crate sharing the
+  // game's target folder), which nothing here builds or looks at yet.
+  const unbuilt = UNBUILT_SPIKE[stackOfShape(shape)];
+  if (unbuilt) return refuse(unbuilt);
+  if (build) return shape?.serve ? at("public/spike") : refuse(SpikeRefusal.Unservable);
   const servesFromItsOwnFolder = ownShape && serve && serve !== ".";
   if (servesFromItsOwnFolder) return at(`${serve}/spike`);
   return at("spike");
@@ -187,6 +235,7 @@ export function spikeBrief({
   contract = "../src/studio.js",
   ownShape = false,
   build = null,
+  stack,
 }: {
   run: Run;
   spec: Pick<FacetSpec, "title" | "intent">;
@@ -200,7 +249,15 @@ export function spikeBrief({
   contract?: string;
   ownShape?: boolean;
   build?: string | null;
+  /** The game's stack: a C++ · raylib game's spike is a CMake project of its own, not a page. */
+  stack?: GameStack;
 }): string {
+  if (isNativeStack(stack)) {
+    // The runner's own folder for the spike (the page's), so its ownership and harvest cover every path the brief names.
+    const location = { dir: path.posix.dirname(page), recipeFile };
+    const facts = { run, spec, check: renderChecks([check]), camera: check.camera, tried, recipes, id: check.id };
+    return cppSpikeBrief({ ...facts, location });
+  }
   return [
     `You are building a SPIKE inside Autopilot run ${run.runId} — a throwaway mini-scene that proves ONE technique against ONE check, in isolation from the game. Nothing you write here ships; the technique does.`,
     ``,
@@ -316,8 +373,12 @@ export async function runSpike(ctx: HarnessCtx, options: SpikeOptions): Promise<
   const delegated = await buildsInSessions(ctx, options.run);
 
   // A shape whose output folder the studio cannot name has nowhere to put a page the studio
-  // could serve. Say that, once, instead of building a spike nobody can look at.
-  if (location.refused) return finishedEarly(spike, `no spike: ${location.refused}`);
+  // could serve, and a compiled game's spike nothing builds. Say that, once and by its code,
+  // instead of building a spike nobody can look at.
+  if (location.code) {
+    spike.outcome.refusal = location.code;
+    return finishedEarly(spike, `no spike: ${location.refused}`);
+  }
 
   await openSpikeWorkspace(spike, budgetMs);
   const built = await buildSpike(spike, delegated);
@@ -430,6 +491,7 @@ function spikeTurn(spike: SpikeRun) {
     contract: location.contract,
     ownShape,
     build: ownShape ? (shape?.build ?? null) : null,
+    stack: stackOfShape(shape),
   });
   // The builder works on exactly the run's builder effort, even none.
   return {
@@ -467,7 +529,7 @@ async function delegatedSpikeBuild(spike: SpikeRun, turn: ReturnType<typeof spik
       // game" and nothing enforced it. Its seam is its own folder and the verdict file.
       ownership: {
         facetId,
-        owns: [location.dir, "spike/VERDICT.md"],
+        owns: spikeOwns(location),
         ownsMain: false,
         ...(ownShape ? { template: false } : {}),
         ...(ownShape && shape?.serve && shape.serve !== "." ? { neverLock: [shape.serve] } : {}),
@@ -571,15 +633,20 @@ async function spikeUnsatisfiable(spike: SpikeRun, finalMessage: string): Promis
   return verdict.reason || "the spike builder reports the check cannot pass as written";
 }
 
+/** What a delegated spike build may edit: the spike's own folder and the verdict file. */
+export function spikeOwns(location: Pick<SpikeLocation, "dir">): string[] {
+  return [location.dir, "spike/VERDICT.md"];
+}
+
+/** Where a passing spike's recipe file is looked for, in order: wherever the builder put it. */
+export function recipeCandidates(location: Pick<SpikeLocation, "dir" | "recipeFile">, id: string): string[] {
+  return [location.recipeFile, path.join("spike", `${id}.RECIPE.md`), path.join(location.dir, `${id}.RECIPE.md`)];
+}
+
 /** The recipe file the builder wrote, wherever it put it. */
 async function readRecipeMarkdown(base: string, spike: SpikeRun): Promise<string> {
   const { id, location } = spike;
-  const candidates = [
-    location.recipeFile,
-    path.join("spike", `${id}.RECIPE.md`),
-    path.join(location.dir, `${id}.RECIPE.md`),
-  ];
-  for (const file of candidates) {
+  for (const file of recipeCandidates(location, id)) {
     const markdown = await readFile(path.join(base, file), "utf8").catch(() => "");
     if (markdown) return markdown;
   }
@@ -608,6 +675,8 @@ async function keepRecipe(spike: SpikeRun): Promise<Recipe> {
     evidence: { run: run.runId, project: run.project, facet: spec.id, iteration, spike: id, check: check.id },
     // Proven in one game: project-scoped until it wins in another.
     project: run.project,
+    // Written in the game's language: a C++ game's technique never reaches a three.js game.
+    runtime: stackOfShape(options.shape ?? null),
   }) as Recipe;
   if (parsed.title) recipe.title = parsed.title.slice(0, CLIP_QUOTE);
   // This run's round uses the technique either way; keeping it for later games is learning.

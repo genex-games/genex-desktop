@@ -1,0 +1,64 @@
+# The lakeside showcase: a beautiful scene on the current renderer, kept for before/after captures
+# across the renderer follow-up. `game/` is a complete Rust · wgpu game folder (genex.toml, src/,
+# shaders/, assets/, no cargo files) the owner opens in Studio; this crate builds the same sources
+# for the workspace: the windowed `showcase` binary, the `showcase-game` entry exactly as Studio
+# builds it, the `showcase-assets` tool that writes the procedural GLBs, and the capture rows.
+[package]
+name = "showcase"
+description = "The lakeside showcase scene (renderer before/after captures)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "showcase_game"
+
+# `cargo run -p showcase`: the scene in a window, its assets read from game/assets.
+[[bin]]
+name = "showcase"
+path = "src/main.rs"
+
+# The game folder's own entry, compiled as Studio's lane compiles it (its assets beside the binary).
+[[bin]]
+name = "showcase-game"
+path = "game/src/main.rs"
+
+# Rewrites game/assets/*.glb and the terrain's splat map from the layout (tests/assets.rs holds the
+# files to it); `showcase-assets fetched` packs the CC0 textures `scripts/showcase-assets.ts` fetched
+# (assets-manifest.json) into what the scene reads.
+[[bin]]
+name = "showcase-assets"
+path = "src/bin/showcase-assets.rs"
+
+# `cargo bench -p showcase --bench render-baseline`: the renderer perf harness (lakeside shots and
+# tour, bench scenes on their camera paths; CPU and GPU-timestamp p50/p95 as JSON in the evidence folder).
+[[bench]]
+name = "render-baseline"
+path = "benches/render_baseline.rs"
+harness = false
+
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+genex = { workspace = true }
+# The bench scenes (src/bench) draw through the renderer's own scene: per-draw materials, point
+# lights and skinning the facade does not offer yet.
+genex-render = { workspace = true }
+# The showcase-assets tool: the splat map's PNG and the fetched maps' processing (the showcase crate
+# is a workspace tool and capture harness; the game folder's sources never use it).
+image = { workspace = true }
+
+# The capture and performance rows render headless on the host GPU (Metal on the Mac) through
+# genex-render, with the web shell's frame-to-scene bridge, and write PNGs and JSON records.
+[dev-dependencies]
+genex-platform-web = { workspace = true }
+wgpu = { workspace = true }
+image = { workspace = true }

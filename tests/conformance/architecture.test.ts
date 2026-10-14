@@ -8,8 +8,11 @@ import {
   ALLOWLIST,
   checkBoundaries,
   checkCycles,
+  checkNativeLoads,
+  checkRustRuntimeBoundary,
   checkSeedBoundary,
   importCycles,
+  rustRuntimeEdges,
   seedEdges,
   type BoundaryAllowlist,
 } from "../../scripts/check-boundaries.ts";
@@ -103,10 +106,101 @@ test("import cycles are found through static runtime imports only, and the allow
   );
 });
 
+test("main, the substrate and the preload load no native code but the frames addon, by process.dlopen in native-frames.ts", (t) => {
+  const root = tree(t, {
+    "src/main/foo.ts": "const addon = require('./x.node');",
+    "src/main/esm.ts": "import addon from './y.node'; export { addon };",
+    "src/main/reexport.ts": "export * from '../z.node';",
+    "src/main/lazy.ts": "export const load = () => import('../lazy.node');",
+    "src/main/equals.ts": "import pty = require('./pty.node');",
+    "src/main/created.ts":
+      "import { createRequire } from 'node:module'; const req = createRequire(import.meta.url); req('./c.node'); module.require('./m.node');",
+    "src/substrate/dl.ts": "process.dlopen({ exports: {} }, '/tmp/a.node');",
+    "src/substrate/aliased.ts": "const { dlopen } = process; const d = process['dlopen']; export { dlopen, d };",
+    "src/preload/wasm.ts":
+      "export const a = (b: BufferSource) => WebAssembly.instantiate(b); export const c = (b: BufferSource) => WebAssembly.compile(b); export const m = (b: BufferSource) => new WebAssembly.Module(b);",
+    "src/main/native-frames.ts":
+      "export function load(file: string) { const module = { exports: {} }; process.dlopen(module, file); return module.exports; } export const other = () => require('./other.node');",
+    "src/main/scan.ts":
+      "export const isAddon = (ext: string) => ext === '.node'; export const NAME = 'genex-frames.node'; export const RULE = /process\\.dlopen\\(/; // process.dlopen(x) in a comment",
+    "src/renderer/view.ts": "const addon = require('./r.node');",
+    "src/harness-seed/loop/x.ts": "process.dlopen({ exports: {} }, 'x.node');",
+  });
+  const refused = checkNativeLoads(root)
+    .map((error) => error.split(": ")[0])
+    .sort();
+  assert.deepEqual(refused, [
+    "src/main/created.ts:1",
+    "src/main/created.ts:1",
+    "src/main/equals.ts:1",
+    "src/main/esm.ts:1",
+    "src/main/foo.ts:1",
+    "src/main/lazy.ts:1",
+    "src/main/native-frames.ts:1",
+    "src/main/reexport.ts:1",
+    "src/preload/wasm.ts:1",
+    "src/preload/wasm.ts:1",
+    "src/preload/wasm.ts:1",
+    "src/substrate/aliased.ts:1",
+    "src/substrate/aliased.ts:1",
+    "src/substrate/dl.ts:1",
+  ]);
+  assert.match(checkNativeLoads(root).join("\n"), /src\/main\/native-frames\.ts:1: .*other\.node/);
+});
+
+test("process.dlopen is allowed in src/main/native-frames.ts alone, and a .node string comparison is no load", (t) => {
+  const root = tree(t, {
+    "src/main/native-frames.ts": "export function load(file: string) { process.dlopen({ exports: {} }, file); }",
+    "src/substrate/plugins/scan.ts":
+      "export const isAddon = (ext: string) => ext === '.node' || ext.endsWith('.node');",
+  });
+  assert.deepEqual(checkNativeLoads(root), []);
+});
+
+test("the app may not load the Rust runtime or the spike's scripts: any src file, static or dynamic, resolved or not; erased types do not count", (t) => {
+  const root = tree(t, {
+    "native/genex-rust/web/shell.html": "<!doctype html>\n",
+    "scripts/spike/rust-wgpu/measure.ts": "export const measure = () => 1;",
+    "scripts/spike/rust-wgpu/types.ts": "export type Pins = { rust: string };",
+    "src/main/shell.ts": "import shell from '../../native/genex-rust/web/shell.html';\nexport default shell;",
+    "src/renderer/measure.ts": "export { measure } from '../../scripts/spike/rust-wgpu/measure.ts';",
+    "src/substrate/lazy.ts": "export const load = () => import('../../scripts/spike/rust-wgpu/measure.ts');",
+    "src/harness-seed/loop/crate.ts": "import '../../../native/genex-rust/crates/genex/src/lib.rs';",
+    "src/shared/pins.ts": "import type { Pins } from '../../scripts/spike/rust-wgpu/types.ts'; export type P = Pins;",
+    "src/main/resources.ts": "export const load = (dir: string) => import(dir + '/native/genex-rust/x.js');",
+  });
+  assert.deepEqual(
+    rustRuntimeEdges(root)
+      .map((e) => `${e.from}:${e.line} -> ${e.to}`)
+      .sort(),
+    [
+      "src/harness-seed/loop/crate.ts:1 -> native/genex-rust/crates/genex/src/lib.rs",
+      "src/main/shell.ts:1 -> native/genex-rust/web/shell.html",
+      "src/renderer/measure.ts:1 -> scripts/spike/rust-wgpu/measure.ts",
+      "src/substrate/lazy.ts:1 -> scripts/spike/rust-wgpu/measure.ts",
+    ],
+  );
+  const result = checkRustRuntimeBoundary(root);
+  assert.equal(result.errors.length, 4);
+  assert.match(
+    result.errors.join("\n"),
+    /src\/main\/shell\.ts:1: runtime import of native\/genex-rust\/web\/shell\.html/,
+  );
+});
+
 test("this repository has no seed import, and no cycle beyond the frozen allowlist", () => {
   const allowed = JSON.parse(fs.readFileSync(path.resolve(ALLOWLIST), "utf8")) as BoundaryAllowlist;
   assert.deepEqual(checkSeedBoundary(process.cwd()).errors, []);
+  assert.deepEqual(
+    checkRustRuntimeBoundary(process.cwd()).errors,
+    [],
+    "no app import of the Rust runtime or the spike",
+  );
   assert.deepEqual(checkCycles(process.cwd(), allowed).errors, []);
+});
+
+test("this repository loads native code only where allowed: the frames addon in native-frames.ts", () => {
+  assert.deepEqual(checkNativeLoads(process.cwd()), []);
 });
 test("browser boundary rejects direct, transitive, aliased and dynamic runtime dependencies; erased types pass", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "boundary-"));

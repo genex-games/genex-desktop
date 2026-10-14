@@ -52,6 +52,10 @@ import type { FolderInspection, GameProject } from "../../src/renderer/types.ts"
 import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { packageBin } from "../../scripts/package-bin.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack, GameValidationCode, ProjectKind, stackOf } from "../../src/shared/game-project.ts";
+import { readGameDestinations } from "../../src/substrate/project-shape.ts";
+import { validateGameDir, validateNativeDir } from "../../src/substrate/game-validation.ts";
 
 const exec = promisify(execFile);
 const repo = path.resolve(import.meta.dirname, "../..");
@@ -2182,6 +2186,516 @@ describe("the contract upgrade", () => {
       assert.equal(await exists(path.join(outside, "elsewhere-src", "hud.v1.js")), false, hostile.name);
     }
     assert.equal(await readFile(path.join(outside, "linked-hud.js"), "utf8"), await firstHud());
+  });
+});
+
+/** The fixed shape of every C++ · raylib folder: the lane builds it, so nothing here is the game's own build. */
+const RAYLIB_SHAPE = {
+  entry: "index.html",
+  main: "src/main.cpp",
+  build: null,
+  install: null,
+  own: false,
+  kind: ProjectKind.RaylibCpp,
+  serve: ".",
+};
+
+/** The CMake project the studio scaffolds, and the entry that installs the C++ contract. */
+const GENEX_CMAKE = "cmake_minimum_required(VERSION 3.28)\nproject(game CXX C)\ngenex_add_game(SOURCES src/*.cpp)\n";
+const CONTRACT_MAIN = '#include "studio.h"\nint main() {\n  studio::install({});\n}\n';
+/** A hand-written raylib project: the CMake every raylib tutorial writes, no genex_add_game. */
+const PLAIN_RAYLIB_CMAKE =
+  "cmake_minimum_required(VERSION 3.28)\nproject(pong C)\nfind_package(raylib 6.0 REQUIRED)\nadd_executable(pong src/main.cpp)\ntarget_link_libraries(pong raylib)\n";
+
+const posixOnly = process.platform === "win32" ? "links and pipes need POSIX" : false;
+
+/** The largest CMakeLists.txt or C++ source the studio reads; a hostile one is written at exactly this size. */
+const NATIVE_SOURCE_CAP_BYTES = 4 * 1024 * 1024;
+/**
+ * A generous ceiling for classifying or validating a folder whose sources sit at the cap: a linear
+ * read takes milliseconds there, and the backtracking one it replaced took hours.
+ */
+const LINEAR_READ_BUDGET_MS = 2_000;
+
+/** `head`, then `unit` over and over, to exactly `bytes` (ASCII, so a character is a byte). */
+function filledTo(head: string, unit: string, bytes = NATIVE_SOURCE_CAP_BYTES): string {
+  return (head + unit.repeat(Math.ceil((bytes - head.length) / unit.length))).slice(0, bytes);
+}
+
+/** Sources written to cost a scanner more than their length: each one is a CMakeLists.txt and a main.cpp. */
+const HOSTILE_SOURCES: Array<[string, string]> = [
+  ["a quote, then escaped quotes", filledTo('"', '\\"')],
+  ["a call whose quoted argument never ends", filledTo('genex_add_game("', '\\"')],
+  ["a bracket comment full of near-miss closings", filledTo("#[==[", "]=]")],
+  ["a bracket argument full of near-miss closings", filledTo("f([==[", "]=]")],
+  ["a raw string full of near-miss closings", filledTo('R"abcdefghijklmnop(', ")abcdefghijklmnop")],
+  ["a block comment that never closes", filledTo("/*", "*")],
+  ["parentheses nested to the end", filledTo("f", "(")],
+  ["one name, then spaces to the end", filledTo("studio", " ")],
+];
+
+/** Write `files` (relative path → text) under `dir`. */
+async function writeTree(dir: string, files: Record<string, string>): Promise<string> {
+  for (const [rel, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+    await writeFile(path.join(dir, rel), text);
+  }
+  return dir;
+}
+
+/** A C++ · raylib folder as the studio scaffolds one, with `files` laid over it. */
+function raylibFolder(dir: string, files: Record<string, string> = {}): Promise<string> {
+  return writeTree(dir, { "CMakeLists.txt": GENEX_CMAKE, "src/main.cpp": CONTRACT_MAIN, ...files });
+}
+
+/** A stand-in for `src/game-template-cpp` until the C++ template lands: what the studio copies and withholds. */
+function cppTemplate(dir: string): Promise<string> {
+  return writeTree(dir, {
+    "CMakeLists.txt": GENEX_CMAKE,
+    "src/main.cpp": CONTRACT_MAIN,
+    "src/studio.h": "namespace studio { struct Game {}; void install(Game game); }\n",
+    "src/studio.cpp": '#include "studio.h"\nvoid studio::install(Game) {}\n',
+    "src/session.cpp": "// a raylib-free runtime unit\n",
+    "web/shell.html": "<!doctype html><title>__GAME_TITLE__</title>\n",
+    "CLAUDE.md": "# Rules for a C++ game\n",
+    "CLAUDE.own.md": "# Rules for a C++ game of its own\n",
+    "NOTES.md": "# __GAME_TITLE__\n",
+    "NOTES.own.md": "# __GAME_TITLE__ (its own)\n",
+    "docs/CONTRACT.md": "# The C++ contract\n",
+  });
+}
+
+/** Every entry under `dir` outside `.git`, with a regular file's bytes: what a read must leave as it was. */
+async function bytesIn(dir: string): Promise<Array<[string, string]>> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  const listed: Array<[string, string]> = [];
+  for (const entry of entries) {
+    const rel = path.relative(dir, path.join(entry.parentPath, entry.name));
+    if (rel.split(path.sep)[0] === ".git") continue;
+    const bytes = entry.isFile() ? (await readFile(path.join(dir, rel))).toString("base64") : "(not a file)";
+    listed.push([rel, bytes]);
+  }
+  return listed.sort(([a], [b]) => (a < b ? -1 : 1));
+}
+
+describe("a C++ · raylib folder", () => {
+  it("is raylib-cpp when its CMakeLists.txt calls genex_add_game and it has no index.html of its own", async () => {
+    const base = await tmpDir("studio-raylib-shape-");
+    const dir = await raylibFolder(path.join(base, "pong"));
+    assert.deepEqual(await readProjectShape(dir), RAYLIB_SHAPE);
+    assert.deepEqual(await detectProjectShape(dir), RAYLIB_SHAPE);
+    // The toast and the Open Game row say the studio builds it, never that it runs as written.
+    const opened = openedWords("Pong", RAYLIB_SHAPE);
+    assert.doesNotMatch(opened, /runs as written/);
+    assert.match(opened, /C\+\+ toolchain/);
+    // The same CMakeLists.txt beside a page of the game's own is a browser game that builds something native too.
+    const web = await raylibFolder(path.join(base, "web"), {
+      "index.html": `<!doctype html><script type="module" src="/src/main.js"></script>\n`,
+      "src/main.js": `const ctx = document.querySelector("canvas").getContext("2d");\n`,
+    });
+    assert.equal((await readProjectShape(web)).kind, ProjectKind.Canvas2d);
+  });
+
+  it("reads every way a CMake project names raylib as raylib, and nothing else", async () => {
+    const base = await tmpDir("studio-raylib-cmake-");
+    const cases: Array<[string, string, boolean]> = [
+      ["find_package", PLAIN_RAYLIB_CMAKE, true],
+      ["a command in capitals", "FIND_PACKAGE ( raylib )\nadd_executable(game main.c)\n", true],
+      ["a link target", "add_executable(game src/main.cpp)\ntarget_link_libraries(game PRIVATE m raylib)\n", true],
+      [
+        "FetchContent",
+        "include(FetchContent)\nFetchContent_Declare(raylib GIT_REPOSITORY https://github.com/raysan5/raylib.git GIT_TAG 6.0)\nFetchContent_MakeAvailable(raylib)\n",
+        true,
+      ],
+      [
+        "ExternalProject under another name",
+        "include(ExternalProject)\nExternalProject_Add(rl URL https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz)\n",
+        true,
+      ],
+      ["SDL, not raylib", "find_package(SDL2 REQUIRED)\nadd_executable(game main.c)\n", false],
+      ["raylib only in a comment", "# find_package(raylib)\nadd_executable(game main.c)\n", false],
+      ["a quoted package name", 'find_package("raylib" 6.0 REQUIRED)\nadd_executable(game main.c)\n', true],
+      [
+        "a call written inside a quoted argument",
+        'message(STATUS "others call find_package(raylib) here")\nadd_executable(game main.c)\n',
+        false,
+      ],
+      ["a bracket comment over several lines", "#[[\nfind_package(raylib)\n]]\nadd_executable(game main.c)\n", false],
+      [
+        "a deeper bracket comment that holds ]]",
+        "#[==[\nnot the end ]]\ntarget_link_libraries(game raylib)\n]==]\nadd_executable(game main.c)\n",
+        false,
+      ],
+      [
+        "a bracket argument",
+        "message([=[\ntarget_link_libraries(game raylib)\n]=])\nadd_executable(game main.c)\n",
+        false,
+      ],
+    ];
+    for (const [label, cmake, raylib] of cases) {
+      const dir = await writeTree(path.join(base, label.replaceAll(" ", "-")), { "CMakeLists.txt": cmake });
+      assert.deepEqual(await readProjectShape(dir), raylib ? RAYLIB_SHAPE : TEMPLATE_SHAPE, label);
+    }
+  });
+
+  it("validates a plain raylib CMake project with native-needs-genex-cmake, never with a missing index.html", async () => {
+    const dir = await raylibFolder(path.join(await tmpDir("studio-raylib-plain-"), "pong"), {
+      "CMakeLists.txt": PLAIN_RAYLIB_CMAKE,
+    });
+    const checked = await validateGameDir(dir);
+    assert.equal(checked.shape.kind, ProjectKind.RaylibCpp);
+    assert.deepEqual(checked.codes, [GameValidationCode.NativeNeedsGenexCmake]);
+    assert.equal(checked.ok, false);
+    assert.equal(checked.problems.length, 1, checked.problems.join("\n"));
+    assert.ok(!checked.problems.some((problem) => /index\.html/.test(problem)), checked.problems.join("\n"));
+  });
+
+  it("records own:false for a raylib studio.json, whatever its other fields claim", async () => {
+    const base = await tmpDir("studio-raylib-own-");
+    // An older or hand-written studio.json: main is src/main.cpp and nothing says own, which used to read as a game of its own.
+    const noted = await raylibFolder(path.join(base, "noted"), {
+      "studio.json": JSON.stringify({ entry: "index.html", main: "src/main.cpp", kind: ProjectKind.RaylibCpp }),
+    });
+    assert.deepEqual(await readProjectShape(noted), RAYLIB_SHAPE);
+    // A studio.json that claims a build of its own cannot switch the C++ lane off: the shape is fixed.
+    const claimed = await raylibFolder(path.join(base, "claimed"), {
+      "studio.json": JSON.stringify({
+        main: "src/game.cpp",
+        build: "make",
+        install: "npm install",
+        own: true,
+        serve: "bin",
+        kind: ProjectKind.RaylibCpp,
+      }),
+    });
+    assert.deepEqual(await readProjectShape(claimed), RAYLIB_SHAPE);
+    // A raylib game that lost its CMakeLists.txt is still one: validation says what is missing.
+    const lost = await writeTree(path.join(base, "lost"), {
+      "studio.json": JSON.stringify({ main: "src/main.cpp", kind: ProjectKind.RaylibCpp }),
+    });
+    assert.deepEqual(await readProjectShape(lost), RAYLIB_SHAPE);
+    // How long it takes to boot is still the folder's to say.
+    const slow = await raylibFolder(path.join(base, "slow"), {
+      "studio.json": JSON.stringify({ kind: ProjectKind.RaylibCpp, bootMs: 20_000 }),
+    });
+    assert.deepEqual(await readProjectShape(slow), { ...RAYLIB_SHAPE, bootMs: 20_000 });
+  });
+
+  it("reads where people play: the kind decides the stack, studio.json the destinations, the host the default", async () => {
+    const base = await tmpDir("studio-raylib-destinations-");
+    const three = { stack: GameStack.ThreeJs, targets: [BuildTarget.Web] };
+    const cases: Array<{
+      label: string;
+      raylib: boolean;
+      meta?: unknown;
+      host: StudioPlatform | null;
+      expected: { stack: GameStack; targets: BuildTarget[] };
+      warnings?: number;
+      contradicts?: boolean;
+    }> = [
+      { label: "a Three.js game that records nothing", raylib: false, host: StudioPlatform.Mac, expected: three },
+      {
+        label: "recorded destinations, in the dialog's order",
+        raylib: true,
+        meta: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Mac, BuildTarget.Web] },
+        host: StudioPlatform.Mac,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] },
+      },
+      {
+        label: "unknown destinations dropped with a warning",
+        raylib: true,
+        meta: { targets: ["web", "playstation", 7, "macos", "web"] },
+        host: StudioPlatform.Linux,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] },
+        warnings: 1,
+      },
+      {
+        label: "no destinations on a Mac",
+        raylib: true,
+        host: StudioPlatform.Mac,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] },
+      },
+      {
+        label: "no destinations on Linux",
+        raylib: true,
+        host: StudioPlatform.Linux,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Linux] },
+      },
+      {
+        label: "no destinations on Windows",
+        raylib: true,
+        host: StudioPlatform.Windows,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Windows] },
+      },
+      {
+        label: "no destinations on a host the studio does not build for",
+        raylib: true,
+        host: null,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web] },
+      },
+      {
+        label: "a three-js stack on a raylib folder: the files win",
+        raylib: true,
+        meta: { stack: GameStack.ThreeJs },
+        host: StudioPlatform.Mac,
+        expected: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] },
+        contradicts: true,
+      },
+      {
+        label: "a raylib stack on a browser game: the files win, and the desktop is dropped",
+        raylib: false,
+        meta: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Mac] },
+        host: StudioPlatform.Mac,
+        expected: three,
+        warnings: 1,
+        contradicts: true,
+      },
+    ];
+    for (const [index, row] of cases.entries()) {
+      const dir = path.join(base, `case-${index}`);
+      if (row.raylib) await raylibFolder(dir);
+      else await templateFolder(dir);
+      if (row.meta !== undefined) {
+        const current = JSON.parse(await readFile(path.join(dir, "studio.json"), "utf8").catch(() => "{}"));
+        await writeFile(path.join(dir, "studio.json"), JSON.stringify({ ...current, ...(row.meta as object) }));
+      }
+      const read = await readGameDestinations(dir, await readProjectShape(dir), row.host);
+      assert.deepEqual(read.destinations, row.expected, row.label);
+      assert.equal(read.warnings.length, row.warnings ?? 0, `${row.label}: ${read.warnings.join(" / ")}`);
+      assert.equal(read.stackContradicts, row.contradicts ?? false, row.label);
+      const codes = (await validateGameDir(dir)).codes;
+      assert.equal(codes.includes(GameValidationCode.StackContradictsKind), row.contradicts ?? false, row.label);
+    }
+  });
+
+  it("ignores hostile studio.json values, never throws, and pollutes nothing", async () => {
+    const base = await tmpDir("studio-raylib-hostile-");
+    const hostile = [
+      JSON.stringify({ targets: "__proto__" }),
+      JSON.stringify({ targets: Array.from({ length: 40 }, () => BuildTarget.Web) }),
+      JSON.stringify({ targets: [null, {}, [BuildTarget.Web], 1.5] }),
+      JSON.stringify({ targets: ["__proto__", "constructor", "toString"] }),
+      JSON.stringify({ targets: [] }),
+      JSON.stringify({ stack: "unity" }),
+      JSON.stringify({ stack: { valueOf: GameStack.ThreeJs } }),
+      '{"__proto__":{"polluted":true},"targets":{"__proto__":["web"]}}',
+      "[]",
+      '"raylib-cpp"',
+      "null",
+      "{not json",
+    ];
+    const games = [
+      { made: raylibFolder, shape: RAYLIB_SHAPE, plays: [BuildTarget.Web, BuildTarget.Mac] },
+      { made: templateFolder, shape: TEMPLATE_SHAPE, plays: [BuildTarget.Web] },
+    ];
+    for (const [index, text] of hostile.entries()) {
+      for (const { made, shape, plays } of games) {
+        const dir = path.join(base, `case-${index}-${shape.kind}`);
+        await made(dir);
+        await writeFile(path.join(dir, "studio.json"), text);
+        const read = await readGameDestinations(dir, shape, StudioPlatform.Mac);
+        assert.deepEqual(read.destinations, { stack: stackOf(shape), targets: plays }, text);
+        assert.equal(read.stackContradicts, false, text);
+        await validateGameDir(dir);
+      }
+    }
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+    assert.equal(([] as unknown as Record<string, unknown>).polluted, undefined);
+  });
+
+  it("names every problem of a C++ game with a code, and never asks it for index.html", async () => {
+    const base = await tmpDir("studio-raylib-validate-");
+    const cases: Array<{
+      label: string;
+      files?: Record<string, string>;
+      remove?: string[];
+      meta?: object;
+      codes: GameValidationCode[];
+    }> = [
+      { label: "the scaffolded shape", codes: [] },
+      {
+        label: "no CMakeLists.txt",
+        remove: ["CMakeLists.txt"],
+        meta: { kind: ProjectKind.RaylibCpp },
+        codes: [GameValidationCode.NativeMissingCMake],
+      },
+      { label: "no src/main.cpp", remove: ["src/main.cpp"], codes: [GameValidationCode.NativeMissingMain] },
+      {
+        label: "main.cpp no longer installs the contract",
+        files: { "src/main.cpp": "int main() { return 0; }\n" },
+        codes: [GameValidationCode.NativeContractRemoved],
+      },
+      {
+        label: "only comments mention the contract",
+        files: { "src/main.cpp": "// studio::install({});\n/* studio::install(game); */\nint main() {}\n" },
+        codes: [GameValidationCode.NativeContractRemoved],
+      },
+      {
+        label: "a plain raylib CMake project",
+        files: { "CMakeLists.txt": PLAIN_RAYLIB_CMAKE },
+        codes: [GameValidationCode.NativeNeedsGenexCmake],
+      },
+      {
+        label: "a quoted argument that names genex_add_game is no call to it",
+        files: {
+          "CMakeLists.txt": `${PLAIN_RAYLIB_CMAKE}message(STATUS "call genex_add_game(SOURCES src/*.cpp) here")\n`,
+        },
+        codes: [GameValidationCode.NativeNeedsGenexCmake],
+      },
+      {
+        label: "a string that names studio::install is no call to it",
+        files: { "src/main.cpp": 'int main() {\n  const char* hint = "studio::install({})";\n}\n' },
+        codes: [GameValidationCode.NativeContractRemoved],
+      },
+      {
+        label: "a character literal that holds a double quote",
+        files: {
+          "src/main.cpp":
+            'int main() {\n  char quote = \'"\'; const char* open = "/*"; studio::install({}); // */\n}\n',
+        },
+        codes: [],
+      },
+      {
+        label: "a raw string that holds what looks like a comment",
+        files: {
+          "src/main.cpp":
+            'const char* shader = R"glsl(\n  // "a" quote\n  vec4 c = vec4(1.0); /*\n)glsl";\nint main() { studio::install({}); }\n',
+        },
+        codes: [],
+      },
+      {
+        label: "studio.json says Three.js",
+        meta: { stack: GameStack.ThreeJs },
+        codes: [GameValidationCode.StackContradictsKind],
+      },
+      {
+        label: "everything at once",
+        files: { "CMakeLists.txt": PLAIN_RAYLIB_CMAKE },
+        remove: ["src/main.cpp"],
+        meta: { stack: GameStack.ThreeJs },
+        codes: [
+          GameValidationCode.NativeNeedsGenexCmake,
+          GameValidationCode.NativeMissingMain,
+          GameValidationCode.StackContradictsKind,
+        ],
+      },
+    ];
+    for (const [index, row] of cases.entries()) {
+      const dir = await raylibFolder(path.join(base, `case-${index}`), row.files);
+      for (const rel of row.remove ?? []) await rm(path.join(dir, rel));
+      if (row.meta) await writeFile(path.join(dir, "studio.json"), JSON.stringify(row.meta));
+      const checked = await validateNativeDir(dir);
+      assert.deepEqual(checked.codes, row.codes, `${row.label}: ${checked.problems.join(" / ")}`);
+      assert.equal(checked.problems.length, row.codes.length, row.label);
+      assert.equal(checked.ok, row.codes.length === 0, row.label);
+      assert.ok(!checked.problems.some((problem) => /index\.html/.test(problem)), row.label);
+      assert.deepEqual((await validateGameDir(dir)).codes, row.codes, `${row.label}: validateGameDir routes by kind`);
+    }
+  });
+
+  it("classifies and validates a hostile CMakeLists.txt and main.cpp at the size cap in linear time, writing nothing", async () => {
+    const base = await tmpDir("studio-raylib-hostile-size-");
+    for (const [index, [label, text]] of HOSTILE_SOURCES.entries()) {
+      assert.equal(Buffer.byteLength(text), NATIVE_SOURCE_CAP_BYTES, label);
+      // Found by its CMakeLists.txt alone; and a C++ game by its studio.json, whose two sources are both hostile.
+      const bare = await writeTree(path.join(base, `bare-${index}`), { "CMakeLists.txt": text });
+      const game = await writeTree(path.join(base, `game-${index}`), {
+        "CMakeLists.txt": text,
+        "src/main.cpp": text,
+        "studio.json": JSON.stringify({ kind: ProjectKind.RaylibCpp }),
+      });
+      const before = [await bytesIn(bare), await bytesIn(game)];
+      const classifying = performance.now();
+      assert.deepEqual(await readProjectShape(bare), TEMPLATE_SHAPE, label);
+      const classifiedMs = performance.now() - classifying;
+      assert.ok(classifiedMs < LINEAR_READ_BUDGET_MS, `${label}: classifying took ${Math.round(classifiedMs)} ms`);
+      const validating = performance.now();
+      const checked = await validateNativeDir(game);
+      const validatedMs = performance.now() - validating;
+      assert.ok(validatedMs < LINEAR_READ_BUDGET_MS, `${label}: validating took ${Math.round(validatedMs)} ms`);
+      assert.deepEqual(
+        checked.codes,
+        [GameValidationCode.NativeNeedsGenexCmake, GameValidationCode.NativeContractRemoved],
+        label,
+      );
+      assert.deepEqual([await bytesIn(bare), await bytesIn(game)], before, label);
+      await rm(bare, { recursive: true });
+      await rm(game, { recursive: true });
+    }
+  });
+
+  it("reads a CMakeLists.txt or main.cpp that is a link, a pipe or a folder as none: never followed, never blocking, nothing written", {
+    skip: posixOnly,
+  }, async () => {
+    const base = await tmpDir("studio-raylib-links-");
+    const outside = await writeTree(path.join(base, "outside"), {
+      "CMakeLists.txt": GENEX_CMAKE,
+      "main.cpp": CONTRACT_MAIN,
+    });
+    const outsideBefore = await bytesIn(outside);
+    /** Each way to put something that is not a plain file where the studio reads one; `outside` is what a link points at. */
+    const plant: Record<string, (target: string, outside: string) => Promise<unknown>> = {
+      link: (target, outside) => symlink(outside, target),
+      pipe: (target) => exec("mkfifo", [target]),
+      folder: (target) => mkdir(target),
+    };
+    for (const [how, make] of Object.entries(plant)) {
+      // Found by its CMakeLists.txt alone: a planted one makes no raylib game.
+      const bare = path.join(base, `bare-${how}`);
+      await mkdir(bare, { recursive: true });
+      await make(path.join(bare, "CMakeLists.txt"), path.join(outside, "CMakeLists.txt"));
+      const bareBefore = await bytesIn(bare);
+      assert.deepEqual(await readProjectShape(bare), TEMPLATE_SHAPE, how);
+      assert.deepEqual(await bytesIn(bare), bareBefore, how);
+
+      // A raylib game by its studio.json: the planted file is one it does not have.
+      const game = await raylibFolder(path.join(base, `game-${how}`), {
+        "studio.json": JSON.stringify({ kind: ProjectKind.RaylibCpp }),
+      });
+      await rm(path.join(game, "CMakeLists.txt"));
+      await rm(path.join(game, "src", "main.cpp"));
+      await make(path.join(game, "CMakeLists.txt"), path.join(outside, "CMakeLists.txt"));
+      await make(path.join(game, "src", "main.cpp"), path.join(outside, "main.cpp"));
+      const gameBefore = await bytesIn(game);
+      const checked = await validateGameDir(game);
+      assert.deepEqual(
+        checked.codes,
+        [GameValidationCode.NativeMissingCMake, GameValidationCode.NativeMissingMain],
+        `${how}: ${checked.problems.join(" / ")}`,
+      );
+      assert.deepEqual(await bytesIn(game), gameBefore, how);
+    }
+    assert.deepEqual(await bytesIn(outside), outsideBefore);
+  });
+
+  it("offers a raylib folder in the Open Game sheet, and promises it no browser file", async () => {
+    const base = await tmpDir("studio-raylib-sheet-");
+    const games = new GameWorkspaces({
+      root: path.join(base, "library"),
+      templateDir: path.join(repo, "src", "game-template"),
+      cppTemplateDir: await cppTemplate(path.join(base, "game-template-cpp")),
+      vendorDir: path.join(base, "vendor"),
+      indexFile: path.join(base, "projects.json"),
+      userData: path.join(base, "userData"),
+      homeDir: base,
+      platform: StudioPlatform.Mac,
+    });
+    const dir = await raylibFolder(path.join(base, "pong"), { "CMakeLists.txt": PLAIN_RAYLIB_CMAKE });
+    const before = await bytesIn(dir);
+    const inspection = await games.inspect(dir);
+    assert.deepEqual(await bytesIn(dir), before, "looking writes nothing");
+    const [candidate] = inspection.candidates;
+    assert.ok(candidate, "the folder itself is the game");
+    assert.equal(inspection.candidates.length, 1);
+    assert.equal(candidate.rel, ".");
+    assert.deepEqual(candidate.shape, RAYLIB_SHAPE);
+    assert.equal(inspection.suggested, ".");
+    const { problems, writes } = candidate.preflight;
+    assert.ok(!problems.some((problem) => /index\.html/.test(problem)), problems.join(" / "));
+    for (const browserFile of ["index.html", "src/main.js", "src/studio.js"]) {
+      assert.ok(!writes.includes(browserFile), `${browserFile} is not promised: ${writes.join(", ")}`);
+    }
+    assert.ok(writes.includes("studio.json"), "the destinations adoption records are a promise too");
   });
 });
 

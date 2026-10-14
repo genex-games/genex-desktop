@@ -1,0 +1,352 @@
+{
+ "framing": [
+  {
+   "name": "chunks",
+   "chunks": [
+    "{\"id\":1}\n{\"id\"",
+    ":2}\r\n\n",
+    "{\"id\":3}",
+    "\n",
+    "tail-without-newline"
+   ]
+  },
+  {
+   "name": "cap",
+   "chunks": [
+    [
+     {
+      "repeat": "a",
+      "count": 1048576
+     },
+     "\n"
+    ],
+    {
+     "repeat": "b",
+     "count": 1000
+    },
+    [
+     {
+      "repeat": "b",
+      "count": 1047577
+     },
+     "\n{\"id\":9}\n"
+    ]
+   ]
+  },
+  {
+   "name": "small-cap",
+   "cap": 4,
+   "chunks": [
+    "abcd\nabcde\nab\r\nabcd\r\n\r\n\n\nabcdef",
+    "gh\nz"
+   ]
+  },
+  {
+   "name": "cap-with-cr",
+   "cap": 4,
+   "chunks": [
+    "abcd\r",
+    "\nxy"
+   ]
+  },
+  {
+   "name": "too-long-tail-at-end",
+   "cap": 4,
+   "chunks": [
+    "abcdefgh"
+   ]
+  },
+  {
+   "name": "too-long-at-end-no-newline",
+   "cap": 4,
+   "chunks": [
+    "abcde"
+   ]
+  },
+  {
+   "name": "only-cr",
+   "chunks": [
+    "\r\n\r",
+    "\n",
+    "\r"
+   ]
+  },
+  {
+   "name": "empty",
+   "chunks": []
+  },
+  {
+   "name": "empty-chunks",
+   "chunks": [
+    "",
+    "",
+    "x",
+    "",
+    "\n"
+   ]
+  },
+  {
+   "name": "many-small",
+   "chunks": [
+    "{",
+    "\"",
+    "a",
+    "\"",
+    ":",
+    "1",
+    "}",
+    "\n",
+    "{",
+    "\"",
+    "b",
+    "\"",
+    ":",
+    "2",
+    "}",
+    "\r",
+    "\n"
+   ]
+  },
+  {
+   "name": "huge-dropped-over-many-chunks",
+   "chunks": [
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    {
+     "repeat": "c",
+     "count": 70000
+    },
+    "\nok\n"
+   ]
+  },
+  {
+   "name": "huge-cap-plus-one-with-cr",
+   "chunks": [
+    [
+     {
+      "repeat": "d",
+      "count": 1048576
+     },
+     "\r\n"
+    ],
+    [
+     {
+      "repeat": "e",
+      "count": 1048577
+     },
+     "\r\n"
+    ],
+    "end"
+   ]
+  },
+  {
+   "name": "invalid-utf8-line",
+   "chunks": [
+    {
+     "hex": "7b7d0aff0a"
+    }
+   ]
+  }
+ ],
+ "handle": [
+  "{\"id\":1,\"op\":\"state\"}",
+  "[1,2]",
+  "\"state\"",
+  "3",
+  "null",
+  "true",
+  "{not json",
+  "",
+  "{\"op\":\"state\"}",
+  "{\"id\":null,\"op\":\"state\"}",
+  "{\"id\":true,\"op\":\"state\"}",
+  "{\"id\":{},\"op\":\"state\"}",
+  "{\"id\":[],\"op\":7}",
+  "{\"id\":4,\"op\":\"launch\"}",
+  "{\"id\":4}",
+  "{\"id\":4,\"op\":7}",
+  "{\"id\":4.5,\"op\":null}",
+  [
+   "{\"id\":5,\"op\":\"state\",\"arg\":",
+   {
+    "repeat": "[",
+    "count": 31
+   },
+   {
+    "repeat": "]",
+    "count": 31
+   },
+   "}"
+  ],
+  [
+   "{\"id\":5,\"op\":\"state\",\"arg\":",
+   {
+    "repeat": "[",
+    "count": 32
+   },
+   {
+    "repeat": "]",
+    "count": 32
+   },
+   "}"
+  ],
+  [
+   "{\"id\":5,\"op\":\"state\",\"arg\":",
+   {
+    "repeat": "[",
+    "count": 32
+   },
+   "x}"
+  ],
+  "{\"id\":\"a1\",\"op\":\"seed\",\"arg\":{\"seed\":12}}",
+  "{\"id\":2,\"op\":\"demo\",\"arg\":{\"name\":\"x\"}}",
+  "{\"id\":2,\"op\":\"seed\"}",
+  "{\"id\":-0,\"op\":\"seed\",\"arg\":{\"seed\":1e400}}",
+  "{\"id\":1e21,\"op\":\"echo\",\"arg\":{\"b\":1,\"a\":[0.1,1e-7,-0,\"\\u0001\\ud800\"],\"b\":2}}",
+  "{\"op\":\"echo\",\"id\":\"x\",\"op\":\"state\"}",
+  "{\"id\":\"\",\"op\":\"echo\",\"arg\":null}",
+  "  {\"id\":3,\"op\":\"echo\",\"arg\":\"caf\\u00e9\"}  "
+ ],
+ "call": [
+  {
+   "op": "state",
+   "arg": null
+  },
+  {
+   "op": "seed",
+   "arg": {
+    "seed": 3
+   }
+  },
+  {
+   "op": "demo",
+   "arg": {}
+  },
+  {
+   "op": "nope",
+   "arg": 1
+  },
+  {
+   "op": "echo",
+   "arg": [
+    1,
+    "two",
+    {
+     "three": 3.5
+    }
+   ]
+  }
+ ],
+ "events": [
+  {
+   "name": "focus",
+   "fields": {
+    "focused": true
+   }
+  },
+  {
+   "name": "ready",
+   "fields": {
+    "nonce": "n1",
+    "protocol": 1,
+    "contractVersion": 1,
+    "event": "ignored",
+    "size": [
+     640,
+     360
+    ]
+   }
+  },
+  {
+   "name": "fatal",
+   "fields": {
+    "reason": "gpu-unsupported"
+   }
+  },
+  {
+   "name": "fatal",
+   "fields": null
+  },
+  {
+   "name": "x",
+   "fields": [
+    1,
+    2
+   ]
+  }
+ ]
+}

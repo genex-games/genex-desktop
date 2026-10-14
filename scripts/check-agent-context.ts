@@ -153,6 +153,8 @@ export const CITATION_ROOTS = ["src/", "scripts/", "tests/"] as const;
 export const CITATION_EXEMPT = [
   "src/harness-seed/",
   "src/game-template/",
+  "src/game-template-cpp/",
+  "src/game-template-rust/",
   "src/harness-boot/",
   "tests/fixtures/shipped/",
 ] as const;

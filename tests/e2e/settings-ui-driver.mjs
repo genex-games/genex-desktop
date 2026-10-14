@@ -263,7 +263,7 @@ async function acceptance() {
       );
     const providersBounds = await bounds();
     const sectionBounds = [];
-    for (const section of ["games", "appearance", "local", "providers", "harness", "permissions"]) {
+    for (const section of ["games", "appearance", "local", "toolchains", "providers", "harness", "permissions"]) {
       await click("#settings-tab-" + section);
       sectionBounds.push({ section, bounds: await bounds() });
     }
@@ -273,6 +273,31 @@ async function acceptance() {
         sectionBounds.every((s) => s.bounds.every((n, i) => Math.abs(n - providersBounds[i]) < 1)),
       sectionBounds,
     );
+
+    // The cpp-game fixture's store holds CMake 4.4.3 (its lock names it) and 4.4.2 (nothing does).
+    await click("#settings-tab-toolchains");
+    const versions = ["cmake/4.4.2", "cmake/4.4.3", "emsdk/6.0.10", "ninja/1.13.2", "raylib/6.0"];
+    const listed = (names) =>
+      `(()=>{const p=document.querySelector('[data-settings-toolchains]');return !!p&&${JSON.stringify(names)}.every(v=>p.querySelector('[data-toolchain-version="'+v+'"]'));})()`;
+    check("Toolchains lists every installed version and the store's disk use", await until(listed(versions)), {
+      text: await js(`document.querySelector('#settings-panel-toolchains')?.textContent`),
+    });
+    check(
+      "Toolchains shows the disk use in mono",
+      await js(
+        `/on disk$/.test(document.querySelector('[data-settings-toolchains] [data-toolchain-store-bytes]')?.textContent ?? '') && getComputedStyle(document.querySelector('[data-toolchain-store-bytes]')).fontFamily.includes('Geist Mono')`,
+      ),
+    );
+    await capture("toolchains");
+    await click("[data-toolchain-prune]");
+    check(
+      "Remove old versions removes only the version no lock names",
+      await until(
+        `!document.querySelector('[data-toolchain-version="cmake/4.4.2"]') && ${listed(versions.filter((v) => v !== "cmake/4.4.2"))} && /^Removed 1 old version/.test(document.querySelector('[data-toolchain-pruned]')?.textContent ?? '')`,
+      ),
+      { text: await js(`document.querySelector('#settings-panel-toolchains')?.textContent`) },
+    );
+    await capture("toolchains-pruned");
 
     for (let n = 0; n < 18; n++) await key("Tab");
     check("Tab stays within Settings", await js(`!!document.activeElement.closest('[data-testid="settings-dialog"]')`));
@@ -437,7 +462,7 @@ async function acceptance() {
     check(
       "signed-out rows offer one Sign in action and name the plan",
       await js(
-        `['Claude Code','Codex'].every(n=>{const r=document.querySelector('[aria-label="'+n+'"]');return r.textContent.includes('Not connected')&&r.querySelectorAll('button').length===1;}) && document.querySelector('[aria-label="Codex"]').textContent.includes('ChatGPT Plus or Pro')`,
+        `['Claude Code','Codex'].every(n=>{const r=document.querySelector('[aria-label="'+n+'"]');const primary=r.querySelectorAll('[data-variant="default"]');return r.textContent.includes('Not connected')&&primary.length===1&&primary[0].textContent==='Sign in';}) && document.querySelector('[aria-label="Codex"]').textContent.includes('ChatGPT Plus or Pro')`,
       ),
     );
     await capture("model-providers");

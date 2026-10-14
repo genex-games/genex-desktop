@@ -8,7 +8,19 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import { OVERFLOW_WINDOWS_MAX, PreviewPool } from "../../src/substrate/preview-pool.ts";
+import { GameStack } from "../../src/shared/game-project.ts";
+import { hostOf, hostTarget } from "../../src/shared/game-targets.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { GameBoxProblem, NativeError, NativeRefusal, NativeRunMode } from "../../src/shared/native-contract.ts";
 import { coreLite } from "../helpers/core-lite.ts";
+import { ScaffoldCaller } from "../../src/substrate/game-workspace.ts";
+
+/** This host's own desktop destination: a native lease it can run (CI runs Linux and Windows too). */
+const HOST_TARGET = hostTarget(hostOf(process.platform) ?? StudioPlatform.Mac);
+/** Only a Mac has a box for an agent's headless run; Windows and Linux boxes open only Play windows. */
+const HEADLESS_BOX = process.platform === "darwin";
+/** The sandbox's answer as the product gives it on this host, for the run's own mode. */
+const hostGameBox = (mode: NativeRunMode = NativeRunMode.Window) => HEADLESS_BOX || mode === NativeRunMode.Window;
 
 interface FakePort {
   id: number;
@@ -175,5 +187,132 @@ describe("windows past the pool's ceiling", () => {
     const pool = new PreviewPool({ live: {} as never, createHeadless: ports.create, max: 1 });
     await pool.acquire({ label: "builder" });
     await assert.rejects(pool.acquire({ label: "facet" }), /exhausted/);
+  });
+});
+
+/**
+ * A native lease (a C++ game's headless run, borrowed with a desktop target) is the harness's like
+ * a window: when the harness dies it is given back, and giving it back ends its run. The registry
+ * is a scripted stand-in; no game process runs.
+ */
+describe("harness-borrowed native leases", () => {
+  it("a harness that dies gives back its native leases and their runs end", {
+    skip: HEADLESS_BOX ? false : "only a Mac's game box runs an agent's headless game",
+  }, async (t) => {
+    const stopped: string[] = [];
+    const ownedStops: string[] = [];
+    let started = 0;
+    const registry = {
+      start: async (request: { project: string; mode: string; owner?: string }) => {
+        started++;
+        return {
+          status: {
+            project: request.project,
+            runId: `run${started}`,
+            mode: request.mode,
+            owner: request.owner ?? null,
+          },
+          port: { studioState: async () => ({}) },
+        };
+      },
+      stop: async (runId: string) => void stopped.push(runId),
+      stopAll: async () => {},
+      stopAgentRuns: async () => {},
+      stopProject: async () => {},
+      stopMode: async () => {},
+      stopOwnedBy: async (owner: string) => void ownedStops.push(owner),
+      state: () => null,
+      portOf: () => null,
+      front: async () => false,
+      sweepOrphans: async () => 0,
+      onFocus: () => () => {},
+      onStatus: () => () => {},
+      showEmbedded: () => {},
+    };
+    const lite = await coreLite({
+      preview: {} as never,
+      createHeadlessPreview: fakePorts().create,
+      createNativeRuns: () => registry as never,
+    });
+    t.mock.method(lite.core.sandbox, "gameBoxAvailable", hostGameBox);
+    lite.core.host.restart = (async () => {}) as never;
+    lite.core.host.healthcheck = (async () => true) as never;
+    await lite.core.games.scaffold("pong", {
+      title: "Pong",
+      stack: GameStack.RaylibCpp,
+      caller: ScaffoldCaller.Internal,
+      targets: [HOST_TARGET],
+    });
+    const api = lite.api();
+    const { handle } = await api["preview.acquire"]({ label: "evidence", target: HOST_TARGET });
+    await api["preview.load"]({ project: "pong", handle });
+    const capacity = async () => (await api["preview.capacity"]()).native?.leases;
+    assert.equal(await capacity(), 1);
+    const died = lite.core.host.options.onUnexpectedExit;
+    assert.ok(died);
+    await died({ at: Date.now(), code: 1, signal: null, harnessVersion: null });
+    assert.equal(await capacity(), 0, "the dead harness's native lease is given back");
+    assert.deepEqual(stopped, ["run1"], "and its run ends");
+    assert.deepEqual(ownedStops, ["harness:1"], "with every other run that boot's leases started");
+  });
+});
+
+/**
+ * The core asks its sandbox's game box for the mode a run needs: a lease and the judging target are
+ * an agent's headless run, so a host whose box opens only Play windows (Windows with the launcher,
+ * Linux with a security context) offers neither; and a Play refused for want of a box says why.
+ */
+describe("the core asks the game box for the run's own mode", () => {
+  const own = HOST_TARGET;
+  const windowOnly = (mode: NativeRunMode = NativeRunMode.Window) => mode === NativeRunMode.Window;
+
+  it("a native lease is refused no-game-box when the box runs only Play windows, before any run starts", async (t) => {
+    let started = 0;
+    const lite = await coreLite({
+      preview: {} as never,
+      createHeadlessPreview: fakePorts().create,
+      createNativeRuns: () =>
+        ({ start: async () => void started++, sweepOrphans: async () => 0, onFocus: () => () => {} }) as never,
+    });
+    t.mock.method(lite.core.sandbox, "gameBoxAvailable", windowOnly);
+    const asked: NativeRunMode[] = [];
+    t.mock.method(lite.core.sandbox, "gameBox", (mode: NativeRunMode) => {
+      asked.push(mode);
+      return mode === NativeRunMode.Window ? null : GameBoxProblem.NoHeadlessBuild;
+    });
+    await assert.rejects(
+      lite.api()["preview.acquire"]({ label: "evidence", target: own }),
+      (error: unknown) =>
+        error instanceof NativeError &&
+        error.refusal === NativeRefusal.NoGameBox &&
+        error.box === GameBoxProblem.NoHeadlessBuild,
+    );
+    assert.deepEqual(asked, [NativeRunMode.Headless], "the refusal carries the box's reason for a headless run");
+    assert.equal(started, 0);
+    assert.equal((await lite.api()["preview.capacity"]()).native?.gameBox, false, "nor is a judging target offered");
+  });
+
+  it("Play refused for want of a game box carries the sandbox's reason", async (t) => {
+    const lite = await coreLite();
+    t.mock.method(lite.core.sandbox, "gameBoxAvailable", () => false);
+    const asked: NativeRunMode[] = [];
+    t.mock.method(lite.core.sandbox, "gameBox", (mode: NativeRunMode) => {
+      asked.push(mode);
+      return GameBoxProblem.LauncherMissing;
+    });
+    await lite.core.games.scaffold("pong", {
+      title: "Pong",
+      stack: GameStack.RaylibCpp,
+      caller: ScaffoldCaller.Internal,
+      targets: [own],
+    });
+    await assert.rejects(
+      lite.core.nativeRuns.start({ project: "pong", target: own, mode: NativeRunMode.Window }),
+      (error: unknown) =>
+        error instanceof NativeError &&
+        error.refusal === NativeRefusal.NoGameBox &&
+        error.box === GameBoxProblem.LauncherMissing,
+    );
+    assert.deepEqual(asked, [NativeRunMode.Window]);
   });
 });

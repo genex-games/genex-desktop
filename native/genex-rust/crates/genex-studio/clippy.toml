@@ -1,0 +1,7 @@
+# genex-studio is host code, not a simulation: the lane's game rules (../../clippy.toml, M0a.9) do
+# not bind it, and this file replaces them for this crate. Stop and the transport's deadlines read
+# the wall clock (`Instant`) and the transport reads its pipe on its own thread.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use an ordered Vec or IndexMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use an ordered Vec or IndexSet" },
+]

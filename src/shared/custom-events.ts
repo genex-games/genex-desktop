@@ -14,6 +14,9 @@ import type { ChatActivityPhase } from "./chat-activity.ts";
 import type { ChatRewind, CheckpointSkippedPayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
+import type { CrateDecisionPayload, CrateRequestPayload } from "./crate-requests.ts";
+import type { DeviceLaunchPayload } from "./device-launch.ts";
+import type { ConformanceRunPayload, EngineEjectedPayload, GameTrustPayload } from "./game-conformance.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
 import type { ConnectorToolEvent, ConnectorToolStartedEvent } from "./mcp.ts";
@@ -24,6 +27,7 @@ import type { LoopProfile } from "./project-facts.ts";
 import type { BuildObservation, ReadyResult, ReadyVia } from "./preview-contract.ts";
 import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
 import type { RunSpec } from "./protocol.ts";
+import type { SeedRetakePayload } from "./seed-retake.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
 import type { AppLookAccessPayload, JobEndedPayload, JobStartedPayload } from "./jobs.ts";
 import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
@@ -172,6 +176,18 @@ export const CustomEvent = {
   UserFeedback: "user_feedback",
   // the studio itself: its harness, learning and games
   BuildObservation: "build_observation",
+  /** An agent asked for an extra crate in a Rust game (shared/crate-requests.ts); written by the host only. */
+  CrateRequest: "crate_request",
+  /** The person approved or declined a crate request; written by the host only. */
+  CrateDecision: "crate_decision",
+  /** One game conformance suite run, keyed by its build digest (shared/game-conformance.ts); written by the host only. */
+  ConformanceRun: "conformance_run",
+  /** The person ejected or un-ejected a game's engine (extension ladder level 5); written by the host only. */
+  EngineEjected: "engine_ejected",
+  /** The person turned a game's trust flag for `unsafe` and build scripts on or off; written by the host only. */
+  GameTrust: "game_trust",
+  /** The person launched a phone build on a Simulator, emulator or phone (shared/device-launch.ts); written by the host only. */
+  DeviceLaunch: "device_launch",
   FixtureNoise: "fixture_noise",
   GameArchived: "game_archived",
   GameCoverCreated: "game_cover_created",
@@ -183,6 +199,8 @@ export const CustomEvent = {
   ImprovementApplied: "improvement_applied",
   RebuildAndRestartStudio: "rebuild_and_restart_studio",
   SeedManifestReconciled: "seed_manifest_reconciled",
+  /** The person re-took the seed copy of a module the agent kept (shared/seed-retake.ts); written by the host only. */
+  SeedRetake: "seed_retake",
   SeedUpgraded: "seed_upgraded",
   SelfChangeUndone: "self_change_undone",
   SelfEdit: "self_edit",
@@ -636,7 +654,12 @@ export interface CustomEventMap {
   coordinator_message_requeued: CoordinatorPayload;
   coordinator_message_steering: SteerPayload;
   coordinator_message_updated: CoordinatorPayload;
+  conformance_run: ConformanceRunPayload;
+  crate_decision: CrateDecisionPayload;
+  crate_request: CrateRequestPayload;
   delegation_incomplete: DelegationIncompletePayload;
+  device_launch: DeviceLaunchPayload;
+  engine_ejected: EngineEjectedPayload;
   /** A chat rewound to before a message (`shared/chat-rewind.ts`); `files`: game files put back, null when none were asked for. */
   conversation_rewound: Partial<ChatRewind> & { files?: number | null };
   checkpoint_skipped: CheckpointSkippedPayload;
@@ -715,6 +738,7 @@ export interface CustomEventMap {
     judgeModel?: string;
     roles?: { judge?: string };
   };
+  game_trust: GameTrustPayload;
   /**
    * The workspace's one-time move from the JavaScript layout to TypeScript (substrate/seed-upgrade.ts
    * `migrateHarnessLayout`). `ok: false`: the migrated copy did not boot, and the JavaScript tree
@@ -750,6 +774,7 @@ export interface CustomEventMap {
     retired?: string[];
     moved?: Array<{ from: string; to: string; names: string[]; callers: string[] }>;
   };
+  seed_retake: SeedRetakePayload;
   session_activity: SessionActivityPayload;
   /**
    * A builder session took the plugin tool registry at `revision` (`main/core/connections.ts`).

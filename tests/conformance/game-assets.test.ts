@@ -7,7 +7,17 @@ import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { copyProject, Project, TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
 import { PluginSourceKind } from "../../src/shared/plugins.ts";
 import { joinProjectAssets, readContainedImage, readGenexJobs, walkGameAssets } from "../../src/main/game-assets.ts";
-import { assetKind, isAudioFile } from "../../src/shared/game-assets.ts";
+import {
+  ASSET_FORMATS,
+  AssetRefusal,
+  AssetSupport,
+  assetKind,
+  isAudioFile,
+  isEnvironmentAsset,
+  stackAcceptsAsset,
+  stackAssetSupport,
+} from "../../src/shared/game-assets.ts";
+import { GameStack, isCompiledStack } from "../../src/shared/game-project.ts";
 import { DEFAULT_ASSET_FOLDERS, isAssetPath } from "../../src/shared/project-workspace.ts";
 import { isImageFile } from "../../src/substrate/game-workspace.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
@@ -700,4 +710,151 @@ it("main and the substrate read pictures and sounds from the one format table", 
   ] as const) {
     assert.equal(isAudioFile(file), audio, file);
   }
+});
+
+/** What raylib 6.0 cannot load as shipped (its config.h, raudio.c and the model loaders it builds in). */
+const NOT_RAYLIB = [
+  "aac",
+  "avif",
+  // Authoring files neither compiled runtime loads (Blender's, Unreal's): their export is the asset.
+  "blend",
+  "exr",
+  "fbx",
+  "flac",
+  "hdr",
+  "ktx2",
+  "m4a",
+  "mov",
+  "mp4",
+  "oga",
+  "ogv",
+  "opus",
+  "ply",
+  "stl",
+  "svg",
+  "uasset",
+  "umap",
+  "webm",
+  "webp",
+];
+
+it("a C++ · raylib game refuses the formats raylib cannot load, by the same table, and Three.js refuses none", () => {
+  for (const file of ["assets/sky.webp", "assets/sky.HDR", "assets/theme.flac", "assets/theme.oga"])
+    assert.equal(stackAcceptsAsset(GameStack.RaylibCpp, file), AssetRefusal.UnsupportedByRaylib, file);
+  assert.equal(AssetRefusal.UnsupportedByRaylib, "unsupported-by-raylib");
+  for (const ext of Object.keys(ASSET_FORMATS)) {
+    assert.equal(stackAcceptsAsset(GameStack.ThreeJs, `a.${ext}`), null, `three-js accepts .${ext}`);
+    assert.equal(
+      stackAcceptsAsset(GameStack.RaylibCpp, `a.${ext.toUpperCase()}`),
+      NOT_RAYLIB.includes(ext) ? AssetRefusal.UnsupportedByRaylib : null,
+      `raylib-cpp and .${ext}`,
+    );
+  }
+  assert.deepEqual(
+    Object.keys(ASSET_FORMATS)
+      .filter((ext) => stackAcceptsAsset(GameStack.RaylibCpp, `a.${ext}`) !== null)
+      .sort(),
+    NOT_RAYLIB,
+    "the refusals are rows of the one format table",
+  );
+  // A file the table does not know is not refused for either stack: it stays metadata.
+  for (const file of ["assets/tree.xyz", "notes", "", "a.__proto__"])
+    for (const stack of [GameStack.ThreeJs, GameStack.RaylibCpp]) assert.equal(stackAcceptsAsset(stack, file), null);
+});
+
+it("raylib's own formats are rows of the table, shown by no viewer", () => {
+  const rows = {
+    qoi: "image",
+    dds: "image",
+    iqm: "model",
+    m3d: "model",
+    vox: "model",
+    qoa: "audio",
+    xm: "audio",
+    mod: "audio",
+  };
+  for (const [ext, kind] of Object.entries(rows)) {
+    assert.equal(assetKind(`x.${ext}`), kind, ext);
+    assert.equal(ASSET_FORMATS[ext]?.preview, "unsupported", ext);
+    assert.equal(ASSET_FORMATS[ext]?.raster, false, ext);
+    assert.equal(stackAcceptsAsset(GameStack.RaylibCpp, `x.${ext}`), null, ext);
+  }
+  assert.equal(assetKind("x.qoi"), "image");
+  assert.equal(isAudioFile("theme.xm"), true);
+});
+
+/** What a Rust · wgpu game takes (plan "Game services"): loaded as is, converted at import, or refused. */
+const RUST_CONVERTS = ["aac", "m4a", "mtl", "obj", "opus", "ply", "stl"];
+const RUST_REFUSES = [
+  "avif",
+  "blend",
+  "fbx",
+  "iqm",
+  "m3d",
+  "mod",
+  "mov",
+  "mp4",
+  "ogv",
+  "qoa",
+  "svg",
+  "uasset",
+  "umap",
+  "vox",
+  "webm",
+  "xm",
+];
+
+it("a Rust · wgpu game has its own row in the one table: webp, hdr and ktx2 load, OBJ and Opus convert, FBX is refused", () => {
+  // The red-first row: webp is refused for raylib and loads for Rust; FBX is refused for both.
+  assert.equal(stackAcceptsAsset(GameStack.RaylibCpp, "assets/sky.webp"), AssetRefusal.UnsupportedByRaylib);
+  assert.equal(stackAcceptsAsset(GameStack.RustWgpu, "assets/sky.webp"), null);
+  assert.equal(stackAssetSupport(GameStack.RustWgpu, "assets/sky.webp"), AssetSupport.Loads);
+  assert.equal(stackAcceptsAsset(GameStack.RustWgpu, "assets/hero.FBX"), AssetRefusal.UnsupportedByRust);
+  assert.equal(AssetRefusal.UnsupportedByRust, "unsupported-by-rust");
+  assert.equal(stackAssetSupport(GameStack.RustWgpu, "assets/rock.obj"), AssetSupport.Converts);
+  assert.equal(stackAcceptsAsset(GameStack.RustWgpu, "assets/rock.obj"), null, "a converted format is not refused");
+  for (const ext of Object.keys(ASSET_FORMATS)) {
+    const expected = RUST_REFUSES.includes(ext)
+      ? AssetSupport.Refused
+      : RUST_CONVERTS.includes(ext)
+        ? AssetSupport.Converts
+        : AssetSupport.Loads;
+    assert.equal(stackAssetSupport(GameStack.RustWgpu, `a.${ext.toUpperCase()}`), expected, `rust-wgpu and .${ext}`);
+    assert.equal(
+      stackAcceptsAsset(GameStack.RustWgpu, `a.${ext}`),
+      expected === AssetSupport.Refused ? AssetRefusal.UnsupportedByRust : null,
+      `rust-wgpu refusal for .${ext}`,
+    );
+  }
+});
+
+it("every format row says how each compiled stack takes it, and Three.js loads every known format", () => {
+  for (const [ext, format] of Object.entries(ASSET_FORMATS)) {
+    assert.deepEqual(Object.keys(format.stacks).sort(), Object.values(GameStack).filter(isCompiledStack).sort(), ext);
+    assert.equal(stackAssetSupport(GameStack.ThreeJs, `a.${ext}`), AssetSupport.Loads, ext);
+    // raylib's row is exactly its refusal list (characterization of the v1 table).
+    assert.equal(
+      format.stacks[GameStack.RaylibCpp],
+      NOT_RAYLIB.includes(ext) ? AssetSupport.Refused : AssetSupport.Loads,
+      `raylib-cpp and .${ext}`,
+    );
+  }
+  for (const stack of Object.values(GameStack))
+    for (const file of ["assets/tree.xyz", "notes", "", "a.__proto__", "a.constructor"]) {
+      assert.equal(stackAssetSupport(stack, file), null, `${stack} ${file}`);
+      assert.equal(stackAcceptsAsset(stack, file), null, `${stack} ${file}`);
+    }
+});
+
+it("an HDR environment map is a known format with its kind, and only the Rust runtime lights a scene with it", () => {
+  // `.hdr` (Radiance RGBE) is the one environment format: an image the inventory lists, which a
+  // Rust · wgpu game loads as its environment (RQ2). EXR and KTX2 load as textures, not environments.
+  assert.equal(assetKind("assets/env/field.hdr"), "image");
+  assert.equal(ASSET_FORMATS.hdr?.environment, true);
+  assert.equal(stackAssetSupport(GameStack.RustWgpu, "assets/env/FIELD.HDR"), AssetSupport.Loads);
+  assert.equal(stackAcceptsAsset(GameStack.RaylibCpp, "assets/env/field.hdr"), AssetRefusal.UnsupportedByRaylib);
+  const environments = Object.keys(ASSET_FORMATS).filter((ext) => isEnvironmentAsset(`a.${ext}`));
+  assert.deepEqual(environments, ["hdr"]);
+  for (const file of ["assets/sky.exr", "assets/sky.ktx2", "assets/sky.png", "hdr", "", "a.__proto__"])
+    assert.equal(isEnvironmentAsset(file), false, file);
 });

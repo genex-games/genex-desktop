@@ -1,9 +1,10 @@
 /**
  * The app's one empty state: a 3D wireframe on a fading floor, a one-line title, a one-line
- * subtitle and a fixed button slot. Every part has a fixed height, so switching between states
- * never moves the art. When the stage goes from the first idea to building, the computer hands off
- * to the crane and the words swap in place (see wire-art.ts for the art's half of it); any other
- * change of scene cross-fades the pictures while the words swap the same way, only quicker.
+ * subtitle (or none) and a fixed button slot. Every part has a fixed height, so switching between
+ * states never moves the art; `wrap` lets longer words wrap instead, the copy growing under the
+ * art. When the stage goes from the first idea to building, the computer hands off to the crane
+ * and the words swap in place (see wire-art.ts for the art's half of it); any other change of
+ * scene cross-fades the pictures while the words swap the same way, only quicker.
  */
 import { useLayoutEffect, useRef, useState, type HTMLAttributes, type JSX, type ReactNode } from "react";
 import { WireArt } from "./WireArt.tsx";
@@ -68,7 +69,7 @@ function handoffSteps(swap: Swap): HandoffSteps {
   };
 }
 
-type Words = { title: string; subtitle: string };
+type Words = { title: string; subtitle: string | undefined };
 type Handoff = { at: number; from: Words & { art: WireKind }; swap: Swap; settled: boolean };
 
 /** How the scene `from` → `to` is drawn. */
@@ -84,18 +85,32 @@ const SETTLE_MS: Record<Swap, number> = {
   [Swap.Reduced]: REDUCED_SETTLE_MS,
 };
 
+/** A title and, when there is one, the sentence under it. */
+function WordsOf({ title, subtitle }: Words): JSX.Element {
+  return (
+    <>
+      <h2 className="empty-state-title">{title}</h2>
+      {subtitle ? <p className="empty-state-subtitle">{subtitle}</p> : null}
+    </>
+  );
+}
+
 export function EmptyState({
   art,
   title,
   subtitle,
   action,
+  wrap = false,
   className = "",
   ...rest
 }: {
   art: WireKind;
   title: string;
-  subtitle: string;
+  /** The sentence under the title; none leaves the title alone. */
+  subtitle?: string;
   action?: ReactNode;
+  /** Words longer than one line wrap, and the copy grows; the art and the slot keep their heights. */
+  wrap?: boolean;
   className?: string;
 } & HTMLAttributes<HTMLDivElement>): JSX.Element {
   const [handoff, setHandoff] = useState<Handoff | null>(null);
@@ -147,7 +162,7 @@ export function EmptyState({
   const swapping = !!handoff && !handoff.settled;
   const choreographed = handoff?.swap === Swap.Handoff;
   return (
-    <div className={`empty-state ${className}`} {...rest}>
+    <div className={`empty-state ${wrap ? "empty-state-wrap " : ""}${className}`} {...rest}>
       <div className="empty-state-art" aria-hidden="true">
         <svg className="empty-state-floor" viewBox="0 0 128 44" preserveAspectRatio="none">
           <path d={FLOOR} />
@@ -164,13 +179,11 @@ export function EmptyState({
       <div className="empty-state-copy" data-title-only={subtitle ? undefined : ""}>
         {swapping && (
           <div ref={outgoing} className="empty-state-words" aria-hidden="true">
-            <h2 className="empty-state-title">{handoff.from.title}</h2>
-            <p className="empty-state-subtitle">{handoff.from.subtitle}</p>
+            <WordsOf {...handoff.from} />
           </div>
         )}
         <div ref={incoming} className="empty-state-words">
-          <h2 className="empty-state-title">{title}</h2>
-          {subtitle ? <p className="empty-state-subtitle">{subtitle}</p> : null}
+          <WordsOf title={title} subtitle={subtitle} />
         </div>
       </div>
       <div ref={slot} className="empty-state-slot">

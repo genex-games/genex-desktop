@@ -175,6 +175,8 @@ async function bootStudio(resources: string, userData: string, uiEvents: UiEvent
   await core.init();
   preview.attachTo(window, { x: 0, y: 0, width: WINDOW.width, height: WINDOW.height });
   await core.start();
+  // This test has no app renderer to announce that its attached Live stage is shown.
+  await core.previewStageVisible(true);
   return { core, preview };
 }
 

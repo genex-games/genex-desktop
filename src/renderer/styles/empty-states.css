@@ -99,6 +99,21 @@
   line-height: 18px;
   color: var(--ink-3);
 }
+/* Words longer than one line (Live's card for a game without Browser): they wrap and the copy grows; the art and the slot keep their heights. */
+.empty-state-wrap .empty-state-copy {
+  height: auto;
+}
+.empty-state-wrap .empty-state-words {
+  position: static;
+}
+.empty-state-wrap .empty-state-title {
+  white-space: normal;
+  text-wrap: balance;
+}
+.empty-state-wrap .empty-state-subtitle {
+  white-space: normal;
+  text-wrap: pretty;
+}
 .empty-state-slot {
   display: flex;
   flex: none;

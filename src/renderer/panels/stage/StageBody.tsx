@@ -16,18 +16,21 @@ export function StageEmpty({
   title,
   subtitle,
   action,
+  wrap = false,
 }: {
   art: "none" | "idea" | "building" | "stopped";
   title: string;
-  subtitle: string;
+  subtitle?: string;
   action?: JSX.Element;
+  /** Words longer than one line wrap (`EmptyState`'s `wrap`). */
+  wrap?: boolean;
 }): JSX.Element {
   return (
     <div
       data-stage-empty={art}
       className="hatch absolute inset-0 grid place-items-center overflow-y-auto p-8 animate-in fade-in-0 duration-200"
     >
-      <EmptyState art={art === "none" ? "idea" : art} title={title} subtitle={subtitle} action={action} />
+      <EmptyState art={art === "none" ? "idea" : art} title={title} subtitle={subtitle} action={action} wrap={wrap} />
     </div>
   );
 }

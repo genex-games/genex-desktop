@@ -5,10 +5,11 @@
 Assets groups media in `assets/`, `public/assets/` and the project kind's asset folders (Unreal `Content`,
 Unity `Assets`, Blender files, a plugin's) by source and generation, engine files by name;
 deliveries and outside changes refresh it. Cards hide metadata; [jobs being made](../plugins.md#assets-being-made)
-(any plugin's, any MCP tool's) keep their spot, chat included; animation-only GLBs fold into models.
+(any plugin's or MCP tool's) keep their spot, chat included; animation-only GLBs fold into models.
 
-An opened file has only Reveal in Finder and Close: images (click: full size), audio/video, 3D
+An opened file has only Reveal in Finder and Close: images, audio/video, 3D
 models with clips, textures or bounded text; unsupported formats and decoder failures say why.
+Deliveries a C++ or Rust game cannot load land refused ([formats](../../src/shared/game-assets.ts)).
 
 Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace assets until landing. Job completion or “seen in game” never proves integration or passing checks.
 
@@ -17,11 +18,11 @@ Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace ass
 The prompt bar's Add menu holds attachments, plugin and MCP switches, Connect and Manage.
 Enabled, connected, signed in and permitted differ.
 
-The Plugins page (Plugins/Skills, search, details) lists installed plugins, your servers, the
+The Plugins page lists installed plugins, your servers, the
 Marketplace (Coming soon) and the plugin guide, with
 [icons](../plugins.md#icons). Install from GitHub pins a pasted link's latest release
 (else newest commit). Games build, preview and export without plugins. The host draws Genex's
-app-wide page (balance, routed tools, candidate pictures) and Local Blender's runtime card. Connect,
+app-wide page and Local Blender's runtime card. Connect,
 unapproved, reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
 Game spend is in the usage panel. Enabled Genex suggests assets in planning.
 
@@ -34,7 +35,7 @@ else Ask for a cover drafts it in chat. Agents check `genex__cover` before publi
 `genex__cover-set` sends it. Chat shows the kept shot with Publish. Agents read Genex’s guide and
 cards via `genex__skill`, never from game files. Plugin MCPs connect on first use.
 
-The curated catalog (`plugins.genex.games`; reviewed releases in `genex-games/genex-plugins`) lists
+The curated catalog (`plugins.genex.games`) lists
 Genex and Local Blender as official; its installs require native-code trust
 ([procedure](../STUDIO-MARKETPLACE-RELEASE.md)).
 
@@ -54,7 +55,7 @@ without asking. Reusing a plugin's id from another source needs **Replace and er
 bundled id). Reinstall is explicit; local reinstall reviews a fresh snapshot. Host-managed secrets
 never enter composer text.
 
-Skills lists Studio’s own (local chat, planner, director), the game’s, providers’ global and plugin
+Skills lists Studio’s own, the game’s, providers’ global and plugin
 skills. Codex says whether workers load its catalog; Claude’s global entries stay excluded. Plugin
 switches cover all games; resumed workers hear what was withdrawn.
 

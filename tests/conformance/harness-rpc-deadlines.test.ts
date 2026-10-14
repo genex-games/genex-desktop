@@ -17,6 +17,7 @@ import { RPC_CLASSES, RpcClass, rpcDeadlineMs } from "../../src/substrate/rpc-de
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { CaptureError, CaptureRefusal } from "../../src/shared/build-preview.ts";
 
 const BOOTSTRAP = fileURLToPath(new URL("../../src/harness-boot/bootstrap.mjs", import.meta.url));
 const FIXTURE_OK = fileURLToPath(new URL("../fixtures/harness-ok", import.meta.url));
@@ -32,7 +33,7 @@ const ASKS_THE_PAGE = `export async function createStudio(host) {
       try {
         outcome = { value: await host.call("preview.state", {}) };
       } catch (err) {
-        outcome = { name: err.name, code: err.code, method: err.method };
+        outcome = { name: err.name, code: err.code, method: err.method, refusal: err.refusal };
       }
       await host.call("events.append", {
         threadId: action.threadId,
@@ -43,7 +44,7 @@ const ASKS_THE_PAGE = `export async function createStudio(host) {
 }`;
 
 /** A harness over a page that answers `preview.state` only when told to, with a deadline for page calls. */
-async function hungPage(deadlineMs: number | null = 800) {
+async function hungPage(deadlineMs: number | null = 800, answer?: () => Promise<unknown>) {
   const root = await tmpDir("studio-rpc-deadline-");
   const workspace = path.join(root, "workspaces", "harness");
   await mkdir(path.dirname(workspace), { recursive: true });
@@ -69,6 +70,7 @@ async function hungPage(deadlineMs: number | null = 800) {
       "events.append": async (params: { threadId: string; batch: never }) =>
         (await store.appendEvents(params.threadId, params.batch)).latestEventId,
       "preview.state": () =>
+        answer?.() ??
         new Promise<unknown>((resolve) => {
           waiting.push(resolve);
         }),
@@ -138,5 +140,17 @@ describe("harness call deadlines (B4)", () => {
       (rpcDeadlineMs(HostMethod.PreviewReady) ?? 0) > (rpcDeadlineMs(HostMethod.PreviewState) ?? 0),
       "loading a page may take longer than asking it something",
     );
+  });
+});
+
+describe("a refused capture on the wire (M-1)", () => {
+  it("a host call that refuses build-failed reaches the harness with its typed refusal", async () => {
+    const r = await hungPage(null, async () => {
+      throw new CaptureError(CaptureRefusal.BuildFailed, "no page is loaded: the game's build failed");
+    });
+    await r.host.start();
+    await r.host.dispatch({ type: "user_message", threadId: r.thread, text: "look" }, 15_000);
+    assert.deepEqual(await r.answers(), [{ name: "CaptureError", refusal: CaptureRefusal.BuildFailed }]);
+    await r.host.stop();
   });
 });

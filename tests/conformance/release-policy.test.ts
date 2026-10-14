@@ -8,7 +8,12 @@ import {
   distributionPlatforms,
 } from "../../scripts/release-policy.mjs";
 import { copyStableDownloads } from "../../scripts/release-downloads.mjs";
-import { releaseArtifacts, verifyReleaseArtifacts } from "../../scripts/release-manifest.mjs";
+import {
+  releaseArtifacts,
+  TOOLCHAIN_LOCK_INPUTS,
+  toolchainLockSha256,
+  verifyReleaseArtifacts,
+} from "../../scripts/release-manifest.mjs";
 import { uploadRelease } from "../../scripts/upload-release.mjs";
 import { lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -245,6 +250,61 @@ test("draft creation refuses a missing or mismatched remote tag before writing",
     calls.map((args) => args[0]),
     ["api"],
   );
+});
+
+test("the release names the toolchain recipe and pins the app expects, and each platform must carry the same", async () => {
+  const repo = path.resolve(import.meta.dirname, "../..");
+  assert.match(await toolchainLockSha256(repo), /^[0-9a-f]{64}$/);
+  const root = await tmpDir();
+  for (const rel of TOOLCHAIN_LOCK_INPUTS) {
+    await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+    await writeFile(path.join(root, rel), `fixture ${rel}\n`);
+  }
+  const digest = await toolchainLockSha256(root);
+  assert.equal(await toolchainLockSha256(root), digest, "the same inputs, the same digest");
+  for (const rel of TOOLCHAIN_LOCK_INPUTS) {
+    await writeFile(path.join(root, rel), `changed ${rel}\n`);
+    assert.notEqual(await toolchainLockSha256(root), digest, `${rel} is an input`);
+    await writeFile(path.join(root, rel), `fixture ${rel}\n`);
+  }
+  await rm(path.join(root, TOOLCHAIN_LOCK_INPUTS[0] ?? ""));
+  await assert.rejects(toolchainLockSha256(root), "a missing input is no digest");
+
+  const directory = await tmpDir();
+  const expected = {
+    version: "0.1.0",
+    source: "a".repeat(40),
+    electron: "43.7.6",
+    lockfileSha256: "b".repeat(64),
+    toolchainLockSha256: digest,
+  };
+  for (const [platform, arch] of [
+    ["darwin", "arm64"],
+    ["linux", "x64"],
+    ["win32", "x64"],
+  ]) {
+    const file = `${platform}.zip`;
+    await writeFile(path.join(directory, file), platform);
+    const manifest = {
+      ...expected,
+      platform,
+      arch,
+      signed: platform !== "linux",
+      artifacts: [{ file, sha256: createHash("sha256").update(platform).digest("hex") }],
+    };
+    await writeFile(path.join(directory, `PROVENANCE-${platform}-${arch}.json`), JSON.stringify(manifest));
+  }
+  await writeFile(
+    path.join(directory, "SBOM.cyclonedx.json"),
+    JSON.stringify({ bomFormat: "CycloneDX", components: [] }),
+  );
+  await verifyReleaseArtifacts(directory, expected, [MACOS, LINUX, WINDOWS]);
+  const file = path.join(directory, "PROVENANCE-win32-x64.json");
+  const manifest = JSON.parse(await readFile(file, "utf8"));
+  for (const patch of [{ toolchainLockSha256: "c".repeat(64) }, { toolchainLockSha256: undefined }]) {
+    await writeFile(file, JSON.stringify({ ...manifest, ...patch }));
+    await assert.rejects(verifyReleaseArtifacts(directory, expected, [MACOS, LINUX, WINDOWS]), /provenance/);
+  }
 });
 
 /** Node's default output buffer for execFileSync, which the upload's `gh` calls run under. */

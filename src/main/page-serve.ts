@@ -74,6 +74,27 @@ const STATUS_TEXT: Record<HttpStatus, string> = {
   [HttpStatus.NotFound]: "not found",
 };
 
+/**
+ * The Content-Type the file server sets itself, by extension: what an Emscripten build needs (a
+ * `.wasm` without `application/wasm` loses streaming compilation, and `.data` must never be
+ * sniffed), plus the page and script types, so every served build reads the same. Any other file
+ * keeps the type Chromium gives it.
+ */
+export const SERVED_MIME: Readonly<Record<string, string>> = {
+  ".wasm": "application/wasm",
+  ".data": "application/octet-stream",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".json": "application/json",
+  ".html": "text/html",
+};
+
+/** The Content-Type the file server sets for `file`, or null to keep Chromium's own. */
+export function servedContentType(file: string): string | null {
+  const extension = path.extname(file).toLowerCase();
+  return Object.hasOwn(SERVED_MIME, extension) ? (SERVED_MIME[extension] ?? null) : null;
+}
+
 /** A plain-text protocol response: `body`, or the status's own words ("forbidden", "not found"). */
 export function textResponse(status: HttpStatus, body: string = STATUS_TEXT[status]): Response {
   return new Response(body, { status });

@@ -38,7 +38,7 @@ export const digest = (entries) => hash(JSON.stringify(Object.entries(entries).s
 /** Include every maintained build input, including notices copied into development resources. */
 export function maintained(root) {
   return [
-    ...["src", "scripts", "tests"].flatMap((d) => filesBelow(path.join(root, d), d)),
+    ...["src", "scripts", "tests", "native", "build"].flatMap((d) => filesBelow(path.join(root, d), d)),
     ...fs
       .readdirSync(root)
       .filter((f) =>

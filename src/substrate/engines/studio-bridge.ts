@@ -25,7 +25,14 @@ import { randomUUID } from "node:crypto";
 import type { DelegateRequest, LiveToolResult } from "./types.ts";
 import { DelegateEventType } from "./types.ts";
 import { CHECKPOINT_NOTE_CHARS } from "./common.ts";
-import { CHECKPOINT_TOOL, CODEX_CAPTURE_TOOL, intakeToolReply, StudioTool } from "./studio-tool-prompts.ts";
+import {
+  type CaptureToolWords,
+  CHECKPOINT_TOOL,
+  CODEX_CAPTURE_TOOL,
+  compiledSessionOf,
+  intakeToolReply,
+  StudioTool,
+} from "./studio-tool-prompts.ts";
 import { captureArgs } from "./capture-args.ts";
 import { openNoFollow, readRegularFile } from "../fsx.ts";
 import { schemaType } from "./tool-schema.ts";
@@ -524,21 +531,35 @@ export function bridgeTools(request: DelegateRequest): BridgeTool[] {
     });
   }
   if (request.onCapture) {
+    // A compiled game's capture builds through its stack's lane before it looks, and says so, and
+    // names its destination; a Three.js game's may name a bench page instead.
+    const words: CaptureToolWords = compiledSessionOf(request)?.codexCapture ?? CODEX_CAPTURE_TOOL;
+    const properties: BridgeTool["parameters"]["properties"] = {
+      cameras: { type: "string", description: words.cameras },
+    };
+    if (words.target) properties.target = { type: "string", description: words.target };
+    if (words.page) properties.page = { type: "string", description: words.page };
     tools.push({
       name: StudioTool.Capture,
-      description: CODEX_CAPTURE_TOOL.description,
-      parameters: {
-        type: "object",
-        properties: {
-          cameras: { type: "string", description: CODEX_CAPTURE_TOOL.cameras },
-          page: { type: "string", description: CODEX_CAPTURE_TOOL.page },
-        },
-      },
+      description: words.description,
+      parameters: { type: "object", properties },
     });
   }
   if (request.onLiveTool) tools.push(...(request.liveTools ?? []));
   tools.push(...(request.interviewTools ?? []));
   return tools;
+}
+
+/**
+ * A bridged capture call's `onCapture` arguments: only a compiled game's capture names a
+ * destination (`target`), and only a Three.js game's a bench page.
+ */
+function bridgeCaptureArgs(
+  args: Record<string, unknown>,
+  request: Pick<DelegateRequest, "cpp" | "rust">,
+): { cameras?: string; page?: string; target?: string } {
+  if (!compiledSessionOf(request)) return captureArgs(args);
+  return { ...captureArgs({ cameras: args.cameras }), ...(args.target ? { target: String(args.target) } : {}) };
 }
 
 /** One bridge call, routed to whichever studio handler this delegation was given. */
@@ -553,9 +574,7 @@ export async function answerBridgeCall(
     // The studio's own checkpoint answers what it did; a throw reaches the shim as a failed call.
     return request.onCheckpoint ? request.onCheckpoint(note) : CHECKPOINT_TOOL.reply;
   }
-  if (name === StudioTool.Capture && request.onCapture) {
-    return request.onCapture(captureArgs(args));
-  }
+  if (name === StudioTool.Capture && request.onCapture) return request.onCapture(bridgeCaptureArgs(args, request));
   if (request.onLiveTool && (request.liveTools ?? []).some((tool) => tool.name === name)) {
     // The file bridge materializes attached images beside its response for the session to view.
     return request.onLiveTool(name, args);

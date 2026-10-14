@@ -1,0 +1,655 @@
+{
+ "sessions": [
+  {
+   "name": "step-rounding",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 1
+    },
+    {
+     "step": 0
+    },
+    {
+     "step": 100
+    },
+    {
+     "step": 1000
+    },
+    {
+     "snapshot": {
+      "fps": 60
+     }
+    },
+    {
+     "step": -5
+    },
+    {
+     "step": "nan"
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  },
+  {
+   "name": "edges-first-tick-of-step",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 1
+    },
+    {
+     "inject": {
+      "down": [
+       "KeyW"
+      ],
+      "look": {
+       "x": 5
+      }
+     }
+    },
+    {
+     "step": 50
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "step": 50
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "inject": {
+      "tap": [
+       "Space"
+      ],
+      "text": "go"
+     }
+    },
+    {
+     "step": 16
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "step": 16
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  },
+  {
+   "name": "seed-resets",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "inject": {
+      "down": [
+       "Space"
+      ]
+     }
+    },
+    {
+     "step": 100
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "inject": {
+      "tap": [
+       "KeyE"
+      ],
+      "down": [
+       "KeyQ"
+      ],
+      "look": {
+       "x": 4,
+       "y": 4
+      },
+      "wheel": {
+       "y": 2
+      },
+      "text": "abc"
+     }
+    },
+    {
+     "sample": {
+      "pressed": [
+       "KeyR"
+      ],
+      "released": [
+       "KeyR"
+      ],
+      "look": [
+       3,
+       3
+      ],
+      "pointerLock": true
+     }
+    },
+    {
+     "seed": 7
+    },
+    {
+     "snapshot": {
+      "fps": 30
+     }
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "step": 0
+    },
+    {
+     "snapshot": {
+      "fps": 30
+     }
+    }
+   ]
+  },
+  {
+   "name": "live-frames",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 3
+    },
+    {
+     "frame": 100
+    },
+    {
+     "start": true
+    },
+    {
+     "frame": 1000
+    },
+    {
+     "pause": true
+    },
+    {
+     "frame": 1000
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "start": true
+    },
+    {
+     "frame": 10
+    },
+    {
+     "frame": 10
+    },
+    {
+     "frame": 16.666666666666668
+    },
+    {
+     "frame": "nan"
+    },
+    {
+     "frame": -3
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  },
+  {
+   "name": "pads-and-text",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 1
+    },
+    {
+     "inject": {
+      "pads": [
+       {
+        "index": 2,
+        "buttons": [
+         1
+        ]
+       },
+       {
+        "index": 0,
+        "buttons": [
+         1
+        ]
+       }
+      ],
+      "text": "✓ go"
+     }
+    },
+    {
+     "step": 34
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "step": 17
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  },
+  {
+   "name": "recorded-play",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 4242
+    },
+    {
+     "start": true
+    },
+    {
+     "sample": {
+      "held": [
+       "KeyW"
+      ],
+      "look": [
+       1.25,
+       0
+      ],
+      "pointerLock": true,
+      "pointer": [
+       0.2,
+       0.4
+      ]
+     }
+    },
+    {
+     "frame": 16.7
+    },
+    {
+     "sample": {
+      "held": [
+       "KeyW"
+      ],
+      "look": [
+       2.5,
+       1
+      ],
+      "pointerLock": true,
+      "pointer": [
+       0.21,
+       0.4
+      ]
+     }
+    },
+    {
+     "frame": 16.6
+    },
+    {
+     "inject": {
+      "tap": [
+       "Space"
+      ],
+      "wheel": {
+       "y": -1
+      }
+     }
+    },
+    {
+     "frame": 33.4
+    },
+    {
+     "snapshot": {
+      "fps": 59.94,
+      "camera": "chase"
+     }
+    },
+    {
+     "sample": {
+      "held": [],
+      "pads": [
+       {
+        "index": 0,
+        "buttons": [
+         1
+        ]
+       }
+      ],
+      "text": "hi"
+     }
+    },
+    {
+     "frame": 50
+    },
+    {
+     "pause": true
+    },
+    {
+     "inject": {
+      "actions": [
+       {
+        "type": "click",
+        "x": 0.6,
+        "y": 0.6
+       },
+       {
+        "type": "look",
+        "dx": 0.1
+       }
+      ]
+     }
+    },
+    {
+     "step": 250
+    },
+    {
+     "snapshot": {
+      "fps": 12
+     }
+    },
+    {
+     "requestRender": true
+    },
+    {
+     "takeRender": true
+    },
+    {
+     "seed": 4242
+    },
+    {
+     "step": 500
+    },
+    {
+     "snapshot": {}
+    },
+    {
+     "seed": 9
+    },
+    {
+     "step": 1000
+    },
+    {
+     "snapshot": {
+      "hud": {
+       "items": [
+        {
+         "text": "x"
+        }
+       ],
+       "crosshair": true,
+       "flash": 0.5
+      },
+      "render": {
+       "drawCalls": 3,
+       "triangles": 12
+      },
+      "assets": [
+       "/assets/a.png"
+      ],
+      "error": "boom",
+      "player": {
+       "x": 1,
+       "y": 2
+      },
+      "camera": "top"
+     }
+    }
+   ]
+  },
+  {
+   "name": "custom-step",
+   "stepMs": 50,
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 2
+    },
+    {
+     "step": 100
+    },
+    {
+     "step": 74
+    },
+    {
+     "start": true
+    },
+    {
+     "frame": 120
+    },
+    {
+     "frame": 30
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  },
+  {
+   "name": "max-seed",
+   "keys": [
+    "KeyW",
+    "w",
+    "Space",
+    "KeyQ",
+    "KeyE",
+    "KeyR",
+    "Mouse1"
+   ],
+   "steps": [
+    {
+     "seed": 4294967295
+    },
+    {
+     "step": 1000000000000.0
+    },
+    {
+     "snapshot": {}
+    }
+   ]
+  }
+ ],
+ "checksums": [
+  {
+   "seed": 1,
+   "tick": 0,
+   "probes": "{}"
+  },
+  {
+   "seed": 1,
+   "tick": 0,
+   "probes": "null"
+  },
+  {
+   "seed": 1,
+   "tick": 0,
+   "probes": "[1,2]"
+  },
+  {
+   "seed": 11,
+   "tick": 3,
+   "probes": "{\"score\":3,\"frame\":999}"
+  },
+  {
+   "seed": 11,
+   "tick": 3,
+   "probes": "{\"score\":3,\"frame\":999,\"volatile\":{\"fps\":60}}"
+  },
+  {
+   "seed": 11,
+   "tick": 3,
+   "probes": "{\"volatile\":1,\"score\":3,\"frame\":999}"
+  },
+  {
+   "seed": 11,
+   "tick": 3,
+   "probes": "{\"frame\":999,\"score\":3}"
+  },
+  {
+   "seed": 4294967295,
+   "tick": 2147483647,
+   "probes": "{\"f\":0.1,\"g\":1e21,\"h\":-0,\"s\":\"\\u0001\\\"\",\"n\":null,\"a\":[true,false,{}],\"big\":123456789012345678}"
+  },
+  {
+   "seed": 0,
+   "tick": 36000,
+   "probes": "{\"pos\":{\"x\":1.5,\"y\":-2.25,\"z\":0.30000000000000004},\"name\":\"caf\\u00e9\",\"x\":1e-7}"
+  }
+ ],
+ "timings": [
+  {
+   "frames": []
+  },
+  {
+   "frames": [
+    [
+     "nan",
+     1,
+     1
+    ]
+   ]
+  },
+  {
+   "frames": [
+    [
+     16.6,
+     2,
+     3
+    ],
+    [
+     16.8,
+     2.5,
+     3.5
+    ],
+    [
+     "inf",
+     1,
+     1
+    ],
+    [
+     17,
+     1,
+     "nan"
+    ],
+    [
+     16.7,
+     2.25,
+     3.25
+    ]
+   ]
+  },
+  {
+   "frames": [],
+   "generated": {
+    "seed": 88,
+    "count": 300
+   }
+  }
+ ],
+ "audio": [
+  {
+   "seed": 1,
+   "amplitude": 0.5,
+   "rate": 48000,
+   "poison": false,
+   "feeds": [
+    0,
+    100,
+    1000,
+    2048,
+    3000
+   ]
+  },
+  {
+   "seed": 2,
+   "amplitude": 1.5,
+   "rate": 44100,
+   "poison": true,
+   "feeds": [
+    512,
+    4096
+   ]
+  },
+  {
+   "seed": 3,
+   "amplitude": 0,
+   "rate": 48000,
+   "poison": false,
+   "feeds": [
+    64
+   ]
+  }
+ ]
+}

@@ -1,0 +1,57 @@
+# A game that reaches every renderer feature through the facade (RX.2's eject fixture): the device's
+# presets with the game's look, the physical sky, sun and spot shadows, bloom, AO, fog, TAA, binned
+# point and spot lights, emissive materials, meshlets with Hi-Z occlusion, a v2 material, a v2 post
+# pass, a v2 after-prepass pass and a v2 post-hdr pass.
+[game]
+title = "Every Light"
+world_size = [640, 360]
+save_name = "every-light"
+
+[[wgsl]]
+path = "shaders/glow.wgsl"
+kind = "material"
+api = 2
+
+[[wgsl]]
+path = "shaders/vignette.wgsl"
+kind = "post"
+api = 2
+
+[[wgsl]]
+path = "shaders/depth_probe.wgsl"
+kind = "pass"
+api = 2
+
+[[wgsl]]
+path = "shaders/warm.wgsl"
+kind = "pass"
+api = 2
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+bloom_intensity = 0.06
+ao_intensity = 1.0
+fog_density = 0.02
+fog_height_falloff = 0.3
+contact_shadow_length = 0.2
+
+[render.shadows]
+distance = 40
+
+# Meshlets with Hi-Z occlusion where captures (desktop-high) and the strongest desktops draw.
+[render.class.desktop-high]
+meshlets = true
+occlusion = true
+
+[render.class.desktop-ultra]
+meshlets = true
+occlusion = true
+
+[render.class.mobile-mid]
+render_scale = 0.75

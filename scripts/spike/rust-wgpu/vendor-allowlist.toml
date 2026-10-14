@@ -1,0 +1,87 @@
+# M0a spike: the curated crate allowlist `setup-toolchain.sh` vendors (spike-only; M1.5 gates the
+# product's vendored set, M1.12 lands these scripts).
+#
+# This file is the dependency section of a throwaway manifest: setup-toolchain.sh writes
+# `[package]` above it, copies the committed lock `vendor-allowlist.lock` beside it and runs
+# `cargo vendor --locked --versioned-dirs` with the spike cargo, and the vendored tree becomes the
+# only crate source of the spike `CARGO_HOME`.
+# The lock is feature-dependent but target-independent, so every feature a workspace crate will
+# enable has to be enabled here (conflicting Android activity features are fine: this manifest is
+# resolved and vendored, never built). Pins follow the plan's "Toolchain and build store" table.
+#
+# No GL: wgpu's `gles`/`webgl`/`angle` features stay off everywhere (WebGPU core is the floor),
+# so glow and khronos-egl never enter the vendored tree. `setup-toolchain.sh --verify` refuses
+# them.
+#
+# Adding a crate or a feature: edit this file, run `setup-toolchain.sh --relock` (network; it
+# rewrites `vendor-allowlist.lock`, moving only what this change needs), then
+# `setup-toolchain.sh --verify`, and commit both files.
+
+[dependencies]
+# Renderer (genex-render): WebGPU-core backends only.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "webgpu", "wgsl", "fragile-send-sync-non-atomic-wasm"] }
+bytemuck = { version = "1", features = ["derive"] }
+# glam 0.33.x: kira and glamx need ^0.33; Rapier's enhanced-determinism forces scalar-math + libm.
+glam = { version = "0.33", features = ["scalar-math", "libm", "bytemuck", "mint", "serde"] }
+
+# Window, input, HUD (genex-platform-*, genex-hud).
+winit = { version = "=0.30.13", features = ["android-game-activity", "android-native-activity"] }
+raw-window-handle = "0.6"
+egui = { version = "=0.36.2", features = ["bytemuck"] }
+egui-wgpu = { version = "=0.36.2", default-features = false, features = ["winit", "macos-window-resize-jitter-fix", "fragile-send-sync-non-atomic-wasm"] }
+egui-winit = { version = "=0.36.2", default-features = false, features = ["bytemuck", "clipboard", "wayland", "x11", "android-game-activity", "android-native-activity"] }
+gilrs = "0.11"
+pollster = "0.4"
+
+# Physics.
+rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize"] }
+
+# Audio: kira on cpal 0.18 (symphonia 0.6 is kira's own).
+kira = { version = "=0.12.5", default-features = false, features = ["cpal", "mp3", "ogg", "vorbis", "flac", "wav", "pcm"] }
+cpal = { version = "0.18", features = ["wasm-bindgen"] }
+
+# Assets.
+gltf = { version = "=1.4.1", features = ["import", "utils", "names", "extras", "KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "hdr", "exr", "dds", "gif", "bmp", "qoi"] }
+
+# Core, protocol, saves (genex-core, genex-studio).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["alloc"] }
+indexmap = { version = "2", features = ["serde"] }
+libm = "0.2"
+log = "0.4"
+thiserror = "2"
+
+# macOS / iOS (genex-frames GXF sender, iOS shell).
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-metal = "=0.3.2"
+objc2-io-surface = "0.3"
+objc2-quartz-core = "0.3"
+objc2-ui-kit = "0.3"
+block2 = "0.6"
+mach2 = "0.4"
+
+# Web (genex-platform-web, pond wasm32).
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement", "Navigator", "Gpu", "Storage", "console"] }
+console_error_panic_hook = "0.1"
+
+# Android (genex-platform-android; GameActivity pinned to android-activity 0.6.1).
+android-activity = { version = "=0.6.1", features = ["game-activity", "native-activity"] }
+ndk = "0.9"
+ndk-context = "0.1"
+jni = "0.21"
+android_logger = "0.15"
+
+# The initial game allowlist (plan: facade re-exports plus a short reviewed list).
+noise = "0.9"
+fastrand = "2"
+
+# Test-only crates the workspace's dev-dependencies use.
+trybuild = "1"
+wasm-bindgen-test = "0.3"

@@ -6,6 +6,7 @@
  */
 import path from "node:path";
 import type { BuildProblem } from "../../shared/build-problem.ts";
+import type { NativeTimers } from "../../shared/native-contract.ts";
 import type { AgentScreen, AgentScreenFrame } from "../../shared/agent-screen.ts";
 import type { Revision } from "../../shared/optimization.ts";
 import type { PermissionMode } from "../../shared/permissions.ts";
@@ -20,6 +21,14 @@ import type { EventEnvelope } from "../../substrate/types.ts";
 import { workerLockKey } from "../../shared/workers.ts";
 import type { PlanReviewController } from "../plan-review.ts";
 import type { PluginConsent } from "../plugin-consent.ts";
+import type { CppBuilds } from "../cpp-build.ts";
+import { type GameBuildLane, GameBuildLanes, raylibLane } from "../game-build.ts";
+import { RUST_TARGET_BUILDERS, type RustTargetBuilder } from "../rust-build.ts";
+import { RUST_MOBILE_TARGET_BUILDERS } from "../rust-build-mobile.ts";
+import { RUST_WEB_BUILDER } from "../rust-build-web.ts";
+import { BuildTarget, GameStack } from "../../shared/game-project.ts";
+import { STACK_REQUIRED_COMPONENTS, type StackComponents } from "../../shared/toolchain.ts";
+import { rustCrossBuilders } from "./rust-cross-lane.ts";
 import type { AssetCall } from "./asset-calls.ts";
 import type { AssetService } from "./assets.ts";
 import type { ChatPermissionService } from "./chat-permissions.ts";
@@ -40,6 +49,8 @@ import type { RecoveryService } from "./recovery.ts";
 import type { ChatRewindService } from "./rewind.ts";
 import type { SelfEditGateService } from "./self-edit-gate.ts";
 import type { SelfImprovementService } from "./self-improvement.ts";
+import type { NativeRunsHost } from "./native-runs.ts";
+import type { ToolchainService } from "./toolchains.ts";
 
 /** One brief in flight: the lock on its folder, and the contractor working there once it starts. */
 export interface ActiveDelegation {
@@ -257,6 +268,8 @@ export interface CoreViews {
   readonly consent: PluginConsent;
   /** The same port the MCP registry reads, kept so a plugin server's `secret:<name>` can be resolved. */
   readonly mcpSecrets: SecretPort | null;
+  /** The clock native runs and a builder's wait for a Mac run go by (`StudioCoreOptions.nativeTimers`, else the real one). */
+  readonly nativeTimers: NativeTimers;
   readonly settings: StudioSettings;
   readonly started: boolean;
   readonly toolRegistryRevision: number;
@@ -315,6 +328,12 @@ export interface CoreServices {
   readonly rewind: ChatRewindService;
   /** Claude Code permissions in game chats: who asks, the cards, the modes and what "always" keeps. */
   readonly permissions: ChatPermissionService;
+  /** The C++ · raylib build lane. */
+  readonly cppBuilds: CppBuilds;
+  /** The managed C++ toolchain store's service. */
+  readonly toolchains: ToolchainService;
+  /** Every C++ · raylib game the studio started (the native run registry). */
+  readonly nativeRuns: NativeRunsHost;
   /** Whether a game chat is in Plan mode, when nothing may act on its behalf (`ChatPermissionService.planning`). */
   planning(threadId: string): Promise<boolean>;
   /** A game chat's permission mode now, as its questions are answered by (`ChatPermissionService.modeOf`). */
@@ -322,11 +341,55 @@ export interface CoreServices {
 }
 
 /**
+ * The build-lane seam as the core holds it (`x.gameBuilds`): every compiled stack's lane behind
+ * one `ensure(game, target, purpose)`, built by {@link coreGameBuilds}. Every compiled build goes
+ * through it; `cppBuilds` stays for the toolchain store's own needs and tests.
+ */
+export interface CoreBuildLanes {
+  readonly gameBuilds: GameBuildLanes;
+}
+
+/**
+ * The core's build lanes, registered by stack: C++ · raylib is the core's own `CppBuilds` behind
+ * its adapter, Rust · wgpu the core's `RustBuilds` as it stands. A stack registered here is the
+ * only way its games build; one missing is refused `lane-missing` (Rust in a core given no Rust lane).
+ */
+export function coreGameBuilds(services: {
+  readonly cppBuilds: Pick<CppBuilds, "ensure" | "cancelAll" | "sweep">;
+  readonly rustBuilds?: GameBuildLane;
+}): GameBuildLanes {
+  return new GameBuildLanes({
+    [GameStack.RaylibCpp]: raylibLane(services.cppBuilds),
+    ...(services.rustBuilds ? { [GameStack.RustWgpu]: services.rustBuilds } : {}),
+  });
+}
+
+/**
+ * The Rust lane's builders: the lane's own table with each later destination's builder registered
+ * over it, one line per builder, by its slice integrator (web and phones M2.12c, Windows and Linux
+ * M4.6, once `required`, the Rust row of `STACK_REQUIRED_COMPONENTS`, lists their cross
+ * components: `rust-cross-lane.ts`). `studio-core` hands it to `RustBuilds`, with the settings
+ * hook `rustTargetSettings` (the phones', Windows' and Linux's).
+ */
+export function rustTargetBuilders(
+  required: StackComponents = STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu],
+): Record<BuildTarget, RustTargetBuilder> {
+  return {
+    ...RUST_TARGET_BUILDERS,
+    [BuildTarget.Web]: RUST_WEB_BUILDER,
+    [BuildTarget.Ios]: RUST_MOBILE_TARGET_BUILDERS[BuildTarget.Ios],
+    [BuildTarget.Android]: RUST_MOBILE_TARGET_BUILDERS[BuildTarget.Android],
+    ...rustCrossBuilders(required),
+  };
+}
+
+/**
  * Everything the extracted services and RPC groups reach inside the core. Not part of the public
  * surface — only `StudioCore` builds it, and it hands it only to what it composes.
  */
 export interface CoreInternals
-  extends WorkInFlight,
+  extends CoreBuildLanes,
+    WorkInFlight,
     PreviewState,
     ImprovementState,
     CoreViews,

@@ -1,0 +1,21 @@
+# Stub member written by M0a.1 so later work packages never edit the workspace manifest.
+# Filled by M0a.5, M2.7. Dependencies come from [workspace.dependencies] only.
+[package]
+name = "genex-audio"
+description = "kira mixer with a device-less backend for headless and boxed runs; symphonia decoding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+genex-core = { workspace = true }
+kira = { workspace = true }
+cpal = { workspace = true }
+symphonia = { workspace = true }
+libm = { workspace = true }

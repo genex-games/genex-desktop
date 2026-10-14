@@ -1,0 +1,64 @@
+[package]
+name = "genex"
+description = "The genex game facade: Game<W>, Sim, Ctx, Frame, Camera, DemoDriver, genex::math, genex::Map and install()."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# The dev flavour serves the studio (`studio`): genex-studio's verbs over fd 3, a headless
+# genex-render renderer for captures and, on a Mac, Live's frames through genex-frames. An export
+# is built without it and never links genex-studio (the admission symbol scan proves that).
+[features]
+default = []
+studio = ["dep:genex-studio", "dep:genex-frames"]
+
+[dependencies]
+# The clock, rng, input merger, state() snapshot and checksum, and saves are genex-core's
+# golden-checked port of the C++ template's units.
+genex-core = { workspace = true }
+egui = { workspace = true }
+glam = { workspace = true }
+indexmap = { workspace = true }
+libm = { workspace = true }
+rapier3d = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+# Custom GPU passes (`genex::gpu`, extension ladder level 3, M2.19) are part of the game API in
+# every flavour and on every destination: genex-render's pass registry and the pinned wgpu types.
+genex-render = { workspace = true }
+wgpu = { workspace = true }
+# The egui HUD the UI hooks run on: `state().hud.items` and the overlay a capture and Live show.
+genex-hud = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+genex-studio = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+genex-frames = { workspace = true, optional = true }
+
+# A game a person runs on a desktop goes through the winit shell (one binary, windowed or
+# headless); the phones' and the web's shells are their own crates.
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+genex-platform-desktop = { workspace = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+
+# The plan's pond snippet: compiled by `cargo test` (the facade's pass case), never run.
+[[example]]
+name = "pond-snippet"
+path = "tests/snippets/pond_snippet.rs"
+
+# The Rust protocol game the host-side runtime suite drives (`tests/conformance/rust-runtime.test.ts`):
+# a generated game's sources, built with the dev flavour.
+[[example]]
+name = "rust-protocol-game"
+path = "../../../../tests/fixtures/rust-protocol-game/src/main.rs"
+required-features = ["studio"]

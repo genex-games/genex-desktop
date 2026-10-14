@@ -1,0 +1,143 @@
+name: Rust spike
+# The Rust/wgpu runtime spike's CI (M0a.13). Every step is a row of scripts/ci/rust-spike.ts (its
+# step table), which owns the checks; this file only installs what a row needs and calls the script.
+#
+# linux (every push that touches the spike): builds the pond, proves FXC is explicit, runs it
+# headless under Xvfb on software Vulkan (SwiftShader from the pinned ANGLE bundle, lavapipe if
+# SwiftShader gives wgpu no WebGPU-compliant adapter; neither is the plan's KILL) and asserts tier
+# core in the receipt, runs the web build on Chrome's WebGPU over SwiftShader and in Firefox on
+# Linux (the typed unsupported page), probes WebGPU in the Electron binary the .deb ships (the
+# result is recorded for M0b.1, no WebGPU is not a KILL), and cross-builds Windows gnullvm (with a
+# decoy dxcompiler.dll) and Android.
+#
+# windows (workflow_dispatch only, billed): runs the gnullvm pond.exe from the linux job on
+# D3D12 WARP with the decoy dxcompiler.dll first on PATH; FXC must still be the compiler, so the
+# decoy must never be loaded, and the WARP adapter must be WebGPU-compliant (else the plan's KILL).
+on:
+  push:
+    paths:
+      - .github/workflows/rust-spike.yml
+      - scripts/ci/rust-spike.ts
+      - scripts/spike/rust-wgpu/**
+      - native/genex-rust/**
+      - native/angle/bundle-lock.json
+      - package-lock.json
+  workflow_dispatch:
+permissions:
+  contents: read
+  # Downloads the pinned ANGLE builds (SwiftShader) from the angle.yml run that produced them.
+  actions: read
+concurrency:
+  group: rust-spike-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.studio-dev/cargo-target
+  SPIKE_EVIDENCE: ${{ github.workspace }}/.studio-dev/evidence/rust-spike-ci
+  SPIKE_ARTIFACTS: ${{ github.workspace }}/.studio-dev/ci/artifacts
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Free runner disk (host, wasm, Windows and Android builds share one target folder)
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: System packages (Xvfb, Vulkan loader, lavapipe, audio/udev headers, browser libraries)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libvulkan1 mesa-vulkan-drivers vulkan-tools pkg-config \
+            libasound2-dev libudev-dev libgtk-3-0t64 libnss3 libasound2t64 xz-utils
+      - name: Pinned application dependencies and browsers
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/electron/install.js
+          npx playwright install --with-deps chromium firefox
+      - name: This workflow calls every step of the script's table once, on its job
+        run: node scripts/ci/rust-spike.ts --check-workflow .github/workflows/rust-spike.yml
+      # Vendors exactly the committed scripts/spike/rust-wgpu/vendor-allowlist.lock (cargo vendor
+      # --locked), refused before any download when native/genex-rust/Cargo.lock disagrees with it.
+      - name: Spike toolchain from the committed pins (scripts/spike/rust-wgpu/pins.md)
+        run: node scripts/ci/rust-spike.ts --step toolchain --evidence "$SPIKE_EVIDENCE"
+      # native/angle/bundle-lock.json names the angle.yml run (and repository) whose artifacts hold it.
+      - name: SwiftShader from the pinned ANGLE bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if node scripts/bundle-angle.mjs --fetch "$RUNNER_TEMP/angle"; then
+            echo "GENEX_SPIKE_ANGLE_DIR=$RUNNER_TEMP/angle" >> "$GITHUB_ENV"
+          else
+            echo "::warning::the pinned ANGLE run could not be downloaded; the headless row falls back to lavapipe"
+          fi
+      - name: Build the pond
+        run: node scripts/ci/rust-spike.ts --step build-pond --evidence "$SPIKE_EVIDENCE"
+      - name: FXC is the explicit D3D12 shader compiler
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/rust-spike.ts --step fxc-explicit --evidence "$SPIKE_EVIDENCE"
+      - name: Headless capture on software Vulkan
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/ci/rust-spike.ts --step headless-software-vulkan --evidence "$SPIKE_EVIDENCE"
+      - name: Web build
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/rust-spike.ts --step web-build --evidence "$SPIKE_EVIDENCE"
+      - name: Chrome WebGPU over SwiftShader
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/ci/rust-spike.ts --step web-chrome --evidence "$SPIKE_EVIDENCE"
+      - name: Firefox on Linux gets the unsupported page
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/ci/rust-spike.ts --step web-firefox --evidence "$SPIKE_EVIDENCE"
+      - name: Electron WebGPU probe
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a node scripts/ci/rust-spike.ts --step electron-webgpu-probe --evidence "$SPIKE_EVIDENCE"
+      - name: Cross builds (Windows gnullvm with decoy, Android)
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/rust-spike.ts --step cross-builds --evidence "$SPIKE_EVIDENCE" --artifacts "$SPIKE_ARTIFACTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-spike-linux-${{ github.sha }}
+          path: ${{ env.SPIKE_EVIDENCE }}
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: rust-spike-windows
+          path: ${{ env.SPIKE_ARTIFACTS }}/windows
+          retention-days: 3
+          if-no-files-found: warn
+  windows:
+    # Billed: only an owner dispatch runs it, after the linux job built pond.exe and the decoy.
+    if: github.event_name == 'workflow_dispatch'
+    needs: linux
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: rust-spike-windows
+          path: windows-artifact
+      - name: gnullvm pond.exe on D3D12 WARP with a decoy dxcompiler.dll on PATH
+        run: node scripts/ci/rust-spike.ts --step windows-warp --windows-dir windows-artifact --evidence evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: rust-spike-windows-evidence-${{ github.sha }}
+          path: evidence
+          if-no-files-found: warn

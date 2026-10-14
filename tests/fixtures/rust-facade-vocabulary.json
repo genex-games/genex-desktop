@@ -1,0 +1,87 @@
+{
+  "about": "The genex facade's agent-facing vocabularies, held by native/genex-rust/crates/genex/tests/vocabulary.rs (RUNTIME_KEYS, InstallErrorCode, the gpu_pass registration code, the Level-2 calls, which call each [[wgsl]] kind feeds, and the frame calls temporal effects need: draw ids and camera cuts; the environment calls with the wire spellings of its kinds and of `HdriSun`; the local-light and emissive calls of RQ6) and read by tests/conformance/rust-template-docs.test.ts, which checks the template docs name each. Change both sides with this file. Its `meshlets` block is the renderer's `genex_meshlets` glTF extras schema (genex-render's meshlet.rs, the host's src/shared/render-quality.ts), held by vocabulary.rs and tests/conformance/genex-toml.test.ts.",
+  "runtimeKeys": [
+    "version",
+    "contractVersion",
+    "seed",
+    "frame",
+    "simulatedMs",
+    "running",
+    "fps",
+    "held",
+    "pointerLock",
+    "hud",
+    "camera",
+    "error",
+    "player",
+    "volatile",
+    "__render",
+    "assets",
+    "checksum"
+  ],
+  "installRefusals": [
+    "duplicate-camera",
+    "duplicate-player",
+    "duplicate-probe",
+    "reserved-probe",
+    "duplicate-camera-name",
+    "duplicate-eye",
+    "duplicate-demo",
+    "invalid-name",
+    "duplicate-facet-state",
+    "invalid-world-size"
+  ],
+  "registrationRefusals": ["gpu-pass-invalid"],
+  "levelTwoCalls": [
+    "gfx.material",
+    "gfx.set_material_uniforms",
+    "gfx.post_pass",
+    "gfx.post_pass_with",
+    "frame.custom",
+    "frame.post_pass",
+    "game.wgsl"
+  ],
+  "wgslKindCalls": { "material": "gfx.material", "post": "gfx.post_pass", "pass": "game.gpu_pass" },
+  "temporalCalls": ["frame.id", "frame.end_id", "frame.camera_cut"],
+  "environment": {
+    "calls": ["frame.environment", "Environment::sky", "Environment::hdri", "HdriEnvironment::new", "SkyParams::default"],
+    "kinds": ["color", "sky", "hdri"],
+    "hdriSun": ["analytic", "off"]
+  },
+  "lights": {
+    "calls": [
+      "frame.point_light",
+      "frame.spot_light",
+      "frame.spot_light_with",
+      "SpotLight::new",
+      "Material::emissive",
+      ".with_emissive",
+      ".with_emissive_texture"
+    ]
+  },
+  "meshlets": {
+    "extrasKey": "genex_meshlets",
+    "schemaVersion": 1,
+    "maxVertices": 64,
+    "maxTriangles": 124,
+    "recordBytes": 48,
+    "minTrianglesDefault": 2048,
+    "extrasKeys": [
+      "version",
+      "max_vertices",
+      "max_triangles",
+      "meshlets",
+      "vertices",
+      "triangles"
+    ],
+    "faults": [
+      "meshlets-unknown-version",
+      "meshlets-over-limit",
+      "meshlets-range-out-of-bounds",
+      "meshlets-ranges-not-tiled",
+      "meshlets-vertex-out-of-mesh",
+      "meshlets-local-index-out-of-meshlet",
+      "meshlets-triangles-differ"
+    ]
+  }
+}

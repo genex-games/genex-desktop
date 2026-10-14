@@ -24,10 +24,12 @@ import {
   crashReporter,
   dialog,
   ipcMain,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
   powerSaveBlocker,
+  sharedTexture,
   shell,
   utilityProcess,
 } from "electron";
@@ -62,7 +64,7 @@ import {
   shutdownSteps,
   type ShutdownStep,
 } from "./app-lifecycle.ts";
-import { createBootGate } from "./boot-gate.ts";
+import { type BootGateOptions, createBootGate } from "./boot-gate.ts";
 import {
   activateChatFixture,
   DevProviders,
@@ -116,7 +118,24 @@ import { readLicenseTexts } from "./licenses.ts";
 import { registerSkillsIpc } from "./ipc/skills.ts";
 import { registerTerminalIpc } from "./ipc/terminal.ts";
 import { registerThreadsIpc } from "./ipc/threads.ts";
+import { hostMobileToolchain, registerToolchainIpc } from "./ipc/toolchain.ts";
+import { execHost } from "./core/toolchains.ts";
+import { stackSetupOf } from "./core/stack-setup-status.ts";
+import { developmentStacksOpen } from "./core/stack-gate.ts";
+import { registerNativeIpc } from "./ipc/native.ts";
+import { registerSeedIpc, seedRetakeDepsOf } from "./ipc/seed.ts";
+import { registerCratesIpc } from "./ipc/crates.ts";
+import { type EngineIpcDeps, registerEngineIpc } from "./ipc/engine.ts";
+import { engineEjectFor } from "./rust-eject.ts";
+import { engineTrustFor } from "./rust-trust.ts";
+import { engineStateFor } from "./engine-state.ts";
+import { crateRequestsFor } from "./crate-requests.ts";
+import { nativeOnRendererGone, nativeOnWindowClosed } from "./core/native-lifecycle.ts";
+import { fixtureNativeRuns } from "./dev/fixture-native.ts";
+import { lazyNativeSupervisorClient } from "./native-supervisor-logic.ts";
+import type { NativeSupervisorClient } from "./core/native-runs.ts";
 import { KeepAwake } from "./keep-awake.ts";
+import { applyLinuxWebGpuSwitches } from "./linux-webgpu.ts";
 import { routeStudioLink } from "./link-policy.ts";
 import { createLoginControllers, type SubscriptionEngine } from "./login-controllers.ts";
 import { createOpenRouterLogin } from "./openrouter-login.ts";
@@ -133,7 +152,9 @@ import { readFinishedFacts } from "./run-sharing-facts.ts";
 import { fieldPlatform } from "../shared/run-sharing.ts";
 import type { SmokeReadGates } from "./smoke/read-gates.ts";
 import type { EvalCoreOptions, EvalLaunch } from "./smoke/eval-lane.ts";
-import { StudioCore, type StudioCoreOptions } from "./studio-core.ts";
+import { createNativeFrames } from "./native-frames.ts";
+import { NATIVE_TIMERS, StudioCore, type StudioCoreOptions } from "./studio-core.ts";
+import { devRustSeedFrom } from "./core/rust-dev-seed.ts";
 import { appLookAccess } from "./app-look-access.ts";
 import { layoutFor } from "./core/layout.ts";
 import { appLookRun, macAppLook, stubAppLook, unsupportedAppLook } from "../substrate/app-look.ts";
@@ -145,6 +166,7 @@ import type { WindowControlColors } from "../shared/studio-api.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { longPath } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
+import { installLinuxUsernsProfile } from "../substrate/linux-userns-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { SECOND_MS } from "../shared/duration.ts";
@@ -152,10 +174,12 @@ import { EVAL_LANE_EXIT } from "../shared/eval-lane.ts";
 import { EngineId } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import {
+  cppAcceptanceLaunch,
   flagValue,
   hasFlag,
   linuxSecretStorageSwitches,
   quitsWhenLastWindowCloses,
+  rustAcceptanceLaunch,
   StudioFlag,
   testLaunchChromiumSwitches,
 } from "./dev/launch-flags.ts";
@@ -279,11 +303,15 @@ registerGameScheme([{ scheme: "studio-plugin", privileges: { standard: true, sec
 const isSelfTest = hasFlag(StudioFlag.SelfTest);
 /** Boots the real app (window, UI, harness) and reports whether it came up clean, then quits. */
 const isSmoke = hasFlag(StudioFlag.Smoke);
+const isCppAcceptance = cppAcceptanceLaunch();
+const isRustAcceptance = rustAcceptanceLaunch();
 for (const [name, value] of testLaunchChromiumSwitches({
   platform: process.platform,
   testLaunch: isSmoke || isSelfTest,
 }))
   app.commandLine.appendSwitch(name, value);
+// The Linux Studio's WebGPU switches, only with the owner's approval (none today): before ready, or Chromium ignores them.
+applyLinuxWebGpuSwitches(app.commandLine);
 for (const [name, value] of linuxSecretStorageSwitches({
   platform: process.platform,
   env: process.env,
@@ -379,10 +407,7 @@ let preview: GamePreview | null = null;
 /** The Live game's full screen in the current window. */
 let gameScreen: GameFullScreen | null = null;
 /** Where startup stands for the window: Ready, or the sandbox setup screen with its Retry. */
-const bootGate = createBootGate(
-  process.platform,
-  process.platform === StudioPlatform.Windows ? { installSandbox: installWindowsSandbox } : {},
-);
+const bootGate = createBootGate(process.platform, sandboxSetUp(process.platform));
 /** The theme's colours for the Windows and Linux window controls, as the renderer last sent them. */
 let windowControls: WindowControlColors | undefined;
 // `keepAwake.held` doubles as the run-active signal for close/quit below.
@@ -454,6 +479,37 @@ export const terminals = new TerminalService(
     if (page) pushToRenderer(page, "studio:terminal", event);
   },
 );
+/**
+ * The native supervisor, beside the terminals: a utility process that ends every C++ game the app
+ * started if the app itself dies. Only when this build ships it, and forked at the first game run:
+ * a utility process forked before the app is ready ends the app.
+ */
+const nativeSupervisor = nativeSupervisorFor(path.join(resources, "native/supervisor.cjs"));
+
+/**
+ * Live's embedded frames: the genex-frames addon in `resources/native`, sending each frame to the
+ * studio window's main frame. Null where no game can be embedded (no addon, an untested Electron,
+ * not a Mac); Live then offers Pop out. A run whose frames fail is killed through the registry.
+ */
+const nativeFrames = createNativeFrames({
+  resources,
+  electronMajor: Number(process.versions.electron.split(".")[0]),
+  sharedTexture,
+  target: () => livePage()?.mainFrame ?? null,
+  timers: NATIVE_TIMERS,
+  // The run ends killed with its frames' refusal, so Live says why (a stop would lose it).
+  kill: (runId, refusal) => core?.nativeRuns.kill(runId, refusal),
+  performance: performanceRecorder,
+  log: (line) => console.warn(`[native-frames] ${line}`),
+});
+
+function nativeSupervisorFor(entry: string): NativeSupervisorClient | undefined {
+  if (!existsSync(entry)) return undefined;
+  return lazyNativeSupervisorClient(() =>
+    utilityProcess.fork(entry, [], { stdio: "ignore", serviceName: "Genex native games" }),
+  );
+}
+
 app.on("accessibility-support-changed", (_event, enabled) => {
   const page = livePage();
   if (page) pushToRenderer(page, "studio:terminal", { type: "accessibility", enabled });
@@ -580,8 +636,11 @@ async function openEvalLaneLaunch(): Promise<{ launch: EvalLaunch; coreOptions: 
 function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0]> {
   if (dev) {
     const chatFixture = isChatFixture(dev.fixture);
+    // The native-game fixture stands a scripted registry in for real game processes.
+    const nativeRuns = fixtureNativeRuns(dev.fixture);
     return {
       gamesRoot: dev.games,
+      ...(nativeRuns ? { createNativeRuns: nativeRuns } : {}),
       executionPolicy: {
         allowedProjectRoot: dev.games,
         ...(fixtureProviders ? { runBackgroundImprovement: false } : {}),
@@ -593,19 +652,12 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
               dev.fixture === FixtureName.FirstLaunch ? FIRST_LAUNCH_STATUS : undefined,
             ),
           }
-        : {}),
+        : devRustSeed(dev.checkout)),
     };
   }
   // An eval lane: real engines (or the fixture ones), games in the run's own folder, no background work.
   if (isSmoke && evalLane) return evalLane.coreOptions;
-  if (isSmoke)
-    return {
-      engines: [
-        new OllamaEngine({ ...(ollamaHost ? { host: ollamaHost } : {}) }),
-        ...fixtureEngines().filter((e) => e.id !== EngineId.Ollama),
-      ],
-      executionPolicy: { runBackgroundImprovement: false },
-    };
+  if (isSmoke) return smokeCoreOptions();
   // Games live in a plain visible folder, not buried in Library — Finder should show them.
   return { gamesRoot: normalGamesFolder(app.getPath("home")) };
 }
@@ -632,6 +684,28 @@ function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "
   return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
 }
 
+/**
+ * An owned live developer profile's Rust seed: the developer's dev store and this worktree's Rust
+ * lock (`core/rust-dev-seed.ts`), so its Rust games build from local artifacts with no published
+ * genex release. A fixture profile keeps its stub store and never gets one.
+ */
+function devRustSeed(checkout: string): Partial<ConstructorParameters<typeof StudioCore>[0]> {
+  const rustSeedFrom = devRustSeedFrom({ env: process.env, checkout, appData: app.getPath("appData") });
+  return rustSeedFrom ? { rustSeedFrom } : {};
+}
+
+/** The C++ and Rust package acceptances use only offline fixture engines; other smoke lanes retain their scripted wire. */
+function smokeCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0]> {
+  const engines =
+    isCppAcceptance || isRustAcceptance
+      ? fixtureEngines()
+      : [
+          new OllamaEngine({ ...(ollamaHost ? { host: ollamaHost } : {}) }),
+          ...fixtureEngines().filter((e) => e.id !== EngineId.Ollama),
+        ];
+  return { engines, executionPolicy: { runBackgroundImprovement: false } };
+}
+
 async function createCore(userData: string): Promise<StudioCore> {
   // Smoke runs keep everything under their throwaway userData.
   const launch = launchCoreOptions();
@@ -650,6 +724,13 @@ async function createCore(userData: string): Promise<StudioCore> {
     appVersion: app.getVersion(),
     markBoot: (step) => performanceRecorder.mark(step),
     onUiEvent: pushUiEvent,
+    // A native game's capture (BGRA, rows top-down) becomes a JPEG the way every other capture does.
+    nativeImages: {
+      encodeJpeg: async (bgra, width, height, quality) =>
+        nativeImage.createFromBitmap(bgra, { width, height }).toJPEG(quality),
+    },
+    ...(nativeSupervisor ? { nativeSupervisor } : {}),
+    nativeFrames,
     onAutoResumePending: (pending) => (pending ? resumeAwake.hold() : resumeAwake.release()),
     onLog: (line, stream) => {
       // stderr carries the harness's own errors and the core's `[core]`/`[host]` lines.
@@ -998,6 +1079,8 @@ function watchWindowLifecycle(win: BrowserWindow): void {
     void codexLogin.dismiss();
     void claudeLogin.cancel();
     void terminals.dispose();
+    // No game the studio started outlives its window: the Play window, agents' runs, embedded ones.
+    if (core) void nativeOnWindowClosed(core.nativeRuns).catch(() => {});
   });
   // A crashed renderer (out of memory an hour into a run, say) leaves an empty window while runs
   // carry on.
@@ -1007,6 +1090,8 @@ function watchWindowLifecycle(win: BrowserWindow): void {
   win.webContents.on("render-process-gone", (_event, details) => {
     void claudeLogin.cancel();
     void terminals.dispose();
+    // The games drawn inside the dead page end with it; the Play window is a window of its own.
+    if (core) void nativeOnRendererGone(core.nativeRuns).catch(() => {});
     const decision = shutdownInProgress ? QUITTING : reloads.decide(details.reason);
     studioLog.write("main", `renderer gone: ${details.reason} (exit ${details.exitCode}); ${decision}`);
     if (decision === QUITTING) return;
@@ -1152,6 +1237,7 @@ function registerIpc(studio: StudioCore): void {
     smokeReads: isSmoke ? smokeReads : null,
     welcome: showsWelcome,
     developer: !app.isPackaged,
+    rustCreation: developmentStacksOpen(studio.options),
   });
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
@@ -1196,12 +1282,37 @@ function registerIpc(studio: StudioCore): void {
   });
   registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel });
+  // The phone rows read the person's own Xcode and Android SDK: never in a fixture or smoke profile.
+  const phoneTools = fixtureNativePolicy
+    ? undefined
+    : hostMobileToolchain({
+        env: process.env,
+        exec: execHost,
+        platform: process.platform,
+        protectedPaths: studio.protectedPaths(),
+      });
+  registerToolchainIpc(handle, studio, stackSetupOf(studio), phoneTools);
+  // The person's device launch installs only the phone packages the exports admitted.
+  registerNativeIpc(handle, studio, { device: { packages: studio.phonePackages } });
+  registerSeedIpc(handle, seedRetakeDepsOf(studio));
+  registerCratesIpc(handle, () => crateRequestsFor(studio));
+  // Eject and the trust flag are the person's acts alone: no harness method reaches them.
+  registerEngineIpc(handle, engineIpcDeps(studio));
   registerNotificationsIpc(handle, {
     notifications: { isSupported: () => Notification.isSupported(), create: (options) => new Notification(options) },
     window: () => window,
     setDockBadge: (text) => app.dock?.setBadge(text),
     pushUiEvent,
   });
+}
+
+/** The engine registrar's services over the core: eject, trust and the read of a game's engine. */
+function engineIpcDeps(studio: StudioCore): EngineIpcDeps {
+  return {
+    eject: () => engineEjectFor(studio),
+    trust: () => engineTrustFor(studio),
+    state: (project) => engineStateFor(studio, project),
+  };
 }
 
 async function main(): Promise<void> {
@@ -1422,6 +1533,22 @@ async function coreOrSetup(): Promise<StudioCore | null> {
   }
 }
 
+/**
+ * What Set up installs on `platform`: Windows' sandbox user and filters, or on Linux Genex's
+ * AppArmor profile, which takes effect in a new process, so the app restarts after it.
+ */
+function sandboxSetUp(platform: string): BootGateOptions {
+  if (platform === StudioPlatform.Windows) return { installSandbox: installWindowsSandbox };
+  if (platform !== StudioPlatform.Linux) return {};
+  return { installSandbox: () => installLinuxUsernsProfile(), restart: relaunchApp };
+}
+
+/** Start the app again once this one has quit (Electron's relauncher waits for the exit). */
+function relaunchApp(): void {
+  app.relaunch();
+  app.quit();
+}
+
 /** Hold startup on "Set up the protected workspace"; Retry runs {@link retryStartup}. */
 async function openSandboxSetup(problem: SandboxProblem): Promise<void> {
   studioLog.write("main", `sandbox unavailable: ${problem.code} ${problem.details.join("; ")}`);
@@ -1628,6 +1755,32 @@ function reportStartupFailure(err: unknown): void {
 /** The smoke, or one of the acceptance runs its flags choose; the exit code. */
 async function runSmokeLaunch(started: StartedStudio): Promise<number> {
   const smokeUserData = testUserData ?? userDataRoot;
+  if (isCppAcceptance) {
+    const { runCppAcceptance } = await import("./smoke/cpp-acceptance.ts");
+    return stopAfter(
+      started.core,
+      runCppAcceptance({
+        ...started,
+        testUserData: smokeUserData,
+        resources,
+        developmentController: Boolean(__STUDIO_DEV_BUILD__ || dev || devRuntime),
+        rendererConsole,
+      }),
+    );
+  }
+  if (isRustAcceptance) {
+    const { runRustAcceptance } = await import("./smoke/rust-acceptance.ts");
+    return stopAfter(
+      started.core,
+      runRustAcceptance({
+        ...started,
+        testUserData: smokeUserData,
+        resources,
+        developmentController: Boolean(__STUDIO_DEV_BUILD__ || dev || devRuntime),
+        rendererConsole,
+      }),
+    );
+  }
   if (evalLane) {
     const { evalCliVersions, runEvalLane, SYSTEM_CLOCK, threadBoundListeners } = await import("./smoke/eval-lane.ts");
     const bound = threadBoundListeners();
@@ -1684,7 +1837,7 @@ let shutdownInProgress = false;
  * exits; the harness is stopped first and, failing that, killed last.
  */
 function quitSteps(): ShutdownStep[] {
-  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core });
+  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core, native: core?.nativeRuns ?? null });
 }
 
 app.on("before-quit", async (event) => {

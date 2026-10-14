@@ -1,0 +1,7 @@
+{
+  "format": "genex-bench-budgets/1",
+  "about": "The performance budgets the Rust performance row holds (plan 'Renderer scope', performance acceptance). Proposed in the M0a.15 memo, section 6; ratified by the owner at the go/no-go, not by an agent: 'ratified' stays false until the owner records it.",
+  "ratified": false,
+  "macFrameP95Ms": 16.7,
+  "raylibRegressionMax": 0.1
+}

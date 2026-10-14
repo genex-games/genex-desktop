@@ -1,6 +1,6 @@
 import { it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, writeFile, symlink, open } from "node:fs/promises";
+import { mkdir, open, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpDir } from "../helpers/tmp.ts";
 import { readAssetPreview } from "../../src/main/asset-preview.ts";
@@ -10,7 +10,28 @@ import {
   assetExtension,
   assetPreviewMode,
 } from "../../src/shared/asset-preview.ts";
-import { ASSET_FORMATS, assetFormat, assetKind } from "../../src/shared/game-assets.ts";
+import { ASSET_FORMATS, type AssetKind, assetFormat, assetKind } from "../../src/shared/game-assets.ts";
+import { readContainedImage, walkGameAssets } from "../../src/main/game-assets.ts";
+
+/**
+ * raylib's own formats, which no Chromium viewer shows. The samples in `tests/fixtures/asset-previews/`
+ * are synthetic minimal files written by hand from each format's public header layout (no tool,
+ * no download): a 1×1 QOI, a 1×1 uncompressed DDS, a one-voxel MagicaVoxel VOX, an IQM v2 header
+ * with no meshes, a binary M3D with only its HEAD and end chunks, a one-slice silent QOA, a
+ * one-pattern two-channel XM and a one-pattern four-channel ProTracker MOD.
+ */
+const RAYLIB_SAMPLES: ReadonlyArray<{ ext: string; kind: AssetKind; magic: string; at: number }> = [
+  { ext: "qoi", kind: "image", magic: "qoif", at: 0 },
+  { ext: "dds", kind: "image", magic: "DDS ", at: 0 },
+  { ext: "vox", kind: "model", magic: "VOX ", at: 0 },
+  { ext: "iqm", kind: "model", magic: "INTERQUAKEMODEL\0", at: 0 },
+  { ext: "m3d", kind: "model", magic: "3DMO", at: 0 },
+  { ext: "qoa", kind: "audio", magic: "qoaf", at: 0 },
+  { ext: "xm", kind: "audio", magic: "Extended Module: ", at: 0 },
+  // ProTracker's signature follows the title, 31 sample headers, the song length and the order table.
+  { ext: "mod", kind: "audio", magic: "M.K.", at: 1080 },
+];
+const SAMPLES = path.join(import.meta.dirname, "../fixtures/asset-previews");
 
 it("preview reads actual media/model bytes but rejects scripts, traversal, hidden files and symlinks", async () => {
   const root = await tmpDir("asset-preview-");
@@ -104,4 +125,31 @@ it("one format table answers kind, viewer, type and thumbnail for every extensio
       [null, "other", name === "png" ? "image/png" : null],
       name,
     );
+});
+it("raylib's own formats read as their kind with no viewer, and no reader crashes on them", async () => {
+  const root = await tmpDir("asset-preview-raylib-");
+  await mkdir(path.join(root, "assets"));
+  for (const { ext, kind, magic, at } of RAYLIB_SAMPLES) {
+    const file = `assets/sample.${ext}`;
+    const bytes = await readFile(path.join(SAMPLES, `sample.${ext}`));
+    assert.ok(bytes.length > 0, `${ext}: the sample has bytes`);
+    assert.equal(
+      bytes.subarray(at, at + magic.length).toString("latin1"),
+      magic,
+      `${ext}: the sample carries its magic`,
+    );
+    await writeFile(path.join(root, file), bytes);
+    assert.equal(assetKind(file), kind, ext);
+    assert.equal(assetPreviewMode(file), "unsupported", ext);
+    const read = await readAssetPreview(root, file);
+    assert.equal(read.mimeType, "application/octet-stream", ext);
+    assert.deepEqual(Buffer.from(read.data), bytes, `${ext}: the contained reader hands the bytes back unchanged`);
+    assert.equal(await readContainedImage(root, file), null, `${ext}: no thumbnail is made of it`);
+  }
+  const walked = await walkGameAssets(root);
+  assert.deepEqual(
+    walked.entries.map((entry) => entry.file),
+    RAYLIB_SAMPLES.map(({ ext }) => `assets/sample.${ext}`).sort(),
+  );
+  assert.deepEqual(walked.skipped, []);
 });

@@ -15,6 +15,7 @@ import ts from "@typescript/typescript6";
 
 const sdk = path.resolve("src/plugin-sdk/index.d.ts");
 const shared = path.resolve("src/shared/plugins.ts");
+const gameProject = path.resolve("src/shared/game-project.ts");
 const quote = (file: string) => JSON.stringify(file);
 
 function compile(t: { after: (fn: () => void) => void }, files: Record<string, string>): ts.Diagnostic[] {
@@ -294,4 +295,23 @@ test("an undeclared host method and a non-scalar tool argument are compile error
     filesBesideStill.some((d) => d.file?.fileName.endsWith("files.ts")),
     "a still observes no files",
   );
+});
+
+test("a backend reads the bound game's stack, and a skill names its stacks, in exactly GameStack's words", (t) => {
+  // The SDK is self-contained, so it spells the stacks as inline unions: this is what holds them to
+  // the one vocabulary (src/shared/game-project.ts), in both directions.
+  const diagnostics = compile(t, {
+    "stacks.ts": `
+      import type { PluginContext, PluginFileSkill, PluginInlineSkill } from ${quote(sdk)};
+      import type { GameStack } from ${quote(gameProject)};
+      type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+      export const context: Same<NonNullable<PluginContext["stack"]>, GameStack> = true;
+      export const fileSkill: Same<NonNullable<PluginFileSkill["stacks"]>[number], GameStack> = true;
+      export const inlineSkill: Same<NonNullable<PluginInlineSkill["stacks"]>[number], GameStack> = true;
+      export function pick(ctx: PluginContext): string {
+        return ctx.stack === "raylib-cpp" ? "a C++ encoding" : "a browser encoding";
+      }
+    `,
+  });
+  assert.equal(diagnostics.length, 0, report(diagnostics));
 });

@@ -1,0 +1,7 @@
+# genex-frames is host code, not a simulation: the lane's game rules (../../clippy.toml, M0a.9) do
+# not bind it, and this file replaces them for this crate. A frame header carries a wall-clock
+# timestamp (`SystemTime`) and the test sender paces itself by the clock and runs a reader thread.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order differs per process: use an ordered Vec or IndexMap" },
+  { path = "std::collections::HashSet", reason = "iteration order differs per process: use an ordered Vec or IndexSet" },
+]

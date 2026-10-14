@@ -102,7 +102,7 @@ function pluginObserver(entry: unknown, index: number, m: PluginManifest, canoni
  * malformed.
  */
 export function validateObservers(m: PluginManifest, canonical: PluginManifest): PluginObserver[] {
-  if (m.apiVersion !== 3) throw new Error(MESSAGE.NeedsApi3);
+  if (m.apiVersion < 3) throw new Error(MESSAGE.NeedsApi3);
   if (!Array.isArray(m.observers) || m.observers.length > LIMIT.Observers) throw new Error(MESSAGE.NotList);
   const seen = new Set<string>();
   return m.observers.map((entry, index) => {

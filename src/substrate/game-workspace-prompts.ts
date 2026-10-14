@@ -3,7 +3,7 @@
  * its own gets in place of the template's, and the `references/` readme. Text only; the
  * workspace (`game-workspace.ts`) decides when each is written.
  */
-import type { ProjectShape } from "../shared/game-project.ts";
+import { type CompiledStack, GameStack, isCompiledStack, type ProjectShape, stackOf } from "../shared/game-project.ts";
 
 /** How many lines of the folder's own readme the seeded notes quote. */
 const QUOTED_README_LINES = 40;
@@ -36,14 +36,14 @@ function buildRule(build: string): string {
  * own, because a build that was never run is a black screen for every critic.
  */
 export function ownRules(template: string, shape: ProjectShape): string {
+  // Function replacements: `$'`, `$&` or `$$` in what the folder says stay its own characters.
+  const buildLine = shape.build ? `it is built with \`${shape.build}\`` : "it runs as written, with no build step";
+  const buildRuleText = shape.build ? buildRule(shape.build) : "";
   return template
-    .replaceAll("__ENTRY_MAIN__", shape.main)
-    .replaceAll("__SERVED_ENTRY__", shape.entry)
-    .replaceAll(
-      "__BUILD_LINE__",
-      shape.build ? `it is built with \`${shape.build}\`` : "it runs as written, with no build step",
-    )
-    .replaceAll("__BUILD_RULE__", shape.build ? buildRule(shape.build) : "");
+    .replaceAll("__ENTRY_MAIN__", () => shape.main)
+    .replaceAll("__SERVED_ENTRY__", () => shape.entry)
+    .replaceAll("__BUILD_LINE__", () => buildLine)
+    .replaceAll("__BUILD_RULE__", () => buildRuleText);
 }
 
 /** The pitch seeded from the folder's own readme, or the placeholder the first build replaces. */
@@ -56,6 +56,22 @@ function seededPitch(readme: { file: string; text: string } | null): string {
     .map((line) => (line ? `> ${line}` : ">"))
     .join("\n");
   return `From the folder's own \`${readme.file}\`, copied when the studio opened this game — replace it with the pitch once the first build knows better:\n\n${quoted}`;
+}
+
+/** How an adopted compiled game runs: the studio's own lane builds it, never a folder of its own. */
+const COMPILED_RUNS = {
+  [GameStack.RaylibCpp]:
+    " the studio builds it with its own C++ toolchain for each destination, and Live shows that build, never a `build/` folder here.",
+  [GameStack.RustWgpu]:
+    " the studio builds it with its own Rust toolchain for each destination, and Live shows that build, never a `target/` folder here.",
+} as const satisfies Record<CompiledStack, string>;
+
+/** How an adopted game runs, for its notes' current state. */
+function howItRuns(shape: ProjectShape): string {
+  const stack = stackOf(shape);
+  if (isCompiledStack(stack)) return COMPILED_RUNS[stack];
+  if (shape.build) return ` it is built with \`${shape.build}\` and the studio serves \`${shape.entry}\`.`;
+  return ` it runs as written and the studio serves \`${shape.entry}\`.`;
 }
 
 /**
@@ -71,13 +87,12 @@ export function ownNotes(
 ): string {
   const state = [
     `This game came with the folder (\`${shape.kind}\`). Its entry is \`${shape.main}\`;`,
-    shape.build
-      ? ` it is built with \`${shape.build}\` and the studio serves \`${shape.entry}\`.`
-      : ` it runs as written and the studio serves \`${shape.entry}\`.`,
+    howItRuns(shape),
     " The studio has changed nothing yet — what changes from here is written down above.",
   ].join("");
+  const pitch = seededPitch(readme);
   return template
-    .replaceAll("__GAME_TITLE__", title)
-    .replaceAll("__SEEDED_PITCH__", seededPitch(readme))
-    .replaceAll("__CURRENT_STATE__", state);
+    .replaceAll("__GAME_TITLE__", () => title)
+    .replaceAll("__SEEDED_PITCH__", () => pitch)
+    .replaceAll("__CURRENT_STATE__", () => state);
 }

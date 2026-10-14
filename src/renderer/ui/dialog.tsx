@@ -8,6 +8,14 @@ import { prefersReducedMotion } from "./media-queries.ts";
 /** How long the close animation plays before the dialog is dismissed (ms). */
 const CLOSE_MS = 150;
 const sizes = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-[30rem]", xl: "max-w-xl", "2xl": "max-w-2xl" };
+/**
+ * Where a dialog stacks: its dimming overlay and its content. A dialog opened from inside another
+ * (the Toolchain sheet over Create game) is `nested`, so its overlay dims the first one's content too.
+ */
+const layers = {
+  base: { overlay: "z-[210]", content: "z-[211]" },
+  nested: { overlay: "z-[220]", content: "z-[221]" },
+};
 export function DialogSurface({
   title,
   titleIcon,
@@ -22,6 +30,7 @@ export function DialogSurface({
   showClose = true,
   dismissible = true,
   headerHidden = false,
+  layer = "base",
 }: {
   title: string;
   /** A glyph after the title's words, such as Publish to the web's globe. */
@@ -37,6 +46,8 @@ export function DialogSurface({
   showClose?: boolean;
   dismissible?: boolean;
   headerHidden?: boolean;
+  /** `nested` for a dialog opened from inside another one. */
+  layer?: keyof typeof layers;
 }) {
   const [open, setOpen] = useState(true);
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
@@ -62,7 +73,12 @@ export function DialogSurface({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[210] bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-(--duration-quick) motion-reduce:animate-none" />
+        <Dialog.Overlay
+          className={cn(
+            "fixed inset-0 bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-(--duration-quick) motion-reduce:animate-none",
+            layers[layer].overlay,
+          )}
+        />
         <Dialog.Content
           aria-label={title}
           data-slot="dialog-content"
@@ -88,7 +104,8 @@ export function DialogSurface({
             event.stopPropagation();
           }}
           className={cn(
-            "fixed top-1/2 left-1/2 z-[211] grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:duration-(--duration-fast) data-[state=closed]:duration-(--duration-quick) ease-(--ease-smooth-out) motion-reduce:animate-none",
+            "fixed top-1/2 left-1/2 grid max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:duration-(--duration-fast) data-[state=closed]:duration-(--duration-quick) ease-(--ease-smooth-out) motion-reduce:animate-none",
+            layers[layer].content,
             sizes[size],
             className,
           )}

@@ -6,6 +6,7 @@
  */
 import { errorMessage } from "../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { NATIVE_STOP_BUDGET_MS } from "../shared/native-contract.ts";
 
 /** Where a line goes: the studio log's `write`. */
 export type LogLine = (source: string, line: string) => void;
@@ -163,22 +164,36 @@ export interface QuitParts {
   claudeLogin: { cancel(): unknown };
   terminals: { dispose(): unknown };
   core: { host: { stop(): Promise<void>; kill(): void }; stop(): Promise<void> } | null;
+  /** The native run registry (`core.nativeRuns`): every C++ game the studio started. */
+  native: { stopAll(): Promise<void> } | null;
 }
+
+/** How long quitting waits for every native game to end: the whole stop sequence, and a second to spare. */
+const NATIVE_GAMES_STOP_MS = NATIVE_STOP_BUDGET_MS + SECOND_MS;
 
 /**
  * What quitting stops, in order, each step bounded by `runShutdown`. The harness goes first, on
  * its own bound (its stop kills the process tree after 5 s), so connectors and previews that are
- * slow to close cannot use up its time; the core's stop then closes the rest. The harness runs
- * detached in its own process group, which the app's exit would not end, so the last step kills
- * whatever is left of it outright.
+ * slow to close cannot use up its time; native games are stopped on a bound of their own, so a
+ * game that ignores `quit` cannot use up the core's; the core's stop then closes the rest. The
+ * harness runs detached in its own process group, which the app's exit would not end, so the last
+ * step kills whatever is left of it outright.
  */
-export function shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core }: QuitParts): ShutdownStep[] {
+export function shutdownSteps({
+  keepAwake,
+  codexLogin,
+  claudeLogin,
+  terminals,
+  core,
+  native,
+}: QuitParts): ShutdownStep[] {
   return [
     { name: "stop the harness", timeoutMs: 7 * SECOND_MS, run: () => core?.host.stop() },
     { name: "release keep-awake", timeoutMs: SECOND_MS, run: () => keepAwake.release() },
     { name: "dismiss Codex sign-in", timeoutMs: 3 * SECOND_MS, run: () => codexLogin.dismiss() },
     { name: "cancel Claude sign-in", timeoutMs: 3 * SECOND_MS, run: () => claudeLogin.cancel() },
     { name: "close terminals", timeoutMs: 3 * SECOND_MS, run: () => terminals.dispose() },
+    { name: "stop native games", timeoutMs: NATIVE_GAMES_STOP_MS, run: () => native?.stopAll() },
     { name: "stop the studio core", timeoutMs: 10 * SECOND_MS, run: () => core?.stop() },
     { name: "kill what is left of the harness", timeoutMs: SECOND_MS, run: () => core?.host.kill() },
   ];

@@ -1,0 +1,19 @@
+# The GPU-hang fixture's manifest: the row copies this folder into a scratch workspace, fills
+# @GENEX@ with native/genex-rust/crates/genex and builds it through the cargo env helper
+# (GENEX_RUST_WORKSPACE) with the genex workspace's lock, offline. Not a member of that workspace:
+# it must never ship, nor change the workspace's lock.
+[workspace]
+resolver = "3"
+
+[package]
+name = "rust-gpu-hang"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "rust-gpu-hang"
+path = "src/main.rs"
+
+[dependencies]
+genex = { path = "@GENEX@", features = ["studio"] }

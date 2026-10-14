@@ -1,13 +1,12 @@
 # Architecture
 
-Technical reference for the external developer. Start with the [product overview](context.md) and
-the affected product page, then read only the section you need here. Each section states the
-current contract and names the code that owns it; history lives in Git and PR descriptions, not
-here. When code and this page disagree, fix the one that is wrong in the same change.
+External developer reference after the [overview](context.md): read only the section you need. Each
+names its contract and owner; Git holds history.
 
-The active app builds browser games only. The Unity CLI, editor, bridge, templates, tools and UI
-are archived in [`archive/unity/`](../../archive/unity/); no flag enables them and there is no
-migration path.
+The app builds browser and C++ · raylib games. Mac arm64 builds every destination; Linux x64 builds
+Browser, Windows and Linux. Windows hosts refuse C++ builds. Rust · wgpu games are created where their lane runs; it builds
+the Mac and the web (see **Stacks and the build-lane seam**). Unity is archived in
+[`archive/unity/`](../../archive/unity/), with no flag or migration path.
 
 ## Processes and trust boundaries
 
@@ -19,8 +18,10 @@ migration path.
 | Harness child | [`src/harness-seed/`](../../src/harness-seed/), booted by [`src/harness-boot/bootstrap.mjs`](../../src/harness-boot/bootstrap.mjs) | Untrusted: the in-app agent rewrites it. Plain Node under `ProcessSandbox`. |
 | Contractors (coding CLIs) | [`src/substrate/engines/`](../../src/substrate/engines/) | Vendor harnesses briefed by the studio; see [Residual risks](#residual-risks). |
 | Game pages | [`src/main/preview.ts`](../../src/main/preview.ts), [`src/page/`](../../src/page/) | Untrusted web content in a closed partition. |
+| Native games (C++) | [`spawnGame`](../../src/substrate/spawn.ts), [`game-sandbox-profile.ts`](../../src/substrate/game-sandbox-profile.ts) | Untrusted generated code in the Seatbelt game profile; see **Native games**. |
 | Plugin backends, MCP servers | [`src/substrate/plugins/`](../../src/substrate/plugins/), [`src/substrate/mcp/`](../../src/substrate/mcp/) | Trusted native code the user approved; a process is crash isolation, not a sandbox. |
 | Terminal hosts | [`src/main/terminal-host.ts`](../../src/main/terminal-host.ts) | One Electron utility process per node-pty session, as the user. |
+| Frames addon | [`src/main/native-frames.ts`](../../src/main/native-frames.ts) | The one native module main itself loads (node-pty stays in terminal hosts); receive-only; see **Native games**. |
 | CLI installers | [`src/substrate/cli-installer.ts`](../../src/substrate/cli-installer.ts) | Vendor installers, unsandboxed. |
 | Agent jobs | [`src/substrate/jobs.ts`](../../src/substrate/jobs.ts) | Sandboxed process groups main starts for agents (the chat's, a lead, workers); they outlive turns and harness restarts and stop on quit. |
 
@@ -54,11 +55,9 @@ host for arrives over the harness RPC, which is therefore an untrusted surface:
   `engine.interrupt` are unchecked on purpose: their `cwd` is only a key into running delegations.
 - Adoption, which widens the sandbox, is not on the RPC: only user-consented host flows call
   `sandbox.allowWrite`.
-- Only whoever answers the person in a game chat asks them: its own Claude session, or a build's
-  lead or the run's coordinator, in the chat's mode
-  ([tool permissions](../tool-permissions.md)), decided from the host's records. `thread.create` takes a title only; `events.append` and
-  `turn.append` refuse `tool_permission` and `plugin_consent` rows. No agent process writes a
-  game's `.claude` folder; no landing or promotion brings one.
+- Only whoever answers the person in a game chat asks them, decided from the host's records; the
+  harness cannot forge a question or a game's `.claude` folder
+  ([tool permissions](../tool-permissions.md#the-harness-cannot-forge-it)).
 - `preview.load` and `game.attached` accept only a library game, and a `root` only when its
   realpath is strictly inside scratch or equals that game's registered folder; the preview pins
   the real path at load. `snapshot.worktree` and `snapshot.removeWorktree` refuse a symlinked
@@ -78,9 +77,6 @@ host for arrives over the harness RPC, which is therefore an untrusted surface:
   every box, since macOS grants Screen Recording and Accessibility to the app: constant `osascript`
   scripts (the window only as arguments), `screencapture` and `sips`; never input.
 
-`tests/conformance/rpc-authority.test.ts` holds the hostile-root table;
-`tests/conformance/harness-api.test.ts` drives the parameter check over a fake child's pipes.
-
 **Path containment** has one home, [`src/substrate/paths.ts`](../../src/substrate/paths.ts):
 `isInside`/`isBelow` compare resolved paths lexically (the filesystem root contains only itself,
 so a misconfigured root fails closed), and `containedReal(root, rel)` checks an untrusted relative
@@ -91,20 +87,30 @@ must not change at `/`.
 **Child environments** come from the pure `childEnv`
 ([`src/substrate/child-env.ts`](../../src/substrate/child-env.ts)). Sandboxed children (the
 harness, `run.exec`, builds) get an allow-list: PATH, HOME, locale, terminal, temp and CA-cert
-variables. Contractors get the app's environment minus credential-shaped names (the list
-in `child-env.ts`), any URL value with a password, and the other vendor's variables, plus what
-the engine sets. Probes and the Ollama server Studio starts use the same filter.
+variables. Contractors get the app's environment minus credential-shaped names
+(`isCredentialVariable`, the list in `child-env.ts`), any URL value with a password, and the
+other vendor's variables, plus what the engine sets. Probes and the Ollama server Studio starts
+use the same filter.
 `credentialHomes()` ([`src/substrate/credential-homes.ts`](../../src/substrate/credential-homes.ts))
 is the one list of coding-CLI sign-in homes that the sandbox, Claude's absolute deny rules (its own
 config home [partly](../tool-permissions.md#rules-at-their-real-paths)), the Codex brief, Bonsai
 and native plugin jobs deny. `ProcessSandbox`
 adds its base deny-read list (`baseDenyRead` in `spawn.ts`): sign-in stores such as `~/.ssh`,
-`~/.aws` and `~/Library/Keychains`, and on Linux the desktop secret stores.
+`~/.aws` and `~/Library/Keychains`, and on Linux the desktop secret stores. Beside it,
+`phoneDenyRead` keeps `ProcessSandbox` commands and unattended Claude Code contractors away from
+phones: the phone sign-ins and keys (`mobileCredentialHomes`: `~/.android`, the emulator's
+discovery files, `~/.gradle`, App Store Connect keys, provisioning profiles, cargo's registry
+tokens) and the SDK's `platform-tools` and `emulator` folders, which are also dropped from every
+child's and C++ session's PATH. On macOS, `closeDeviceBridges` rewrites sandbox-runtime's
+localhost grant inside the profile so the adb server's port 5037 and the emulator ports 5554-5585
+and 8554-8585 can be denied on loopback, and denies starting any program from the device-tool
+folders; on Linux the sandbox's network namespace already hides the host's loopback. Codex
+contractors and asking sessions are outside it ([residual risks](../tool-permissions.md#residual-risks)).
 
 **Windows sandbox.** Commands run as the local `srt-sandbox` user under Git Bash through
 sandbox-runtime's srt-win backend
 ([`src/substrate/windows-sandbox.ts`](../../src/substrate/windows-sandbox.ts)). Its grants, deny
-list and residual risks are in
+list (`windowsDenyRead`) and residual risks are in
 [Windows sandbox](../windows-sandbox.md).
 
 **Contractor bridge and locks.** The bridge
@@ -120,6 +126,12 @@ open and matches device and file index after it; `O_TRUNC` waits for that). On W
 scope: Codex's cover pre-existing files, never directories; the Claude hook matches
 `Edit|Write|MultiEdit|NotebookEdit` only, so a Bash write is not blocked.
 
+**Native games and device launches.** A compiled game's Mac build runs only through
+`ProcessSandbox.spawnGame` under its own Seatbelt profile, after `admitMacBundle` (Windows and
+Linux builds: `admitCrossOutput`); its frames reach Live as untrusted pixels, and only the
+person's **On a device** press starts a phone build
+([native games](native-games.md#processes-and-containment)).
+
 ### Residual risks
 
 - **A Codex contractor can read the whole disk.** `codex exec` runs under Codex's own sandbox
@@ -132,23 +144,22 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   borrowed Codex sign-in and the ordinary home folder. Running it under `ProcessSandbox` with
   deny-read is planned.
 - **OpenCode reads its sign-ins; 2.x's server is unsandboxed** ([details](../connections-and-context.md#openrouter-and-opencode)).
-- **An install briefly opens the npm registry to every sandboxed process.** sandbox-runtime's
-  proxy filters against one process-wide allow-list, so `ProcessSandbox.run` widens it for a
-  package install's length and restores it afterwards (counted, in `finally`). Two installs
-  open it: the user's Install packages button and `genex__package`, a consented add of one of the
-  two exact-pinned Genex SDK packages (`GENEX_GAME_PACKAGES`) that the agent cannot re-version.
+- **An install briefly opens the npm registry to every sandboxed process**, C++ builds,
+  prewarms and crate checks included: sandbox-runtime's proxy filters against one process-wide
+  allow-list, so `ProcessSandbox.run` widens it for a package install's length and restores it
+  afterwards (counted, in `finally`). Two installs open it: the user's Install packages button and
+  `genex__package`, a consented add of one of the two exact-pinned Genex SDK packages
+  (`GENEX_GAME_PACKAGES`) that the agent cannot re-version.
 - **A Genex CLI run opens `api.genex.games` to every sandboxed process** for its length, by the
-  same process-wide widening. Other processes hold no Genex token (it reaches only the CLI's
-  preload, on stdin), so they can reach the API but not act as the user.
-- **The asset adapter still runs the pinned CLI with the user's real `HOME`** (`adapter.ts`
-  asset commands). The CLI's legacy cleanup therefore deletes `genex-*` entries under
-  `~/.claude/skills`, `~/.codex/skills` and `~/.cursor/skills` (and two legacy `~/.claude` files)
-  on a `genex__asset` call. `genex__cli` and publishing already use a contained `HOME`; giving
-  asset runs one is a follow-up.
+  same widening. Only the CLI's preload holds the Genex token (on stdin).
+- **The asset adapter still runs the pinned CLI with the user's real `HOME`** (`adapter.ts`). Its
+  legacy cleanup therefore deletes `genex-*` entries under `~/.claude/skills`, `~/.codex/skills`
+  and `~/.cursor/skills` (and two legacy `~/.claude` files) on a `genex__asset` call; `genex__cli`
+  and publishing already use a contained `HOME`.
 - **Windows sandbox residuals** are listed in [Windows sandbox](../windows-sandbox.md#residual-risks).
 - **A command a reply offers runs outside the sandbox.** Run starts the agent-written line with the
   user's own permissions. Only one visible line without control characters is accepted; a
-  prompt-injected agent can still offer a harmful one, and the user's reading is the last check.
+  prompt-injected agent can still offer a harmful one.
 - **`STUDIO_DISABLE_OS_CREDENTIALS=1` is not process isolation.** It blocks SecretStore's Electron
   backend before import and on each operation; it does not sandbox external coding CLIs or
   Chromium's own storage.
@@ -165,17 +176,20 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform, which it sets as
   `data-platform` on the root, and the phase. When `ProcessSandbox` raises
   `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
-  unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
-  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
-  ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
-  instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces
-  that window with the studio. On Windows, `studio:boot.setup` (native) first installs the sandbox
-  with the unpacked srt-win
+  unsupported platform, missing Linux tools found by a PATH lookup, Ubuntu's user-namespace
+  restriction (`userns-restricted`), Windows `not_provisioned` or `wfp_fence_inactive` by code,
+  Linux `isolation-blocked` from [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)),
+  main holds the boot gate ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a
+  core-less setup window instead of exiting; `studio:boot.retry` recreates the core and, once
+  started, replaces that window with the studio. `studio:boot.setup` (native; the feature map's
+  Sandbox setup row) installs Windows' sandbox with the unpacked srt-win
   ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and retries; a dismissed prompt changes nothing. Other startup failures keep the error dialog and exit; smoke
-  and developer launches still fail (the `sandbox-setup` fixture shows the screen over a ready
-  core). The window's title bar comes from
+  UAC prompt) and retries, a dismissed prompt changing nothing, or Linux's AppArmor profile
+  ([`linux-userns-setup.ts`](../../src/substrate/linux-userns-setup.ts),
+  [`linux-apparmor.ts`](../../src/substrate/linux-apparmor.ts)) and relaunches, as AppArmor
+  attaches at exec. Other startup failures keep the error dialog and exit; smoke and developer
+  launches still fail (the `sandbox-setup` fixture shows the screen over a ready core). The
+  window's title bar comes from
   [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS
   (lights on the headers' line), a themed 48 px `titleBarOverlay` on Windows and Linux
   (`studio:window.controls`).
@@ -187,8 +201,7 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   reads only declared params and answers its declared result without a cast. Follow the
   [RPC recipe](recipes.md#harness-rpc-method).
 - Behavior lives in services under [`src/main/core/`](../../src/main/core/) (previews, delegation,
-  recovery, self-improvement, plugin tools, conversation, assets, game threads, the self-edit
-  gate, connections, plan drafts), which reach the core's shared state through one typed
+  native runs, toolchains and more), which reach the core's shared state through one typed
   `CoreInternals` ([`core/internals.ts`](../../src/main/core/internals.ts), in narrow groups).
 - [`src/main/smoke/`](../../src/main/smoke/) holds the build smoke, selftest and acceptance drivers,
   loaded by dynamic import only when their flag is set. Acceptance drivers that need seed code load
@@ -209,7 +222,7 @@ code import none from the substrate.
 | Contract | File | Notes |
 | --- | --- | --- |
 | Renderer API | [`studio-api.ts`](../../src/shared/studio-api.ts) | The fixed named calls of `window.studio`. |
-| IPC channels | [`ipc-channels.ts`](../../src/shared/ipc-channels.ts) | Ties each `studio:*` invoke channel to its call, payload and result, and each push channel (`studio:event`, `studio:terminal`, `studio:claude-login`, `studio:codex-login`) to its `on*` subscription. Preload, `handle()` and the fixture policy take their types from it. |
+| IPC channels | [`ipc-channels.ts`](../../src/shared/ipc-channels.ts) | Ties each `studio:*` invoke channel to its call, payload and result, and each push channel to its `on*` subscription. Preload, `handle()` and the fixture policy take their types from it. |
 | UI events | [`ui-events.ts`](../../src/shared/ui-events.ts) | `studio:event` carries a `UiEvent` from `UiEventMap`. `UiEvent` names each (`UiEvent.PreviewFrame`). `StudioCore.emit` and `pushUiEvent` are checked against it; the renderer narrows on `event.type`. Harness notifications are forwarded unchanged, so harness-written fields stay optional and unknown names still arrive and are ignored. |
 | Durable custom events | [`custom-events.ts`](../../src/shared/custom-events.ts) | `CustomEvent` names them (`CUSTOM_EVENT_TYPES` lists the values; `customEventData` builds a record); `CustomEventMap` types what the app reads, every field optional. Read through `customEvent`/`customPayload`, never by casting `data.payload`. |
 | Event log | [`event-log.ts`](../../src/shared/event-log.ts) | Events, conversations and snapshot records. |
@@ -225,8 +238,7 @@ or `as never`.
 under `src/shared` resolves where the seed runs. A rule both apply has a typed host copy in
 `src/shared` — the coordinator's tools and run reading (`coordinator.ts`), the follow-up queue
 (`message-queue.ts`), the model-role tables and presets (`model-roles.ts`), SkillOpt's bounded
-edits (`skill-edits.ts`) — and the seed keeps its own. `tests/conformance/seed-contracts.test.ts`
-and `tests/conformance/providers.test.ts` replay the same inputs through both copies. Other
+edits (`skill-edits.ts`) — and the seed keeps its own. Other
 two-copy rules: the ownership glob ([`src/substrate/ownership.ts`](../../src/substrate/ownership.ts)
 and the seed's `loop/review.ts`), and the engine-export refusal (`ENGINE_EXPORT_REFUSAL` in
 [`shape-words.ts`](../../src/shared/shape-words.ts) and the seed's `loopRunRefusal`). See the
@@ -240,21 +252,14 @@ and must stay so.
 event log, layout, library, plugins, session, threads, toasts, agent screens, command runs) are wired once by
 `createStudio(api)` in `state/studio.ts`: one `onEvent` subscription, the log poll, the bootstrap
 and the commands that span stores. The app has one instance started before React mounts, so
-StrictMode cannot subscribe twice. Components read through the selector hooks in `state/hooks.ts`
-(`useShallow` for objects and arrays); UI-only state stays local; derivations stay in the pure
-modules (`chat-entries.ts`, `run-graph.ts`, `build-progress.ts`,
-[`src/shared/run-state.ts`](../../src/shared/run-state.ts)); `localStorage` keys come only from
-[`src/renderer/storage.ts`](../../src/renderer/storage.ts). `tests/conformance/renderer-state.test.ts`
-drives the stores with `tests/helpers/fake-studio-api.ts`. See the
+StrictMode cannot subscribe twice. Selector hooks (`state/hooks.ts`) use `useShallow` for objects
+and arrays; the pure derivation modules include `chat-entries.ts`, `run-graph.ts`,
+`build-progress.ts` and [`src/shared/run-state.ts`](../../src/shared/run-state.ts). See the
 [store recipe](recipes.md#zustand-store).
 
-**Layout.** A large panel is a folder of its parts beside its entry component:
-`panels/inspector/` (`RunInspector.tsx`'s sheets), `panels/run-graph/` (`RunGraph.tsx`'s nodes,
-gates and camera), `panels/stage/` (`PreviewPanel.tsx`'s body and strip), `panels/plugins/` and
-`panels/connectors/`. `panels/ChatPanel.tsx` keeps its parts in `chat/`: its hooks are
-`chat/use-*.ts` (wired by `use-chat-panel.ts`), sending routes in `send-route.ts`, the
-conversation in `ChatConversation.tsx`. First launch is `onboarding/` (pure
-decisions in `state.ts`, the canvas art in `art.ts`).
+**Layout.** Panel folders are listed in [src/AGENTS.md](../../src/AGENTS.md#renderer-shared-and-page);
+the chat's hooks are `chat/use-*.ts` (wired by `use-chat-panel.ts`), and first launch is
+`onboarding/` (pure decisions in `state.ts`).
 
 **Words.** Every user-facing label derived from harness vocabulary — statuses, verdict sources,
 stop reasons, tool names, the run's headline, `problemWords` — lives in
@@ -279,9 +284,8 @@ writes `buildersMax` (1–12, default 4); main derives the preview-pool ceiling 
 empty, never-welcomed profile first shows the welcome (`onboarding/`), which fades into home.
 Launches open home (`Room.Home`). Its first message runs `launchGame` (`state/launch.ts`):
 `studio:game.name` names the game (`main/core/game-naming.ts`), `createGame` makes it, its chat
-sends the message (`chat/use-launch-handover.ts`). Fixtures open their game from the sidebar. The bell (`notifications.ts`, `NotificationsMenu.tsx`, `studio:notify`, `studio:badge`) and
-file tabs beside the chat (`open-beside.ts`, `FileViewer.tsx`, `main/game-file.ts`) are specified in
-the [feature map](feature-map.md). A file a chat names links once main confirms it
+sends the message (`chat/use-launch-handover.ts`). Fixtures open their game from the sidebar. The
+bell and the file tabs beside the chat are specified in the [feature map](feature-map.md). A file a chat names links once main confirms it
 (`renderer/chat-files.ts`, `main/chat-files.ts`); programs are only shown.
 
 **Composer.** What the composer's controls show is specified in the
@@ -303,9 +307,6 @@ to acknowledge, then the oldest queued message runs; Escape never cancels a buil
 inherits `studio.model.last`; the Studio thread keeps `studio.studioChat.model` and its own keys,
 seeded once and never written back. Studio chat's `ModelMenu` has no `onRoles`.
 
-**Run summaries.** Preload shares watchers; main caches histories/folds by heads and evidence metadata.
-Preview identity patches avoid refolds. Activity incrementally retains summaries and auxiliary records.
-
 **Chat.** `studio:chat.page` / `EventStore.chatPage` returns the newest 160 committed events and
 exclusive `before` cursors for older pages. The renderer deduplicates by event identity, windows
 variable-height entries, keeps the reading anchor when prepending and caps the global event tail
@@ -323,10 +324,9 @@ raw HTML tokens after parsing; code highlighting follows the
 questions and plan reviews pin above the composer (`chat/ChatQuestion.tsx`); only explicit
 confirmation calls the consent, permission or plan IPC.
 
-**Questions and Studio chat.** `ask_user` records a durable `interview_question` through both the
-direct tool registry and a Loop chat's delegated bridge; the provider turn ends, the answer arrives
-through the normal message queue and resumes the same session, and a question never launches a
-run by itself. Its commissioning options live in a thread artifact referenced by `intakeId`.
+**Questions and Studio chat.** `ask_user` records a durable `interview_question` (direct tool
+registry or a Loop chat's delegated bridge); the provider turn ends and the answer resumes the same
+session through the message queue; a question never launches a run by itself. Its commissioning options live in a thread artifact referenced by `intakeId`.
 Explicit Studio messages bypass game coordinators: `loop/studio-chat.ts` calls `engine.complete`
 with no tools, a bounded window, current attachments and host-owned `studio.context`; it never
 delegates or edits games, settings or harness files, and a blank reply is a durable error.
@@ -338,7 +338,7 @@ while Live, holding that game, is out of sight, `PreviewService.liveOutOfSight`;
 is offered by commit, `offerBuild`, and a landing lands and offers the folder). A harness preview call that names no window, or
 the live view, reaches the stand-in (`STAND_IN_HANDLE`, a hidden window outside the lease count,
 opened on first use with what Live shows, closed after two idle minutes); only a build with no
-headless capability still drives Live. What the harness loads there, a checkpoint and a rewind
+headless capability drives Live. What the harness loads there, a checkpoint and a rewind
 reach `PreviewService.offerLive` (`core/live-gate.ts`): a game folder whose print (HEAD, status,
 uncommitted sizes and times) moved since Live loaded it, or a build Live is not showing (held by
 its commit), emits `live.behind`; the person's Reload (`reloadLive`) applies it and any live load
@@ -346,10 +346,9 @@ that succeeded clears it. The event says which build Live shows (`shows`, whiche
 loaded it), and the stage reads the whole state on mount (`studio:live.behind`). The renderer
 (`stage.ts`, `stage/live-behind.ts`) adds the run's newest healthy build Live does not show and
 a shown build found broken, applies what main holds when Live is not watched, and swaps only the
-empty scaffold's first healthy build by itself. Live preview candidates load in a staging preview
-first; a candidate and a session never borrow Live when the pool is full, and a session never
-takes Live or the stand-in by a harness-named handle: it gets an overflow lease, at most
-`OVERFLOW_WINDOWS_MAX` past the pool's ceiling, and waits for a window beyond that. The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
+empty scaffold's first healthy build by itself. Candidates load in a staging preview first; a
+candidate or session never borrows Live or the stand-in (a session gets an overflow lease, at most
+`OVERFLOW_WINDOWS_MAX` past the ceiling, then waits). The morning card (`MorningCard.tsx` over `morning-words.ts`) is specified in
 the [feature map](feature-map.md).
 
 **Covers.** `GameAvatar` paints every cover with one WebGL context (`ui/cover-animation.ts`,
@@ -358,8 +357,8 @@ and dispose their WebGL contexts.
 
 **Appearance.** [`src/renderer/appearance/`](../../src/renderer/appearance/) owns the versioned
 palette model, bounded JSON/JSONC interchange and the `studio.appearance.v1` preference; one
-resolved `data-theme` drives controls and portals. Imports never execute CSS. Game pages are not
-recolored. See [themes](../../design/genex/THEMES.md) and the [design workflow](design.md).
+resolved `data-theme` drives controls and portals; imports never execute CSS, and game pages are
+not recolored. See [themes](../../design/genex/THEMES.md) and the [design workflow](design.md).
 
 ## Engines and providers
 
@@ -380,8 +379,7 @@ descriptor as `provider` (null for an unlisted engine). `SUBSCRIPTION_ENGINES` i
 and re-exported by [`src/main/core/subscription-engines.ts`](../../src/main/core/subscription-engines.ts)
 and [`src/renderer/subscription-auth.ts`](../../src/renderer/subscription-auth.ts), whose
 `signInVendor` gives the sign-in card the table's words (a neutral card for an unlisted engine);
-chat labels name a contractor by the table's `label`.
-`tests/conformance/providers.test.ts` holds both role tables (app and seed) to it. See the
+chat labels name a contractor by the table's `label`. See the
 [provider recipe](recipes.md#provider-or-engine).
 
 **Coding CLIs.** Installations are external.
@@ -396,36 +394,31 @@ any other `.cmd` goes through `cmd.exe`, plain words bare, others escaped for `%
 spawner for it, `claudeLaunchOptions`) and stops with its whole tree (`taskkill /T /F`,
 [`src/substrate/process-tree.ts`](../../src/substrate/process-tree.ts)). Studio or game-local
 dependencies and packaged binaries are excluded. A persisted override that is not ready yields to a
-ready automatic installation, an explicit executable never. Diagnostics share a 15-second
-cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers until
-Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
+ready automatic installation, an explicit executable never. Diagnostics share a 15-second cache;
+sessions reuse the login PATH and unchanged binaries' probe answers until Recheck; running
+processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
 renderer or agent channel can write. Descriptors carry `account` (login source, variable, what
 signing out leaves, CLI state and version). Fixture and smoke sessions search no paths or standard
-locations (`configureCodingClis`), so status checks never run a machine-installed provider or report
-fixtures as account readiness.
+locations (`configureCodingClis`).
 
 **Sign-in.** Both subscriptions keep native CLI sign-in and account storage
 ([`src/main/login-controllers.ts`](../../src/main/login-controllers.ts)). A controller holds the
 chosen path and environment for the attempt and its status checks. Claude's piped browser/code
 flow falls back to the embedded terminal with the same executable, credential home and PATH; a
 sign-in for another credential home cancels the one in progress; a zero exit still needs native
-auth-status verification. Codex keeps its in-app guided console and subscription-only auth. Claude
-SDK queries always get an external path; a missing CLI fails before the SDK is invoked. Managed
-login output removes auth URLs, credential patterns and terminal string controls before display.
+auth-status verification. Codex keeps its in-app guided console and subscription-only auth. A
+missing CLI fails before the Claude SDK is invoked. Managed login output drops auth URLs,
+credential patterns and terminal string controls before display.
 
 **Embedded terminal.** [`src/main/terminal-service.ts`](../../src/main/terminal-service.ts) owns at
 most four sessions, each node-pty in its own utility process; xterm.js loads lazily. Project shells
 resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, else
 PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
 normal permissions. Games, plugins and the harness get no terminal API. A command a game reply offers
-runs only when the user presses Run: `studio:terminal.run` takes one command line (`runnableCommand`)
-as a `command` session (`commandShell`: the shell's `-c`, or PowerShell's `-Command`) in the game
-folder, one per game, the dock closed. Output stays out of React state and events (the card reads
-`state/command-output.ts`); the last 20 plain, redacted lines (`terminal-command.ts`) reach the agent
-as an `origin: command-result` message the transcript hides. Output
-is bounded (64 Ki code units in flight, 256 Ki
-queued, 16 Ki per message) with pause/resume backpressure; scrollback is 3,000 lines; nothing is
-persisted. Hide keeps the process; Stop ends the shell and captured descendants with PID identity
+runs only when the user presses Run (`studio:terminal.run`, `runnableCommand`) as one `command`
+session per game; its last 20 plain, redacted lines (`terminal-command.ts`) reach the agent hidden
+(the feature map's Command from a reply row). Output is bounded with pause/resume backpressure, kept
+out of React state and events, and never persisted. Stop ends the shell and captured descendants with PID identity
 checks (on Windows `taskkill /T`); reload, window close and quit dispose sessions.
 
 **Roles across providers.** The orchestrator is always the run's engine. Workers and judges may run
@@ -447,7 +440,6 @@ replaced once. `tests/conformance/director-cross-engine.test.ts` runs a crossed 
 **One engine voice.** `toolCall(engine, name)` and `toolSyntax(engine)` in the seed's
 `loop/model-roles.ts` are the only place the harness branches on the engine (Claude reads
 `mcp__studio__<tool>`, Codex reads `node .studio/bridge/tool.mjs <tool> --field=value`).
-`tests/conformance/engine-voice.test.ts` renders every exported brief once per engine.
 
 **Judge sessions.** Every verdict is a one-shot session with no history. Claude verdicts run in one
 stable directory (`JUDGE_CWD` in
@@ -492,16 +484,13 @@ moved and retired:
   `library/recipes` holds the answering recipe; ids the seed still ships are refreshed in place with
   counters kept (catalogue version 2). Both user-facing surfaces report all outcomes.
 
-**Layout migration.** `migrateHarnessLayout` (seed manifest `layoutVersion` 2) moves a
-pre-TypeScript workspace once, after a validation fork of it booted; until then `applySeed` defers
-the `.ts` modules ([harness runtime](../harness-runtime.md)).
-
-**Self-edit gate.** `guardian.validate_edit`
-([`src/main/core/self-edit-gate.ts`](../../src/main/core/self-edit-gate.ts)) type-checks a proposed
-code change in a validation fork with the vendored TypeScript 7 compiler
-([`src/substrate/type-gate.ts`](../../src/substrate/type-gate.ts), `resources/tsc/`) and boots it;
-`guardian.write_self` alone changes the agent's files ([harness runtime](../harness-runtime.md)).
-Keep the seed's tool descriptions accurate to it.
+**Layout migration and self-edit gate** ([harness runtime](../harness-runtime.md)).
+`migrateHarnessLayout` (seed manifest `layoutVersion` 2) moves a pre-TypeScript workspace once;
+until then `applySeed` defers the `.ts` modules. `guardian.validate_edit`
+([`self-edit-gate.ts`](../../src/main/core/self-edit-gate.ts)) type-checks a proposed code change
+with the vendored TypeScript 7 compiler ([`type-gate.ts`](../../src/substrate/type-gate.ts),
+`resources/tsc/`) in a booted validation fork; `guardian.write_self` alone changes the agent's
+files. Keep the seed's tool descriptions accurate to it.
 
 **Boot inbox.** At boot the harness restores its follow-up queue with the `events.inbox` RPC
 ([`src/main/core/inbox.ts`](../../src/main/core/inbox.ts)), not `events.list` of every
@@ -554,12 +543,11 @@ the [builds and live product page](../product/builds-live.md); the chat's lifecy
 [the conversation's](../conversation-coordinator.md). Every loop fix gets an incident
 row in `tests/conformance/harness-incidents.test.ts` ([recipe](recipes.md#harness-incident-fix)).
 
-**Plan review.** Composer commissions with Plan mode on are reviewed before execution by
-`PlanReviewController` ([`src/main/plan-review.ts`](../../src/main/plan-review.ts)), which keeps the
-request, settings, plan and versioned status in thread metadata and emits `plan_review` events. Only
-`studio:plan.answer` approves; conversation text revises. There is no approval expiry and no run
-clock while approval is pending; Cancel/Stop invalidates it; a waiting plan survives relaunch.
-Approval dispatches the brief with the legacy `reviewPlan` flag cleared.
+**Plan review.** `PlanReviewController` ([`src/main/plan-review.ts`](../../src/main/plan-review.ts))
+holds a Plan-mode commission's request, settings, plan and versioned status in thread metadata and
+emits `plan_review` events. Only `studio:plan.answer` approves; conversation text revises; no expiry
+or run clock while pending; Cancel/Stop invalidates it; a waiting plan survives relaunch. Approval
+dispatches the brief with the legacy `reviewPlan` flag cleared.
 
 **Scout.** Before the plan, a read-only scout (`loop/scout.ts`) plays to the requested state and
 reports a `setup` (actions or a demo, a `verify` probe), a builder count and what exists;
@@ -636,13 +624,12 @@ The studio forwards each tool call to the harness (`HarnessHost.dispatch`, `dire
 `refs/studio/runs/<runId>/integration`, `.../workers/<facetId>` (moved to every accepted commit and
 again before teardown), `.../attempts/<facet>/<n>` (`-stopped` for a stopped round),
 `.../spikes/<facet>/<id>` and `refs/studio/snap/<id>` (`loop/repo.ts`, `snapshots.ts`). One committer
-signs studio commits (`STUDIO_AS`, `GIT_ENV`). A chat keeps the game folder from before and after
-each answered message the same way, on `refs/studio/chat/<thread>/before|after/<message>`, for
+signs studio commits (`STUDIO_AS`, `GIT_ENV`). A chat keeps the folder before and after
+each answered message on `refs/studio/chat/<thread>/before|after/<message>` for
 rewinding ([conversation lifecycle](../conversation-coordinator.md#sending-and-rewinding)). Builder
 notes are `docs/notes/NOTES.<facet>.md`.
 `.studio/` is gitignored; on the long turn the studio copies `.studio/DIRECTOR.md` to run and thread
-artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Adoption writes a real `.gitignore` before
-`git init`. Snapshot commits land on the user's checked-out branch with hooks disabled and are
+artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Snapshot commits land on the user's checked-out branch with hooks disabled and are
 refused during a merge, rebase, cherry-pick or revert. `SnapshotEngine.restore` runs every check
 before any reset and refuses (`branch-changed`, `history-changed`, `operation-in-progress`,
 `rescue-failed`) leaving the folder untouched; the mandatory rescue snapshot is named on
@@ -665,9 +652,9 @@ its mark is asked to finish cleanly in the same session (`WIND_DOWN_ASK`).
 sha or harness word. Rounds carry it on `facet_iteration.verdict`; the lead's gate, judge, health
 pass and close append `director_verdict`. The Builds result panel shows the staged build's newest
 record (`headVerdict`); step panels, gate tooltips, the chat and the judges' sheet print its
-sentence. `run-steps.ts` decides a step's state from merges first (`mergedRounds`: a
-loop's merge takes its kept rounds; a lead's merge, by log position, takes the last kept round or,
-with none, every unjudged round started before it) and judges second. A flip counts as proof only when `strongFlips` (a
+sentence. `run-steps.ts` picks a step's picture by provenance and decides its state
+from merges first (`mergedRounds`: a loop's merge takes its kept rounds; a lead's merge, by log
+position, the last kept round or, with none, every unjudged round started before it), then judges. A flip counts as proof only when `strongFlips` (a
 scene/pixel/metric/probe/demo/play check, or a vision check the plan wrote); otherwise the blind
 side-by-side pick decides (`acceptRound`). A self-measuring regression counts only if a second
 look reproduces it; only a judge's own gap (`judgedGap`) grows a check or THE FIX. An unmeasured vision check needs a yes at
@@ -675,9 +662,9 @@ look reproduces it; only a judge's own gap (`judgedGap`) grows a check or THE FI
 reading defect becomes a probe suggestion, and a question hedged twice under 0.5 retires. Counts
 separate planned from grown checks (`checkCounts` in `words.ts`). Questions about one camera ride
 in one call (`askVisionBoard`, `visionBatch`, `MAX_BATCH_QUESTIONS`); an unanswered id is never a
-pass. Health, judge and gate passes are patient (`patientEvidence`: up to three looks on a load
-race). An engine limit is waited out when it resets well before the deadline; otherwise the run
-closes paused, naming the limit.
+pass. Health, judge and gate passes allow up to three looks on a load race (`patientEvidence`). An
+engine limit is waited out when it resets well before the deadline; otherwise the run closes
+paused, naming the limit.
 
 **Landing.** At the close the harness stops workers, syncs the head, takes a fresh health pass,
 judges it unless stopped (`judgeTheLanding`), and lands when the head moved beyond the start and
@@ -716,7 +703,12 @@ writes; SkillOpt keeps its own gate.
 decided in [`src/substrate/project-shape.ts`](../../src/substrate/project-shape.ts)) is decided by
 evidence — every `<script src>`, `package.json`, bundler config, engine runtime files — never the
 entry filename, and recorded in `studio.json` on first open: `main`, `build`, `serve`, `kind`
-(`three-vite`, `three-modules`, `canvas2d`, `phaser`, `engine-export`, `own-script`) and `own`. A
+(`ProjectKind`: `three-vite`, `three-modules`, `canvas2d`, `phaser`, `engine-export`,
+`own-script`, `raylib-cpp`, `rust-wgpu`) and `own`. A folder holding a `genex.toml` (read by
+`lstat`, never followed) is Rust · wgpu whatever `studio.json` says; a `kind` only a newer Genex
+knows opens read-only (`readOnly: kind-unsupported`): listed and opened, never written, built or
+exported; the host refuses `game.write`, `game.upgradeContract`, snapshots and delegated agents on
+it (`assertWritableGame`), and the seed refuses its runs. A
 folder is the studio's template only with both `contractVersion` in `studio.json` and the vendored
 three import map. `findGameRoot` looks one folder down. An `engine-export` game can be played and
 photographed but never starts a run.
@@ -733,10 +725,9 @@ template's (kept as `<name>.v<generation>.js`); an edited contract keeps its HUD
 older HUD is noted and narrows builders' HUD rule (`loop/held-hud.ts`).
 
 **Builds.** `preview.load`/`preview.reload` build through `GameBuilds`
-([`src/main/game-build.ts`](../../src/main/game-build.ts)) and serve the output. A build never runs in
-a folder the user owns: the folder is mirrored into a shadow under
-`scratch/builds/<project>-<hash>/` (Git's view of the project plus `.env*`, `node_modules` linked,
-output kept in `last/`); a studio worktree under `scratch/` builds in place. Builds are memoised on
+([`src/main/game-build.ts`](../../src/main/game-build.ts)) and serve the output. Builds mirror the project into
+`scratch/builds/<project>-<hash>/` (Git's view plus `.env*`, linked `node_modules`, output in
+`last/`); studio worktrees under `scratch/` build in place. Builds are memoised on
 a tree key; the stage's **Try again** (`reloadPreview({retry: true})`) forgets the memo and
 re-resolves the login shell PATH ([`src/substrate/toolchain.ts`](../../src/substrate/toolchain.ts); on
 Windows the process PATH plus the registry's machine and user PATH).
@@ -744,13 +735,16 @@ The package manager comes from the lockfile; installing is the one thing that op
 (`registry.npmjs.org`, `studio:packages.install`, behind a button), and only the lockfile's own
 install line runs (`INSTALL_COMMANDS`/`isInstallCommand`). A failed or empty build shows the last
 good output with the reason (`studio:build.problem`,
-[`src/shared/build-problem.ts`](../../src/shared/build-problem.ts)); a judged load still fails. Build
+[`src/shared/build-problem.ts`](../../src/shared/build-problem.ts)); a judged load fails to no page (`build-failed`, `buildFailed`); Live never blanks. Build
 actions coalesce identical `showBuild` requests and serialize worktree replacement per project;
 preview loads serialize per handle.
 
-**Served page.** [`src/main/page-serve.ts`](../../src/main/page-serve.ts) holds the pure serving
-decisions (`servedRelative`, `resolveServed`, `servedLocation`, `routeHttp`,
-`gameRequestAllowed`, `previewNavigationAllowed`) and the only page rewrite; the input dispatch
+**Stacks and compiled games.** A game's stack is `stackOf(shape)` (glossary); every compiled build
+goes through `GameBuildLanes` (`CppBuilds`, `RustBuilds`), refusing a stack without a lane
+`lane-missing`, and each stack keeps its own lock in the toolchain store
+([native games](native-games.md#builds-and-the-stack-seam)).
+
+**Served page.** [`src/main/page-serve.ts`](../../src/main/page-serve.ts) holds the pure serving decisions and the only page rewrite; the input dispatch
 string is in [`src/main/page-dispatch.ts`](../../src/main/page-dispatch.ts). `resolveServed` checks
 lexically and then realpaths every request against the real root pinned at load: 404 for a missing
 or non-regular file, 403 for an escape (including a root swapped after load), 400 for a malformed
@@ -792,7 +786,7 @@ are accessors with no-op setters. `hook.ts` reports renderers and reads the scen
 frames the game draws; a bundled game adds `installStudio({ renderer, player })`. `capture.ts`
 reads the canvas at the end of a drawn frame and composites over the page background (WebGPU reads
 depend on the recorded `alphaMode`); otherwise the compositor's `capturePage()` answers. Every shot
-records provenance (`stats.source`, `composited`, `drawCalls`, `provenance`, `surface`). Draw calls
+records its provenance. Draw calls
 are counted at the graphics API (`counters.ts`); WebGL and WebGPU are equals. `game-template`'s
 `src/studio.js` is the contract every template game installs; never remove a method.
 
@@ -804,22 +798,22 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
-**Worker windows and computer use.** Every building delegation and every looking read-only session
-gets one pooled preview window for the session
+**Worker windows and computer use.** Every building delegation and read-only looking session
+gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs; `computer` ([`src/substrate/computer-tool.ts`](../../src/substrate/computer-tool.ts)) is
+photographs (a C++ game's `target: "macos"` runs its Mac build headless in a native lease of the
+session's own); `computer` ([`src/substrate/computer-tool.ts`](../../src/substrate/computer-tool.ts)) is
 the studio's own computer use with Anthropic's action vocabulary plus `camera`, `state`, `reload`
-and `console`. Headless ports render offscreen. Native input is sent and synthetic copies withheld
-per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
-real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
-(`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
-and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). When no window is free, judge
-and playtest answer *no window free*; unskippable passes look through the stand-in, never Live. `preview.capacity` reports free windows and memory. Concurrent first `state` and
-`console` requests share one navigation. Each action emits
-`preview.frame` and `preview.screen`.
+and `console`. Headless ports render offscreen. Once a trusted event of a type is seen, native input is
+sent and synthetic copies withheld, except a mousemove's (real delta; `game-template/src/studio.js` de-duplicates). Two pool windows are never a worker's
+(`workerWindows(max)` = max − 2, ≥ 1). A harness lease carries its boot as `owner`
+and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). Without a free window, judge and
+playtest answer *no window free*; unskippable passes use the stand-in, never Live.
+`preview.capacity` reports free windows and memory. Concurrent first `state` and `console` requests
+share one navigation. Each action emits `preview.frame` and `preview.screen`.
 
-**Native preview layering.** Modal dialogs hide the WebContentsView; popovers hide it only while
-their rectangle intersects the Live slot; identical bounds do not repeat IPC.
+**Native preview layering.** Modal dialogs hide the WebContentsView, popovers while
+over the Live slot; identical bounds skip IPC.
 
 ## Plugins, MCP and Genex
 
@@ -833,28 +827,22 @@ installs, pins active-session versions and owns backend processes;
 are service checks, not an OS sandbox. Custom panels run in an opaque sandboxed frame. API versions
 1–3 share the host; `validateManifest` returns a canonical manifest and version-gated fields are
 refused under API 1. The registry fires `onChange` (`plugins.changed`). Install records carry an
-origin (`bundled`, `local`, `catalog`, `github`, `index`) and an identity (`pluginIdentity()`); a
-package whose id belongs to another identity is refused unless the user chose **Replace and erase
-data** (`authorizeReplacement`, single use, ten minutes). Bundled seed ids cannot be installed from
-elsewhere; removed seeds never auto-enable. Account and install actions never appear in model tool
-schemas. Registry mutations are serialized.
+origin and an identity (`pluginIdentity()`); taking another identity's id needs **Replace and erase
+data** (`authorizeReplacement`, single use, ten minutes; [removal](../plugins.md#removal-and-reinstall-by-recorded-origin)).
+Account and install actions never appear in model tool schemas. Registry mutations are serialized.
 
-**Consent.** A tool declaring `confirmation` waits for a consent card: `StudioCore.requestConsent`
-holds the call until the user answers, it times out, or Stop or the turn's end withdraws it; only
-`studio:plugins.consent` approves, both agent paths share the wrapper, and no seam fails closed
-([consent model](../plugins.md#the-tool-consent-model)). A request left unanswered by a previous
-process is declined once, `by: restart`, before the harness boots.
+**Consent.** `StudioCore.requestConsent` holds a `confirmation` tool's call for its card
+([consent model](../plugins.md#the-tool-consent-model)); only `studio:plugins.consent` approves. A
+request left unanswered by a previous process is declined once, `by: restart`, before the harness boots.
 
 **Marketplace and scan.** [`src/substrate/plugins/marketplace.ts`](../../src/substrate/plugins/marketplace.ts)
-holds the https index and the sha-pinned GitHub install (each blob checked against its git object
-id and by `assertRelativePath`; symlinks and submodules refused, caps enforced, network injected).
-`scan.ts`'s verdict is disclosure, not isolation, and a file it did not read is never `safe`.
-Catalog downloads verify digest and manifest and run no install hooks; dependency copying resolves
-the real `node_modules` and refuses anything outside it. A hot reload that changes a plugin's MCP
-servers or network hosts is refused until the folder is loaded again. The app applies its own
-catalog policy on every index read (`STUDIO_CATALOG_POLICY`, `applyCatalogPolicy`; the catalog
-repo's `policy.json` must change with it). Rules, update cleanup and debug logs are in the plugin
-SDK: [marketplace](../plugins.md#marketplace), [GitHub installs](../plugins.md#install-from-github),
+holds the https index and the sha-pinned GitHub install (network injected; paths through
+`assertRelativePath`). `scan.ts`'s verdict is disclosure, not isolation, and a file it did not read
+is never `safe`. Dependency copying resolves the real `node_modules` and refuses anything outside
+it. A hot reload that changes a plugin's MCP servers or network hosts is refused until the folder is
+loaded again. The app applies its own catalog policy on every index read (`STUDIO_CATALOG_POLICY`,
+`applyCatalogPolicy`; the catalog repo's `policy.json` must change with it). Blob checks, caps,
+update cleanup and debug logs are in the plugin SDK: [marketplace](../plugins.md#marketplace), [GitHub installs](../plugins.md#install-from-github),
 [scan](../plugins.md#the-install-time-static-scan) and [hot reload](../plugins.md#hot-reload-and-debug-logs).
 
 **Managed native jobs.** API 3 services
@@ -869,9 +857,7 @@ output delivery: [API 3 managed-native services](../plugins.md#api-3-managed-nat
 ([`src/substrate/mcp/registry.ts`](../../src/substrate/mcp/registry.ts)) owns connectors,
 connections, tool caches, health and leases; revocation is immediate. A connection is per project
 only for a per-project launch (`perProject`) or a connector that shares the project root; otherwise
-one connection serves every game. A connection with no lease and no call in flight closes after
-10 minutes (`IDLE_CLOSE_MS`; `idleCloseMs` and `schedule` are injectable) and reopens on the next
-use.
+one connection serves every game. An idle connection closes after 10 minutes (`IDLE_CLOSE_MS`) and reopens on the next use.
 `engine-homes/mcp/connectors.json` holds names only (atomic 0o600 writes in a 0o700 folder); every
 value lives in a `SecretStore` under `engine-homes/mcp/secrets` and is materialized only into a
 child's environment or a header at connect time. Without OS encryption the secret port is null and
@@ -882,10 +868,9 @@ the card says why values cannot be stored (`secretsLocked`, a `SecretStorageIssu
 `<connectorId>__<tool>` on the same live-tool path as plugin tools: Claude sees
 `mcp__studio__<connector>__<tool>` on the one in-process server, Codex through the file bridge, the
 local harness after its plugin loop. Every call is a `connector_tool` event with the answer capped
-at 4 KiB. Connector tool results, call errors and stderr health messages are redacted of known
-values (materialized env and headers, launch `secrets`, OAuth tokens) and then token shapes, through
-[`src/shared/redact.ts`](../../src/shared/redact.ts), the one redactor for the event log, the dev
-control and MCP. Collisions shorten a tool name's base so the suffixed name stays within 48
+at 4 KiB. Connector tool results, call errors and stderr health messages go through
+[`src/shared/redact.ts`](../../src/shared/redact.ts), the one redactor
+([redaction on append](#persistence-and-the-event-log)). Collisions shorten a tool name's base so the suffixed name stays within 48
 characters (`uniqueToolName`). Judges, critics, playtesters, read-only sessions, the coordinator
 and optimization candidates get no connectors; the Auto chat, a Loop chat and a build's lead get them.
 
@@ -902,21 +887,16 @@ revocation (refresh token first, 10 s limit, after the local record is deleted);
 keeps a `${VAR}` placeholder as a name that still needs its value (`needsValue`). Project roots are
 opt-in and are not a sandbox.
 
-**Plugin MCP servers.** An API 2+ manifest's `mcpServers` are connectors the plugin owns: published
-while it is enabled, withdrawn whenever its backend stops, never written to `connectors.json`, named
-`<pluginId>-<serverId>`, trusted by the install dialog; a changed launch is a permission expansion.
-The host launches `process.execPath` with `ELECTRON_RUN_AS_NODE` on a contained script, a working
-directory and `HOME` under the plugin's storage, and only the declared environment.
-`credential-file` passes the token down file descriptor 3 only while a host credential lease is
-active: a `node` server gets `/dev/fd/3` as the variable and the bare token on the pipe
-(`PluginMcpLaunch.credential()`); the virtual path and the `GENEX_TOKEN=` line
-(`credentialFile()`) are for Studio's own Genex CLI (`host-cli`) only. The launch reports the token
-and stored `secret:` values as `secrets`, so the connection redacts them from what the server says.
-`host-cli` is reserved for id `genex` with a `bundled` source.
+**Plugin MCP servers.** An API 2+ manifest's `mcpServers` are connectors the plugin owns
+([contract](../plugins.md#mcp-servers)), withdrawn whenever its backend stops; a changed launch is a
+permission expansion. `credential-file` passes the token on fd 3 only while a host credential lease
+is active (`PluginMcpLaunch.credential()`), and the launch reports it and stored `secret:` values as
+`secrets`, so the connection redacts them from what the server says.
 
 **Genex.** The bundled Genex plugin
 ([`src/plugins/genex/`](../../src/plugins/genex/)) runs the restricted asset adapter (`adapter.ts`)
-in its backend; the pinned CLI owns quotes, locking, reservations and the credit ledger. Job state
+in its backend; the pinned CLI owns quotes, locking, reservations and the credit ledger, and its
+`allowance.enforced` and the service's credit admission are authoritative. Job state
 lives under `engine-homes/genex/projects/<project>`. Arguments are arrays; operations, inputs and
 destinations are validated; hosted initialization, domains and billing administration stay hidden.
 The CLI environment starts from scratch (`genexCliEnv`, telemetry off). The creator MCP
@@ -1002,7 +982,7 @@ managed local runtime; core has no Blender tool of its own.
   unchanged recorded assets with a separate index and re-hashes the staged blob before committing;
   the director calls `assets.checkpoint` before merging.
 - **Export.** [`src/substrate/game-export.ts`](../../src/substrate/game-export.ts) stages fresh public
-  files and replaces only an app-managed destination; hidden files, env files, private-key names,
+  files where no agent writes and replaces only an app-managed destination; hidden files, env files, private-key names,
   dependencies and symlinks are excluded or refused; parsed imports and references prune the
   vendor folder. Static analysis cannot classify computed URLs, so browser export checks remain
   required.
@@ -1022,13 +1002,13 @@ managed local runtime; core has no Blender tool of its own.
   head (another writer appended) or after a quarantine. Cursor, tail, page and feed reads open only
   the bodies they return, in parallel batches of 32; `listAllSince(after, limit)` merges ids across
   threads before reading, so a bounded feed reads only the newest bodies.
-- **Checkpointed folds.** `EventStore.foldThread` keeps a fold's state in a file beside the thread
-  record and on the next call folds only the events after it; a missing, unreadable, other-version or
-  ahead-of-the-log checkpoint is rebuilt from the whole log. Two folds use it
-  ([`src/main/core/recovery.ts`](../../src/main/core/recovery.ts)): `repair-state.json` (the boot
-  repair's open turns, runs, questions and open inbox records) and `snapshot-records.json` (the
-  Studio thread's snapshot records for the snapshot index). A launch therefore reads only what came
-  after the previous launch. `turn.append` indexes the events it wrote (`TurnHandle.write`).
+- **Checkpointed folds.** `EventStore.foldThread` caches each fold beside the thread record and
+  reads only later events. Missing, invalid, outdated or ahead-of-log checkpoints rebuild from
+  history. [`recovery.ts`](../../src/main/core/recovery.ts) uses `repair-state.json` for open
+  turns/runs/questions/inbox and `snapshot-records.json` for Studio snapshots.
+  `TurnHandle.write` indexes its appended events. A head mismatch is counted; its additive
+  fallback appends under the store lock without another head check, preserving cancellation
+  across concurrent queue pause/resume. Explicit store head checks stay strict.
 - **Redaction on append.** The core opens the store with a `redact` hook
   (`secretRedactor(() => core.knownSecretValues())` from
   [`src/shared/redact.ts`](../../src/shared/redact.ts)); `appendEvents` applies it to every string
@@ -1045,7 +1025,9 @@ managed local runtime; core has no Blender tool of its own.
   from one log read without its rewound ranges, then extended in 256-event batches. Bootstrap carries the host thread-status map separately; a
   non-ready harness clears it.
 - **Run summaries.** [`src/shared/run-summary.ts`](../../src/shared/run-summary.ts) is a pure
-  reporting projection, never an execution gate; main rebuilds summaries from uncapped project
+  reporting projection, never an execution gate (preload shares watchers; main caches histories
+  and folds by heads and evidence metadata; preview identity patches avoid refolds; Activity
+  retains summaries incrementally); main rebuilds summaries from uncapped project
   conversations ([`src/main/run-summary-reader.ts`](../../src/main/run-summary-reader.ts)) without
   creating a chat. Unknown coverage stays unknown; while a summary is pending the UI shows no totals.
   `onRunSummary` shares one feed per run (`run-summary-feed.ts`): one fetch at a time, 250 ms
@@ -1095,7 +1077,7 @@ managed local runtime; core has no Blender tool of its own.
   encryption, disable SecretStore and strip inherited tokens and live opt-ins. See
   [verification](verification.md) and the [dev fixture recipe](recipes.md#dev-fixture).
 - Smoke, selftest and the plain-Node rig set both Electron paths early and inject a real
-  `OllamaEngine` pointed at a scripted host.
+  `OllamaEngine` pointed at a scripted host; packaged C++ acceptance uses offline fixtures only.
 - **Log and crash dumps.** Main keeps `<userData>/logs/studio.log`
   ([`src/main/logs.ts`](../../src/main/logs.ts)): rotated at 5 files of 5 MB, mode 0600, never
   throws, and every line passes `scrubForLog` (`redactSecrets`, email addresses as `[email]`, the
@@ -1115,24 +1097,21 @@ managed local runtime; core has no Blender tool of its own.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
   agent job, and logs a plugin lease release that fails instead of skipping what follows it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
-  Settings → Harness → Copy diagnostics text (versions, OS, data and log paths, provider and CLI
-  status, the last 100 log lines) served on `studio:diagnostics` (fixture-safe). The renderer's
-  `ErrorBoundary` ([`src/renderer/ErrorBoundary.tsx`](../../src/renderer/ErrorBoundary.tsx)) draws
-  the app's error screen ([feature map](feature-map.md)).
+  Copy diagnostics text (versions, OS, paths, provider and CLI status, the last 100 log lines) on
+  `studio:diagnostics` (fixture-safe); `ErrorBoundary` draws the error screen ([feature map](feature-map.md)).
 - Forge excludes development state and agent metadata explicitly (`.gitignore` is not a packaging
   boundary) and unpacks spawned resources and native helpers from asar; the packaged smoke checks
-  the archive for private roots. Bundled license notices come from
-  [`scripts/third-party-notices.mjs`](../../scripts/third-party-notices.mjs), which refuses gaps;
-  none selects a license for Studio itself. Forge's `afterPrune` runs
-  [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs): `pruneUnreachable` removes
-  `node_modules` packages reachable only through excluded dependencies (`@genex-ai/cli-demo`, which
-  the plugin payload vendors, and the Claude SDK and Codex native packages); `trimNodePty` keeps only
-  node-pty's `lib`, `build/Release` binaries (with Windows's `conpty/`) and the target prebuild,
-  without PDBs; Windows packages node-pty's N-API prebuild instead of rebuilding it; `trimSandboxVendor` keeps only
-  the target's sandbox-runtime helper (Linux `seccomp/<arch>`, Windows `srt-win/<arch>`, none on
-  macOS). A `prePackage` hook refuses a symlinked `node_modules`, which the packager would prune in
-  place. `package-prune.test.ts`, `package-linked-modules.test.ts` and checks in
-  `run-packaged-smoke` hold it.
+  the archive for private roots. [`scripts/third-party-notices.mjs`](../../scripts/third-party-notices.mjs)
+  generates notices, refuses license gaps and keeps Studio's license separate.
+  `afterPrune` runs [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs) and `prePackage`
+  refuses a symlinked `node_modules`; what they keep is in
+  [release readiness](../release-readiness.md#distribution-and-open-source).
+- Every build bundles the pinned ANGLE (macOS, Windows, Linux) in `resources/angle/`
+  (`scripts/bundle-angle.mjs` against `native/angle/bundle-lock.json`; release builds fail closed).
+  The store installs it offline, restoring re-signed Mac libraries from `signatures.json`; Rust's
+  Linux Vulkan split: `swiftshader-bundle.ts`.
+- Linux headers and Rust link stubs ship in `resources/linux-sysroot/`, pinned by
+  `native/linux-sysroot/bundle-lock.json`; installation verifies every file offline.
 - Release signing ([`scripts/package-signing.cjs`](../../scripts/package-signing.cjs)) is decided by
   the environment: no `MACOS_SIGN_IDENTITY` re-signs the bundle ad-hoc (`localSigningHook`); an
   identity signs with the hardened runtime and `build/entitlements.mac.plist` (`allow-jit` only, no
@@ -1146,8 +1125,6 @@ managed local runtime; core has no Blender tool of its own.
   for packaged macOS/Windows (Linux: `release-check.ts`); its header covers the sidebar's Relaunch to update and the run-safe restart.
 - Sandbox preparation on macOS names `/bin/bash` explicitly and retries only sandbox-runtime's
   shell-lookup error, at most three times (`sandbox-prepare.ts`); no child is replayed.
-- The snapshot Git helper's bounded `spawn git EAGAIN` retry is specified in
-  [verification](verification.md#full-regression-and-failure-evidence).
 - A provider stream closed after cancellation keeps its stopped or deadline provenance; stopped chat
   delegations keep edits and skip recorded launches.
 
@@ -1165,5 +1142,5 @@ Scope and commands are in [verification](verification.md). Suites that hold the 
 | One session: the lead is the chat's session | `director-one-session.test.ts`, `after-loop-run.test.ts`, `reopen-run.test.ts`, `lead-sessions-host.test.ts` |
 | Renderer stores and words | `renderer-state.test.ts`, `words.test.ts` |
 | Harness loop incidents | `harness-incidents.test.ts` (`npm run verify:harness`) |
-| Boundaries and import cycles | `npm run verify:architecture` |
-
+| Boundaries, import cycles and native loads | `npm run verify:architecture` |
+| Live frames and the frames addon | `native-frames.test.ts`, `native-frames-addon.test.ts` |

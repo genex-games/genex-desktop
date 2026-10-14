@@ -5,7 +5,12 @@ import path from "node:path";
 import os from "node:os";
 import { safeChild, readVersion } from "../../scripts/studio-dev/files.mjs";
 import { allocateProfile, validateProfile, assertStopped } from "../../scripts/studio-dev/ownership.mjs";
-import { DevErrorCode, operationSchema } from "../../src/main/dev/protocol.ts";
+import { registerHooks } from "node:module";
+import { DevError, DevErrorCode, DevMethod, NativeCaptureFrame, operationSchema } from "../../src/main/dev/protocol.ts";
+import { parseStudioDevArgs } from "../../scripts/studio-dev/args.ts";
+import { CaptureSurface } from "../../src/shared/preview-contract.ts";
+import { computePixelStats } from "../../src/substrate/pixel-stats.ts";
+import { NativeOp } from "../../src/shared/native-contract.ts";
 test("build identity includes project licenses and refuses notice changes during publication", async (t) => {
   const { sourceIdentity, publishBuild, maintained } = await import("../../scripts/studio-dev/files.mjs");
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-notices-")));
@@ -24,6 +29,26 @@ test("build identity includes project licenses and refuses notice changes during
   assert.throws(() => publishBuild(root, output, "b-notices", before), /inputs changed/);
   assert.equal(fs.existsSync(path.join(output, "build.json")), false);
 });
+for (const input of ["native/angle/bundle-lock.json", "native/genex-frames/receiver.c", "build/icon.icns"]) {
+  test(`build identity copies and detects changes to ${input}`, async (t) => {
+    const { sourceIdentity, publishBuild, maintained } = await import("../../scripts/studio-dev/files.mjs");
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-inputs-")));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const output = path.join(root, ".studio-dev/builds/b-native");
+    fs.mkdirSync(output, { recursive: true });
+    fs.mkdirSync(path.join(root, "node_modules/electron"), { recursive: true });
+    for (const file of ["package.json", "package-lock.json"]) fs.writeFileSync(path.join(root, file), "{}");
+    fs.writeFileSync(path.join(root, "node_modules/electron/package.json"), '{"version":"43.7.6"}');
+    fs.mkdirSync(path.dirname(path.join(root, input)), { recursive: true });
+    fs.writeFileSync(path.join(root, input), "Fixture build input");
+    assert.ok(maintained(root).includes(input), "disposable checkouts must copy this build input");
+    const before = sourceIdentity(root);
+    fs.writeFileSync(path.join(root, input), "Changed native resource");
+    assert.notEqual(sourceIdentity(root).sourceDigest, before.sourceDigest);
+    assert.throws(() => publishBuild(root, output, "b-native", before), /inputs changed/);
+    assert.equal(fs.existsSync(path.join(output, "build.json")), false);
+  });
+}
 test("owned profiles reject traversal, aliases, copied ownership, silent reuse and provider changes", (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-owner-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -46,6 +71,74 @@ test("owned profiles reject traversal, aliases, copied ownership, silent reuse a
   fs.writeFileSync(path.join(root, "unknown.json"), '{"version":2}');
   assert.throws(() => readVersion(path.join(root, "unknown.json")), /version/);
 });
+test("a profile folder deleted by hand frees its id; any other leftover owner record is refused before anything is made", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-orphan-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = allocateProfile(root, "gate", "live", null);
+  fs.rmSync(first.root, { recursive: true });
+  const again = allocateProfile(root, "gate", "live", null);
+  assert.notEqual(again.ownerId, first.ownerId, "a new profile, not the deleted one reused");
+  assert.equal(validateProfile(root, "gate").ownerId, again.ownerId, "the record and the folder agree");
+
+  const record = (id: string) => path.join(root, ".studio-dev", "owners", `${id}.json`);
+  const folder = (id: string) => path.join(root, ".studio-dev", "profiles", id);
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-orphan-other-")));
+  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+  const hostile: Array<[string, string, (id: string) => void]> = [
+    [
+      "another checkout's record",
+      "other-checkout",
+      (id) => {
+        fs.writeFileSync(
+          record(id),
+          JSON.stringify({ version: 1, profileId: id, root: folder(id), checkout: elsewhere }),
+        );
+      },
+    ],
+    [
+      "a record naming another folder",
+      "other-root",
+      (id) => {
+        fs.writeFileSync(record(id), JSON.stringify({ version: 1, profileId: id, root: elsewhere, checkout: root }));
+      },
+    ],
+    [
+      "a record of another profile id",
+      "other-id",
+      (id) => {
+        fs.writeFileSync(
+          record(id),
+          JSON.stringify({ version: 1, profileId: "gate", root: folder(id), checkout: root }),
+        );
+      },
+    ],
+    ["an unreadable record", "garbled", (id) => fs.writeFileSync(record(id), "{")],
+    [
+      "a record of another version",
+      "versioned",
+      (id) => {
+        fs.writeFileSync(record(id), JSON.stringify({ version: 2, profileId: id, root: folder(id), checkout: root }));
+      },
+    ],
+    [
+      "a record that is a link",
+      "linked",
+      (id) => {
+        const target = path.join(elsewhere, `${id}.json`);
+        fs.writeFileSync(target, JSON.stringify({ version: 1, profileId: id, root: folder(id), checkout: root }));
+        fs.symlinkSync(target, record(id));
+      },
+    ],
+  ];
+  for (const [name, id, plant] of hostile) {
+    plant(id);
+    const before = fs.readFileSync(record(id), "utf8");
+    assert.throws(() => allocateProfile(root, id, "live", null), Error, name);
+    assert.equal(fs.existsSync(folder(id)), false, `${name}: no profile folder made`);
+    assert.equal(fs.readFileSync(record(id), "utf8"), before, `${name}: the record is left as it was`);
+  }
+});
+
 test("closed controller schema rejects privileged fields, eval, unbounded work and unsafe artifacts", () => {
   for (const value of [
     { method: "evaluate", params: { expression: "process.exit()" } },
@@ -131,6 +224,255 @@ test("interrupted controller response cannot be reported as a successful capture
     /closed before response/,
   );
 });
+
+/**
+ * `--surface native` reaches a C++ game's own run (the open game's Play window, else its newest
+ * agent run): its state, its input, a capture and its console. Everything else has no native
+ * counterpart (no web contents to profile, snapshot, type into or scroll) and is refused
+ * `UnsupportedSurface` before anything runs. The runtime module is loaded with Electron stood in.
+ */
+let electronStoodIn = false;
+/** The runtime module, with Electron stood in (once per process: the hook stays registered). */
+async function runtimeModule() {
+  if (!electronStoodIn) {
+    electronStoodIn = true;
+    registerHooks({
+      resolve(specifier, context, next) {
+        if (specifier !== "electron") return next(specifier, context);
+        const stub = "export const app = {}; export const contentTracing = {}; export default {};";
+        return { url: `data:text/javascript,${encodeURIComponent(stub)}`, shortCircuit: true };
+      },
+    });
+  }
+  return import("../../src/main/dev/runtime.ts");
+}
+
+test("--surface native refuses cpu profiles, heaps, keys and scrolls with UnsupportedSurface", async () => {
+  const { asksNative, refuseNativeOperation } = await runtimeModule();
+  const diagnostics = (method: string, params: Record<string, unknown>) => {
+    const args = ["diagnostics", "--profile", "p", "--json", JSON.stringify({ method, params })];
+    const { operation } = parseStudioDevArgs(args);
+    assert.ok(operation, method);
+    return operation;
+  };
+  const refused = [
+    diagnostics("cpu.start", { surface: "native", profileId: "p1" }),
+    diagnostics("cpu.stop", { surface: "native", profileId: "p1" }),
+    diagnostics("heap", { surface: "native", name: "h1" }),
+    diagnostics("key", { surface: "native", key: "a", code: "KeyA" }),
+    diagnostics("scroll", { surface: "native", deltaX: 0, deltaY: 10 }),
+  ];
+  for (const operation of refused) {
+    assert.equal(asksNative(operation), true, operation.method);
+    assert.throws(
+      () => refuseNativeOperation(operation),
+      (error: unknown) => error instanceof DevError && error.code === DevErrorCode.UnsupportedSurface,
+      operation.method,
+    );
+  }
+  const capture = parseStudioDevArgs(["capture", "--profile", "p", "--surface", "native", "--name", "c1"]).operation;
+  const logs = parseStudioDevArgs(["logs", "--profile", "p", "--surface", "native"]).operation;
+  for (const operation of [capture, logs]) {
+    assert.ok(operation);
+    assert.equal(asksNative(operation), true, operation.method);
+    assert.doesNotThrow(() => refuseNativeOperation(operation), operation.method);
+  }
+  const game = parseStudioDevArgs(["capture", "--profile", "p", "--surface", "game"]).operation;
+  assert.ok(game);
+  assert.equal(asksNative(game), false, "the game view is not the native surface");
+});
+
+/** A native run's port as far as the dev control reaches it, and the runtime parts around it. */
+function nativeSurface(
+  root: string,
+  options: { project?: string | null; port?: boolean; console?: number; size?: number; live?: null } = {},
+) {
+  const asked: string[] = [];
+  const bgra = Buffer.from([0, 0, 255, 255, 0, 0, 255, 255, 0, 255, 0, 255, 0, 255, 0, 255]);
+  const port = {
+    call: async (op: string, arg?: unknown) => {
+      asked.push(`${op} ${JSON.stringify(arg)}`);
+      return { preset: "high", frameBudgetMs: 4 };
+    },
+    studioState: async () => ({ tick: 7 }),
+    input: async () => ({ ok: true, applied: 0, width: 2, height: 2 }),
+    screenshotWithStats: async () => ({
+      jpeg: Buffer.from("jpeg-bytes"),
+      stats: { ...computePixelStats(bgra, 2, 2), canvas: true },
+      surface: CaptureSurface.Canvas,
+      provenance: { seq: 1, digest: null, camera: "default", runId: null, build: null },
+    }),
+    consoleEntries: () =>
+      Array.from({ length: options.console ?? 5 }, (_, line) => ({
+        at: line,
+        level: "warning",
+        message: `${"w".repeat(options.size ?? 0)}line ${line} secret`,
+        source: "native",
+      })),
+  };
+  const rt = {
+    // The studio window's Native view as composited: what the person sees (null: not shown).
+    liveNativeView: async () =>
+      options.live === null ? null : { png: Buffer.from("live-png"), dimensions: { width: 4, height: 3 } },
+    preview: { status: () => ({ project: options.project === undefined ? "pong" : options.project }) },
+    core: {
+      runPreviewIdentity: () => ({ project: null }),
+      nativeRuns: {
+        portOf: (project: string) => {
+          asked.push(project);
+          return options.port === false ? null : port;
+        },
+      },
+    },
+    diagnostics: { destination: async (name: string) => path.join(root, name) },
+    sanitize: (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll("secret", "[redacted]")),
+  };
+  return { rt, asked };
+}
+
+const devOperation = (args: string[]) => {
+  const { operation } = parseStudioDevArgs(args);
+  assert.ok(operation, args.join(" "));
+  return operation;
+};
+
+test("--surface native captures the open game's run into the evidence folder, once per name, 0600", async (t) => {
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt, asked } = nativeSurface(root);
+  const capture = devOperation(["capture", "--profile", "p", "--surface", "native", "--name", "c1"]);
+  const shot = (await performNative(rt, capture)) as { file: string; surface: string; dimensions: unknown };
+  assert.deepEqual(asked, ["pong"], "the open game's run");
+  assert.equal(shot.file, path.join(root, "native-c1.jpg"));
+  assert.equal(shot.surface, "native");
+  assert.deepEqual(shot.dimensions, { width: 2, height: 2 });
+  assert.equal(fs.readFileSync(shot.file, "utf8"), "jpeg-bytes");
+  if (process.platform !== "win32") assert.equal(fs.statSync(shot.file).mode & 0o777, 0o600);
+  fs.writeFileSync(shot.file, "first");
+  await assert.rejects(performNative(rt, capture), /EEXIST/, "a capture never overwrites one already there");
+  assert.equal(fs.readFileSync(shot.file, "utf8"), "first");
+});
+
+test("--surface native --frame live captures what Live shows; the run's own capture says it is the pinned profile", async (t) => {
+  // Pass-1 gate round 3: the run's capture op draws the pinned capture profile (the person's preset
+  // ignored by design), so a gate that switched presets read the same picture at every preset.
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt } = nativeSurface(root);
+  const pinned = (await performNative(
+    rt,
+    devOperation(["capture", "--profile", "p", "--surface", "native", "--name", "p1"]),
+  )) as { file: string; frame: string };
+  assert.equal(pinned.frame, NativeCaptureFrame.Pinned);
+  const live = (await performNative(
+    rt,
+    devOperation(["capture", "--profile", "p", "--surface", "native", "--name", "l1", "--frame", "live"]),
+  )) as { file: string; frame: string; dimensions: unknown };
+  assert.equal(live.frame, NativeCaptureFrame.Live);
+  assert.equal(live.file, path.join(root, "native-l1.png"));
+  assert.deepEqual(live.dimensions, { width: 4, height: 3 });
+  assert.equal(fs.readFileSync(live.file, "utf8"), "live-png");
+  const hidden = nativeSurface(root, { live: null }).rt;
+  await assert.rejects(
+    performNative(
+      hidden,
+      devOperation(["capture", "--profile", "p", "--surface", "native", "--name", "l2", "--frame", "live"]),
+    ),
+    (error: unknown) => error instanceof DevError && error.code === DevErrorCode.MissingPrerequisite,
+  );
+  assert.throws(() => devOperation(["capture", "--profile", "p", "--surface", "native", "--frame", "drawn"]));
+});
+
+test("game.renderSettings reaches the open game's native run: a read, and a frame budget set for this session", async (t) => {
+  // Pass-1 gate round 3: Live never showed dynamic resolution react on a fast Mac; a gate holds a
+  // short frame budget through the verb and reads the scale step down.
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt, asked } = nativeSurface(root);
+  const request = (params: unknown) => operationSchema.parse({ method: DevMethod.GameRenderSettings, params });
+  const answer = await performNative(rt, request({ surface: "native", set: { frameBudgetMs: 4, preset: "ultra" } }));
+  assert.deepEqual(answer, { preset: "high", frameBudgetMs: 4 });
+  await performNative(rt, request({ surface: "native" }));
+  assert.deepEqual(
+    asked.filter((entry) => entry.startsWith(NativeOp.RenderSettings)),
+    [`renderSettings ${JSON.stringify({ set: { preset: "ultra", frameBudgetMs: 4 } })}`, "renderSettings {}"],
+  );
+  for (const set of [{ frameBudgetMs: "4" }, { preset: "insane" }, { warp: true }, "low"])
+    assert.throws(() => request({ surface: "native", set }), JSON.stringify(set));
+});
+
+test("--surface native logs page the run's console, redacted and within the log budget", async (t) => {
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt } = nativeSurface(root);
+  const page = (await performNative(
+    rt,
+    devOperation(["logs", "--profile", "p", "--surface", "native", "--cursor", "1", "--limit", "2"]),
+  )) as { surface: string; entries: Array<{ message: string }>; nextCursor: number; truncated: boolean };
+  assert.equal(page.surface, "native");
+  assert.deepEqual(
+    page.entries.map((entry) => entry.message),
+    ["line 1 [redacted]", "line 2 [redacted]"],
+  );
+  assert.equal(page.nextCursor, 3);
+  assert.equal(page.truncated, true, "more lines follow");
+  const flood = nativeSurface(root, { console: 200, size: 2000 }).rt;
+  const big = (await performNative(
+    flood,
+    devOperation(["logs", "--profile", "p", "--surface", "native", "--limit", "200"]),
+  )) as { entries: Array<{ omitted?: boolean }>; truncated: boolean };
+  const sent = big.entries.filter((entry) => !entry.omitted);
+  assert.ok(Buffer.byteLength(JSON.stringify(sent)) <= 64 * 1024, "the answer stays within the log budget");
+  assert.ok(
+    big.entries.some((entry) => entry.omitted),
+    "what did not fit is named, not sent",
+  );
+  assert.equal(big.truncated, true);
+});
+
+test("game.state and game.input reach the native run with --surface native, and the game view by default", async (t) => {
+  const { asksNative, performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { rt, asked } = nativeSurface(root);
+  const json = (method: string, params: Record<string, unknown>) =>
+    devOperation(["ui", "--profile", "p", "--json", JSON.stringify({ method, params })]);
+  const actions = [{ type: "tap", keys: ["KeyO"] }];
+  const state = json("game.state", { surface: "native" });
+  const input = json("game.input", { surface: "native", actions });
+  assert.equal(asksNative(state), true);
+  assert.equal(asksNative(input), true);
+  assert.deepEqual(await performNative(rt, state), { tick: 7 });
+  assert.deepEqual(await performNative(rt, input), { ok: true, applied: 0, width: 2, height: 2 });
+  assert.deepEqual(asked, ["pong", "pong"], "the open game's run, each time");
+  for (const operation of [
+    json("game.state", {}),
+    json("game.input", { actions }),
+    json("game.state", { surface: "game" }),
+  ])
+    assert.equal(asksNative(operation), false, `${operation.method} defaults to the game view`);
+  assert.throws(() => json("game.input", { surface: "desktop", actions }), "only the game view or the native run");
+});
+
+test("--surface native with no open game, or a game with no run, is a missing prerequisite", async (t) => {
+  const { performNative } = await runtimeModule();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dev-native-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const capture = devOperation(["capture", "--profile", "p", "--surface", "native", "--name", "c2"]);
+  for (const options of [{ project: null }, { port: false }]) {
+    await assert.rejects(
+      performNative(nativeSurface(root, options).rt, capture),
+      (error: unknown) => error instanceof DevError && error.code === DevErrorCode.MissingPrerequisite,
+      JSON.stringify(options),
+    );
+  }
+  assert.deepEqual(fs.readdirSync(root), [], "nothing was written");
+});
+
 test("an input whose target is still opening is tried again until reachable; any other refusal is final", async (t) => {
   const { createServer } = await import("node:net");
   const { requestWhenReachable } = await import("../../scripts/studio-dev/client.ts");

@@ -218,6 +218,54 @@ describe("Set up on Windows", () => {
   });
 });
 
+/** Ubuntu 24.04 before Genex's AppArmor profile, with the profile Set up would install. */
+const USERNS_RESTRICTED: SandboxProblem = {
+  code: SandboxProblemCode.UsernsRestricted,
+  platform: StudioPlatform.Linux,
+  missingTools: [],
+  installCommands: [],
+  details: [],
+  apparmor: {
+    profile: "/etc/apparmor.d/genex-portable",
+    command: "sudo /bin/sh -c …",
+    remove: "sudo apparmor_parser -R …",
+  },
+};
+const LINUX_USERNS: BootState = {
+  platform: StudioPlatform.Linux,
+  phase: BootPhase.SandboxSetup,
+  sandbox: USERNS_RESTRICTED,
+};
+
+describe("Set up on Linux", () => {
+  it("is offered for Ubuntu's restriction when a profile can name this copy of Genex", () => {
+    assert.equal(canSetUp({ platform: StudioPlatform.Linux, problem: USERNS_RESTRICTED }), true);
+    const { apparmor: _fix, ...unnamable } = USERNS_RESTRICTED;
+    assert.equal(canSetUp({ platform: StudioPlatform.Linux, problem: unnamable }), false, "no profile, no install");
+    assert.equal(canSetUp({ platform: StudioPlatform.Windows, problem: USERNS_RESTRICTED }), false);
+  });
+
+  it("an install that restarts the app says so and starts nothing here", async () => {
+    const fake = fakeStudioApi();
+    fake.stub("bootState", async () => LINUX_USERNS);
+    fake.stub("setUpSandbox", async () => ({ outcome: SandboxSetupOutcome.Restarting, state: LINUX_USERNS }));
+    let started = 0;
+    const controller = createBoot(fake.api, {
+      onReady: () => {
+        started++;
+      },
+    });
+    await controller.load();
+    await controller.setUp();
+    const state = controller.store.getState();
+    assert.equal(bootView(state), BootView.SandboxSetup);
+    assert.equal(state.restarting, true);
+    assert.equal(state.settingUp, false);
+    assert.equal(state.setupCancelled, false);
+    assert.equal(started, 0);
+  });
+});
+
 describe("window control colours", () => {
   const style = (values: Record<string, string>) => ({ getPropertyValue: (name: string) => values[name] ?? "" });
 

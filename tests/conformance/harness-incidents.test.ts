@@ -31,9 +31,26 @@ import {
   dryRunChecks,
   evaluateMetricCheck,
   evaluateProbeCheck,
+  runDeterministicChecks,
   settleVision,
   toScoreboard,
 } from "../../src/harness-seed/loop/checks.ts";
+import { handleRunStart, loopRunRefusal } from "../../src/harness-seed/loop/run-dispatch.ts";
+import {
+  BuildTarget,
+  CheckSupport,
+  GameStack,
+  NativeNightRefusal,
+  ProjectKind,
+  RAYLIB_CHECK_SUPPORT,
+  StudioPlatform,
+  acquireFor,
+  leaseTarget,
+  NativeBackend,
+  NativeRefusal,
+  TargetRefusal,
+} from "../../src/harness-seed/loop/native-contract.ts";
+import { ParityRow, parityFor, runParityGate } from "../../src/harness-seed/loop/native-evidence.ts";
 import {
   defectsToChecks,
   facetPrompt,
@@ -56,6 +73,7 @@ import {
 } from "../../src/harness-seed/loop/judge.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
+import { GameValidationCode } from "../../src/shared/game-project.ts";
 import { LEAD_WINDOWS, MAX_BUILDERS } from "../../src/shared/builders.ts";
 import { unionMergeMain, verifyWiringMerge } from "../../src/harness-seed/loop/merge.ts";
 import {
@@ -82,8 +100,10 @@ import {
   HARNESS_CHECKS,
   loadCatalogue,
   normalizeFacetSpec,
+  renderCatalogueForPlanner,
   renderMilestones,
   validateFacetSpec,
+  withHarnessChecks,
   withStyleMetric,
 } from "../../src/harness-seed/loop/spec.ts";
 import type { Check } from "../../src/harness-seed/loop/spec.ts";
@@ -109,7 +129,9 @@ import { createRunInbox, type RunInbox } from "../../src/harness-seed/loop/run-i
 import { runWakeLoop, type DirectorTalk } from "../../src/harness-seed/loop/director/wake.ts";
 import { markersLeft, mergeFirst, unresolvedOf } from "../../src/harness-seed/loop/director/conflict-worker.ts";
 import { setAsideStrays } from "../../src/harness-seed/loop/director/lead-session.ts";
-import { landIntegration } from "../../src/harness-seed/loop/director/integrate.ts";
+import { closeTheLoopRun, landIntegration } from "../../src/harness-seed/loop/director/integrate.ts";
+import { verdictRecord, VerdictRule, VerdictPass } from "../../src/harness-seed/loop/verdict.ts";
+import { failedObservationRule } from "../../src/harness-seed/loop/native-verdict.ts";
 import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/message-queue.ts";
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
@@ -161,6 +183,7 @@ import { timedWorkRemaining } from "../../src/harness-seed/loop/director/budgets
 import { restoreLoopRun } from "../../src/harness-seed/loop/director/journal.ts";
 import { reopenedJournal } from "../../src/harness-seed/loop/director/reopen.ts";
 import { applySeed } from "../../src/substrate/seed-upgrade.ts";
+import { validateGameDir } from "../../src/substrate/game-validation.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -185,7 +208,7 @@ it("AUDIT-SEED. preserved pre-wake budgets cannot break newly shipped completion
 import { reopenBudgets, reopenedRun } from "../../src/harness-seed/loop/reopen-run.ts";
 import { CompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 import { turnBriefing } from "../../src/harness-seed/loop/turn-prompts.ts";
-import { LandingHow } from "../../src/harness-seed/loop/director/rules.ts";
+import { compileWorkerSpec, LandingHow, monitorFindings } from "../../src/harness-seed/loop/director/rules.ts";
 import { NoteKind } from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import { computePixelStats, labPalette } from "../../src/substrate/pixel-stats.ts";
@@ -198,6 +221,8 @@ import {
 } from "../../src/substrate/ownership.ts";
 import { ownershipHook } from "../../src/substrate/engines/claude-code.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { classifyEvidenceFailure, EvidenceFailure, gatherEvidence } from "../../src/harness-seed/loop/evidence.ts";
+import { PageMethod } from "../../src/harness-seed/loop/page-contract.ts";
 import { runTurn } from "../../src/harness-seed/loop/turn-loop.ts";
 import { materializePrompt } from "../../src/harness-seed/loop/prompt.ts";
 import { toPiMessages } from "../../src/substrate/engines/ollama.ts";
@@ -8168,6 +8193,947 @@ describe("the chat's main agent asked to read the owner's Downloads", () => {
   });
 });
 
+/**
+ * C++ · raylib on the web lane (M3a). A raylib game's facets write C++ and CMake; the reviewer's
+ * determinism, input and portability rules read only JavaScript before this, so each diff below
+ * passed review silently. Scene checks read a three.js graph a raylib page does not have, and a
+ * raylib night on a harness part kept from before native support must be refused by its code.
+ */
+describe("C++ · raylib on the web lane (M3a)", () => {
+  it("FISHING-PARITY-CLOSE. successful web frames with failed native checks stay unlanded without claiming a load failure", async () => {
+    const head = "919466b80000000000000000000000000000000000";
+    const base = "111111110000000000000000000000000000000000";
+    for (const failure of ["native-check", "no-frame", "no-judging-target", "load-error", "crashed"]) {
+      const parityFailed = failure !== "no-frame";
+      const nativeCheckFailed = failure === "native-check";
+      const reason = "native parity (mac): crossTarget: the web and native builds disagree after 120 ticks";
+      const health = {
+        ok: false,
+        problems: [parityFailed ? reason : "no camera produced a frame"],
+        warnings: [],
+        consoleErrors: [],
+        shots: nativeCheckFailed ? [{ camera: "default", base64: "RklTSA==" }] : [],
+        loadError: failure === "load-error" ? "browser build failed to load" : null,
+        crashed: failure === "crashed",
+        ...(parityFailed
+          ? {
+              parity: {
+                pass: false,
+                reason,
+                refusal: failure === "no-judging-target" ? TargetRefusal.NoJudgingTarget : null,
+                targets: [],
+              },
+            }
+          : {}),
+      };
+      const recorder = ctxRecorder({ handlers: { [HostMethod.RunExec]: () => ({ stdout: "", code: 0 }) } });
+      const decisions: Array<{ detail: string; plain: string }> = [];
+      const state = {
+        integrationHead: head,
+        baseHeads: new Set([base]),
+        healthByHead: new Map(),
+        consoleByHead: new Map(),
+        lastJudge: null,
+      };
+      const report: Record<string, unknown> = {};
+      let landedCalls = 0;
+      let closed: Record<string, unknown> | null = null;
+      const loopRun = {
+        baseCommit: base,
+        ctx: recorder.ctx,
+        run: { runId: "run_fishing", project: "fishing-game" },
+        state,
+        report,
+        integrationWorktree: "/fixture/fishing-build",
+        integrationRef: "refs/studio/runs/run_fishing/integration",
+        syncHead: async () => head,
+        runningWorkers: () => [],
+        settleWorkers: async () => {},
+        patientEvidence: async () => health,
+        withLease: async (_lease: string, look: (handle: string) => Promise<unknown>) => look("web"),
+        consoleInheritedBy: () => [],
+        errorsLogged: () => [],
+        shotsOf: () => health.shots,
+        writeVerdict: async () => {},
+        judgeTheLanding: async () => {},
+        decision: async (detail: string, plain: string) => decisions.push({ detail, plain }),
+        landIntegration: async () => {
+          landedCalls += 1;
+          return { ok: true };
+        },
+        closeRun: async (result: Record<string, unknown>) => {
+          closed = result;
+        },
+      };
+      const result = await closeTheLoopRun(loopRun as never, { settleMs: 0 });
+      assert.equal(result.ok, false);
+      assert.equal(result.why, nativeCheckFailed ? "final-check-failed" : "does-not-run", failure);
+      assert.equal(landedCalls, 0, "failed native checks never authorize landing");
+      assert.equal(closed, result, "the close persists the same refusal");
+      assert.equal(state.integrationHead, head, "the saved build head remains available");
+      assert.equal(report.victory, false);
+      if (nativeCheckFailed) {
+        assert.match(result.reason, /final native checks did not pass/);
+        assert.match(decisions[0]?.detail ?? "", /crossTarget/);
+        assert.match(decisions[0]?.detail ?? "", /refs\/studio\/runs\/run_fishing\/integration/);
+        assert.doesNotMatch(JSON.stringify([result, decisions]), /did not load|did not start/);
+        const verdict = verdictRecord({
+          pass: VerdictPass.Close,
+          rule: VerdictRule.NotLanded,
+          notLanded: result.why,
+        });
+        assert.match(verdict.because, /final checks did not pass/);
+        assert.doesNotMatch(verdict.because, /did not start/);
+      }
+    }
+  });
+
+  it("FISHING-PARITY-VERDICT. health, judge and worker failures name native checks separately from a build that does not start", () => {
+    for (const pass of [VerdictPass.Health, VerdictPass.Judge, VerdictPass.Gate]) {
+      const rule = failedObservationRule(
+        {
+          parity: { pass: false, reason: "crossTarget", refusal: null, targets: [] },
+        },
+        VerdictRule.DoesNotStart,
+      );
+      assert.equal(rule, "native-check-failed");
+      const verdict = verdictRecord({ pass, rule, ok: false, problems: ["native parity (mac): crossTarget"] });
+      assert.match(verdict.because, /native checks did not pass/);
+      assert.doesNotMatch(verdict.because, /did not start|did not run/);
+    }
+    assert.equal(failedObservationRule({}, VerdictRule.DoesNotStart), VerdictRule.DoesNotStart);
+    assert.equal(failedObservationRule({ parity: null }, VerdictRule.DoesNotStart), VerdictRule.DoesNotStart);
+    assert.equal(
+      failedObservationRule(
+        {
+          parity: { pass: false, reason: "judging build failed", refusal: TargetRefusal.NoJudgingTarget, targets: [] },
+        },
+        VerdictRule.DoesNotStart,
+      ),
+      VerdictRule.DoesNotStart,
+    );
+    for (const failedLoad of [{ loadError: "browser build failed" }, { crashed: true }]) {
+      assert.equal(
+        failedObservationRule(
+          {
+            ...failedLoad,
+            parity: { pass: false, reason: "crossTarget", refusal: null, targets: [] },
+          },
+          VerdictRule.DoesNotStart,
+        ),
+        VerdictRule.DoesNotStart,
+      );
+    }
+    for (const pass of [true, null])
+      assert.equal(
+        failedObservationRule({ parity: { pass, reason: "", refusal: null, targets: [] } }, VerdictRule.DoesNotStart),
+        VerdictRule.DoesNotStart,
+      );
+  });
+
+  it("FISHING-PARITY-COUNTERS. web-only root draw counters do not fail native gameplay agreement, and gameplay drift still fails", async () => {
+    for (const drift of [0, 1]) {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({
+            ok: true,
+            admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+          }),
+          [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+          [HostMethod.PreviewReady]: () => ({ ready: true }),
+          [HostMethod.PreviewLoad]: () => true,
+          [HostMethod.PreviewReload]: () => true,
+          [HostMethod.PreviewCall]: () => ({ ok: true }),
+          [HostMethod.PreviewInput]: () => ({ ok: true }),
+          [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 1, simulatedMs: 16, drawCalls: 4 }),
+          [HostMethod.PreviewScreenshot]: () => ({
+            base64: "RklTSA==",
+            stats: { litFraction: 0.4, meanLuma: 0.5, canvas: true, drawCalls: 4 },
+          }),
+          [HostMethod.PreviewState]: (params) => ({
+            player: { x: params.handle === "web" ? drift : 0 },
+            ...(params.handle === "web" ? { drawCalls: 48, triangles: 2200 } : {}),
+          }),
+          [HostMethod.PreviewRelease]: () => true,
+        },
+      });
+      const verdict = await runParityGate(recorder.ctx as never, {
+        run: { runId: "run_fishing", project: "fishing-game", stack: GameStack.RaylibCpp } as never,
+        target: BuildTarget.Mac,
+        webHandle: "web",
+        seed: 1234,
+        cameras: ["default"],
+        retriesMs: [],
+        tolerances: { read: async () => null, write: async () => {} },
+      });
+      const cross = verdict.rows.find((row) => row.row === ParityRow.CrossTarget);
+      assert.equal(verdict.rows.find((row) => row.row === ParityRow.Replay)?.pass, true);
+      assert.equal(cross?.pass, drift === 0, JSON.stringify(cross));
+      assert.equal(verdict.pass, drift === 0, JSON.stringify(verdict));
+      if (drift) assert.match(cross?.reason ?? "", /player\.x/);
+    }
+  });
+
+  /** A facet that owns src/dash.cpp, on the C++ template. */
+  const dash = { id: "dash", owns: ["src/dash.cpp"], checks: [] };
+  /** A diff that adds `lines` to `file` (and removes `removed`). */
+  const diffOf = (file: string, lines: string[], removed: string[] = []) =>
+    [
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      `@@ -1,${removed.length} +1,${lines.length} @@`,
+      ...removed.map((line) => `-${line}`),
+      ...lines.map((line) => `+${line}`),
+    ].join("\n");
+  const categoriesOf = (diff: string, options: { ownsMain?: boolean; main?: string; template?: boolean } = {}) =>
+    mechanicalReview(diff, dash, { ownsMain: false, main: "src/main.cpp", ...options }).map((v) => v.category);
+
+  const rows: Array<{ incident: string; diff: string; category: string; ownsMain?: boolean }> = [
+    {
+      incident: "rand() in simulation",
+      diff: diffOf("src/dash.cpp", ["  int roll = rand() % 6;"]),
+      category: "determinism",
+    },
+    {
+      incident: "GetFrameTime() in update",
+      diff: diffOf("src/dash.cpp", ["  dashTimer += GetFrameTime();"]),
+      category: "wall-clock",
+    },
+    {
+      incident: "SetTargetFPS in src/dash.cpp",
+      diff: diffOf("src/dash.cpp", ["  SetTargetFPS(60);"]),
+      category: "frame-pacing",
+    },
+    {
+      incident: "raw IsKeyDown in src/dash.cpp",
+      diff: diffOf("src/dash.cpp", ["  if (IsKeyDown(KEY_SPACE)) startDash();"]),
+      category: "input",
+    },
+    {
+      incident: "removing studio::install(",
+      diff: diffOf("src/main.cpp", ["  return 0;"], ["  studio::install(std::move(game));", "  return 0;"]),
+      category: "contract",
+      ownsMain: true,
+    },
+    {
+      incident: "FetchContent_Declare",
+      diff: diffOf("CMakeLists.txt", ["FetchContent_Declare(box2d GIT_REPOSITORY https://github.com/erincatto/box2d)"]),
+      category: "dependencies",
+    },
+    {
+      incident: "-sUSE_SDL=2",
+      diff: diffOf("CMakeLists.txt", ["target_link_options(game PRIVATE -sUSE_SDL=2)"]),
+      category: "dependencies",
+    },
+    {
+      incident: "-ffast-math",
+      diff: diffOf("CMakeLists.txt", ["target_compile_options(game PRIVATE -ffast-math)"]),
+      category: "float-math",
+    },
+    {
+      incident: "a #version 330 shader",
+      diff: diffOf("src/dash.cpp", [
+        '  const char* trail = "#version 330\\nout vec4 c; void main() { c = vec4(1.0); }";',
+      ]),
+      category: "shader",
+    },
+    {
+      incident: "-s USE_SDL=2, spelled with a space",
+      diff: diffOf("CMakeLists.txt", ['target_link_options(game PRIVATE "SHELL:-s USE_SDL=2")']),
+      category: "dependencies",
+    },
+    {
+      incident: "file(DOWNLOAD ...) at configure time",
+      diff: diffOf("CMakeLists.txt", ["file(DOWNLOAD https://example.com/box2d.zip box2d.zip)"]),
+      category: "dependencies",
+    },
+    {
+      incident: "studio::install( commented out instead of removed",
+      diff: diffOf(
+        "src/main.cpp",
+        ["  // studio::install(std::move(game));", "  return 0;"],
+        ["  studio::install(std::move(game));", "  return 0;"],
+      ),
+      category: "contract",
+      ownsMain: true,
+    },
+    {
+      incident: "SetTargetFPS in a runtime file other than src/platform.cpp",
+      diff: diffOf("src/session.cpp", ["  SetTargetFPS(60);"]),
+      category: "frame-pacing",
+      ownsMain: true,
+    },
+  ];
+  for (const { incident, diff, category, ownsMain } of rows) {
+    it(`RAYLIB-REVIEW. ${incident}: the mechanical review finds it (${category})`, () => {
+      assert.ok(categoriesOf(diff, { ownsMain }).includes(category), JSON.stringify(categoriesOf(diff, { ownsMain })));
+    });
+  }
+
+  it("RAYLIB-REVIEW. the runtime's own calls, Genex's CMake and a facet's wiring line are not findings", () => {
+    const runtime = [
+      diffOf("src/platform.cpp", ["  SetTargetFPS(60);", "  if (IsKeyDown(name.key)) held.push_back(name.id);"]),
+      diffOf("src/studio.cpp", ["  rt.fps.frame(GetTime() * 1000.0);"]),
+      diffOf("CMakeLists.txt", [
+        "find_package(Genex REQUIRED)",
+        "genex_add_game(game SOURCES src/main.cpp src/dash.cpp)",
+      ]),
+      diffOf("src/dash.cpp", [
+        "  // never GetTime() here: dt is the clock",
+        "  Shader glow = studio::shader(nullptr, kGlowFs);",
+      ]),
+    ].join("\n");
+    assert.deepEqual(categoriesOf(runtime, { ownsMain: true }), []);
+    const wiring = diffOf("src/main.cpp", ['#include "dash.h"', "  void wire_dash(studio::Game&); wire_dash(game);"]);
+    assert.deepEqual(categoriesOf(wiring), [], "the FACET WIRING line and its #include are the facet's to add");
+    assert.deepEqual(
+      mechanicalReview(wiring, dash, { ownsMain: false }).map((v) => v.category),
+      [],
+      "a caller that names no entry still knows the C++ template's",
+    );
+  });
+
+  it("RAYLIB-REVIEW. a three.js game's GLSL3 shader is not a C++ finding; on a raylib game it is", () => {
+    const water = diffOf("src/shaders/water.frag", ["#version 300 es", "precision highp float;"]);
+    const facet = { id: "water", owns: ["src/water.js", "src/shaders/water.frag"], checks: [] };
+    const found = (options: Record<string, unknown>) =>
+      mechanicalReview(water, facet, { ownsMain: false, ...options }).map((v) => v.category);
+    assert.deepEqual(found({}), [], "a RawShaderMaterial needs its #version line");
+    assert.deepEqual(found({ stack: GameStack.ThreeJs }), []);
+    assert.ok(found({ stack: GameStack.RaylibCpp }).includes("shader"), JSON.stringify(found({})));
+    const cFile = diffOf("tools/hash.c", ["  srand(time(NULL)); int r = rand();"]);
+    assert.deepEqual(
+      mechanicalReview(cFile, { id: "tools", owns: ["tools/hash.c"], checks: [] }, { stack: GameStack.ThreeJs }).map(
+        (v) => v.category,
+      ),
+      [],
+      "the C++ rules are a raylib game's",
+    );
+  });
+
+  it("RAYLIB-REVIEW. reviewAttempt reviews by the run's stack", async () => {
+    const cFile = diffOf("src/dash.cpp", ["  int roll = rand() % 6;"]);
+    const categories = async (stack: string) => {
+      const recorder = ctxRecorder({
+        handlers: { [HostMethod.RunExec]: () => ({ code: 0, stdout: cFile, stderr: "" }) },
+      });
+      const outcome = await reviewAttempt(recorder.ctx as never, {
+        run: { runId: "run_r", stack } as never,
+        spec: dash,
+        worktree: "/worktree",
+        incumbentCommit: "abc1234",
+        ownsMain: false,
+        model: false,
+      });
+      return outcome.violations.map((v) => v.category);
+    };
+    assert.ok((await categories(GameStack.RaylibCpp)).includes("determinism"));
+    assert.deepEqual(await categories(GameStack.ThreeJs), []);
+  });
+
+  it("RAYLIB-REVIEW. every file of the C++ template's runtime is the entry owner's, not a facet's", async () => {
+    const templateSrc = fileURLToPath(new URL("../../src/game-template-cpp/src", import.meta.url));
+    const runtime = (await readdir(templateSrc)).filter((name) => name !== "main.cpp").map((name) => `src/${name}`);
+    assert.ok(runtime.length > 10, runtime.join(", "));
+    for (const file of runtime) {
+      assert.equal(reviewAllowedFile(file, { id: "dash", checks: [] }, false), false, `${file} is not a facet's`);
+      assert.equal(reviewAllowedFile(file, { id: "core", checks: [] }, true), true, `${file} is the entry owner's`);
+    }
+    const pacing = diffOf("src/platform.cpp", ["  SetTargetFPS(60);"]);
+    assert.deepEqual(categoriesOf(pacing, { ownsMain: true }), [], "only src/platform.cpp paces frames");
+  });
+
+  it("RAYLIB-HOOK. the edit-time hook and the reviewer agree on the C++ template's entry, runtime and build file", async () => {
+    // The hook used to know only the three.js template: it blocked a raylib facet's wiring line in
+    // src/main.cpp and the entry owner's CMakeLists.txt, and let a facet with no seam write the
+    // runtime, which review then refused. Both copies, with and without the entry named.
+    const agree = (file: string, spec: Record<string, unknown>, ownsMain: boolean, expected: boolean, why: string) => {
+      assert.equal(hookAllowedFile(file, spec as never, ownsMain), expected, `hook: ${file} — ${why}`);
+      assert.equal(reviewAllowedFile(file, spec as never, ownsMain), expected, `reviewer: ${file} — ${why}`);
+    };
+    const runtime = (await readdir(fileURLToPath(new URL("../../src/game-template-cpp/src", import.meta.url))))
+      .filter((name) => name !== "main.cpp")
+      .map((name) => `src/${name}`);
+    for (const named of [{ main: "src/main.cpp" }, {}]) {
+      const facet = { id: "dash", owns: ["src/dash.cpp"], ...named };
+      const noSeam = { id: "w", owns: [], ...named };
+      const label = "main" in named ? "entry named" : "entry not named";
+      agree("src/main.cpp", facet, false, true, `${label}: the FACET WIRING line is every facet's`);
+      agree("src/main.cpp", facet, true, true, `${label}: the entry owner's`);
+      agree("CMakeLists.txt", facet, true, true, `${label}: the build file is the entry owner's`);
+      agree("CMakeLists.txt", facet, false, false, `${label}: never a facet's`);
+      agree("src/dash.cpp", facet, false, true, `${label}: its own seam`);
+      agree("src/ball.cpp", facet, false, false, `${label}: another facet's module`);
+      for (const file of runtime) {
+        agree(file, facet, true, true, `${label}: the runtime is the entry owner's`);
+        agree(file, noSeam, false, false, `${label}: never a facet's, seam or no seam`);
+      }
+    }
+  });
+
+  it("RAYLIB-REVIEW. a raylib facet's stray file is pointed back to src/<id>.cpp", () => {
+    const stray = diffOf("CMakeLists.txt", ["add_executable(extra src/extra.cpp)"]);
+    const [finding] = mechanicalReview(
+      stray,
+      { id: "dash", checks: [] },
+      { ownsMain: false, main: "src/main.cpp" },
+    ).filter((v) => v.category === "ownership");
+    assert.match(String(finding?.fix), /src\/dash\.cpp/);
+  });
+
+  it("RAYLIB-REVIEW. a raylib game the user brought keeps its own clock and randomness, never a fetch", () => {
+    const own = diffOf("src/dash.cpp", ["  int roll = rand() % 6;", "  float t = GetTime();", "  SetTargetFPS(60);"]);
+    const found = categoriesOf(own, { template: false, ownsMain: true });
+    assert.ok(!found.includes("determinism") && !found.includes("wall-clock"), JSON.stringify(found));
+    assert.ok(found.includes("frame-pacing"), JSON.stringify(found));
+  });
+
+  it("RAYLIB-JUDGING. a game without Browser is judged on a build this host runs, a judging-only web build only when it runs none", () => {
+    // Wave 2 judged every look on the web build while the evidence pass could read only a page
+    // (a native lease failed every probe as "the shim did not load"). The native evidence pass
+    // reads native captures, so a Mac-only game on a Mac with a game box is judged on its Mac
+    // build again; FLIPPED back from wave 2's "every look judges the web build".
+    const game = (targets: string[]) => ({ destinations: { stack: GameStack.RaylibCpp, targets } as never });
+    const onMac = { host: StudioPlatform.Mac, native: { gameBox: true } };
+    assert.deepEqual(leaseTarget(game([BuildTarget.Mac]), onMac), { target: BuildTarget.Mac, judgingOnly: false });
+    for (const target of [BuildTarget.Windows, BuildTarget.Linux])
+      assert.deepEqual(leaseTarget(game([target]), onMac), { target: BuildTarget.Web, judgingOnly: true }, target);
+    const noBox = { host: StudioPlatform.Mac, native: { gameBox: false } };
+    assert.deepEqual(leaseTarget(game([BuildTarget.Mac]), noBox), { target: BuildTarget.Web, judgingOnly: true });
+    assert.deepEqual(
+      leaseTarget(game([BuildTarget.Mac]), {}),
+      { target: BuildTarget.Web, judgingOnly: true },
+      "no host",
+    );
+    const onLinux = { host: StudioPlatform.Linux, native: { gameBox: true } };
+    assert.deepEqual(leaseTarget(game([BuildTarget.Linux]), onLinux), {
+      target: BuildTarget.Linux,
+      judgingOnly: false,
+    });
+    for (const host of [StudioPlatform.Mac, StudioPlatform.Windows, StudioPlatform.Linux])
+      for (const target of [BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux])
+        assert.deepEqual(
+          leaseTarget(game([BuildTarget.Web, target]), { host, native: { gameBox: true } }),
+          { target: BuildTarget.Web, judgingOnly: false },
+          "Browser is judged on the web build; the parity gate looks at the desktop one",
+        );
+  });
+
+  it("RAYLIB-JUDGING. an optimization lease is always a web build: a native lease refuses candidate loads", async () => {
+    const recorder = ctxRecorder({ handlers: { [HostMethod.PreviewAcquire]: () => ({ handle: "h1" }) } });
+    const call = (method: typeof HostMethod.PreviewAcquire, params: Record<string, unknown>) =>
+      recorder.ctx.call(method, params);
+    const macOnly = { destinations: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Mac] } as never };
+    const onMac = { host: StudioPlatform.Mac, native: { gameBox: true } };
+    const judged = await acquireFor(call, macOnly, onMac, { label: "optimization:run", purpose: "optimization" });
+    assert.deepEqual(
+      { target: judged.target, judgingOnly: judged.judgingOnly },
+      { target: BuildTarget.Web, judgingOnly: true },
+    );
+    const look = await acquireFor(call, macOnly, onMac, { label: "judge" });
+    assert.equal(look.target, BuildTarget.Mac);
+    assert.deepEqual(
+      recorder.paramsOf(HostMethod.PreviewAcquire).map((p) => p.target),
+      [BuildTarget.Web, BuildTarget.Mac],
+    );
+  });
+
+  it("RAYLIB-PARITY. a game reporting metal-angle whose admission facts say links-opengl fails the gate on the host fact", async () => {
+    // The game's own `ready` says what it renders with; only the host read its imports. A bundle
+    // that links OpenGL fails whatever the game reports, and is never started to be asked.
+    const opengl = "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL";
+    const facts = (refusal: string | null) => ({
+      target: BuildTarget.Mac,
+      refusal,
+      detail: refusal ? opengl : null,
+      imports: ["@rpath/libEGL.dylib", "@rpath/libGLESv2.dylib", opengl],
+      rpaths: ["@executable_path/../Frameworks"],
+      angleManifestSha256: null,
+    });
+    for (const refusal of [NativeRefusal.LinksOpenGl, null]) {
+      const recorder = ctxRecorder({
+        unknown: { value: null },
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({
+            ok: true,
+            problem: null,
+            lock: "abc",
+            output: "/out",
+            admission: facts(refusal),
+          }),
+          [HostMethod.NativeStatus]: () => ({ backend: NativeBackend.MetalAngle }),
+          [HostMethod.PreviewAcquire]: () => ({ handle: "n1" }),
+          [HostMethod.PreviewReady]: () => ({ ready: true, via: "contract", phase: "ready" }),
+          [HostMethod.PreviewStatus]: () => ({ crashed: false, loadError: null }),
+          [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 19, simulatedMs: 304, drawCalls: 4 }),
+          [HostMethod.PreviewCall]: (p) =>
+            p.method === "debugCamera" ? { ok: true } : { frame: 1, simulatedMs: 16, steppedFrames: 1, drawCalls: 4 },
+          [HostMethod.PreviewScreenshot]: () => ({
+            base64: "TkFUSVZF",
+            bytes: 6,
+            path: null,
+            stats: { litFraction: 0.4, canvas: true },
+            surface: "canvas",
+          }),
+          [HostMethod.PreviewState]: () => ({ frame: 1 }),
+          [HostMethod.PreviewRelease]: () => true,
+        },
+      });
+      const verdict = await runParityGate(recorder.ctx as never, {
+        run: { runId: "r1", project: "pong", stack: GameStack.RaylibCpp } as never,
+        target: BuildTarget.Mac,
+        webHandle: "w1",
+        seed: 1234,
+        cameras: ["default"],
+        retriesMs: [],
+      });
+      const admission = verdict.rows.find((row) => row.row === ParityRow.Admission);
+      assert.equal(admission?.pass, false, `refusal ${refusal}`);
+      assert.equal(admission?.refusal, NativeRefusal.LinksOpenGl);
+      assert.equal(verdict.pass, false, "the host's fact fails the gate");
+      if (refusal) assert.equal(recorder.paramsOf(HostMethod.PreviewAcquire).length, 0, "a refused bundle never runs");
+      else assert.match(String(admission?.reason), /metal-angle/, "the claim is named beside the fact that beat it");
+    }
+  });
+
+  it("RUST-LADDER. an ejected game's worktree run refused conformance-required is judged on that worktree, then started", async () => {
+    // native-prepare gates a worktree run on the worktree's own build digest, but nothing in the loop
+    // ever ran `game.conformance` with that root: every facet, director or gauntlet look at an ejected
+    // game's worktree was refused, and check_conformance on the main folder could not clear it.
+    const root = "/wt/forked-pond";
+    let judged = false;
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        [HostMethod.NativeBuild]: () => ({ ok: true, problem: null, lock: "abc", output: "/out", admission: null }),
+        [HostMethod.NativeStatus]: () => ({ backend: "metal" }),
+        [HostMethod.PreviewAcquire]: () => ({ handle: "n1" }),
+        [HostMethod.PreviewLoad]: () => {
+          if (!judged)
+            throw Object.assign(new Error("build has no passing conformance run"), {
+              data: { refusal: NativeRefusal.ConformanceRequired },
+            });
+          return "native://forked-pond/r1";
+        },
+        [HostMethod.GameConformance]: (p) => {
+          judged = p.root === root;
+          return { project: "forked-pond", buildDigest: "d".repeat(64), passed: judged, checks: [] };
+        },
+        [HostMethod.PreviewReady]: () => ({ ready: true, via: "contract", phase: "ready" }),
+        [HostMethod.PreviewStatus]: () => ({ crashed: false, loadError: null }),
+        [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 19, simulatedMs: 304, drawCalls: 4 }),
+        [HostMethod.PreviewRelease]: () => true,
+      },
+    });
+    const verdict = await runParityGate(recorder.ctx as never, {
+      run: { runId: "r1", project: "forked-pond", stack: GameStack.RustWgpu } as never,
+      target: BuildTarget.Mac,
+      webHandle: "w1",
+      seed: 1234,
+      cameras: ["default"],
+      retriesMs: [],
+      root,
+    });
+    assert.deepEqual(recorder.paramsOf(HostMethod.GameConformance), [{ project: "forked-pond", root }]);
+    assert.equal(recorder.paramsOf(HostMethod.PreviewLoad).length, 2, "refused once, started once judged");
+    assert.equal(verdict.rows.find((row) => row.row === ParityRow.Ready)?.pass, true);
+  });
+
+  it("RAYLIB-PARITY. a Mac-hosted [Web, Windows] game's Windows build is built and checked, unmeasured, and never passes the board on Windows", async () => {
+    // Wave 5's gate answered every Windows row not-runnable-here without building anything: a
+    // Windows build that did not compile, or that imported opengl32.dll, never reached the board.
+    const facts = (refusal: string | null) => ({
+      target: BuildTarget.Windows,
+      refusal,
+      detail: refusal ? 'it imports "opengl32.dll"' : null,
+      imports: ["libGLESv2.dll", "KERNEL32.dll", ...(refusal ? ["opengl32.dll"] : [])],
+      rpaths: [],
+      angleManifestSha256: null,
+    });
+    const look = async (refusal: string | null) => {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({
+            ok: true,
+            problem: null,
+            lock: "abc",
+            output: "/out",
+            admission: facts(refusal),
+          }),
+        },
+      });
+      const verdict = await parityFor(recorder.ctx as never, {
+        run: { runId: "r1", project: "pong", stack: GameStack.RaylibCpp } as never,
+        destinations: { stack: GameStack.RaylibCpp, targets: [BuildTarget.Web, BuildTarget.Windows] },
+        capacity: { host: StudioPlatform.Mac, native: { gameBox: true, leases: 0, max: 4 } } as never,
+        webHandle: "w1",
+        seed: 1234,
+        cameras: ["default"],
+        judged: true,
+        retriesMs: [],
+      });
+      const { results } = await runDeterministicChecks(recorder.ctx, {
+        spec: { checks: [] },
+        evidence: { ok: true, problems: [], warnings: [], shots: [], parity: verdict } as never,
+      });
+      return { recorder, verdict, board: results.find((entry) => entry.id === "native-parity") };
+    };
+    const admitted = await look(null);
+    assert.deepEqual(admitted.recorder.paramsOf(HostMethod.NativeBuild), [
+      { project: "pong", target: BuildTarget.Windows },
+    ]);
+    assert.deepEqual(admitted.recorder.paramsOf(HostMethod.PreviewAcquire), [], "a Windows build never runs on a Mac");
+    const windows = admitted.verdict?.targets.find((entry) => entry.target === BuildTarget.Windows);
+    assert.equal(windows?.rows.find((row) => row.row === ParityRow.Admission)?.pass, true, "the host admitted it");
+    assert.ok(
+      windows?.rows
+        .filter((row) => row.row !== ParityRow.Admission)
+        .every((row) => row.pass === null && row.reason === "built, not run on this Mac"),
+      JSON.stringify(windows?.rows),
+    );
+    assert.equal(windows?.pass, null, "the Windows verdict is unmeasured");
+    assert.notEqual(admitted.board?.pass, true, "the board is not passed on Windows");
+    assert.equal(admitted.board?.pass, null);
+    const refused = await look(NativeRefusal.ImportsOpengl32);
+    assert.equal(refused.verdict?.pass, false, "a build the host refuses fails the gate");
+    assert.equal(refused.board?.pass, false, "and the board");
+  });
+
+  it("RAYLIB-CHECKS. scene checks on a raylib spec report pass: null, and the page is never asked", async () => {
+    const recorder = ctxRecorder({
+      handlers: {
+        "preview.evaluate": () => ({ __error: "the build exposes no __studio.inspect() — install the v2 contract" }),
+      },
+    });
+    const scene = { id: "one-hud", kind: "scene", weight: "identity", js: "count('hud') === 1" } as unknown as Check;
+    const { results } = await runDeterministicChecks(recorder.ctx, {
+      spec: { checks: [scene] },
+      evidence: null,
+      handle: "h1",
+      stack: GameStack.RaylibCpp,
+    });
+    assert.equal(results[0]?.pass, null, JSON.stringify(results));
+    assert.equal(results[0]?.state, "unmeasured");
+    assert.deepEqual(recorder.paramsOf("preview.evaluate"), [], "no JS reaches a page that has no scene graph");
+  });
+
+  it("RAYLIB-CHECKS. a raylib pass's evidence names its stack, so a caller that passes none still scores scene checks unmeasured", async () => {
+    const recorder = ctxRecorder({
+      handlers: {
+        "preview.evaluate": () => ({ __error: "the build exposes no __studio.inspect() — install the v2 contract" }),
+      },
+    });
+    const scene = { id: "one-hud", kind: "scene", weight: "identity", js: "count('hud') === 1" } as unknown as Check;
+    const { results } = await runDeterministicChecks(recorder.ctx, {
+      spec: { checks: [scene] },
+      evidence: { stack: GameStack.RaylibCpp, shots: [] },
+      handle: "h1",
+    });
+    assert.equal(results[0]?.pass, null, JSON.stringify(results));
+    assert.deepEqual(recorder.paramsOf("preview.evaluate"), []);
+  });
+
+  it("RAYLIB-CHECKS. every kind the raylib table calls unmeasured reports pass: null; a measured kind still measures", async () => {
+    const recorder = ctxRecorder({ handlers: { "preview.evaluate": () => ({ value: true }) } });
+    const bodies: Record<string, Record<string, unknown>> = {
+      scene: { js: "true" },
+      pixel: { camera: "default", expr: "meanLuma > 0" },
+      metric: { camera: "default", metric: "meanLuma", goal: "min", target: 1 },
+      probe: { expr: "score >= 0" },
+      demo: { demo: "dash" },
+      vision: { ask: "is there a dash?", expect: "yes" },
+      play: { ask: "can you dash?", expect: "yes" },
+    };
+    const checks = Object.keys(RAYLIB_CHECK_SUPPORT).map(
+      (kind) => ({ id: `c-${kind}`, kind, weight: "normal", ...bodies[kind] }) as unknown as Check,
+    );
+    const evidence = { state: { score: 1 }, shots: [], demos: {} };
+    const { results } = await runDeterministicChecks(recorder.ctx, {
+      spec: { checks },
+      evidence,
+      handle: "h1",
+      stack: GameStack.RaylibCpp,
+    });
+    for (const [kind, support] of Object.entries(RAYLIB_CHECK_SUPPORT)) {
+      const entry = results.find((r) => r.kind === kind);
+      if (support === CheckSupport.Unmeasured) assert.equal(entry?.pass, null, `${kind} is unmeasured on raylib`);
+    }
+    assert.equal(results.find((r) => r.kind === "probe")?.pass, true, "state() is read on raylib as anywhere");
+  });
+
+  it("RAYLIB-SPEC. no-dom-ui and single-hud are off a raylib board, even when the plan wrote them", async () => {
+    const hud = { kind: "first-person", traits: { hud: true } };
+    const planned = { id: "dash", checks: [{ id: "single-hud", kind: "scene", js: "count('hud') === 1" }] as Check[] };
+    const onThree = withHarnessChecks(planned, { ownsMain: true, game: hud }).checks.map((c) => c.id);
+    assert.ok(onThree.includes("no-dom-ui") && onThree.includes("single-hud"), JSON.stringify(onThree));
+    const onRaylib = withHarnessChecks(planned, { ownsMain: true, game: hud, stack: GameStack.RaylibCpp }).checks.map(
+      (c) => c.id,
+    );
+    assert.ok(!onRaylib.includes("no-dom-ui") && !onRaylib.includes("single-hud"), JSON.stringify(onRaylib));
+    const catalogue = await loadCatalogue(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+    assert.match(renderCatalogueForPlanner(catalogue, { game: hud }), /no-dom-ui/, "a three.js plan is told they ride");
+    const menu = renderCatalogueForPlanner(catalogue, { game: hud, stack: GameStack.RaylibCpp });
+    assert.doesNotMatch(menu, /no-dom-ui|single-hud/, "the planner is not told they ride on a raylib board");
+  });
+
+  it("RAYLIB-DIRECTOR. a director's worker board and its monitor read the night's stack", () => {
+    // The director built boards and watched diffs with no stack: no-dom-ui and single-hud rode a
+    // raylib board (unmeasured, never passing) and the monitor guessed C++ from the file names.
+    type Stack = (typeof GameStack)[keyof typeof GameStack];
+    const board = (stack: Stack | null) =>
+      compileWorkerSpec({
+        id: "dash",
+        owns: ["src/dash.cpp"],
+        kind: "first-person",
+        traits: ["hud"],
+        stack,
+      }).spec.checks.map((c: { id: string }) => c.id);
+    assert.ok(board(GameStack.ThreeJs).includes("no-dom-ui"), JSON.stringify(board(GameStack.ThreeJs)));
+    const raylib = board(GameStack.RaylibCpp);
+    assert.ok(!raylib.includes("no-dom-ui") && !raylib.includes("single-hud"), JSON.stringify(raylib));
+    const shader = ["--- a/src/shaders/glow.fs", "+++ b/src/shaders/glow.fs", "@@ -0,0 +1,1 @@", "+#version 330"].join(
+      "\n",
+    );
+    const watched = (stack: Stack) =>
+      monitorFindings({
+        status: " M src/shaders/glow.fs",
+        diff: shader,
+        spec: { id: "dash", owns: ["src/shaders/glow.fs"] },
+        ownsMain: false,
+        stack,
+      }).violations;
+    assert.ok(
+      watched(GameStack.RaylibCpp).some((what) => /#version|ES 3|shader/i.test(what)),
+      "a raylib shader rule",
+    );
+    assert.deepEqual(watched(GameStack.ThreeJs), [], "a three.js shader keeps its #version line");
+  });
+
+  it("RAYLIB-NIGHT. loopRunRefusal reads what is missing by name, never a problem's words", () => {
+    const browser = { name: "pong", shape: { kind: "three-modules" } };
+    assert.equal(loopRunRefusal(browser, ["index.html is missing"], []), null, "the words decide nothing");
+    assert.match(String(loopRunRefusal(browser, [], ["index.html"])), /index\.html is missing/);
+    // FLIPPED for the open Loop: an older launch that hands no `missing` meets no missing-file
+    // refusal (its base builder still owes the page), where it used to be refused by the words.
+    assert.equal(loopRunRefusal(browser, ["index.html is missing"]), null, "an older launch: no names");
+  });
+
+  it("RAYLIB-NIGHT. a raylib game is refused by game.validate's typed codes, in the problem's words", () => {
+    const raylib = { name: "pong", shape: { kind: ProjectKind.RaylibCpp } };
+    const problem = "CMakeLists.txt is not a plain file";
+    const codes = [GameValidationCode.NativeMissingCMake];
+    assert.match(String(loopRunRefusal(raylib, [problem], [], { codes })), /CMakeLists\.txt is not a plain file/);
+  });
+
+  it("RAYLIB-NIGHT. a raylib night refuses when a part it runs is not marked; any other game does not", () => {
+    const raylib = { name: "pong", shape: { kind: ProjectKind.RaylibCpp } };
+    const browser = { name: "pong", shape: { kind: "three-modules" } };
+    assert.ok(loopRunRefusal(raylib, [], [], { servesNative: false }));
+    assert.equal(loopRunRefusal(raylib, [], [], { servesNative: true }), null);
+    assert.equal(loopRunRefusal(browser, [], [], { servesNative: false }), null);
+  });
+
+  it("RAYLIB-NIGHT. a browser game the host codes sparsely is refused for its missing file alone", async () => {
+    const dir = await tmpDir("night-sparse-codes-");
+    await writeFile(
+      path.join(dir, "index.html"),
+      '<!doctype html><script src="https://cdn.unreachable.example/x.js"></script><script type="module" src="src/main.js"></script>',
+    );
+    // The real host's answer: a missing file (coded), an unreachable host (uncoded), no contract (coded).
+    const readiness = await validateGameDir(dir);
+    assert.ok(readiness.codes.length < readiness.problems.length, JSON.stringify(readiness));
+    const refused = String(
+      loopRunRefusal({ name: "moth", shape: readiness.shape }, readiness.problems, readiness.missing),
+    );
+    const [missing, ...rest] = readiness.problems;
+    assert.ok(missing && refused.includes(missing), refused);
+    for (const problem of rest) assert.ok(!refused.includes(problem), `not a refusal: ${problem}`);
+  });
+
+  it("RAYLIB-SPEC. the raylib planner is offered no catalogue check of a kind it cannot measure", () => {
+    const checks = Object.fromEntries(
+      Object.keys(RAYLIB_CHECK_SUPPORT).map((kind) => [`seeded-${kind}`, { kind, note: `a ${kind} check` }]),
+    );
+    const onThree = renderCatalogueForPlanner({ checks }, {});
+    const onRaylib = renderCatalogueForPlanner({ checks }, { stack: GameStack.RaylibCpp });
+    for (const [kind, support] of Object.entries(RAYLIB_CHECK_SUPPORT)) {
+      const line = new RegExp(`"seeded-${kind}"`);
+      assert.match(onThree, line, `a three.js plan is offered ${kind}`);
+      if (support === CheckSupport.Unmeasured) assert.doesNotMatch(onRaylib, line, `${kind} is unmeasured on raylib`);
+      else assert.match(onRaylib, line, `${kind} is measured on raylib`);
+    }
+  });
+
+  it("RAYLIB-CHECKS. every kind the raylib table measures scores on raylib exactly as on three.js", async () => {
+    const bodies: Record<string, Record<string, unknown>> = {
+      scene: { js: "true" },
+      pixel: { camera: "default", expr: "meanLuma > 0" },
+      metric: { camera: "default", metric: "meanLuma", goal: "min", target: 1 },
+      probe: { expr: "score >= 0" },
+      demo: { demo: "dash" },
+      vision: { ask: "is there a dash?", expect: "yes" },
+      play: { ask: "can you dash?", expect: "yes" },
+    };
+    const checks = Object.keys(RAYLIB_CHECK_SUPPORT).map(
+      (kind) => ({ id: `c-${kind}`, kind, weight: "normal", ...bodies[kind] }) as unknown as Check,
+    );
+    const evidence = { state: { score: 1 }, shots: [], demos: { dash: { ok: true } } };
+    const scored = async (stack: string) => {
+      const recorder = ctxRecorder({ handlers: { "preview.evaluate": () => ({ value: true }) } });
+      return runDeterministicChecks(recorder.ctx, { spec: { checks }, evidence, handle: "h1", stack: stack as never });
+    };
+    const three = await scored(GameStack.ThreeJs);
+    const raylib = await scored(GameStack.RaylibCpp);
+    for (const [kind, support] of Object.entries(RAYLIB_CHECK_SUPPORT)) {
+      if (support !== CheckSupport.Measured) continue;
+      assert.deepEqual(
+        raylib.results.find((r) => r.kind === kind),
+        three.results.find((r) => r.kind === kind),
+        `${kind} is measured on raylib as anywhere`,
+      );
+      assert.equal(
+        raylib.pending.some((c) => c.kind === kind),
+        three.pending.some((c) => c.kind === kind),
+        `${kind} waits for its model on raylib as anywhere`,
+      );
+    }
+  });
+
+  it("RAYLIB-NIGHT. with every part the seed ships, the same raylib night is not refused: it reaches its scope", async () => {
+    const game = {
+      name: "pong",
+      dir: "/games/pong",
+      title: "Pong",
+      shape: { kind: ProjectKind.RaylibCpp, main: "src/main.cpp" },
+    };
+    const appended: Array<Record<string, any>> = [];
+    const studio = {
+      host: {
+        call: async (method: string, params: Record<string, any>) => {
+          if (method === HostMethod.GameList) return [game];
+          if (method === HostMethod.EventsAppend) appended.push(...params.batch);
+          return null;
+        },
+        notify: () => {},
+        heartbeat: () => {},
+        workspace: "/fixture",
+      },
+      cancels: new Set<string>(),
+      stoppedMessages: new Set<string>(),
+      moodBoards: new Map(),
+      activeRuns: new Map(),
+      startingRuns: new Map(),
+      orphanRuns: new Map(),
+      scoped: () => {
+        throw new Error("the night reached its scope");
+      },
+    } as unknown as Studio;
+    const run = {
+      runId: "run_fresh",
+      goal: "a raylib pong",
+      project: "pong",
+      reference: { name: "pong", shots: [] },
+      budgets: { wallClockMs: HOUR_MS },
+    };
+    await assert.rejects(
+      handleRunStart(studio, { type: "run_start", threadId: "t1", run } as never),
+      /the night reached its scope/,
+    );
+    assert.equal(
+      appended.filter((entry) => entry.event_type === "run_start_blocked").length,
+      0,
+      JSON.stringify(appended),
+    );
+  });
+
+  /** A seed workspace where the agent kept `part` from before native support (its pre-native exports, edited). */
+  async function keptPreNative(part: string): Promise<string> {
+    const vintage = JSON.parse(
+      await readFile(new URL("../fixtures/seed-exports-pre-native.json", import.meta.url), "utf8"),
+    ) as { modules: Record<string, string[]> };
+    const root = await tmpDir("raylib-night-kept-");
+    const workspace = path.join(root, "workspace");
+    const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
+    const names = vintage.modules[part] ?? [];
+    assert.ok(names.length > 0, `${part} has a pre-native vintage`);
+    const older = `${names.map((name) => `export const ${name} = () => null;`).join("\n")}\n// the agent's own change\n`;
+    await writeFile(path.join(workspace, part), older);
+    const report = await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
+    assert.ok(report.kept.includes(part));
+    return workspace;
+  }
+
+  /** A host that lists one raylib game and records what is appended; a refused night opens no scope. */
+  function raylibNightHost(workspace: string) {
+    const game = {
+      name: "pong",
+      dir: "/games/pong",
+      title: "Pong",
+      shape: { kind: ProjectKind.RaylibCpp, main: "src/main.cpp" },
+    };
+    const appended: Array<Record<string, any>> = [];
+    const host = {
+      call: async (method: string, params: Record<string, any>) => {
+        if (method === HostMethod.GameList) return [game];
+        if (method === HostMethod.EventsAppend) appended.push(...params.batch);
+        return null;
+      },
+      notify: () => {},
+      heartbeat: () => {},
+      workspace,
+    };
+    const studio = {
+      host,
+      cancels: new Set(),
+      stoppedMessages: new Set(),
+      moodBoards: new Map(),
+      activeRuns: new Map(),
+      startingRuns: new Map(),
+      orphanRuns: new Map(),
+      scoped: () => {
+        throw new Error("a refused night opens no scope");
+      },
+    };
+    return { appended, host, studio };
+  }
+
+  // Every part §2.10 names that a start cannot see through its own imports (gauntlet.ts), and the
+  // chat's own session and its contractor turn, which a waking raylib night runs as well.
+  for (const part of ["loop/gauntlet.ts", "loop/chat-session.ts", "loop/delegated-turn.ts"]) {
+    it(`RAYLIB-NIGHT. a raylib night whose parts include a kept pre-native ${part} is refused typed`, async () => {
+      const workspace = await keptPreNative(part);
+      const dispatch = (await import(pathToFileURL(path.join(workspace, "loop/run-dispatch.ts")).href)) as {
+        handleRunStart(studio: unknown, action: unknown): Promise<void>;
+      };
+      const { appended, studio } = raylibNightHost(workspace);
+      const run = {
+        runId: "run_kept",
+        goal: "a raylib pong",
+        project: "pong",
+        reference: { name: "pong", shots: [] },
+        budgets: { wallClockMs: HOUR_MS },
+      };
+      await dispatch.handleRunStart(studio, { type: "run_start", threadId: "t1", run });
+      const blocked = appended.find((entry) => entry.event_type === "run_start_blocked");
+      assert.equal(blocked?.payload?.code, NativeNightRefusal.PartsMissing, JSON.stringify(appended));
+      assert.equal(studio.activeRuns.size, 0, "no night was registered");
+
+      const chat = (await import(pathToFileURL(path.join(workspace, "loop/chat-dispatch.ts")).href)) as {
+        launchFromIntake(studio: unknown, ctx: unknown, action: unknown, spec: unknown): Promise<void>;
+      };
+      const fresh = raylibNightHost(workspace);
+      const ctx = { ...fresh.host, threadId: "t2", cancelled: false, setStatus: () => {} };
+      await assert.rejects(
+        chat.launchFromIntake(fresh.studio, ctx, { threadId: "t2", project: "pong" }, { goal: "a raylib pong" }),
+        { code: NativeNightRefusal.PartsMissing },
+      );
+      assert.equal(fresh.studio.activeRuns.size, 0, "the chat launched nothing");
+    });
+  }
+});
+
 describe("stuck ladders and small reviewers", () => {
   const rulesUrl = "../../src/harness-seed/loop/facet/rules.ts";
   const judgementUrl = "../../src/harness-seed/loop/facet/round-judgement.ts";
@@ -9233,6 +10199,182 @@ describe("a worker of its own for the UI and HUD", () => {
     const stadium = compileWorkerSpec({ id: "stadium", brief: "a floodlit stadium", kind: "top-down" });
     assert.equal(partCritic(stadium.spec, game), "place", "a part with no critic of its own keeps its kind's");
     assert.equal(partCritic({ ...stadium.spec, critic: "noir" }, game), "place", "an unknown critic is no critic");
+  });
+});
+
+describe("a Rust · wgpu night on a part kept from before Rust games (M3.2)", () => {
+  /** A seed workspace where the agent kept `part` from before Rust games (its pre-Rust exports, edited). */
+  async function keptPreRust(part: string): Promise<string> {
+    const vintage = JSON.parse(
+      await readFile(new URL("../fixtures/seed-exports-pre-rust.json", import.meta.url), "utf8"),
+    ) as { modules: Record<string, string[]> };
+    const root = await tmpDir("rust-night-kept-");
+    const workspace = path.join(root, "workspace");
+    const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
+    const names = vintage.modules[part] ?? [];
+    assert.ok(names.length > 0, `${part} has a pre-Rust vintage`);
+    const older = `${names.map((name) => `export const ${name} = () => null;`).join("\n")}\n// the agent's own change\n`;
+    await writeFile(path.join(workspace, part), older);
+    const report = await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
+    assert.ok(report.kept.includes(part));
+    return workspace;
+  }
+
+  /** A host that lists one Rust game and records what is appended; a refused night opens no scope. */
+  function rustNightHost(workspace: string) {
+    const game = {
+      name: "pond",
+      dir: "/games/pond",
+      title: "Pond",
+      shape: { kind: ProjectKind.RustWgpu, main: "src/main.rs" },
+    };
+    const appended: Array<Record<string, any>> = [];
+    const host = {
+      call: async (method: string, params: Record<string, any>) => {
+        if (method === HostMethod.GameList) return [game];
+        if (method === HostMethod.EventsAppend) appended.push(...params.batch);
+        return null;
+      },
+      notify: () => {},
+      heartbeat: () => {},
+      workspace,
+    };
+    const studio = {
+      host,
+      cancels: new Set(),
+      stoppedMessages: new Set(),
+      moodBoards: new Map(),
+      activeRuns: new Map(),
+      startingRuns: new Map(),
+      orphanRuns: new Map(),
+      scoped: () => {
+        throw new Error("a refused night opens no scope");
+      },
+    };
+    return { appended, studio };
+  }
+
+  // The kept native loop is the one whose binary raylib checks would read a Rust game as three.js.
+  for (const part of ["loop/native-loop.ts", "loop/native-evidence.ts", "loop/library.ts"]) {
+    it(`RUST-NIGHT. a Rust night whose parts include a kept pre-Rust ${part} is refused typed, naming the module`, async () => {
+      const workspace = await keptPreRust(part);
+      const dispatch = (await import(pathToFileURL(path.join(workspace, "loop/run-dispatch.ts")).href)) as {
+        handleRunStart(studio: unknown, action: unknown): Promise<void>;
+      };
+      const { appended, studio } = rustNightHost(workspace);
+      const run = {
+        runId: "run_kept_rust",
+        goal: "a pond you can fish in",
+        project: "pond",
+        reference: { name: "pond", shots: [] },
+        budgets: { wallClockMs: HOUR_MS },
+      };
+      await dispatch.handleRunStart(studio, { type: "run_start", threadId: "t1", run });
+      const blocked = appended.find((entry) => entry.event_type === "run_start_blocked");
+      assert.equal(blocked?.payload?.code, NativeNightRefusal.RustPartsMissing, JSON.stringify(appended));
+      assert.ok(blocked?.payload?.modules?.includes(part), `the refusal names ${part}: ${JSON.stringify(blocked)}`);
+      assert.ok(String(blocked?.payload?.reason).includes(part), "and the chat's sentence names it too");
+      assert.equal(studio.activeRuns.size, 0, "no night was registered");
+    });
+  }
+});
+
+/**
+ * Rounds (M-1.2): the Builds graph showed a fishing HUD over a starter world on a round whose
+ * challenger build had failed. The host had left the previous page loaded and only said so on
+ * `status.loadError`; `photographCameras` shot it anyway, and that older build's frames went out
+ * as the challenger's `facet_iteration.shots`. A build that loaded nothing is photographed never.
+ */
+describe("a round whose challenger build failed (M-1.2)", () => {
+  /** A window whose status says what this load left: a build that failed (`buildFailed`), or a page. */
+  function staleWindow(status: { loadError: string | null; buildFailed: string | null }) {
+    return ctxRecorder({
+      handlers: {
+        [HostMethod.PreviewLoad]: () => "about:blank",
+        [HostMethod.PreviewReload]: () => true,
+        [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+        [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, ...status }),
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.method === PageMethod.Cameras) return ["default", "close", "wide"];
+          if (params.method === PageMethod.Demos) return ["cast"];
+          if (params.method === PageMethod.Eyes) return [];
+          return { ok: true };
+        },
+        [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+        [HostMethod.PreviewState]: () => ({ version: 2, player: { x: 1 } }),
+        [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+        [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0 }),
+        [HostMethod.PreviewInput]: () => ({ ok: true, applied: 1, width: 800, height: 600 }),
+        [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+        // The older build's frame: whatever the window still shows.
+        [HostMethod.PreviewScreenshot]: (params) => ({
+          path: `/runs/shots/${String(params.label)}.jpg`,
+          base64: "T0xERVItQlVJTEQ=",
+          bytes: 12,
+          stats: { canvas: true, litFraction: 0.4, drawCalls: 40 },
+        }),
+        [HostMethod.PreviewConsole]: () => [],
+        [HostMethod.PreviewGpuErrors]: () => [],
+      },
+    });
+  }
+
+  const looks = [
+    { name: "a worker's worktree on a leased window", options: { root: "/fixture/worktrees/w1", handle: "lease-1" } },
+    { name: "the live view, its last good build kept", options: {} },
+  ];
+  for (const { name, options } of looks) {
+    it(`STALE-ROUND. a failed challenger build yields shots: [] — ${name}`, async () => {
+      const loadError = "the game's build failed: error[E0425]: cannot find value `rod` in this scope";
+      const recorder = staleWindow({ loadError, buildFailed: loadError });
+      const evidence = await gatherEvidence(recorder.ctx as never, {
+        run: { runId: "run_pond", project: "pond" } as never,
+        iterationId: "003",
+        seed: 1,
+        ...options,
+      });
+      assert.deepEqual(evidence.shots, [], "no frame of the older build is filed as this challenger's");
+      assert.deepEqual(evidence.motion, [], "nor a motion frame");
+      assert.equal(recorder.paramsOf(HostMethod.PreviewScreenshot).length, 0, "the window is never photographed");
+      assert.equal(evidence.ok, false);
+      assert.ok(evidence.problems.includes(loadError), `the build's own sentence: ${evidence.problems.join("; ")}`);
+      assert.equal(
+        classifyEvidenceFailure(evidence.problems),
+        EvidenceFailure.Build,
+        "a build that loaded nothing is the build's failure, never a blind camera to wait out",
+      );
+    });
+  }
+
+  it("STALE-ROUND-SUBFRAME. a page that loaded with a failed subframe is still photographed", async () => {
+    // The load error is the subframe's; the host's typed fact says the build is on the page.
+    const recorder = staleWindow({
+      loadError: "net::ERR_FAILED (-2) for https://ads.example/frame",
+      buildFailed: null,
+    });
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_pond", project: "pond" } as never,
+      iterationId: "003",
+      seed: 1,
+      root: "/fixture/worktrees/w1",
+      handle: "lease-1",
+    });
+    assert.ok(evidence.shots.length > 0, "a build that loaded is looked at, whatever else failed");
+    assert.ok(recorder.paramsOf(HostMethod.PreviewScreenshot).length > 0);
+  });
+
+  it("STALE-ROUND-CONTROL. the same window with a build that loaded is photographed on every camera", async () => {
+    const recorder = staleWindow({ loadError: null, buildFailed: null });
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_pond", project: "pond" } as never,
+      iterationId: "003",
+      seed: 1,
+      root: "/fixture/worktrees/w1",
+      handle: "lease-1",
+    });
+    assert.ok(evidence.shots.length > 0, "a loaded build is looked at");
   });
 });
 

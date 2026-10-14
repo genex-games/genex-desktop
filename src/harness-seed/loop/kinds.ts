@@ -333,6 +333,35 @@ function dragAction(raw: AnyRecord): PlayAction | null {
   };
 }
 
+/** The largest finger id a script may name (contract v2: a uint32). */
+const TOUCH_ID_MAX = 0xffff_ffff;
+
+/**
+ * A finger's touch in world pixels: a tap at `x`/`y`, held for `ms` when it names one, or a swipe
+ * to `toX`/`toY`. Every coordinate is needed, and a lift names both of its; a finger id outside a
+ * uint32 is left to the script's own (`SCRIPT_TOUCH_ID` in play-script.ts).
+ */
+function touchAction(raw: AnyRecord): PlayAction | null {
+  const x = number(raw.x, null);
+  const y = number(raw.y, null);
+  if (x === null || y === null) return null;
+  const toX = number(raw.toX, null);
+  const toY = number(raw.toY, null);
+  const lift = toX !== null && toY !== null ? { toX, toY } : null;
+  const lifts = raw.toX !== undefined || raw.toY !== undefined;
+  if (lifts && !lift) return null;
+  const id = raw.id;
+  const named = Number.isInteger(id) && id >= 0 && id <= TOUCH_ID_MAX;
+  return {
+    type: "touch",
+    x,
+    y,
+    ...(lift ?? {}),
+    ...(raw.ms === undefined ? {} : { ms: clamp(raw.ms, 0, MAX_ACTION_MS) }),
+    ...(named ? { id } : {}),
+  };
+}
+
 /** Each action a script may declare, as the harness will drive it — or null for one it cannot. */
 const ACTIONS: Record<string, (raw: AnyRecord) => PlayAction | null> = {
   hold: (raw) => {
@@ -353,6 +382,7 @@ const ACTIONS: Record<string, (raw: AnyRecord) => PlayAction | null> = {
     const name = typeof raw.name === "string" ? raw.name.trim().slice(0, CAMERA_NAME_CHARS) : "";
     return name ? { type: "camera", name } : null;
   },
+  touch: touchAction,
 };
 
 const PLAY_ACTIONS = new Set<string>(Object.keys(ACTIONS));
@@ -419,7 +449,15 @@ function clauseFor(action: PlayAction | null | undefined): string {
   if (type === "scroll") return `scroll ${number(action!.dx, 0)}, ${number(action!.dy, 0)}`;
   if (type === "wait") return `wait ${seconds(action!.ms ?? 100)}`;
   if (type === "camera") return `switch to the ${action!.name} camera`;
+  if (type === "touch" && action) return touchClause(action);
   return "";
+}
+
+/** A finger's touch in words: where it went down, and where it lifted or how long it pressed. */
+function touchClause(action: PlayAction): string {
+  if (action.toX !== undefined) return `swipe from ${at(action.x, action.y)} to ${at(action.toX, action.toY)}`;
+  if (action.ms !== undefined) return `touch and hold ${at(action.x, action.y)} for ${seconds(action.ms)}`;
+  return `touch ${at(action.x, action.y)}`;
 }
 
 /** A single-character key reads as the letter on the keyboard; a named key reads as it is given. */
