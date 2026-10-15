@@ -891,7 +891,7 @@ fn pop_map(frames: &[Vec<f32>], size: (usize, usize)) -> Vec<u8> {
 /// TAA (`high`, `ultra`), and no more than a static mesh of its finest level draws at a preset
 /// without TAA, whose silhouettes against the sun's glare alias under MSAA on any ground (the
 /// static 0.375 m mesh pops 6 pixels over the path at `medium`, the terrain 3; with the morph
-/// switched off the terrain pops 21 and steps 234: `wp-A.7.md`).
+/// switched off the terrain pops 21 and steps 234).
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_dolly_over_the_terrain_has_no_one_frame_pop() {

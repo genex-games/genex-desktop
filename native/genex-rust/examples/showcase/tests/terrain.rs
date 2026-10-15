@@ -244,7 +244,7 @@ fn metal_the_lakeside_ground_adds_no_pop_on_a_dolly() {
     }
     // Where the levels draw coarser geometry, a silhouette's aliased pixel lands a pixel away from
     // the finest level's: the pixel sets cannot match exactly (2026-10-15: 3 pixels over 98 frames
-    // at medium, 1 at high, `wp-A.7.md`), so the row holds the count: the levels never pop more.
+    // at medium, 1 at high), so the row holds the count: the levels never pop more.
     for (row, (with, without), switches) in rows {
         assert!(switches > 0, "the dolly changes the terrain's selection: {row}");
         assert!(with <= without, "the terrain's levels popped: {row}");
