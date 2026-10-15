@@ -3,17 +3,24 @@
 // - dilation: the motion of the closest depth in the 3x3 neighbourhood (an edge moves with the
 //   object in front of it); a neighbourhood of background alone moves with the camera at the far
 //   plane through `reproject` (T-03);
-// - history: Catmull-Rom (five bilinear taps) at uv - motion, rescaled by exposure now / exposure
-//   then (pre-exposed space), so an exposure change never resets it;
+// - history: Catmull-Rom (five bilinear taps) at uv - motion, held inside the four texels around
+//   it (renderer pass 2, B.7: its overshoot, and the sharpening below, rang on sub-pixel detail
+//   and compounded frame after frame into one-frame pops on every Lakeside path), rescaled by
+//   exposure now / exposure then (pre-exposed space), so an exposure change never resets it;
 // - rectification (renderer pass 2, P2-0.8a: S10 and T-02, after FidelityFX FSR 2.2, MIT): the
 //   neighbourhood's colour box is built in reversibly tonemapped space c / (1 + max3(c)), YCoCg:
 //   mean ± GX_TAA_VARIANCE_GAMMA σ inside the neighbourhood's min/max, so one bright pixel no
-//   longer stretches it over everything beside a highlight. History outside it is clipped towards
-//   it softly: the clip is undone by how much the pixel is locked (a thin feature, or an
-//   oscillation, seen within the last jitter cycle) or luma-unstable (its quantised luma rose and
-//   fell over the last four frames), scaled by 1 - sqrt(reactive), motion counting as reactive up
-//   to GX_TAA_MOTION_REACTIVE;
-// - rejection: off-screen history, depth disocclusion and the reactive mask take the current
+//   longer stretches it over everything beside a highlight. On a settled pixel (no motion of its
+//   own, no reactive coverage) the box grows by the pixel's temporal noise (renderer pass 2, B.7:
+//   how far its raw sample strays from the history the box keeps, a running mean in the lock
+//   history's w) and a small floor, so a sub-pixel detail the jitter hits in some frames only, or
+//   a sharp shadow mask's texel, no longer clips its history to each frame's box and back. History
+//   outside it is clipped towards it softly: the clip is undone by how much the pixel is locked (a
+//   thin feature, or an oscillation, seen within the last jitter cycle) or luma-unstable (its
+//   quantised luma rose and fell over the last four frames), scaled by 1 - sqrt(reactive), motion
+//   counting as reactive up to GX_TAA_MOTION_REACTIVE;
+// - rejection: off-screen history (through a wider filter, GX_TAA_EDGE_FILTER_FALLOFF; B.7),
+//   depth disocclusion and the reactive mask take the current
 //   frame, filtered around the unjittered pixel centre (a 3x3 Gaussian over the jittered taps), so
 //   a rejected region neither aliases nor wobbles by the jitter; motion raises the current weight.
 //   Disocclusion: the history's depth key (last frame's farthest surface in the 3x3) lies nearer
@@ -27,8 +34,8 @@
 // The outputs are this frame's histories: the colour (rgb the resolved radiance, alpha the 3x3
 // neighbourhood's farthest depth key, proportional to 1 / view depth under either depth
 // convention, read by the next frame's disocclusion test), the last four frames' quantised luma
-// (rgba8) and the lock (rgba8: its remaining lifetime / 2, the luma it was locked at and how
-// recently the pixel moved). A
+// (rgba8) and the lock (rgba8: its remaining lifetime / 2, the luma it was locked at, how
+// recently the pixel moved and its temporal noise). A
 // full-screen fragment pass on every destination (no storage textures).
 
 // Mirrors `post::taa::GpuTaaParams`.
@@ -70,17 +77,36 @@ const GX_TAA_LUMA_KNEE: f32 = 1.0;
 // The rejected-pixel filter's falloff: exp(-k d^2) per tap at d render pixels from the unjittered
 // centre (a Gaussian close to a 3.3-pixel Blackman-Harris, the common TAA reconstruction filter).
 const GX_TAA_FILTER_FALLOFF: f32 = 2.29;
+// `post::taa::EDGE_FILTER_FALLOFF`: the wider filter a pixel whose history lies off the screen
+// takes (what enters at the frame's edge has no history, and its sharp first sample popped).
+const GX_TAA_EDGE_FILTER_FALLOFF: f32 = 0.8;
 // The largest radiance the history keeps (half-float's largest finite value, rounded down).
 const GX_TAA_RADIANCE_MAX: f32 = 64512.0;
 // The tonemapped space's largest value the inverse divides by 1 - it (FSR 2.2's epsilon).
 const GX_TAA_TONEMAP_EPSILON: f32 = 1.0 / 65504.0;
 // `post::taa::STILL_MOTION_PX` and `post::taa::STILL_ALPHA_SHARE`: a pixel whose (dilated) motion
 // is under the first stands still, and its accumulation floor is alpha_min times the second.
-const GX_TAA_STILL_MOTION_PX: f32 = 0.01;
+const GX_TAA_STILL_MOTION_PX: f32 = 0.05;
 const GX_TAA_STILL_ALPHA_SHARE: f32 = 0.5;
 // `post::taa::HISTORY_SHARPEN`: the history's sharpening against its outer taps where it fell
-// halfway between texel centres (none on a centre).
-const GX_TAA_HISTORY_SHARPEN: f32 = 0.2;
+// halfway between texel centres (none on a centre), and `post::taa::SHARPEN_MOTION_PX`: the
+// motion over which the sharpening fades in (none under the first).
+const GX_TAA_HISTORY_SHARPEN: f32 = 0.15;
+const GX_TAA_SHARPEN_MOTION_PX: vec2<f32> = vec2<f32>(0.05, 0.2);
+// `post::taa::NOISE_RATE`, `NOISE_BOX_SCALE`, `NOISE_BOX_FLOOR`, `SETTLED_OWN_MOTION_PX`,
+// `NOISE_RESET_OWN_MOTION_PX` and `NOISE_REACTIVE_CUT`: the temporal noise's running mean, how far
+// it (and the floor) grows a settled pixel's colour box, the motion of its own over which a pixel
+// stops counting as settled, the motion that clears its noise, and how fast reactive coverage
+// takes the growth away.
+const GX_TAA_NOISE_RATE: f32 = 0.15;
+const GX_TAA_NOISE_BOX_SCALE: f32 = 3.0;
+const GX_TAA_NOISE_BOX_FLOOR: f32 = 0.01;
+const GX_TAA_SETTLED_OWN_MOTION_PX: vec2<f32> = vec2<f32>(0.15, 0.5);
+const GX_TAA_NOISE_RESET_OWN_MOTION_PX: f32 = 0.3;
+const GX_TAA_NOISE_REACTIVE_CUT: f32 = 8.0;
+// `post::taa::NOISE_HOLD_REACH`: history this many growths outside the box (the first to the
+// second) is clipped without the growth.
+const GX_TAA_NOISE_HOLD_REACH: vec2<f32> = vec2<f32>(2.0, 4.0);
 // `post::taa::LOCK_SIMILAR_RATIO`: two neighbours' lock lumas (perceived lightness of the
 // tonemapped colour) are similar within this ratio (FSR 2.2's 1.05 on lightness^(1/6)).
 const GX_TAA_LOCK_SIMILAR_RATIO: f32 = 1.3400956;
@@ -184,6 +210,10 @@ struct HistorySample {
     around: vec3<f32>,
     // How far between texel centres the sample fell: 0 on a centre, 1 halfway on both axes.
     between: f32,
+    // The least and greatest of the four texels around the sample (its bilinear footprint): the
+    // resampled and sharpened history stays inside them.
+    footprint_lo: vec3<f32>,
+    footprint_hi: vec3<f32>,
 }
 
 fn gx_taa_history_catmull_rom(uv: vec2<f32>) -> HistorySample {
@@ -216,6 +246,15 @@ fn gx_taa_history_catmull_rom(uv: vec2<f32>) -> HistorySample {
     out.around = 0.25 * (ta + tb + td + te);
     let off = f * (1.0 - f);
     out.between = 2.0 * (off.x + off.y);
+    // The four texels the bilinear centre tap blends, one gather a channel (cheaper than four
+    // loads: 0.42 against 0.44 ms a resolve at 1080p).
+    let corner = (center + 0.5) * texel;
+    let r = textureGather(0, gx_history, gx_linear, corner);
+    let g = textureGather(1, gx_history, gx_linear, corner);
+    let b = textureGather(2, gx_history, gx_linear, corner);
+    out.footprint_lo = vec3<f32>(min(min(r.x, r.y), min(r.z, r.w)), min(min(g.x, g.y), min(g.z, g.w)), min(min(b.x, b.y), min(b.z, b.w)));
+    out.footprint_hi = vec3<f32>(max(max(r.x, r.y), max(r.z, r.w)), max(max(g.x, g.y), max(g.z, g.w)), max(max(b.x, b.y), max(b.z, b.w)));
+    out.value = vec4<f32>(clamp(out.value.rgb, out.footprint_lo, out.footprint_hi), out.value.a);
     return out;
 }
 
@@ -300,6 +339,22 @@ fn gx_taa_filter_tap(rgb: vec3<f32>, offset: vec2<f32>) -> vec4<f32> {
     let d = offset - gx_taa.jitter.xy;
     let w = exp(-GX_TAA_FILTER_FALLOFF * dot(d, d));
     return vec4<f32>(rgb * w, w);
+}
+
+// The current frame around `pixel` filtered with falloff `k` about the unjittered pixel centre (the
+// 3x3 neighbourhood, clamped at the frame's edges).
+fn gx_taa_filtered_with(pixel: vec2<i32>, size: vec2<i32>, k: f32) -> vec3<f32> {
+    var sum = vec4<f32>(0.0);
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let at = clamp(pixel + vec2<i32>(dx, dy), vec2<i32>(0), size - vec2<i32>(1));
+            let rgb = gx_taa_sane(textureLoad(gx_scene, at, 0).rgb);
+            let d = vec2<f32>(f32(dx), f32(dy)) - gx_taa.jitter.xy;
+            let w = exp(-k * dot(d, d));
+            sum += vec4<f32>(rgb * w, w);
+        }
+    }
+    return sum.rgb / max(sum.a, 1e-6);
 }
 
 // The neighbourhood of `pixel`, and (w) the lock's shading luma: the median of the three rows'
@@ -490,16 +545,19 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     let history_key = history_sample.a;
     let reactive = clamp(textureLoad(gx_reactive, pixel, 0).r, 0.0, 1.0);
     let prev_luma = textureLoad(gx_luma_history, gx_taa_side_texel(prev_uv, textureDimensions(gx_luma_history)), 0);
-    let prev_lock = textureLoad(gx_lock_history, gx_taa_side_texel(prev_uv, textureDimensions(gx_lock_history)), 0).rgb;
+    let prev_lock = textureLoad(gx_lock_history, gx_taa_side_texel(prev_uv, textureDimensions(gx_lock_history)), 0);
 
     // The current frame's weight: the accumulation schedule, raised by motion and the mask.
     let frames = f32(gx_taa.counts.x);
     let average = 1.0 / (frames + 1.0);
     let motion_px = length(motion * 0.5 * gx_taa.size.xy);
     // The history resampled between texel centres is sharpened back by how far between them it
-    // fell: each frame of motion resamples it, and the losses compound over its memory.
-    let sharpen = GX_TAA_HISTORY_SHARPEN * resampled.between;
-    let history_rgb = max(history_sample.rgb + sharpen * (history_sample.rgb - resampled.around), vec3<f32>(0.0)) * gx_taa.params.y;
+    // fell: each frame of motion resamples it, and the losses compound over its memory. Not under
+    // a creep: there it fed back on itself frame after frame and an edge's history rang (B.7: the
+    // bench-outdoor lake box flickered on 323 pixels creeping against 21 still at high).
+    let sharpen = GX_TAA_HISTORY_SHARPEN * resampled.between * smoothstep(GX_TAA_SHARPEN_MOTION_PX.x, GX_TAA_SHARPEN_MOTION_PX.y, motion_px);
+    let sharpened = history_sample.rgb + sharpen * (history_sample.rgb - resampled.around);
+    let history_rgb = clamp(sharpened, resampled.footprint_lo, resampled.footprint_hi) * gx_taa.params.y;
     // A still pixel (a still camera on a still surface) averages over twice as many frames: its
     // jittered sample of a sub-pixel edge (a grass blade, a far tree tip against the sky) moves the
     // history by alpha times the edge's contrast every frame, which kept such edges flickering by
@@ -540,10 +598,38 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     let filtered = n.filtered.rgb / max(n.filtered.a, 1e-6);
     let at_floor = average <= gx_taa.params.x && !reset;
     let unjittered = select(reactive, 1.0, (rejected && !reset) || at_floor);
-    let current = mix(n.current, filtered, unjittered);
+    var current = mix(n.current, filtered, unjittered);
+    // B.7: a pixel whose history lies off the screen takes a wider filter (only there: a branch
+    // the frame's interior never takes).
+    if offscreen && !reset {
+        current = gx_taa_filtered_with(pixel, size, GX_TAA_EDGE_FILTER_FALLOFF);
+    }
 
     // T-02: the lock and the luma instability, from last frame's (none for a new sample).
-    let colour_box = gx_taa_colour_box(&n);
+    var colour_box = gx_taa_colour_box(&n);
+    // B.7: the pixel's temporal noise, how far its raw sample strays from the history the box
+    // keeps (a ghost the box clips away never raises it), and the box grown by last frame's noise
+    // where the pixel is settled: its surface has no motion of its own beyond the camera's (at the
+    // closest surface, as the dilation reads it) and no reactive coverage. A surface moving over
+    // the pixel, or a history reset, clears its noise, and history far outside the
+    // grown box (a whole surface gone, not a detail the jitter missed) is clipped as before.
+    let history_t = gx_taa_ycocg(gx_taa_tonemap(gx_taa_sane(history_rgb)));
+    let kept = gx_taa_clip(history_t, colour_box.lo, colour_box.hi);
+    let noise_now = abs(gx_taa_ycocg(gx_taa_tonemap(n.current)).x - kept.x);
+    let prev_noise = select(prev_lock.w, 0.0, fresh);
+    let noise = mix(prev_noise, noise_now, GX_TAA_NOISE_RATE);
+    let closest_uv = (vec2<f32>(n.closest) + 0.5) * gx_taa.size.zw;
+    let own_px = length(motion * 0.5 * gx_taa.size.xy - gx_taa_prev_key(closest_uv, n.key_hi).yz);
+    let unmoved = 1.0 - smoothstep(GX_TAA_SETTLED_OWN_MOTION_PX.x, GX_TAA_SETTLED_OWN_MOTION_PX.y, own_px);
+    // Only once the accumulation sits at its floor (Live): a capture's settling cycle keeps the
+    // plain box, so a settled capture is the jitter cycle's mean as before.
+    let settled = unmoved * (1.0 - saturate(reactive * GX_TAA_NOISE_REACTIVE_CUT)) * select(0.0, 1.0, at_floor);
+    let growth = (GX_TAA_NOISE_BOX_SCALE * prev_noise + GX_TAA_NOISE_BOX_FLOOR) * settled;
+    let excursion = abs(history_t.x - kept.x);
+    let holds = 1.0 - smoothstep(GX_TAA_NOISE_HOLD_REACH.x * growth, GX_TAA_NOISE_HOLD_REACH.y * growth, excursion);
+    let grow = vec3<f32>(growth * holds);
+    colour_box.lo -= grow;
+    colour_box.hi += grow;
     // A moving pixel's protection is cut as FSR 2.2's temporal reactive factor cuts it: towards
     // GX_TAA_MOTION_REACTIVE at a render pixel of motion, its own or the camera's, so a lock or an
     // oscillation does not hold history the motion smeared.
@@ -577,6 +663,7 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     var out: TaaTargets;
     out.history = vec4<f32>(gx_taa_sane(resolved), n.key_lo);
     out.luma = instability.history;
-    out.lock = vec4<f32>(lock.status.x * 0.5, lock.status.y, max(moved, 0.0), 0.0);
+    let cleared = reset || own_px > GX_TAA_NOISE_RESET_OWN_MOTION_PX;
+    out.lock = vec4<f32>(lock.status.x * 0.5, lock.status.y, max(moved, 0.0), select(saturate(noise), 0.0, cleared));
     return out;
 }

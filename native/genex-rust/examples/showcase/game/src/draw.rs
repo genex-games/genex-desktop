@@ -73,6 +73,11 @@ const WINDOW_LIGHT_DIP: f32 = 0.45;
 const FIREFLY_GLOW: f32 = 14.0;
 const FIREFLY: Color = Color::rgb(196, 255, 92);
 const FIREFLY_RADIUS: f32 = 0.022;
+/// The least radius (pixels, at the world's reference height) a firefly's body is drawn with: a
+/// far one grows to it and dims by the area it gained, so its light is kept (renderer pass 2, B.7:
+/// a body smaller than a pixel was a bright point the jitter hit in some frames only, and each hit
+/// popped for one frame on the Lakeside's orbits and dollies).
+const FIREFLY_LEAST_RADIUS_PX: f32 = 1.0;
 const HULL_TINT: Color = Color::rgb(108, 60, 40);
 const JACKET: Color = Color::rgb(64, 94, 146);
 const TROUSERS: Color = Color::rgb(72, 68, 62);
@@ -351,13 +356,15 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
     cabin(world, frame);
     dock(world, frame, t);
     lanterns(world, frame, t);
-    fireflies(frame, t);
+    fireflies(frame, camera, t);
     animals(world, frame, t);
 }
 
 fn terrain(world: &World, frame: &mut Frame) {
     frame.tag("terrain");
-    frame.custom(&world.models.terrain, Transform::IDENTITY, &world.models.terrain_material, Color::WHITE);
+    if let Some(ground) = &world.models.terrain {
+        frame.terrain(ground);
+    }
 }
 
 fn pick_in<T>(items: &[T], tint: f32) -> &T {
@@ -605,15 +612,20 @@ pub fn firefly(index: usize, home: Vec3, t: f32) -> (Vec3, f32) {
 /// draws under its own id: a firefly that blinks out is skipped, so by draw order alone the ones
 /// after it would take another's last position as their own and TAA would follow the wrong motion
 /// (G0: a dark-cored trail behind the forest shot's fireflies in Live).
-fn fireflies(frame: &mut Frame, t: f32) {
+fn fireflies(frame: &mut Frame, camera: &Camera, t: f32) {
     frame.tag("fireflies");
+    let forward = (camera.target - camera.position).normalize_or_zero();
+    // Pixels a metre spans one metre in front of the camera, at the reference height.
+    let focal_px = crate::showcase::WORLD_SIZE[1] as f32 * 0.5 / math::tan(camera.fovy.to_radians() * 0.5);
     for (i, home) in layout().fireflies.iter().enumerate() {
         let (at, lit) = firefly(i, *home, t);
         if lit < 0.02 {
             continue;
         }
+        let depth = (at - camera.position).dot(forward).max(FIREFLY_RADIUS);
+        let grow = (FIREFLY_LEAST_RADIUS_PX * depth / (FIREFLY_RADIUS * focal_px)).max(1.0);
         frame.id(&format!("firefly-{i}"));
-        frame.sphere_with(at, FIREFLY_RADIUS, &Material::emissive(FIREFLY, FIREFLY_GLOW * lit));
+        frame.sphere_with(at, FIREFLY_RADIUS * grow, &Material::emissive(FIREFLY, FIREFLY_GLOW * lit / (grow * grow)));
     }
     frame.end_id();
 }

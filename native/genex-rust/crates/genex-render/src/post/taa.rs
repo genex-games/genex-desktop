@@ -7,8 +7,10 @@
 //! The resolve (shaders/post/taa.wgsl), per pixel of the jittered HDR scene at render size:
 //! - **dilation:** the motion vector of the closest depth in the 3x3 neighbourhood, so an edge
 //!   reprojects with the object in front of it;
-//! - **history:** Catmull-Rom (five bilinear taps) at `uv - motion`, rescaled by exposure now /
-//!   exposure then ([`GpuTaaParams::params`] y), so an exposure change never resets it;
+//! - **history:** Catmull-Rom (five bilinear taps) at `uv - motion`, sharpened by
+//!   [`HISTORY_SHARPEN`] under motion and held inside the four texels around the sample (B.7),
+//!   rescaled by exposure now / exposure then ([`GpuTaaParams::params`] y), so an exposure change
+//!   never resets it;
 //! - **rectification** (renderer pass 2, P2-0.8a: S10 and T-02, after FidelityFX FSR 2.2, MIT): the
 //!   neighbourhood's colour box is built in reversibly tonemapped space `c / (1 + max3(c))`, YCoCg:
 //!   mean ± [`VARIANCE_GAMMA`] σ inside the neighbourhood's min/max ([`TaaFlags::CLIP`]), so one
@@ -20,7 +22,8 @@
 //!   side history, rose and fell), scaled by `1 - sqrt(reactive)` (motion counts as reactive up to
 //!   [`MOTION_REACTIVE`]). A sub-pixel feature the jitter
 //!   shows in some frames only keeps its history instead of being clipped away on the frames that
-//!   miss it;
+//!   miss it. On a settled pixel (no motion of its own, no reactive coverage) the box also grows by
+//!   the pixel's temporal noise and a floor ([`NOISE_BOX_SCALE`], renderer pass 2, B.7);
 //! - **rejection:** off-screen history, depth disocclusion and the reactive mask take the current
 //!   frame filtered around the unjittered pixel centre (a 3x3 Gaussian over the jittered taps,
 //!   [`FILTER_FALLOFF`]), so a rejected region neither aliases nor wobbles by the jitter; motion
@@ -90,7 +93,9 @@ pub const LUMA_HISTORY_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// The lock side history (T-02): x the lock's remaining lifetime / 2 (0..2 jitter cycles' worth),
 /// y the shading luma it was locked at (FSR 2.2's lock status), z how recently the pixel moved (1
 /// at a render pixel of motion, falling to 0 over a jitter cycle: a pixel an object just passed
-/// over is not protected).
+/// over is not protected), w its temporal noise (renderer pass 2, B.7: a running mean, at
+/// [`NOISE_RATE`], of how far its raw sample strayed from the history the colour box keeps, in
+/// tonemapped luma; cleared where a surface moves over the pixel, [`NOISE_RESET_OWN_MOTION_PX`]).
 pub const LOCK_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// The luma side history's labels, a pair like the colour history's.
 pub const LUMA_HISTORY_LABELS: [&str; 2] = ["taa luma history a", "taa luma history b"];
@@ -117,8 +122,48 @@ pub const MOTION_REJECTION_PER_PX: f32 = 0.01;
 /// fractional resample loses high frequencies the next one loses again: G0 (2026-10-15), panned at
 /// 1 and 4 px a frame bench-outdoor kept 49% and 57% of its still sharpness at high. At 0.2 it keeps
 /// 100% and 86% (ultra 102% and 89%) with the 1 px pan's flicker 0.061% -> 0.066%; 0.3 overshot
-/// at 1 px (122%), the feedback sharpening every frame of the history's memory.
-pub const HISTORY_SHARPEN: f32 = 0.2;
+/// at 1 px (122%), the feedback sharpening every frame of the history's memory. Renderer pass 2,
+/// B.7: the resample and the sharpened history are held inside the four history texels around the
+/// sample (Catmull-Rom's overshoot and the sharpening rang on sub-pixel detail into one-frame
+/// pops), and the colour box grows on settled pixels ([`NOISE_BOX_SCALE`]), so less of the
+/// sharpening is clipped away: 0.15 keeps 90% and 98% (ultra 94% and 111%).
+pub const HISTORY_SHARPEN: f32 = 0.15;
+/// The motion (render pixels a frame) over which the history's sharpening fades in, from none
+/// under the first (`GX_TAA_SHARPEN_MOTION_PX`): under a creep the sharpening fed back on itself
+/// every frame and an edge's history rang (B.7: bench-outdoor's lake box flickered on 323 pixels
+/// creeping a fiftieth of a pixel a frame against 21 still at high; 0 against 0 without it).
+pub const SHARPEN_MOTION_PX: [f32; 2] = [0.05, 0.2];
+/// How fast a pixel's temporal noise (the lock history's w, [`LOCK_FORMAT`]) follows this frame's,
+/// a running mean (`GX_TAA_NOISE_RATE`).
+pub const NOISE_RATE: f32 = 0.15;
+/// How far a settled pixel's colour box grows by its temporal noise (`GX_TAA_NOISE_BOX_SCALE`),
+/// and the growth it always has (`GX_TAA_NOISE_BOX_FLOOR`, tonemapped YCoCg): a sub-pixel detail
+/// the jitter hits in some frames only (a far tree tip against the sky, a sparkle in a canopy) was
+/// clipped out of its history on every frame the jitter missed it and came back on the next hit,
+/// a one-frame pop on every Lakeside path (B.7: pan, orbit and dolly worst 14, 13 and 39 popped
+/// pixels a frame at high against 1, 2 and 2); and a sharp shadow mask's texel clipped back and
+/// forth by a few levels under a still camera (the fence row: 0.0004% of pixels a frame at high
+/// against medium's none, now none).
+pub const NOISE_BOX_SCALE: f32 = 3.0;
+/// See [`NOISE_BOX_SCALE`].
+pub const NOISE_BOX_FLOOR: f32 = 0.01;
+/// The motion of its own (render pixels a frame, beyond the camera's at the closest surface) over
+/// which a pixel stops counting as settled, fully at the second (`GX_TAA_SETTLED_OWN_MOTION_PX`):
+/// a swaying tree is settled, a near grass blade swaying across the ground is not, so the history
+/// it leaves behind is clipped (the Live-TAA trails row).
+pub const SETTLED_OWN_MOTION_PX: [f32; 2] = [0.15, 0.5];
+/// The motion of its own (render pixels a frame) that clears a pixel's temporal noise
+/// (`GX_TAA_NOISE_RESET_OWN_MOTION_PX`): a surface moving over it says nothing about its noise.
+pub const NOISE_RESET_OWN_MOTION_PX: f32 = 0.3;
+/// How fast reactive coverage takes the colour box's growth away (`GX_TAA_NOISE_REACTIVE_CUT`):
+/// none from an eighth of coverage.
+pub const NOISE_REACTIVE_CUT: f32 = 8.0;
+/// History this many growths outside the colour box, fading from the first to the second, is
+/// clipped without the growth (`GX_TAA_NOISE_HOLD_REACH`): a whole surface gone (a moved object's
+/// edge, an object without motion vectors) is no detail the jitter missed. A history reset
+/// clears the noise too: measured against the stale history of a reset frame, a cube's first
+/// outline was held as a faint ring after it moved away (tests/taa_frame.rs).
+pub const NOISE_HOLD_REACH: [f32; 2] = [2.0, 4.0];
 /// The colour box: the neighbourhood's mean ± this many standard deviations (tonemapped YCoCg),
 /// intersected with its min/max (`GX_TAA_VARIANCE_GAMMA` in taa.wgsl). FSR 2.2 weighs its samples
 /// `exp(-(2..3) d²)` by their distance from the unjittered centre at one deviation; measured here
@@ -150,9 +195,17 @@ const FLAG_BITS: u32 = (1 << JITTER_CYCLE_SHIFT) - 1;
 /// The rejected-pixel filter's falloff `k` (`GX_TAA_FILTER_FALLOFF`): each tap of the 3x3
 /// neighbourhood weighs `exp(-k d²)` at `d` render pixels from the unjittered pixel centre.
 pub const FILTER_FALLOFF: f32 = 2.29;
+/// The wider falloff a pixel whose history lies off the screen takes its current frame with
+/// (`GX_TAA_EDGE_FILTER_FALLOFF`; renderer pass 2, B.7): what enters at the frame's edge has no
+/// history, and its sharp first sample was a one-frame pop beside the softer resolve of the next
+/// frame (a dark mote entering the Lakeside orbit's right edge). Disoccluded pixels keep
+/// [`FILTER_FALLOFF`].
+pub const EDGE_FILTER_FALLOFF: f32 = 0.8;
 /// The motion (render pixels, the 3x3 neighbourhood's closest surface's) under which a pixel
-/// stands still (`GX_TAA_STILL_MOTION_PX` in taa.wgsl): a still camera on a still surface.
-pub const STILL_MOTION_PX: f32 = 0.01;
+/// stands still (`GX_TAA_STILL_MOTION_PX` in taa.wgsl): a still camera on a still surface, or a
+/// creep (B.7: a fiftieth of a pixel a frame took twice the still floor's current weight, and the
+/// jitter's edge noise with it, at 0.01).
+pub const STILL_MOTION_PX: f32 = 0.05;
 /// A still pixel's accumulation floor as a share of `alpha_min` (`GX_TAA_STILL_ALPHA_SHARE`): it
 /// averages over twice as many frames, so a sub-pixel edge's jittered sample moves its history by
 /// half as much each frame (pass-1 gate finding 04: grass tufts and far tree tips against the sky

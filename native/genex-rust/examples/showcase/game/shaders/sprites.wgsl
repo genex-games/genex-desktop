@@ -17,9 +17,13 @@ struct SpriteIn {
 
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
+    // The quad's position in units of the sprite's half width (beyond 1 where a glow's quad grew
+    // to hold its band-limited light).
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) color: vec4<f32>,
     @location(2) @interpolate(flat) kind: f32,
+    // A glow's pixel footprint as a variance in its quad's units (`glow_blur`); 0 for the others.
+    @location(3) @interpolate(flat) blur: f32,
 }
 
 @group(0) @binding(0) var<uniform> gx_frame: GxFrameV2;
@@ -30,6 +34,40 @@ const SMOKE_FALLOFF: f32 = 2.5;
 const SMOKE_SKY_SHARE: f32 = 0.7;
 
 const KIND_GLOW: f32 = 0.0;
+// A glow's light is band-limited to the pixel grid (renderer pass 2, B.7): each of its Gaussian
+// terms is widened by a Gaussian of this many pixels (about a pixel's own footprint) and dimmed by
+// as much, so its energy is kept. A far firefly or a mote of pollen smaller than a pixel then
+// covers about a pixel steadily instead of a sub-pixel point the jitter hits in some frames only
+// (each such hit popped for one frame on the Lakeside's pans, orbits and dollies).
+const GLOW_PIXEL_SIGMA_PX: f32 = 0.5;
+// The glow's two Gaussian terms, exp(-r^2 x falloff) x weight over its quad's unit radius: the
+// soft halo and the bright core.
+const GLOW_HALO: vec2<f32> = vec2<f32>(5.0, 0.55);
+const GLOW_CORE: vec2<f32> = vec2<f32>(60.0, 1.6);
+
+// The variance (quad units squared) a glow of `half_width_px` pixels is widened by.
+fn glow_blur(half_width_px: f32) -> f32 {
+    let sigma = GLOW_PIXEL_SIGMA_PX / max(half_width_px, 1e-3);
+    return sigma * sigma;
+}
+
+// How far the quad reaches, in units of the half width, so the widened halo is cut where the
+// sharp one was (at its unit radius).
+fn glow_reach(blur: f32) -> f32 {
+    return sqrt(1.0 + blur * 2.0 * GLOW_HALO.x);
+}
+
+// One Gaussian term (x: falloff, y: weight) at squared radius `r2`, widened by variance `blur`.
+fn glow_term(term: vec2<f32>, r2: f32, blur: f32) -> f32 {
+    let variance = 0.5 / term.x;
+    let widened = variance + blur;
+    return term.y * (variance / widened) * exp(-r2 * 0.5 / widened);
+}
+
+// A glow's light at squared radius `r2` (quad units), band-limited by `blur`.
+fn glow_light(r2: f32, blur: f32) -> f32 {
+    return glow_term(GLOW_HALO, r2, blur) + glow_term(GLOW_CORE, r2, blur);
+}
 const KIND_SMOKE: f32 = 2.0;
 const KIND_POOL: f32 = 3.0;
 
@@ -49,18 +87,33 @@ fn sprite_corner(i: u32, sprite: SpriteIn) -> vec3<f32> {
         right = normalize(cross(helper, axis));
         up = cross(axis, right);
     }
-    let half_width = sprite.center_size.w;
-    let half_height = select(sprite.extra.x, half_width, sprite.extra.x <= 0.0);
+    let reach = sprite_reach(sprite);
+    let half_width = sprite.center_size.w * reach;
+    let half_height = select(sprite.extra.x, sprite.center_size.w, sprite.extra.x <= 0.0) * reach;
     return sprite.center_size.xyz + right * uv.x * half_width + up * uv.y * half_height;
+}
+
+// A glow's footprint variance (`glow_blur`); 0 for smoke and pools, whose light is soft already.
+fn sprite_blur(sprite: SpriteIn) -> f32 {
+    if sprite.axis_kind.w != KIND_GLOW {
+        return 0.0;
+    }
+    return glow_blur(half_width_px(sprite.center_size.xyz, sprite.center_size.w));
+}
+
+// How far the sprite's quad reaches, in units of its half width.
+fn sprite_reach(sprite: SpriteIn) -> f32 {
+    return glow_reach(sprite_blur(sprite));
 }
 
 fn sprite_out(i: u32, sprite: SpriteIn) -> SpriteOut {
     let corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
     var out: SpriteOut;
     out.clip = gx_frame.view_proj * vec4<f32>(sprite_corner(i, sprite), 1.0);
-    out.uv = corners[i];
+    out.uv = corners[i] * sprite_reach(sprite);
     out.color = sprite.color;
     out.kind = sprite.axis_kind.w;
+    out.blur = sprite_blur(sprite);
     return out;
 }
 
@@ -93,10 +146,11 @@ fn fs_sprite(in: SpriteOut) -> @location(0) vec4<f32> {
         let a = body * in.color.a * (0.6 + 0.4 * n);
         return vec4<f32>(scene_rgb(smoke_light(in.color.rgb)) * a, a);
     }
-    if r2 > 1.0 {
+    let reach = glow_reach(in.blur);
+    if r2 > reach * reach {
         discard;
     }
-    var light = exp(-r2 * 5.0) * 0.55 + exp(-r2 * 60.0) * 1.6;
+    var light = glow_light(r2, in.blur);
     if in.kind == KIND_POOL {
         light = (1.0 - smoothstep(0.0, 1.0, sqrt(r2))) * 0.6;
     }
@@ -154,6 +208,7 @@ struct SpriteReactiveOut {
     @location(2) @interpolate(flat) kind: f32,
     // The share of its coverage the sprite writes, by how far its centre moved on screen.
     @location(3) @interpolate(flat) share: f32,
+    @location(4) @interpolate(flat) blur: f32,
 }
 
 @vertex
@@ -164,23 +219,25 @@ fn vs_sprite_reactive(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> Sprite
     out.uv = base.uv;
     out.color = base.color;
     out.kind = base.kind;
+    out.blur = base.blur;
     let moved = parallax_px(sprite.center_size.xyz, sprite.extra.yzw);
     let size = half_width_px(sprite.center_size.xyz, sprite.center_size.w);
     out.share = saturate((moved - REACTIVE_STILL_PX) / (1.0 - REACTIVE_STILL_PX)) * smoothstep(REACTIVE_SIZE_PX * 0.5, REACTIVE_SIZE_PX, size);
     return out;
 }
 
-// How much of a pixel a glow owns at `uv` on its quad: its light over its strongest channel.
-fn glow_cover(uv: vec2<f32>, color: vec4<f32>) -> f32 {
-    let r2 = dot(uv, uv);
-    let light = exp(-r2 * 5.0) * 0.55 + exp(-r2 * 60.0) * 1.6;
+// How much of a pixel a glow owns at `uv` on its quad (footprint `blur`): its light over its
+// strongest channel.
+fn glow_cover(uv: vec2<f32>, color: vec4<f32>, blur: f32) -> f32 {
+    let light = glow_light(dot(uv, uv), blur);
     return max(color.r, max(color.g, color.b)) * color.a * light * REACTIVE_GLOW_GAIN;
 }
 
 @fragment
 fn fs_sprite_reactive(in: SpriteReactiveOut) -> @location(0) vec4<f32> {
     let r2 = dot(in.uv, in.uv);
-    if in.share <= 0.0 || in.kind == KIND_POOL || r2 > 1.0 {
+    let reach = glow_reach(in.blur);
+    if in.share <= 0.0 || in.kind == KIND_POOL || r2 > reach * reach {
         discard;
     }
     var cover: f32;
@@ -188,7 +245,7 @@ fn fs_sprite_reactive(in: SpriteReactiveOut) -> @location(0) vec4<f32> {
         let body = exp(-r2 * SMOKE_FALLOFF) * (1.0 - smoothstep(0.5, 1.0, sqrt(r2)));
         cover = body * in.color.a;
     } else {
-        cover = glow_cover(in.uv, in.color);
+        cover = glow_cover(in.uv, in.color, in.blur);
         // Where the glow draws its own motion (`fs_sprite_motion`) its history follows it.
         if cover >= GLOW_MOTION_COVER {
             discard;
@@ -213,6 +270,7 @@ struct SpriteMotionOut {
     @location(2) @interpolate(flat) kind: f32,
     // The centre's NDC motion, this frame's position minus last frame's (unjittered cameras).
     @location(3) @interpolate(flat) motion: vec2<f32>,
+    @location(4) @interpolate(flat) blur: f32,
 }
 
 @vertex
@@ -223,6 +281,7 @@ fn vs_sprite_motion(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteMo
     out.uv = base.uv;
     out.color = base.color;
     out.kind = base.kind;
+    out.blur = base.blur;
     let now = ndc_of(gx_frame.unjittered_view_proj, vec4<f32>(sprite.center_size.xyz, 1.0));
     let before = ndc_of(gx_frame.prev_view_proj, vec4<f32>(sprite.extra.yzw, 1.0));
     // A centre behind either camera has no reprojection: no motion (the renderer's rule).
@@ -232,7 +291,8 @@ fn vs_sprite_motion(@builtin(vertex_index) i: u32, sprite: SpriteIn) -> SpriteMo
 
 @fragment
 fn fs_sprite_motion(in: SpriteMotionOut) -> @location(0) vec4<f32> {
-    if in.kind != KIND_GLOW || dot(in.uv, in.uv) > 1.0 || glow_cover(in.uv, in.color) < GLOW_MOTION_COVER {
+    let reach = glow_reach(in.blur);
+    if in.kind != KIND_GLOW || dot(in.uv, in.uv) > reach * reach || glow_cover(in.uv, in.color, in.blur) < GLOW_MOTION_COVER {
         discard;
     }
     return vec4<f32>(in.motion, 0.0, 0.0);
