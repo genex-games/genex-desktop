@@ -1592,7 +1592,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Apache License 2.0
 
-Applies to Basis Universal, Draco, Chevrotain, the pdf.js JPEG decoder, the Filament functions the Rust renderer ports (Copyright (C) The Android Open Source Project) and the Bevy auto exposure and contact-shadow functions it ports (Bevy contributors and Tomasz Stachowiak, dual-licensed MIT OR Apache-2.0) ([Rust renderer shader ports](#rust-renderer-shader-ports)). Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
+Applies to Basis Universal, Draco, Chevrotain, the pdf.js JPEG decoder, the Filament functions the Rust renderer ports (Copyright (C) The Android Open Source Project) and the Bevy auto exposure, contact-shadow and reflection-probe box-projection functions it ports (Bevy contributors and Tomasz Stachowiak, dual-licensed MIT OR Apache-2.0) ([Rust renderer shader ports](#rust-renderer-shader-ports)). Text from https://www.apache.org/licenses/LICENSE-2.0.txt:
 
 ```
                                  Apache License

@@ -1,6 +1,7 @@
 // Lighting chunk: fog (RQ4.3). Height and distance fog, evaluated analytically along the view ray
 // from the camera to the surface: no depth target, no history, on in every preset. Reads the
-// forward bindings `frame`, `env_specular` and `env_sampler` and the accessor `gx_fog()` (the
+// forward binding `frame`, the sky's prefiltered cube through `gx_env_sky` (the environment
+// bindings' accessor, A.3) and the accessor `gx_fog()` (the
 // forward pass's is forward_effects.wgsl, the Level-2 v2 prelude's reads GxFrameV2); the Level-2 v2 `gx_shade_pbr` is
 // built from this same text. fog.rs is the CPU twin of every function here and tests/fog.rs holds
 // the two to each other.
@@ -12,7 +13,7 @@
 // - under the flat-colour environment (`frame.ambient.w` 0) the in-scatter is the fog row's colour,
 //   which the renderer makes the fog's colour times the flat backdrop's (`fog::gpu_fog_over`);
 // - under a sky or an HDR map (`frame.ambient.w` 1) it is the environment's radiance towards the
-//   horizon in the ray's azimuth (the prefiltered cube `env_specular` at GX_FOG_ENV_ROUGHNESS,
+//   horizon in the ray's azimuth (the sky's prefiltered cube, `gx_env_sky`, at GX_FOG_ENV_ROUGHNESS,
 //   its mirror level, the sky-view LUT's colour unblurred) plus the sun's forward lobe of the
 //   frame's sun colour (already the sun as it reaches the ground: under the sky through the
 //   transmittance LUT, under a map its analytic sun; never reddened again), both multiplied by the
@@ -116,7 +117,7 @@ fn gx_fog_inscatter(fog: GxFog, dir: vec3<f32>) -> vec3<f32> {
     }
     let sun = normalize(frame.sun_dir.xyz);
     let lobe = frame.sun_color.rgb * (gx_fog_sun_up(sun.y) * GX_FOG_SUN_SHARE * gx_fog_phase(dot(dir, sun)));
-    let sky = textureSampleLevel(env_specular, env_sampler, gx_fog_horizon(dir), gx_env_lod(GX_FOG_ENV_ROUGHNESS)).rgb;
+    let sky = gx_env_sky(gx_fog_horizon(dir), gx_env_lod(GX_FOG_ENV_ROUGHNESS));
     return tint * (sky + lobe);
 }
 

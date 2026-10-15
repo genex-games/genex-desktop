@@ -16,8 +16,9 @@ use genex_render::device_class::DeviceClass;
 use genex_render::graph::FrameEncoder;
 use genex_render::hdri::HdriImage;
 use genex_render::ibl::{
-    BRDF_LUT_SAMPLES, BRDF_LUT_SIZE, BakeAction, BakeRequest, EnvironmentMaps, SLICE_STEPS, SPECULAR_MIPS, SliceStep, bake_bytes, brdf_lut_reference,
-    cube_direction, equirect_direction, ggx_half_vector, hammersley, map_direction, roughness_lod, sh9_eval, slice_budget,
+    BRDF_LUT_SAMPLES, BRDF_LUT_SIZE, BakeAction, BakeRequest, CONTINUOUS_PREFILTER_SAMPLES, EnvironmentMaps, SLICE_STEPS, SPECULAR_MIPS, SliceStep, SourceKind,
+    bake_bytes, brdf_lut_reference, continuous_bake_work, cube_direction, equirect_direction, ggx_half_vector, hammersley, map_direction, roughness_lod,
+    sh9_eval, slice_budget,
 };
 use genex_render::presets::preset_quality;
 use genex_render::settings::{Environment, EnvironmentQuality, HdriEnvironment, HdriSun, Quality, QualityPreset, SceneFormat, SkyParams};
@@ -552,6 +553,9 @@ fn metal_a_sun_turning_a_tenth_of_a_degree_a_tick_keeps_the_sky_bake_within_its_
     let mut quality = preset_quality(QualityPreset::High, DeviceClass::ALL[0]).environment;
     quality.ibl = true;
     quality.cube_size = side;
+    // Renderer pass 2 A.3 (SI-02 step 2) flips high to a continuous rebake: this row holds the
+    // time-sliced cycle every other quality (and phones) keeps.
+    quality.continuous_sky = false;
     let mut maps = EnvironmentMaps::new(&gpu.device, &gpu.queue);
     let mut sky = SkyState::new();
     sky.set_environment(&Environment::sky());
@@ -1213,6 +1217,154 @@ fn metal_a_setting_sun_steps_the_sky_s_ambient_less_than_a_percent_a_frame() {
     assert!(failures.is_empty(), "the ambient steps: {failures:?}");
 }
 
+/// The bound specular cube's mean radiance over mip `mip` of every face.
+fn cube_mean(gpu: &Gpu, maps: &EnvironmentMaps, mip: u32) -> [f32; 3] {
+    let specular = maps.specular_texture().expect("baked");
+    let mut sum = [0.0_f64; 3];
+    let mut count = 0.0_f64;
+    for face in 0..6 {
+        for texel in read_layer(gpu, specular, mip, face, 4).chunks(4) {
+            for c in 0..3 {
+                sum[c] += f64::from(f16_value(texel[c]));
+            }
+            count += 1.0;
+        }
+    }
+    sum.map(|value| (value / count) as f32)
+}
+
+/// The most a continuous rebake's cube may change from one frame to the next while the sun sets
+/// 0.05 degrees a frame (a 6-minute day): SI-15's sun-sweep row.
+const CONTINUOUS_CUBE_STEP: f32 = 0.01;
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_a_setting_sun_moves_the_sky_cube_a_little_every_frame_on_high() {
+    // Renderer pass 2 A.3, SI-02 step 2 with SI-15's sun-sweep row: the time-sliced rebake (every
+    // phone, `low` and `medium`) leaves the bound cube unchanged until the sun has turned past the
+    // threshold and the 13-step cycle lands, then steps by all of it; desktop `high` and `ultra`
+    // rebake the cube whole on every frame the sun turned, at the continuous sample count, so a
+    // glossy surface's sky reflection follows a setting sun without steps.
+    let Some(gpu) = gpu() else { return };
+    let mut steps = Vec::new();
+    for continuous in [false, true] {
+        let mut quality = preset_quality(QualityPreset::High, DeviceClass::ALL[0]).environment;
+        quality.ibl = true;
+        quality.cube_size = 64;
+        quality.continuous_sky = continuous;
+        let mut maps = EnvironmentMaps::new(&gpu.device, &gpu.queue);
+        let mut sky = SkyState::new();
+        sky.set_environment(&Environment::sky());
+        maps.set_environment(&Environment::sky());
+        assert_eq!(sky_frame(&gpu, &mut sky, &mut maps, &quality, 0, sun_up(12.0)), BakeAction::Full);
+        let mut previous = cube_mean(&gpu, &maps, 0);
+        let mut worst = 0.0_f32;
+        for tick in 1..=120u64 {
+            let action = sky_frame(&gpu, &mut sky, &mut maps, &quality, tick, sun_up(12.0 - 0.05 * tick as f32));
+            if continuous {
+                assert_eq!(action, BakeAction::Full, "tick {tick}: the sun turned, the cube follows whole");
+                let work = maps.last_work();
+                assert_eq!(work.prefilter_samples, CONTINUOUS_PREFILTER_SAMPLES.min(genex_render::ibl::prefilter_samples(64)));
+                assert!(work.texel_samples <= continuous_bake_work(64, SourceKind::Sky) + genex_render::ibl::sky_sh_work(), "tick {tick}: {work:?}");
+            }
+            let mean = cube_mean(&gpu, &maps, 0);
+            let step = (0..3).map(|c| (mean[c] - previous[c]).abs() / previous[c].max(1e-6)).fold(0.0_f32, f32::max);
+            worst = worst.max(step);
+            previous = mean;
+        }
+        eprintln!("continuous {continuous}: the cube's mean changes at most {:.3}% a frame", 100.0 * worst);
+        steps.push(worst);
+    }
+    let [sliced, continuous] = [steps[0], steps[1]];
+    assert!(continuous <= CONTINUOUS_CUBE_STEP, "a continuous rebake steps {:.3}% a frame", 100.0 * continuous);
+    assert!(continuous * 3.0 <= sliced, "the time-sliced cycle steps more ({:.3}%) than the continuous rebake ({:.3}%)", 100.0 * sliced, 100.0 * continuous);
+}
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_a_continuous_rebake_fits_a_share_of_the_frame() {
+    // SI-02 step 2's cost: a whole rebake at the continuous sample count, timed on the GPU, on
+    // every frame of a turning map (the sky's own costs the same passes from its LUT).
+    let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
+    let gpu = match Gpu::headless_with(wgpu::Features::TIMESTAMP_QUERY) {
+        Ok(gpu) => gpu,
+        Err(error) => {
+            assert!(!require, "GENEX_REQUIRE_METAL=1 and no adapter with timestamps: {error}");
+            eprintln!("skipped: no adapter with timestamp queries ({error})");
+            return;
+        }
+    };
+    let map = synthetic_map(1024, 512, smooth);
+    let mut fields = vec![format!("\"row\":\"ibl-continuous-rebake\",\"adapter\":\"{}\"", gpu.receipt().adapter)];
+    let mut failures = Vec::new();
+    for side in [128_u32, 256] {
+        let mut quality = ibl_quality(side);
+        quality.continuous_sky = true;
+        let mut maps = baked(&gpu, &map, &hdri(0.0), side);
+        let mut timer = BakeTimer::new(&gpu, 20);
+        for run in 0..22u64 {
+            let environment = hdri(run as f32);
+            let bake = BakeRequest { environment: &environment, quality: &quality, frame_index: run + 1, settle: false, sun_dir: [0.0, 1.0, 0.0], sun_color: [1.0; 3] };
+            if run < 2 {
+                frame(&gpu, &mut maps, &environment, &quality, run + 1, false, [0.0, 1.0, 0.0]);
+                continue;
+            }
+            timer.frame(&gpu, &mut maps, &bake);
+            assert_eq!(maps.last_work().action, BakeAction::Full, "run {run}: whole");
+        }
+        let mut times = timer.read(&gpu);
+        times.sort_by(f64::total_cmp);
+        let p50 = times[times.len() / 2];
+        fields.push(format!("\"cube{side}\":{{\"p50Ms\":{p50:.4},\"maxMs\":{:.4}}}", times[times.len() - 1]));
+        if p50 > CONTINUOUS_BAKE_MS {
+            failures.push(format!("cube {side}: {p50:.3} ms"));
+        }
+    }
+    let row = format!("{{{}}}", fields.join(","));
+    println!("{row}");
+    if let Ok(path) = std::env::var("GENEX_PERF_OUT") {
+        std::fs::write(path, format!("{row}\n")).expect("perf row");
+    }
+    assert!(failures.is_empty(), "a continuous rebake over {CONTINUOUS_BAKE_MS} ms: {failures:?}");
+}
+
+/// Every specular mip's faces of the bound bake.
+fn specular_bytes(gpu: &Gpu, maps: &EnvironmentMaps) -> Vec<u16> {
+    let specular = maps.specular_texture().expect("baked");
+    (0..SPECULAR_MIPS).flat_map(|mip| (0..6).map(move |face| (mip, face))).flat_map(|(mip, face)| read_layer(gpu, specular, mip, face, 4)).collect()
+}
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_a_resting_environment_refreshes_a_continuous_bake_at_the_full_count() {
+    // SI-02 step 2: a continuous rebake prefilters at CONTINUOUS_PREFILTER_SAMPLES; once nothing
+    // changes, a time-sliced refresh at the full count binds what a cold bake (a settled capture)
+    // binds, byte for byte.
+    let Some(gpu) = gpu() else { return };
+    let side = 256;
+    let mut quality = ibl_quality(side);
+    quality.continuous_sky = true;
+    let map = synthetic_map(256, 128, smooth);
+    let mut maps = baked(&gpu, &map, &hdri(0.0), side);
+    for (frame_index, degrees) in [(1, 1.0), (2, 2.0)] {
+        assert_eq!(frame(&gpu, &mut maps, &hdri(degrees), &quality, frame_index, false, [0.0, 1.0, 0.0]), BakeAction::Full, "turned: whole");
+        assert_eq!(maps.last_work().prefilter_samples, CONTINUOUS_PREFILTER_SAMPLES);
+    }
+    let cold = baked(&gpu, &map, &hdri(2.0), side);
+    let reference = specular_bytes(&gpu, &cold);
+    assert_ne!(specular_bytes(&gpu, &maps), reference, "the continuous bake is the coarse one");
+    for frame_index in 3..3 + u64::from(SLICE_STEPS) {
+        let action = frame(&gpu, &mut maps, &hdri(2.0), &quality, frame_index, false, [0.0, 1.0, 0.0]);
+        assert!(matches!(action, BakeAction::Slice(_)), "frame {frame_index}: {action:?}");
+    }
+    assert_eq!(specular_bytes(&gpu, &maps), reference, "the resting refresh binds the cold bake");
+    assert_eq!(frame(&gpu, &mut maps, &hdri(2.0), &quality, 40, false, [0.0, 1.0, 0.0]), BakeAction::Idle);
+}
+
+/// A continuous rebake's GPU time at most, ms: a time-sliced step's share of a 60 fps frame
+/// (`SLICE_SHARE`), since it replaces the slices on the qualities that run it.
+const CONTINUOUS_BAKE_MS: f64 = SLICE_SHARE * FRAME_INTERVAL_MS;
+
 /// Run compute entry `entry` of `source` (pipeline constants `constants`) one workgroup per row
 /// over `rows` (`stride` vec4s each, at binding `rows_binding`), with `bindings` of group 0
 /// besides: the rows as the probe left them.
@@ -1257,11 +1409,19 @@ fn shading_probe_source() -> String {
     let base = genex_render::shaders::FORWARD;
     let patched = base.replacen("fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {", "fn gx_ambient_occlusion_unprobed(world_pos: vec3<f32>) -> vec4<f32> {", 1);
     assert_ne!(patched, base, "forward_effects.wgsl no longer answers the AO term here: the probe stands in for it");
+    // Renderer pass 2 A.3: a compute probe has no light bins, so the reflection is the sky's
+    // layer of the probe array (the forward pass walks the probes binned at the pixel).
+    let reflection = "fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {";
+    let patched = patched.replacen(reflection, "fn gx_env_reflection_binned(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {", 1);
     format!(
         "{patched}\n{}",
         r"
 @group(0) @binding(20) var<storage, read_write> probe_rows: array<vec4<f32>>;
 var<private> probe_ao: vec4<f32>;
+
+fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    return gx_env_sky(dir, lod);
+}
 
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
     return probe_ao;
@@ -1330,7 +1490,8 @@ fn black_cube_and_sampler(gpu: &Gpu) -> (wgpu::TextureView, wgpu::Sampler) {
         usage: wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), array_layer_count: Some(6), ..Default::default() });
+    // The forward text binds the probe cube array at 11 (renderer pass 2 A.3): one black cube.
+    let view = texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), array_layer_count: Some(6), ..Default::default() });
     let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
@@ -1491,6 +1652,9 @@ fn metal_the_sky_s_sh9_refresh_costs_a_small_share_of_the_sky_s_budget() {
     quality.cube_size = 256;
     // No rebake while the sun moves a little: only the refresh is due.
     quality.sun_rebake_tenths = 1800;
+    // Renderer pass 2 A.3 (SI-02 step 2): high rebakes continuously, which includes the SH9 each
+    // frame; this row times the SH9-only refresh the time-sliced qualities run.
+    quality.continuous_sky = false;
     let Environment::Sky(params) = Environment::sky() else { unreachable!("the default sky") };
     let (mut sky, mut maps) = (SkyState::new(), EnvironmentMaps::new(&gpu.device, &gpu.queue));
     sky.set_environment(&Environment::sky());

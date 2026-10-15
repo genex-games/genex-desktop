@@ -1814,6 +1814,18 @@ fn lighting(lights: &Lights) -> Lighting {
         .map(|light| PointLight { position: light.position.to_array(), range: light.range, color: rgb(light.color), intensity: intensity(light.intensity) })
         .collect();
     lighting.spots = lights.spots.iter().filter(|light| usable_light(light.position, light.range)).map(spot_light).collect();
+    // The renderer holds or drops a hostile probe (`probes::ReflectionProbe::held`).
+    lighting.reflection_probes = lights
+        .reflection_probes
+        .iter()
+        .map(|probe| genex_render::probes::ReflectionProbe {
+            min: probe.min.to_array(),
+            max: probe.max.to_array(),
+            capture: probe.capture.to_array(),
+            blend: probe.blend,
+            intensity: probe.intensity,
+        })
+        .collect();
     lighting
 }
 

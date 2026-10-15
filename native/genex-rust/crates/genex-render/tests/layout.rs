@@ -139,7 +139,8 @@ fn every_renderer_shader_validates_against_webgpu_core() {
     assert!(!SHADERS.is_empty());
     for (name, source) in SHADERS {
         let module = parse(name, source);
-        Validator::new(ValidationFlags::all(), Capabilities::empty())
+        // WebGPU core's cube arrays (renderer pass 2 A.3: the forward pass's probe array).
+        Validator::new(ValidationFlags::all(), Capabilities::CUBE_ARRAY_TEXTURES)
             .validate(&module)
             .unwrap_or_else(|error| panic!("{name} needs more than WebGPU core: {error:?}"));
     }
@@ -232,7 +233,8 @@ fn variants_of(shader: &str) -> Vec<Variant> {
 }
 
 fn validated(name: &str, module: &naga::Module) -> ModuleInfo {
-    Validator::new(ValidationFlags::all(), Capabilities::empty())
+    // WebGPU core's cube arrays (renderer pass 2 A.3: the forward pass's probe array).
+    Validator::new(ValidationFlags::all(), Capabilities::CUBE_ARRAY_TEXTURES)
         .validate(module)
         .unwrap_or_else(|error| panic!("{name} needs more than WebGPU core: {error:?}"))
 }
@@ -345,6 +347,9 @@ fn kind_of(module: &naga::Module, global: &naga::GlobalVariable) -> BindingKind 
             (ImageDimension::D2, false, ImageClass::Sampled { multi: false, .. }) => BindingKind::Texture2d,
             (ImageDimension::D2, true, ImageClass::Sampled { multi: false, .. }) => BindingKind::Texture2dArray,
             (ImageDimension::Cube, false, ImageClass::Sampled { .. }) => BindingKind::TextureCube,
+            // The forward pass's reflection-probe array (renderer pass 2 A.3): no v2 kind (the v2
+            // map keeps the cube); one sampled texture, counted as the cube it replaced.
+            (ImageDimension::Cube, true, ImageClass::Sampled { .. }) => BindingKind::TextureCube,
             (ImageDimension::D3, false, ImageClass::Sampled { .. }) => BindingKind::Texture3d,
             other => panic!("no v2 binding kind for {other:?}"),
         },
@@ -595,10 +600,16 @@ fn the_ldr_degrade_reasons_spell_the_hosts_degrade_reasons() {
 fn the_forward_frame_layout_binds_the_environment_under_the_v2_maps_names_and_types() {
     let module = parse("forward", shader("forward"));
     let declared = declared(&module);
-    for (binding, name) in FRAME_ENV_BINDINGS {
+    // Renderer pass 2 A.3 flips binding 11: the forward pass binds the reflection probes' cube
+    // array there (`env_probes`, its layer 0 the sky's cube) while the v2 map keeps the cube; the
+    // other environment inputs keep the v2 map's names and types.
+    for (binding, name) in FRAME_ENV_BINDINGS.into_iter().filter(|(binding, _)| *binding != 11) {
         let v2 = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name).unwrap_or_else(|| panic!("the v2 map names {name}"));
         let row = declared.iter().find(|(group, at, ..)| (*group, *at) == (0, binding)).unwrap_or_else(|| panic!("forward binds group 0 binding {binding}"));
         assert_eq!((row.2.as_str(), row.3), (name, v2.kind.as_declared()), "forward binding {binding}");
+    }
+    for (binding, name) in genex_render::probes::FRAME_PROBE_BINDINGS {
+        assert!(declared.iter().any(|(group, at, declared, _)| (*group, *at, declared.as_str()) == (0, binding, name)), "forward binds {name} at {binding}");
     }
     // The shared lighting chunks read the environment in both preludes: the SH9 evaluation and
     // the environment term compile against the forward bindings and the v2 material map alike.
@@ -624,14 +635,16 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
     // sampler PCSS's blocker search gathers the shadow map with (16 per stage in core).
     assert_eq!(
         (counts.uniform_buffers, counts.storage_buffers, counts.sampled_textures, counts.samplers),
-        (4, 8, FORWARD_FRAGMENT_TEXTURES_MAX, 4),
+        // Renderer pass 2 A.3 flipped 8 -> 9 storage buffers: the reflection probes' rows.
+        (4, 9, FORWARD_FRAGMENT_TEXTURES_MAX, 4),
         "{counts:?}"
     );
     // WebGPU's limits are per stage: the fragment stage reads five tables (materials, lights, the
     // light extensions, the one light-bin table and the material extensions; pass 2 A.0 LG-16
     // flipped 6 -> 5), the vertex stage the instance side.
     let fragment = stage_counts_in(&module, &info, naga::ShaderStage::Fragment);
-    assert_eq!(fragment.storage_buffers, 5, "{fragment:?}");
+    // Renderer pass 2 A.3 flipped 5 -> 6: the reflection probes' rows.
+    assert_eq!(fragment.storage_buffers, 6, "{fragment:?}");
     for stage in [naga::ShaderStage::Vertex, naga::ShaderStage::Fragment] {
         let used = stage_counts_in(&module, &info, stage);
         assert!(used.uniform_buffers <= core.max_uniform_buffers_per_shader_stage, "{stage:?}: {used:?}");
@@ -1540,12 +1553,13 @@ fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core_with_headr
         fragment.add(effect_kind(name));
     }
     // frame, env_sh, fog; lights, materials, light_ext, light_bins, material_ext (pass 2 A.0
-    // LG-16 flipped 6 -> 5 storage buffers: the tile masks share the z-bin table);
-    // shadow array, two class-0 arrays, env cube, BRDF LUT, six size-class arrays, AO, aerial
+    // LG-16 flipped 6 -> 5 storage buffers: the tile masks share the z-bin table) and the
+    // reflection probes' rows (A.3 flipped 5 -> 6); shadow array, two class-0 arrays, the env
+    // cube (A.3: the probe cube array in its slot), BRDF LUT, six size-class arrays, AO, aerial
     // perspective, contact shadows; shadow comparison, texture, environment and point samplers.
     assert_eq!(
         (fragment.uniform_buffers, fragment.storage_buffers, fragment.sampled_textures, fragment.samplers),
-        (3, 5, 14, 4),
+        (3, 6, 14, 4),
         "{fragment:?}"
     );
     assert!(fragment.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX);
@@ -1615,8 +1629,9 @@ fn the_light_binning_node_lands_and_the_legacy_plan_keeps_its_light_table() {
 /// The forward fragment stage's storage-buffer plan (renderer pass 2 section 2, LG-16): five
 /// today, then the reflection-probe rows (A.3) and the decal rows (A.10) take one each, so it ends
 /// at seven of core's eight. Lights, decals and probes are binned into one table (`light_bins`).
-const FORWARD_FRAGMENT_STORAGE_TODAY: u32 = 5;
-const FORWARD_FRAGMENT_STORAGE_TIER_A: u32 = FORWARD_FRAGMENT_STORAGE_TODAY + 2;
+// Renderer pass 2 A.3 flipped 5 -> 6 (the reflection probes' rows); the decal rows (A.10) take the next.
+const FORWARD_FRAGMENT_STORAGE_TODAY: u32 = 6;
+const FORWARD_FRAGMENT_STORAGE_TIER_A: u32 = FORWARD_FRAGMENT_STORAGE_TODAY + 1;
 
 #[test]
 fn the_forward_fragment_stage_leaves_tier_a_its_storage_slots_and_every_stage_stays_within_eight() {

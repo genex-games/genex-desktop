@@ -45,9 +45,9 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
 | 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
-| 11 | environment: sky LUTs, IBL bake | compute |
+| 11 | environment: sky LUTs, IBL bake, reflection-probe captures | compute + pass |
 | 12-15 | opaque, sky, Level-2 materials and `after-opaque`, transparent | in the world pass |
-| 15a, 16, 17 | reactive mask, MSAA resolve, TAA | pass |
+| 15a, 16, 17 | Level-3 in-world passes' own motion, reactive mask, MSAA resolve, TAA | pass |
 | 18-21 | `post-hdr`, bloom, exposure, tonemap | pass / compute |
 | 22-25 | upscale, 2D and `ldr` post, HUD (captures), timestamps | pass / queue |
 
@@ -69,6 +69,25 @@ colour map uploads as `TextureKind::Cutout`, whose mips keep the alpha test's co
 the smaller of it and the screen-space AO on indirect light only. The material sampler filters
 anisotropically by preset (`Quality::anisotropy`: 16 on high and ultra, 8 medium, 4 low and
 phones, 2 on low-tier phones). Spot casters still draw a variant whole.
+
+## Reflection probes
+
+`Lighting::reflection_probes` (`probes::ReflectionProbe`; the facade's `frame.reflection_probe`)
+are boxes of the world whose glossy reflections come from a cube captured inside them. The first
+`EnvironmentQuality::reflection_probes` a frame declares (4 low, 8 medium, 16 high and ultra; 2 to
+8 on phones by tier) get a layer of one cube array whose layer 0 is the sky's specular cube, at the
+sky cube's side capped by `probe_side_max` (256 desktop, 128 phones): binding 11 of the forward
+frame group, the rows (binned with the lights, `ClusterKind::Probe`) at binding 22. Node 11
+captures a probe after the sky's bake: six faces drawn from its capture point through the forward
+pipeline compiled for the capture (one sun cascade over the probe's box, the light loop, no
+screen effects, no probes read), the sky behind the geometry, then the IBL prefilter into a
+staging cube published into the probe's layer whole. A new probe is captured whole (two a frame);
+a stale one (the sky rebaked, the probe moved) refreshes one of 14 steps a frame while its last
+capture stays bound; a settled capture recaptures what differs. The forward pass weighs each
+binned probe by its fade past the box, reads it along the reflection projected onto the box grown
+by the fade (eased in with the weight) and fills what the probes leave with the sky. Captures
+leave out transparent draws, alpha-masked and double-sided variants, particles, lines and
+Level-2/3 passes; Level-2 v2 materials reflect the sky's cube.
 
 ## Output size and window present
 

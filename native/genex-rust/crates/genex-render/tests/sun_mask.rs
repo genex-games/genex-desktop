@@ -375,7 +375,10 @@ fn every_key() -> Vec<genex_render::post::sun_mask::SunMaskKey> {
 fn emits_everywhere(name: &str, source: &str, constants: &[(&str, f64)]) {
     use naga::back::{hlsl, msl, spv};
     let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|error| panic!("{name}: {}", error.emit_to_string(source)));
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+    // WebGPU core reads cube arrays (A.3's probes bind the specular cube as one, and the mask's
+    // visibility pass is appended to the forward module); compatibility mode does not.
+    let core = naga::valid::Capabilities::CUBE_ARRAY_TEXTURES;
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), core)
         .validate(&module)
         .unwrap_or_else(|error| panic!("{name} needs more than WebGPU core: {error:?}"));
     let constants: naga::back::PipelineConstants = constants.iter().map(|(key, value)| ((*key).to_owned(), *value)).collect();

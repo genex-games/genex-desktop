@@ -283,6 +283,9 @@ fn cube_radiance(d: [f32; 3]) -> [f32; 3] {
 /// A synthetic environment cube (16 texels a side, three mips) and its sampler.
 struct TestCube {
     view: wgpu::TextureView,
+    /// The same six layers as a one-cube array: what the forward text binds at 11 (renderer pass 2
+    /// A.3: the reflection probes' cube array, layer 0 the sky's).
+    array: wgpu::TextureView,
     sampler: wgpu::Sampler,
 }
 
@@ -325,6 +328,7 @@ fn synthetic_cube_of(gpu: &Gpu, side: u32, radiance: impl Fn([f32; 3]) -> [f32; 
     }
     TestCube {
         view: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() }),
+        array: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), ..Default::default() }),
         sampler: gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
     }
 }
@@ -403,11 +407,12 @@ fn chunk_through(gpu: &Gpu, source: Source, frame: &GpuFrame, fog: &GpuFog, cube
     let uniform = wgpu::BufferUsages::UNIFORM;
     let sampler = wgpu::BindingResource::Sampler(&cube.sampler);
     let view = wgpu::BindingResource::TextureView(&cube.view);
+    let array = wgpu::BindingResource::TextureView(&cube.array);
     match source {
         Source::Forward => {
             let frame = buffer_with(gpu, "fog frame", uniform, bytemuck::bytes_of(frame));
             let row = buffer_with(gpu, "fog row", uniform, bytemuck::bytes_of(fog));
-            run_probe(gpu, &forward_probe_source(), 20, &[(0, frame.as_entire_binding()), (11, view), (14, sampler), (15, row.as_entire_binding())], rows)
+            run_probe(gpu, &forward_probe_source(), 20, &[(0, frame.as_entire_binding()), (11, array), (14, sampler), (15, row.as_entire_binding())], rows)
         }
         Source::V2 => {
             let mut v2 = GxFrameV2::from_frame(frame);
@@ -1204,6 +1209,7 @@ fn baked_sky_cube(gpu: &Gpu, sun_dir: [f32; 3]) -> TestCube {
     let texture = maps.specular_texture().expect("baked cube");
     TestCube {
         view: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), array_layer_count: Some(6), ..Default::default() }),
+        array: texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::CubeArray), array_layer_count: Some(6), ..Default::default() }),
         sampler: gpu.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
     }
 }
@@ -1530,7 +1536,7 @@ fn shot_posts(origin: vec3<f32>, dir: vec3<f32>) -> ShotHit {
 // to blue under the flat colour.
 fn shot_sky(dir: vec3<f32>) -> vec3<f32> {
     if frame.ambient.w > 0.5 {
-        return textureSampleLevel(env_specular, env_sampler, dir, 0.0).rgb;
+        return gx_env_sky(dir, 0.0);
     }
     return mix(test_fog.color.rgb, vec3<f32>(0.25, 0.45, 0.9), clamp(dir.y * 1.5, 0.0, 1.0));
 }
@@ -1666,7 +1672,7 @@ fn shot_group(gpu: &Gpu, pipeline: &wgpu::ComputePipeline, shot: &Shot, cube: &T
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube.view) },
+            wgpu::BindGroupEntry { binding: 11, resource: wgpu::BindingResource::TextureView(&cube.array) },
             wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
             wgpu::BindGroupEntry { binding: 15, resource: fog.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 21, resource: pixels.as_entire_binding() },

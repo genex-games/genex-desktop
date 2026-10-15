@@ -173,10 +173,17 @@ pub struct BudgetInput {
     /// The bytes of the look's 3D grading LUT the tonemap holds (renderer pass 2 A.2; 0: none;
     /// the [`GRADING_LUT_LABEL`] entry of `Renderer::buffer_ledger`).
     pub grading_lut_bytes: u64,
+    /// The bytes the reflection probes hold (renderer pass 2 A.3, `probes::ProbeMaps::bytes`: the
+    /// cube array, the capture's targets and rows; 0: no probe held; the
+    /// [`REFLECTION_PROBES_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub reflection_probe_bytes: u64,
 }
 
 /// The ledger label of the look's 3D grading LUT ([`BudgetKind::Ibl`]; renderer pass 2 A.2).
 pub const GRADING_LUT_LABEL: &str = "grading-lut";
+/// The ledger label of the reflection probes' cubes and capture targets ([`BudgetKind::Ibl`];
+/// renderer pass 2 A.3).
+pub const REFLECTION_PROBES_LABEL: &str = "reflection-probes";
 
 impl BudgetInput {
     /// An input with no materials and no passes.
@@ -195,14 +202,17 @@ impl BudgetInput {
             window: None,
             buffers: Vec::new(),
             grading_lut_bytes: 0,
+            reflection_probe_bytes: 0,
         }
     }
 
-    /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers) and
-    /// its grading LUT ([`GRADING_LUT_LABEL`]).
+    /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers), its
+    /// grading LUT ([`GRADING_LUT_LABEL`]) and its reflection probes ([`REFLECTION_PROBES_LABEL`]).
     pub fn with_buffers(mut self, held: &BudgetLedger) -> BudgetInput {
         self.buffers = held.entries().iter().filter(|entry| entry.kind == BudgetKind::Buffers).map(|entry| (entry.label.clone(), entry.bytes)).collect();
-        self.grading_lut_bytes = held.entries().iter().filter(|entry| entry.label == GRADING_LUT_LABEL).map(|entry| entry.bytes).sum();
+        let labelled = |label: &str| held.entries().iter().filter(|entry| entry.label == label).map(|entry| entry.bytes).sum();
+        self.grading_lut_bytes = labelled(GRADING_LUT_LABEL);
+        self.reflection_probe_bytes = labelled(REFLECTION_PROBES_LABEL);
         self
     }
 
@@ -445,6 +455,9 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
     }
     if input.grading_lut_bytes > 0 {
         ledger.register(BudgetKind::Ibl, GRADING_LUT_LABEL, input.grading_lut_bytes);
+    }
+    if input.reflection_probe_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, REFLECTION_PROBES_LABEL, input.reflection_probe_bytes);
     }
     register_window(&mut ledger, input);
     ledger

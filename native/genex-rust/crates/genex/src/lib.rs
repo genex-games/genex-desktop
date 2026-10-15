@@ -60,7 +60,7 @@ pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
 pub use frame::{
     Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, Lights, Material, PointLight, PostDraw,
-    Shape, SpotLight, Sun, Transform,
+    ReflectionProbe, Shape, SpotLight, Sun, Transform,
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};

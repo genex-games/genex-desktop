@@ -105,6 +105,17 @@ pub const MOBILE_MAX_CUBE_PX: u32 = 256;
 /// 930 KB, past its 96 MiB budget without transient MSAA; a quarter costs 180 KB over the 32 px
 /// cube it replaced (renderer pass 2, P2-0.11).
 pub const MOBILE_MAX_RADIANCE_PX: u32 = 64;
+/// The largest reflection-probe cube a desktop or browser captures (renderer pass 2 A.3,
+/// `probes::probe_side`: the sky cube's side, at most this): ultra's 512 px HDRI cube is the sky's
+/// alone; a probe there holds a 256 px cube (4.2 MB with its mips).
+pub const PROBE_SIDE_MAX_PX: u32 = 256;
+/// The largest reflection-probe cube a phone captures (1.05 MB with its mips).
+pub const MOBILE_PROBE_SIDE_MAX_PX: u32 = 128;
+/// Reflection probes given a cube per desktop preset (low, medium, high and ultra).
+pub const PROBES_PER_PRESET: [u8; 4] = [4, 8, 16, 16];
+/// The most reflection probes a phone of each tier (low, mid, high, ultra) gives a cube, whatever
+/// the preset asks (plan A.3: 2 on mobile-low, 4 on mobile-mid).
+pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
 /// The most local lights a phone bins (`LightQuality::cap`), whatever the preset asks.
 pub const MOBILE_MAX_LIGHTS: u32 = 256;
 /// The smallest binning tile a phone uses, in pixels (fewer tiles to bin and walk).
@@ -261,6 +272,9 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         sky_cadence: cadence,
         aerial_perspective,
         radiance_side_max: 0,
+        reflection_probes: 0,
+        probe_side_max: PROBE_SIDE_MAX_PX,
+        continuous_sky: false,
     }
 }
 
@@ -301,6 +315,7 @@ fn low_row(quality: &mut Quality, form: FormFactor) {
     quality.anisotropy = LOW_ANISOTROPY;
     quality.exposure_input_divisor = 16;
     quality.environment = environment(64, (64, 36), 8, 20, false);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[0];
     // Two cascades (pass-1 gate findings 01, 01b and 02): one 1024 px cascade over 50 units has
     // 8 cm texels under a 45° camera (9 cm for a phone's 768 px over 40), so a figure's legs
     // washed out of its shadow, which stood 30 px off the feet, and a block's shadow lost a wedge
@@ -327,6 +342,7 @@ fn medium_row(quality: &mut Quality) {
     quality.anisotropy = MEDIUM_ANISOTROPY;
     quality.exposure_input_divisor = 8;
     quality.environment = environment(128, (96, 54), 4, 10, true);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[1];
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth32, &MEDIUM_REACH);
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 1, steps: 4, temporal: false };
@@ -339,6 +355,10 @@ fn high_row(quality: &mut Quality) {
     quality.anisotropy = HIGH_ANISOTROPY;
     quality.exposure_input_divisor = 4;
     quality.environment = environment(256, (192, 108), 1, 5, true);
+    quality.environment.reflection_probes = PROBES_PER_PRESET[2];
+    // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
+    // sample count; phones keep the time-sliced cycle).
+    quality.environment.continuous_sky = true;
     quality.shadows = shadows(3, 2048, ShadowFilter::PcssLite, ShadowFormat::Depth32, &HIGH_REACH);
     quality.contact_shadows = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
@@ -359,6 +379,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.taa = quality.taa.with_jitter_cycle(JitterCycle::Sixteen);
     // An HDR map's detail is worth a 512 px cube on ultra (plan §2.4); the smooth sky is not.
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
+    quality.environment.reflection_probes = PROBES_PER_PRESET[3];
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
     quality.shadows = shadows(4, map_size, ShadowFilter::Pcss, ShadowFormat::Depth32, &ULTRA_REACH);
     // Three slices of eight steps at full resolution with history. The unbiased estimate (gate

@@ -1560,6 +1560,16 @@ pub struct EnvironmentQuality {
     /// The largest radiance cube (the prefilter's source, `ibl::radiance_side`) in pixels; 0
     /// keeps it at half the specular side. Phones cap it (`presets::MOBILE_MAX_RADIANCE_PX`).
     pub radiance_side_max: u32,
+    /// Most reflection probes given a captured cube (renderer pass 2 A.3, `probes`): the first
+    /// this many a frame declares; 0 shades none (the sky alone). A resource knob.
+    pub reflection_probes: u8,
+    /// The largest probe cube side in pixels (`probes::probe_side`: the sky cube's side, at most
+    /// this; 0: no cap). A resource knob.
+    pub probe_side_max: u32,
+    /// Whether a moving sun rebakes the sky's cube whole on every frame it turns past
+    /// `ibl::CONTINUOUS_SUN_DEGREES` (renderer pass 2 A.3, SI-02 step 2: desktop and web `high`
+    /// and `ultra`), instead of over a time-sliced cycle once it turned `sun_rebake_tenths`.
+    pub continuous_sky: bool,
 }
 
 /// Local lights.
@@ -1751,6 +1761,9 @@ impl Quality {
                 sky_cadence: 1,
                 aerial_perspective: false,
                 radiance_side_max: 0,
+                reflection_probes: 0,
+                probe_side_max: 0,
+                continuous_sky: false,
             },
             lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0 },
             textures: TextureQuality::OFF,

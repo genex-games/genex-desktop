@@ -124,6 +124,8 @@ pub mod ibl;
 pub mod sky;
 /// HDR environment maps from a game's assets: the Radiance `.hdr` decoder and its caps.
 pub mod hdri;
+/// Reflection probes (renderer pass 2 A.3): box-projected local cubes captured in the scene.
+pub mod probes;
 
 // --- RQ4: the depth/normal prepass, bloom, GTAO, fog, contact shadows (RQ4.0 registers every RQ4
 // module; bloom, AO and contact shadows are `post` nodes) ---

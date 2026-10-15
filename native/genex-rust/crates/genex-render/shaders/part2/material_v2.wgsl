@@ -36,6 +36,21 @@
 @group(0) @binding(10) var<uniform> env_sh: GxEnvSh;
 @group(0) @binding(11) var brdf_lut: texture_2d<f32>;
 @group(0) @binding(12) var env_sampler: sampler;
+
+// The environment's cubes as the shared lighting chunks read them (renderer pass 2 A.3;
+// shaders/forward_env.wgsl answers the same three for the forward pass): a v2 material's
+// reflection is the sky's cube (reflection probes reach the forward pass only).
+fn gx_env_levels() -> u32 {
+    return textureNumLevels(env_specular);
+}
+
+fn gx_env_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    return textureSampleLevel(env_specular, env_sampler, dir, lod).rgb;
+}
+
+fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
+    return gx_env_sky(dir, lod);
+}
 // Screen-space ambient occlusion (RQ4; render size, 1 = unoccluded).
 @group(0) @binding(13) var ao_map: texture_2d<f32>;
 // Aerial perspective (RQ4): rgb in-scatter, a transmittance, over view-space froxels.

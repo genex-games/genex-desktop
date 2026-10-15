@@ -574,7 +574,7 @@ mod tests {
             params: GpuLightBinParams::default(),
             bounds: Vec::new(),
         };
-        BinnedFrame { lights, ext, bins }
+        BinnedFrame { lights, ext, bins, reflection_probes: Vec::new() }
     }
 
     #[test]

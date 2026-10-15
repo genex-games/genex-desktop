@@ -1,7 +1,11 @@
 // Lighting chunk: ambient. The frame's flat ambient colour, or the environment's image-based light
-// (RQ2) when a sky or a map lights the scene. Reads the forward bindings `frame`, `env_specular`,
-// `env_sh`, `brdf_lut` and `env_sampler` (the Level-2 v2 material map declares the same names) and
-// the `gx_ambient_occlusion` accessor (shaders/effects.wgsl).
+// (RQ2) when a sky or a map lights the scene. Reads the forward bindings `frame`, `env_sh`,
+// `brdf_lut` and `env_sampler` (the Level-2 v2 material map declares the same names), the
+// environment's prefiltered cubes through the accessors its bindings' file defines
+// (`gx_env_levels`, `gx_env_sky`, `gx_env_reflection`: shaders/forward_env.wgsl, the v2 prelude's
+// material_v2.wgsl; renderer pass 2 A.3: the forward pass's reflection reads the reflection probes
+// around the surface, a v2 material's the sky's cube) and the `gx_ambient_occlusion` accessor
+// (shaders/effects.wgsl).
 //
 // The environment's light is the split sum (Karis 2013) over the bake RQ2.1 writes: SH9 irradiance
 // for the diffuse lobe, the prefiltered specular cube at the surface's roughness mip times the
@@ -184,14 +188,14 @@ fn gx_env_dfg(n_dot_v: f32, roughness: f32) -> vec2<f32> {
 // roughnesses a mirror-like surface shows get most of the levels. `ibl::roughness_lod` is the CPU
 // twin.
 fn gx_env_lod(roughness: f32) -> f32 {
-    let last_mip = f32(textureNumLevels(env_specular) - 1u);
+    let last_mip = f32(gx_env_levels() - 1u);
     let r = clamp(roughness, 0.0, 1.0);
     return last_mip * r * (2.0 - r);
 }
 
-// The prefiltered radiance arriving along `dir` for perceptual `roughness`.
+// The sky's prefiltered radiance arriving along `dir` for perceptual `roughness`.
 fn gx_env_specular(dir: vec3<f32>, roughness: f32) -> vec3<f32> {
-    return textureSampleLevel(env_specular, env_sampler, dir, gx_env_lod(roughness)).rgb;
+    return gx_env_sky(dir, gx_env_lod(roughness));
 }
 
 // Where a rough lobe's reflected light mostly comes from: the mirror direction `r` pulled
@@ -233,7 +237,8 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     let fms_ems = e_ms * fss_ess * f_avg / (vec3<f32>(1.0) - e_ms * f_avg);
     let k_d = s.albedo * (1.0 - s.metallic) * (vec3<f32>(1.0) - fss_ess - fms_ems);
     let r = reflect(-s.v, s.n);
-    let radiance = gx_env_specular(gx_specular_dominant(s.n, r, s.roughness), s.roughness);
+    // The reflection probes around the surface where the frame has them, else the sky (A.3).
+    let radiance = gx_env_reflection(s.world_pos, gx_specular_dominant(s.n, r, s.roughness), gx_env_lod(s.roughness));
     let ao = gx_surface_occlusion(s);
     let occlusion = ao.w;
     let irradiance = gx_env_irradiance(gx_diffuse_normal(s.n, ao.xyz, occlusion));

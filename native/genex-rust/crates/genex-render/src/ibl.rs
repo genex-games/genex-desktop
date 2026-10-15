@@ -101,6 +101,16 @@ pub const SUN_REBAKE_DEGREES: f32 = 0.5;
 pub const SUN_REBAKE_RADIANCE: f32 = 0.02;
 /// Steps of a time-sliced rebake: six source faces, six prefiltered faces, then SH9.
 pub const SLICE_STEPS: u32 = 13;
+/// How far the sun turns before a quality that rebakes continuously
+/// ([`EnvironmentQuality::continuous_sky`], SI-02 step 2) rebakes the sky whole, in degrees: a
+/// moving sun's cube follows it every frame instead of stepping once per time-sliced cycle.
+pub const CONTINUOUS_SUN_DEGREES: f32 = 0.02;
+/// GGX samples per texel of a continuous rebake's prefilter (renderer pass 2 A.3, SI-02 step 2):
+/// filtered importance sampling reads a mip of the source whose texels cover each sample's solid
+/// angle, so the physical sky (smooth, its sun disk analytic) prefilters within the half-float's
+/// precision from 32 samples, a quarter of a 256 px cube's [`prefilter_samples`], and a whole bake
+/// fits a frame's share. A cold bake and a settled capture keep the full count.
+pub const CONTINUOUS_PREFILTER_SAMPLES: u32 = 32;
 
 /// Pool labels of the environment's targets.
 const SPECULAR_LABEL: &str = "env specular";
@@ -158,7 +168,7 @@ pub fn roughness_lod(roughness: f32) -> f32 {
 }
 
 /// The mips of a texture whose larger side is `side`, down to 1 texel.
-fn full_mips(side: u32) -> u32 {
+pub(crate) fn full_mips(side: u32) -> u32 {
     u32::BITS - side.max(1).leading_zeros()
 }
 
@@ -565,6 +575,12 @@ impl SliceStep {
     /// Texel samples the step reads for a specular cube of `side` from a `kind` source (the bake's
     /// work model), over the uncapped radiance cube: a capped one (phones) reads at most this.
     pub fn work(self, side: u32, kind: SourceKind) -> u64 {
+        self.work_with(side, kind, prefilter_samples(side))
+    }
+
+    /// [`SliceStep::work`] with the prefilter reading `samples` per texel (a continuous rebake's
+    /// [`CONTINUOUS_PREFILTER_SAMPLES`]).
+    pub fn work_with(self, side: u32, kind: SourceKind, samples: u32) -> u64 {
         let texels = |side: u32| u64::from(side) * u64::from(side);
         match self {
             SliceStep::Source { face } => {
@@ -577,10 +593,7 @@ impl SliceStep {
                     SourceKind::Sky => chain,
                 }
             }
-            SliceStep::Prefilter { .. } => {
-                let samples = u64::from(prefilter_samples(side));
-                (1..SPECULAR_MIPS).map(|mip| texels((side >> mip).max(1)) * samples).sum()
-            }
+            SliceStep::Prefilter { .. } => (1..SPECULAR_MIPS).map(|mip| texels((side >> mip).max(1)) * u64::from(samples)).sum(),
             SliceStep::Sh9 => match kind {
                 SourceKind::Map => u64::from(FACES) * texels(SH9_SOURCE_SIDE.min(radiance_side(side, 0))),
                 SourceKind::Sky => sky_sh_work(),
@@ -607,6 +620,13 @@ pub fn full_bake_work(side: u32, kind: SourceKind) -> u64 {
     (0..SLICE_STEPS).map(|index| SliceStep::at(index).work(side, kind)).sum()
 }
 
+/// Texel samples of a continuous rebake of a specular cube of `side` from a `kind` source: every
+/// step, the prefilter at [`CONTINUOUS_PREFILTER_SAMPLES`] (at most the full count).
+pub fn continuous_bake_work(side: u32, kind: SourceKind) -> u64 {
+    let samples = CONTINUOUS_PREFILTER_SAMPLES.min(prefilter_samples(side));
+    (0..SLICE_STEPS).map(|index| SliceStep::at(index).work_with(side, kind, samples)).sum()
+}
+
 /// Whether a sun at `dir` with radiance `color` has moved from the baked `baked_dir` and
 /// `baked_color` enough to rebake the sky ([`SUN_REBAKE_DEGREES`], [`SUN_REBAKE_RADIANCE`]).
 pub fn sun_moved(baked_dir: [f32; 3], baked_color: [f32; 3], dir: [f32; 3], color: [f32; 3]) -> bool {
@@ -615,8 +635,16 @@ pub fn sun_moved(baked_dir: [f32; 3], baked_color: [f32; 3], dir: [f32; 3], colo
 
 /// [`sun_moved`] with the turn threshold `degrees` (a quality's [`Rebake::degrees`]).
 pub fn sun_moved_by(baked_dir: [f32; 3], baked_color: [f32; 3], dir: [f32; 3], color: [f32; 3], degrees: f32) -> bool {
-    let dot = baked_dir[0] * dir[0] + baked_dir[1] * dir[1] + baked_dir[2] * dir[2];
-    let turned = dot < libm::cosf(degrees.to_radians());
+    // In f64 over the unit directions: at SI-02's continuous threshold (hundredths of a degree)
+    // an f32 cosine is within a unit in the last place of 1, so the same sun read as turned.
+    let unit = |d: [f32; 3]| {
+        let d = d.map(f64::from);
+        let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(f64::MIN_POSITIVE);
+        d.map(|c| c / length)
+    };
+    let (a, b) = (unit(baked_dir), unit(dir));
+    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let turned = dot < libm::cos(f64::from(degrees).to_radians());
     let changed = baked_color.iter().zip(color).any(|(was, now)| (now - was).abs() > SUN_REBAKE_RADIANCE * was.abs().max(now.abs()));
     turned || changed
 }
@@ -629,17 +657,21 @@ pub struct Rebake {
     pub cadence: u8,
     /// The sun's turn that rebakes the sky, in degrees.
     pub degrees: f32,
+    /// Whether a change rebakes whole on the frame it happens (SI-02 step 2,
+    /// [`CONTINUOUS_SUN_DEGREES`]) instead of over a time-sliced cycle.
+    pub continuous: bool,
 }
 
 impl Rebake {
-    /// Every frame, at [`SUN_REBAKE_DEGREES`].
-    pub const EVERY_FRAME: Rebake = Rebake { cadence: 1, degrees: SUN_REBAKE_DEGREES };
+    /// Every frame, at [`SUN_REBAKE_DEGREES`], time-sliced.
+    pub const EVERY_FRAME: Rebake = Rebake { cadence: 1, degrees: SUN_REBAKE_DEGREES, continuous: false };
 
     /// The pacing `quality` asks for ([`EnvironmentQuality::rebake_cadence`],
-    /// [`EnvironmentQuality::sun_rebake_tenths`]; 0 tenths is [`SUN_REBAKE_DEGREES`]).
+    /// [`EnvironmentQuality::sun_rebake_tenths`]; 0 tenths is [`SUN_REBAKE_DEGREES`];
+    /// [`EnvironmentQuality::continuous_sky`]).
     pub fn of(quality: &EnvironmentQuality) -> Rebake {
         let degrees = if quality.sun_rebake_tenths == 0 { SUN_REBAKE_DEGREES } else { f32::from(quality.sun_rebake_tenths) / 10.0 };
-        Rebake { cadence: quality.rebake_cadence, degrees }
+        Rebake { cadence: quality.rebake_cadence, degrees, continuous: quality.continuous_sky }
     }
 
     /// Whether a step runs at `frame_index`.
@@ -693,6 +725,10 @@ pub enum BakeAction {
 struct Schedule {
     baked: Option<BakeKey>,
     cycle: Option<(BakeKey, u32)>,
+    /// Whether the bound bake is a continuous rebake's (SI-02 step 2: fewer prefilter samples):
+    /// once the sun rests, a time-sliced refresh at the full count replaces it, so a resting Live
+    /// frame binds what a settled capture bakes.
+    coarse: bool,
 }
 
 impl Schedule {
@@ -701,11 +737,26 @@ impl Schedule {
     /// over (nothing it wrote was bound); a sun moving every frame finishes the cycle in progress
     /// first, so it still lands a full refresh every [`SLICE_STEPS`] steps.
     fn next(&mut self, now: &BakeKey, settle: bool, frame_index: u64, rebake: Rebake) -> (BakeAction, BakeKey) {
-        let exact = self.baked.as_ref() == Some(now) && self.cycle.is_none();
+        let exact = self.baked.as_ref() == Some(now) && self.cycle.is_none() && !self.coarse;
         if self.baked.is_none() || (settle && !exact) {
             self.baked = Some(now.clone());
             self.cycle = None;
+            self.coarse = false;
             return (BakeAction::Full, now.clone());
+        }
+        let continuous_stale = self.baked.as_ref().is_some_and(|baked| baked.stale_for(now, CONTINUOUS_SUN_DEGREES));
+        if rebake.continuous && continuous_stale {
+            // SI-02 step 2: whole, at the continuous sample count, bound on this frame (a resting
+            // sun's full-count refresh in progress gives way).
+            self.baked = Some(now.clone());
+            self.cycle = None;
+            self.coarse = true;
+            return (BakeAction::Full, now.clone());
+        }
+        if self.coarse && self.cycle.is_none() {
+            // The sun rests: refresh the coarse bake at the full count, time-sliced.
+            self.cycle = Some((now.clone(), 0));
+            self.coarse = false;
         }
         if self.cycle.as_ref().is_some_and(|(key, _)| !key.same_scene(now)) {
             self.cycle = None;
@@ -736,11 +787,13 @@ pub struct BakeWork {
     pub action: BakeAction,
     /// Texel samples it read ([`SliceStep::work`]).
     pub texel_samples: u64,
+    /// GGX samples per texel its prefilter read (0: no prefilter ran).
+    pub prefilter_samples: u32,
 }
 
 impl Default for BakeWork {
     fn default() -> Self {
-        BakeWork { action: BakeAction::Idle, texel_samples: 0 }
+        BakeWork { action: BakeAction::Idle, texel_samples: 0, prefilter_samples: 0 }
     }
 }
 
@@ -796,7 +849,7 @@ struct BakePipelines {
     sky_sh_faces: TextureView,
 }
 
-fn texture_entry(binding: u32, filterable: bool, view_dimension: TextureViewDimension) -> BindGroupLayoutEntry {
+pub(crate) fn texture_entry(binding: u32, filterable: bool, view_dimension: TextureViewDimension) -> BindGroupLayoutEntry {
     BindGroupLayoutEntry {
         binding,
         visibility: ShaderStages::COMPUTE,
@@ -805,7 +858,7 @@ fn texture_entry(binding: u32, filterable: bool, view_dimension: TextureViewDime
     }
 }
 
-fn storage_faces_entry(binding: u32) -> BindGroupLayoutEntry {
+pub(crate) fn storage_faces_entry(binding: u32) -> BindGroupLayoutEntry {
     BindGroupLayoutEntry {
         binding,
         visibility: ShaderStages::COMPUTE,
@@ -818,15 +871,15 @@ fn storage_faces_entry(binding: u32) -> BindGroupLayoutEntry {
     }
 }
 
-fn sampler_entry(binding: u32) -> BindGroupLayoutEntry {
+pub(crate) fn sampler_entry(binding: u32) -> BindGroupLayoutEntry {
     BindGroupLayoutEntry { binding, visibility: ShaderStages::COMPUTE, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None }
 }
 
-fn layout(device: &Device, label: &str, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
+pub(crate) fn layout(device: &Device, label: &str, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
 }
 
-fn compute(device: &Device, label: &str, source: &str, entry_point: &str, layout: &BindGroupLayout) -> Result<Compiled<ComputePipeline>, RenderError> {
+pub(crate) fn compute(device: &Device, label: &str, source: &str, entry_point: &str, layout: &BindGroupLayout) -> Result<Compiled<ComputePipeline>, RenderError> {
     compute_with(device, (label, source, entry_point), layout, true)
 }
 
@@ -866,7 +919,7 @@ fn lut_pipeline(device: &Device) -> Result<Compiled<RenderPipeline>, RenderError
     }))
 }
 
-fn sampler(device: &Device, label: &str, wrap_u: wgpu::AddressMode) -> Sampler {
+pub(crate) fn sampler(device: &Device, label: &str, wrap_u: wgpu::AddressMode) -> Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
         address_mode_u: wrap_u,
@@ -944,7 +997,7 @@ impl BakePipelines {
 
 /// A view of mip `mip` of `texture`'s `layers` layers as a 2D array (a storage or `textureLoad`
 /// view).
-fn array_view(texture: &Texture, mip: u32, layers: u32) -> TextureView {
+pub(crate) fn array_view(texture: &Texture, mip: u32, layers: u32) -> TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
         base_mip_level: mip,
@@ -991,6 +1044,9 @@ struct CubeMaps {
     side: u32,
     specular: Texture,
     specular_cube: TextureView,
+    /// The same six layers as a one-cube array: the forward pass's binding 11 while no reflection
+    /// probe is held (renderer pass 2 A.3, `probes::ProbeMaps::cube_array`).
+    specular_cube_array: TextureView,
     radiance: Texture,
     sh: Buffer,
     /// The six faces of each specular mip, as a storage array.
@@ -1013,6 +1069,8 @@ impl CubeMaps {
     /// `side`, six layers, its full chain).
     fn new(device: &Device, side: u32, pipelines: &BakePipelines, radiance: &Texture) -> Result<CubeMaps, RenderError> {
         let (specular, specular_cube) = cube_texture(device, SPECULAR_LABEL, side, SPECULAR_MIPS);
+        let specular_cube_array =
+            specular.create_view(&wgpu::TextureViewDescriptor { dimension: Some(TextureViewDimension::CubeArray), array_layer_count: Some(FACES), ..Default::default() });
         let radiance_size = radiance.width();
         let radiance = radiance.clone();
         let radiance_cube = radiance.create_view(&wgpu::TextureViewDescriptor { dimension: Some(TextureViewDimension::Cube), array_layer_count: Some(FACES), ..Default::default() });
@@ -1054,6 +1112,7 @@ impl CubeMaps {
             side,
             specular,
             specular_cube,
+            specular_cube_array,
             radiance,
             sh,
             specular_mips,
@@ -1164,6 +1223,12 @@ pub struct EnvironmentMaps {
     sky_sh_generation: Option<u64>,
     /// The radiance cube both sets share at the current size ([`EnvironmentMaps::ensure_back`]).
     radiance: Option<Texture>,
+    /// The reflection probes (renderer pass 2 A.3): their cube array, whose layer 0 is the bound
+    /// specular cube, and their rows.
+    probes: crate::probes::ProbeMaps,
+    /// Bumped whenever the bound specular cube is replaced (a bake landed, or released): what the
+    /// probes' captures are lit by and their layer 0 holds.
+    cube_generation: u64,
 }
 
 /// The v2 material map's row of the environment input `name` (one of `FRAME_ENV_BINDINGS`).
@@ -1189,6 +1254,8 @@ impl EnvironmentMaps {
             work: BakeWork::default(),
             sky_sh_generation: None,
             radiance: None,
+            probes: crate::probes::ProbeMaps::new(device, queue),
+            cube_generation: 0,
         }
     }
 
@@ -1303,9 +1370,10 @@ impl EnvironmentMaps {
         self.map.as_ref()?.sun.as_ref().map(|sun| world_sun(sun, hdri))
     }
 
-    /// Which resources the frame bind group holds: a new value means rebuild it.
+    /// Which resources the frame bind group holds: a new value means rebuild it (the bake's, then
+    /// the reflection probes').
     pub fn generation(&self) -> u64 {
-        self.generation
+        self.generation + self.probes.generation()
     }
 
     /// Whether the environment replaces the frame's flat ambient term: an environment that lights
@@ -1334,6 +1402,9 @@ impl EnvironmentMaps {
         if name == "env_sampler" {
             return Some(BindingResource::Sampler(&self.sampler));
         }
+        if let Some(resource) = self.probe_binding(name) {
+            return Some(resource);
+        }
         let row = env_row(name)?;
         let lit = self.environment.lights_scene() && self.baked();
         if let (true, Some(maps), Some((_, lut))) = (lit, &self.maps, &self.lut) {
@@ -1345,6 +1416,66 @@ impl EnvironmentMaps {
             }
         }
         Some(self.neutral.resource(row, false))
+    }
+
+    /// The forward pass's reflection-probe bindings (renderer pass 2 A.3, `probes::FRAME_PROBE_BINDINGS`):
+    /// `env_probes`, the probe cube array (the bound specular cube as a one-cube array while no
+    /// probe is held, the neutral black array while nothing is baked or the environment does not
+    /// light the scene), and `env_probe_rows`, the rows in binned order. None for any other name.
+    fn probe_binding(&self, name: &str) -> Option<BindingResource<'_>> {
+        match name {
+            crate::probes::ENV_PROBES => {
+                let lit = self.environment.lights_scene() && self.baked();
+                let sky = self.maps.as_ref().filter(|_| lit).map(|maps| &maps.specular_cube_array);
+                Some(BindingResource::TextureView(self.probes.cube_array(sky)))
+            }
+            crate::probes::ENV_PROBE_ROWS => Some(self.probes.rows().as_entire_binding()),
+            _ => None,
+        }
+    }
+
+    /// The reflection probes' state (renderer pass 2 A.3).
+    pub fn probes(&self) -> &crate::probes::ProbeMaps {
+        &self.probes
+    }
+
+    /// Graph node 11's probe part, after the bake (`probes::ProbeMaps::prepare` over the bound
+    /// specular cube): the capture work due this frame and the compute passes it opened. Nothing
+    /// while the environment does not light the scene or nothing is baked (the probes are
+    /// released).
+    pub fn prepare_probes(&mut self, frame: &mut FrameEncoder, prep: &crate::probes::ProbePrep<'_>) -> (crate::probes::CaptureWork, u32) {
+        let lit = self.environment.lights_scene() && self.baked();
+        let sky = self.maps.as_ref().filter(|_| lit).map(|maps| (&maps.specular, self.cube_generation));
+        let device = frame.device().clone();
+        let queue = frame.queue().clone();
+        let prep = crate::probes::ProbePrep { sky, ..*prep };
+        match self.probes.prepare(&device, &queue, frame.encoder(), &prep) {
+            Ok(work) => work,
+            Err(error) => {
+                log::error!("reflection probes skipped: {error}");
+                self.probes.release();
+                (crate::probes::CaptureWork::new(), 0)
+            }
+        }
+    }
+
+    /// What the renderer's probe capture draws keep between frames.
+    pub fn probe_store(&mut self) -> &mut crate::probes::CaptureStore {
+        self.probes.store()
+    }
+
+    /// The face a probe capture step draws (`probes::ProbeMaps::face`).
+    pub fn probe_face(&self, slot: usize, step: crate::probes::CaptureStep, prep: &crate::probes::ProbePrep<'_>) -> Option<crate::probes::FaceCapture> {
+        self.probes.face(slot, step, prep)
+    }
+
+    /// Encode a probe capture step's own passes (`probes::ProbeMaps::encode_step`) over the bound
+    /// specular cube: the compute passes it opened.
+    pub fn encode_probe_step(&mut self, frame: &mut FrameEncoder, slot: usize, step: crate::probes::CaptureStep) -> u32 {
+        let Some(maps) = self.maps.as_ref() else { return 0 };
+        let device = frame.device().clone();
+        let sky = (maps.specular_cube.clone(), self.cube_generation);
+        self.probes.encode_step(&device, frame.encoder(), slot, step, (&sky.0, sky.1))
     }
 
     /// The bound specular cube (six layers, [`SPECULAR_MIPS`] mips), once baked.
@@ -1420,7 +1551,9 @@ impl EnvironmentMaps {
     fn release(&mut self) {
         if self.maps.take().is_some() {
             self.generation += 1;
+            self.cube_generation += 1;
         }
+        self.probes.release();
         self.back = None;
         self.radiance = None;
         self.schedule = Schedule::default();
@@ -1468,6 +1601,9 @@ impl EnvironmentMaps {
         };
         let before = self.schedule.clone();
         let (action, baking) = self.schedule.next(&key, request.settle, request.frame_index, Rebake::of(request.quality));
+        // A whole bake that is neither cold nor a settle's is a continuous rebake (SI-02 step 2).
+        let continuous = action == BakeAction::Full && !request.settle && before.baked.is_some();
+        let samples = if continuous { CONTINUOUS_PREFILTER_SAMPLES.min(prefilter_samples(side)) } else { prefilter_samples(side) };
         let steps: Vec<SliceStep> = match action {
             BakeAction::Idle => Vec::new(),
             BakeAction::Full => (0..SLICE_STEPS).map(SliceStep::at).collect(),
@@ -1476,11 +1612,11 @@ impl EnvironmentMaps {
         if steps.is_empty() {
             let (passes, texel_samples) = self.refresh_sky_sh(&device, frame, (request, source), writes);
             counters.compute += passes;
-            self.work = BakeWork { action, texel_samples };
+            self.work = BakeWork { action, texel_samples, prefilter_samples: 0 };
             return Ok(counters);
         }
         self.ensure_back(&device, baking.side, request.quality.radiance_side_max)?;
-        let Some(passes) = self.encode_steps(&device, frame, &steps, source, (request.frame_index, writes)) else {
+        let Some(passes) = self.encode_steps(&device, frame, &steps, source, (request.frame_index, writes, samples)) else {
             // The sky has no LUTs yet: nothing was recorded, and the step stays due.
             self.schedule = before;
             return Ok(counters);
@@ -1490,9 +1626,11 @@ impl EnvironmentMaps {
             // The last step landed: the rebake's set is bound whole, the old one is written next.
             std::mem::swap(&mut self.maps, &mut self.back);
             self.generation += 1;
+            self.cube_generation += 1;
         }
         let kind = source.kind();
-        let mut texel_samples = steps.iter().map(|step| step.work(side, kind)).sum();
+        let mut texel_samples = steps.iter().map(|step| step.work_with(side, kind, samples)).sum();
+        let prefiltered = steps.iter().any(|step| matches!(step, SliceStep::Prefilter { .. }));
         if steps.contains(&SliceStep::Sh9) {
             // The SH9 step projected the sky's current LUT into the set it bound.
             self.sky_sh_generation = source.sky_generation();
@@ -1501,7 +1639,7 @@ impl EnvironmentMaps {
             counters.compute += passes;
             texel_samples += work;
         }
-        self.work = BakeWork { action, texel_samples };
+        self.work = BakeWork { action, texel_samples, prefilter_samples: if prefiltered { samples } else { 0 } };
         Ok(counters)
     }
 
@@ -1592,7 +1730,7 @@ impl EnvironmentMaps {
         frame: &mut FrameEncoder,
         steps: &[SliceStep],
         source: &Source<'_>,
-        (frame_index, writes): (u64, Option<wgpu::ComputePassTimestampWrites<'_>>),
+        (frame_index, writes, samples): (u64, Option<wgpu::ComputePassTimestampWrites<'_>>, u32),
     ) -> Option<u32> {
         let pipelines = self.pipelines.as_ref().expect("made by bake_with");
         let maps = self.back.as_mut().expect("made by ensure_back");
@@ -1629,7 +1767,7 @@ impl EnvironmentMaps {
             encode_source(&queue, pipelines, maps, &mut pass, source, &faces, schedule);
         }
         if let Some(faces) = prefilter_faces {
-            encode_prefilter(&queue, pipelines, maps, &mut pass, &faces, schedule);
+            encode_prefilter(&queue, pipelines, maps, &mut pass, (&faces, samples), schedule);
         }
         if sh9 {
             if let Source::Sky(sky) = source {
@@ -1676,9 +1814,8 @@ fn encode_source(queue: &Queue, pipelines: &BakePipelines, maps: &CubeMaps, pass
 }
 
 /// The GGX prefilter of `faces` at every roughness mip from 1.
-fn encode_prefilter(queue: &Queue, pipelines: &BakePipelines, maps: &CubeMaps, pass: &mut ComputePass<'_>, faces: &Range<u32>, schedule: [u32; 4]) {
+fn encode_prefilter(queue: &Queue, pipelines: &BakePipelines, maps: &CubeMaps, pass: &mut ComputePass<'_>, (faces, samples): (&Range<u32>, u32), schedule: [u32; 4]) {
     let radiance = maps.radiance.width();
-    let samples = prefilter_samples(maps.side);
     pass.set_pipeline(&pipelines.prefilter);
     for (mip, group) in (1..SPECULAR_MIPS).zip(&maps.prefilter_groups) {
         let slot = SLOT_PREFILTER + u64::from(mip);
@@ -1895,7 +2032,7 @@ mod tests {
     #[test]
     fn a_rebake_follows_the_quality_s_cadence_and_sun_threshold() {
         let mut schedule = Schedule::default();
-        let low = Rebake { cadence: 8, degrees: 2.0 };
+        let low = Rebake { cadence: 8, degrees: 2.0, continuous: false };
         let sky = Environment::sky();
         assert_eq!(schedule.next(&key(sky.clone(), sun(30.0)), false, 0, low).0, BakeAction::Full);
         assert_eq!(schedule.next(&key(sky.clone(), sun(31.5)), false, 1, low).0, BakeAction::Idle, "1.5 degrees is under low's threshold");
@@ -1907,7 +2044,7 @@ mod tests {
         }
         assert_eq!(slices, SLICE_STEPS, "one step every 8th frame until the refresh lands");
         let quality = crate::presets::preset_quality(crate::settings::QualityPreset::Low, crate::device_class::DeviceClass::ALL[0]).environment;
-        assert_eq!(Rebake::of(&quality), Rebake { cadence: quality.sky_cadence, degrees: 2.0 });
+        assert_eq!(Rebake::of(&quality), Rebake { cadence: quality.sky_cadence, degrees: 2.0, continuous: false });
     }
 
     #[test]

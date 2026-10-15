@@ -439,6 +439,13 @@ pub struct GpuSkyAtmosphere {
 /// identity), so the picture is the flat-ambient one.
 pub const FRAME_ENV_BINDINGS: [(u32, &str); 4] = [(11, "env_specular"), (12, "env_sh"), (13, "brdf_lut"), (14, "env_sampler")];
 
+/// What the forward frame group binds for the environment, as (binding, name of
+/// `ibl::EnvironmentMaps::binding`): [`FRAME_ENV_BINDINGS`] with binding 11 the reflection probes'
+/// cube array (renderer pass 2 A.3: its layer 0 the sky's cube, the v2 map keeps the cube) and the
+/// probes' rows at binding 22 (`probes::FRAME_PROBE_BINDINGS`).
+pub const FRAME_ENV_BOUND: [(u32, &str); 5] =
+    [(11, crate::probes::ENV_PROBES), (12, "env_sh"), (13, "brdf_lut"), (14, "env_sampler"), (22, crate::probes::ENV_PROBE_ROWS)];
+
 /// The forward frame group's slots reserved for the RQ4 screen effects (RQ4.0), as (binding, WGSL
 /// name): the fog row (`GxFog`), ambient occlusion, the aerial-perspective volume and the
 /// non-filtering sampler they are read with (the Level-2 v2 material map's names and types), and

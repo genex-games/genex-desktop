@@ -13,12 +13,13 @@
 //! built by graph node 4 or its CPU reference). [`BINNED_SHADING_LANDED`] says whether the
 //! renderer's forward pass draws through them.
 
-use crate::cluster::LightBinFrame;
+use crate::cluster::{ClusterInput, LightBinFrame};
 use crate::layout::{GpuLight, GpuLightExt, GpuLocalLight, LIGHT_KIND_SPOT, MAX_LIGHTS, MAX_LOCAL_LIGHTS, NO_SHADOW_SLOT, SPOT_SHADOW_UNFADED};
 #[cfg(doc)]
 use crate::layout::MAX_SHADOWED_SPOTS;
 use crate::scene::CameraDesc;
 use crate::settings::LightQuality;
+use crate::probes::ReflectionProbe;
 use crate::texture::srgb_to_linear;
 
 /// Whether the renderer's forward pass shades local lights through the bins (RQ6.2's forward seam:
@@ -116,6 +117,9 @@ pub struct Lighting {
     pub spots: Vec<SpotLight>,
     /// Whether the sun casts shadows (cascades drawn through the culled indirect path).
     pub shadows: bool,
+    /// The reflection probes (renderer pass 2 A.3, [`crate::probes`]): binned with the lights,
+    /// the first the quality's `reflection_probes` of them captured into cubes.
+    pub reflection_probes: Vec<ReflectionProbe>,
     /// How far from the camera, in view depth, shadows reach; 0 (the default) takes the quality's
     /// distance (`ShadowQuality::distance`: 40 on the legacy renderer, longer on higher presets).
     pub shadow_distance: f32,
@@ -133,6 +137,7 @@ impl Default for Lighting {
             spots: Vec::new(),
             shadows: true,
             shadow_distance: QUALITY_SHADOW_DISTANCE,
+            reflection_probes: Vec::new(),
         }
     }
 }
@@ -245,6 +250,9 @@ pub struct BinnedFrame {
     /// The frame's binning (`LightBinFrame::reference_masks`/`reference_zbins` on the CPU, graph
     /// node 4 on the GPU, bit for bit equal).
     pub bins: LightBinFrame,
+    /// The reflection probes binned after the lights (A.3; `probes::held_probes` of the scene's,
+    /// in declaration order: `bins.probes` indexes them).
+    pub reflection_probes: Vec<ReflectionProbe>,
 }
 
 /// `lighting`'s local lights for `camera` drawing a `render`-sized frame under `quality`: the rows of
@@ -257,9 +265,14 @@ pub fn binned_frame(lighting: &Lighting, quality: &LightQuality, camera: &Camera
     let mut rows = local_lights(lighting, MAX_LOCAL_LIGHTS, usize::MAX);
     let cap = usize::try_from(quality.cap).unwrap_or(usize::MAX).min(MAX_LOCAL_LIGHTS);
     fade_past_cap(&mut rows, camera.eye, cap);
-    let bins = LightBinFrame::prepare(&rows, camera, render, quality);
+    // The reflection probes' influence spheres share the lights' index space (A.3, LG-16): a frame
+    // without probes bins exactly as before.
+    let reflection_probes = crate::probes::held_probes(&lighting.reflection_probes);
+    let spheres: Vec<crate::cluster::ClusterSphere> = reflection_probes.iter().map(ReflectionProbe::sphere).collect();
+    let others = ClusterInput { decals: &[], probes: &spheres };
+    let bins = LightBinFrame::prepare_clusterables(&rows, &others, camera, render, quality);
     let (lights, ext) = split_rows(&bins.sorted(&rows));
-    BinnedFrame { lights, ext, bins }
+    BinnedFrame { lights, ext, bins, reflection_probes }
 }
 
 /// Scale the radiance of the rows the cap is about to drop ([`crate::cluster::cap_fade`]), so a

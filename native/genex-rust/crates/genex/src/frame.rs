@@ -389,6 +389,53 @@ pub struct Lights {
     /// with the `clustered` feature switched off only the point lights light the scene). The
     /// preset caps how many local lights a frame lights, nearest first.
     pub spots: Vec<SpotLight>,
+    /// Reflection probes in call order (renderer pass 2 A.3): the first the device's quality gives
+    /// a cube to reflect their box's own surroundings; the rest reflect the sky.
+    pub reflection_probes: Vec<ReflectionProbe>,
+}
+
+/// A reflection probe: an axis-aligned box of the world (a room's inside: its floor, walls and
+/// ceiling are the box's faces) whose glossy surfaces reflect a cube captured inside it instead of
+/// the sky, seen where the walls stand (box projection) and blended into the sky and the next probe
+/// over `blend` units past its faces. The cube is captured from the scene once (again when the sky changes or the probe moves),
+/// so a probe suits a static room or street; a moving object is not seen in it until a recapture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReflectionProbe {
+    /// The box's least corner (the room's floor and walls).
+    pub min: Vec3,
+    /// The box's greatest corner (its ceiling and walls).
+    pub max: Vec3,
+    /// Where the cube is captured from (held inside the box).
+    pub capture: Vec3,
+    /// How far past the box's faces its reflection fades out (0: a hard edge).
+    pub blend: f32,
+    /// The multiplier of its reflection (1: as captured).
+    pub intensity: f32,
+}
+
+impl ReflectionProbe {
+    /// A probe over the box `min..max`, captured from its centre, fading out over a tenth of its
+    /// smallest side, at full intensity.
+    pub fn new(min: Vec3, max: Vec3) -> ReflectionProbe {
+        let smallest = (max - min).abs().min_element();
+        ReflectionProbe { min, max, capture: (min + max) * 0.5, blend: 0.1 * smallest, intensity: 1.0 }
+    }
+
+    /// The probe captured from `capture` (a point inside the box with a view of the room: eye
+    /// height, away from the walls).
+    pub fn with_capture(self, capture: Vec3) -> ReflectionProbe {
+        ReflectionProbe { capture, ..self }
+    }
+
+    /// The probe fading out over `blend` units past its faces.
+    pub fn with_blend(self, blend: f32) -> ReflectionProbe {
+        ReflectionProbe { blend, ..self }
+    }
+
+    /// The probe's reflection times `intensity`.
+    pub fn with_intensity(self, intensity: f32) -> ReflectionProbe {
+        ReflectionProbe { intensity, ..self }
+    }
 }
 
 /// One logical draw, as [`Frame::draws`] reads it back.
@@ -654,6 +701,13 @@ impl Frame {
     /// default cone (20 degrees at full strength, dark past 30). Not a draw.
     pub fn spot_light(&mut self, position: Vec3, direction: Vec3, range: f32, color: Color, intensity: f32) -> &mut Self {
         self.spot_light_with(&SpotLight::new(position, direction, range, color, intensity))
+    }
+
+    /// Add a reflection probe (renderer pass 2 A.3): glossy surfaces inside its box reflect its
+    /// surroundings instead of the sky. Not a draw.
+    pub fn reflection_probe(&mut self, probe: &ReflectionProbe) -> &mut Self {
+        self.lights.reflection_probes.push(*probe);
+        self
     }
 
     /// Add `light`, a [`SpotLight`] with its own cone or a shadow map. Not a draw.

@@ -10,7 +10,7 @@
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::SpotLight;
+use genex::render::{ReflectionProbe, SpotLight};
 
 use crate::harbour::World;
 
@@ -84,6 +84,12 @@ pub const CAFE_DOOR: Bounds = Bounds { min: vec3(DOOR.0, KERB, FACADE), max: vec
 /// A walk from the pavement in front of the café, through its door, to the middle of the room (at
 /// eye height): the door transition's path.
 pub const DOOR_WALK: [Vec3; 2] = [vec3(3.4, 1.6, 5.4), vec3(3.4, 1.6, 11.5)];
+/// Where the café's reflection probe (renderer pass 2 A.3, its box the room's inside) captures its
+/// cube: the middle of the room at eye height.
+pub const CAFE_PROBE_CAPTURE: Vec3 = vec3(0.0, 1.6, 0.5 * (CAFE_FRONT + CAFE_BACK));
+/// How far past the room's faces the café's reflection fades out: the front wall's thickness, so
+/// the pavement outside reflects the sky.
+const CAFE_PROBE_BLEND: f32 = 0.3;
 /// The white rug by the café's red wall: the floor whose colour bleed the irradiance rows measure.
 pub const BLEED_FLOOR: Bounds = Bounds { min: vec3(CAFE_WEST + 0.1, KERB, 11.0), max: vec3(CAFE_WEST + 2.5, KERB + 0.01, 14.5) };
 
@@ -478,6 +484,8 @@ fn cafe(frame: &mut Frame, s: &Surfaces) {
 /// wall, two plants and a cup on the window table.
 fn cafe_inside(frame: &mut Frame, s: &Surfaces) {
     frame.tag("cafe-inside");
+    // The polished parquet reflects the room, not the sky (A.3).
+    frame.reflection_probe(&ReflectionProbe::new(CAFE_INSIDE.min, CAFE_INSIDE.max).with_capture(CAFE_PROBE_CAPTURE).with_blend(CAFE_PROBE_BLEND));
     let (x, z) = ((CAFE_WEST, CAFE_EAST), (CAFE_FRONT, CAFE_BACK));
     floor(frame, x, z, KERB, PARQUET_TILE, &s.parquet);
     floor(frame, x, z, CAFE_CEILING + SLAB, PLASTER_TILE, &s.plaster);

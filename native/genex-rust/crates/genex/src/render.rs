@@ -101,7 +101,7 @@ pub use genex_render::settings::{Environment, EnvironmentKind, HdriEnvironment, 
 pub use genex_render::settings::Fog;
 /// A spot light with its own cone or a shadow map ([`crate::Frame::spot_light_with`], RQ6), and the
 /// cone [`crate::Frame::spot_light`] gives one by default.
-pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, SpotLight};
+pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, ReflectionProbe, SpotLight};
 
 /// The tonemapper of a game's look: how the HDR scene becomes display colour.
 /// [`Tonemap::KhronosNeutral`] (the default) keeps authored colours as they are up to the

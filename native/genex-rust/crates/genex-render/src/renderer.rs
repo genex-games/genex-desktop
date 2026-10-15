@@ -111,6 +111,7 @@
 pub mod live_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
+mod probe_capture;
 mod variants;
 
 use wgpu::{
@@ -132,7 +133,7 @@ use crate::hdri::{HdriImage, PreparedMap};
 use crate::hiz::{HizInput, HizNode};
 use crate::ibl::EnvironmentMaps;
 use crate::layout::{
-    DrawIndexedArgs, FRAME_EFFECT_BOUND, FRAME_ENV_BINDINGS, FRAME_LIGHT_BINDINGS, FRAME_MATERIAL_CLASS_BINDINGS, GpuCullViews, GpuFrame,
+    DrawIndexedArgs, FRAME_EFFECT_BOUND, FRAME_ENV_BOUND, FRAME_LIGHT_BINDINGS, FRAME_MATERIAL_CLASS_BINDINGS, GpuCullViews, GpuFrame,
     GpuPassView, MAX_CASCADES, SHADOW_CASCADES,
 };
 use crate::mesh::{MeshData, Vertex};
@@ -927,11 +928,15 @@ fn bind_group_layout(device: &Device, label: &str, entries: &[BindGroupLayoutEnt
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
 }
 
-/// The frame layout's environment entries ([`FRAME_ENV_BINDINGS`]): each the binding type the
-/// Level-2 v2 material map gives the input of the same name, so the shared lighting chunks see
-/// one type in both.
+/// The frame layout's environment entries ([`FRAME_ENV_BOUND`]): the reflection probes' cube array
+/// and rows (renderer pass 2 A.3, `probes::frame_env_entry`), and each other input under the binding
+/// type the Level-2 v2 material map gives the input of the same name, so the shared lighting
+/// chunks see one type in both.
 fn frame_env_entries() -> impl Iterator<Item = BindGroupLayoutEntry> {
-    FRAME_ENV_BINDINGS.into_iter().filter_map(|(binding, name)| {
+    FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| {
+        if let Some(entry) = crate::probes::frame_env_entry(binding, name) {
+            return Some(entry);
+        }
         let row = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name)?;
         Some(BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: row.kind.binding_type(false, row.bytes), count: None })
     })
@@ -2133,6 +2138,9 @@ impl<'a> WorldNodes<'a> {
                 drop(sky);
                 self.count_passes(frame, sky_passes);
                 self.count_passes(frame, ibl_passes);
+                // Renderer pass 2 A.3: the reflection probes' captures, lit by the bake just made.
+                let probe_passes = renderer.encode_probes(frame, self.prep);
+                self.count_passes(frame, probe_passes);
                 // A new bake or this frame's aerial-perspective volume: the world pass binds them.
                 self.baked_groups = Some(renderer.current_groups());
             }
@@ -4464,6 +4472,11 @@ impl Renderer {
         if lut > 0 {
             ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::GRADING_LUT_LABEL, lut);
         }
+        // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
+        let probes = self.environment.borrow().probes().bytes();
+        if probes > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::REFLECTION_PROBES_LABEL, probes);
+        }
         ledger
     }
 
@@ -4700,7 +4713,7 @@ impl Renderer {
             wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) },
         ];
         entries.extend(
-            FRAME_ENV_BINDINGS.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })),
+            FRAME_ENV_BOUND.into_iter().filter_map(|(binding, name)| environment.binding(name).map(|resource| wgpu::BindGroupEntry { binding, resource })),
         );
         let [ao_term, contact_mask, aerial_volume] = self.effect_views();
         let [(fog, _), (ao, _), (aerial, _), (point, _), (contact, _)] = FRAME_EFFECT_BOUND;

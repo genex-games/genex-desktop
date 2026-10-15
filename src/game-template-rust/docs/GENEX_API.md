@@ -186,6 +186,19 @@ above it the look's bloom haloes it; `.with_emissive_texture(path)` masks it). E
 the picture, not other surfaces: pair a lantern's glowing glass with a `frame.point_light`, a lit
 window with a `frame.spot_light` shining out of it.
 
+A room's polished floor reflects the sky until it has a reflection probe:
+`frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`
+(`use genex::render::ReflectionProbe;`) covers the axis-aligned box `min..max`, the room's inside
+from its floor to its ceiling; glossy surfaces in it reflect a cube captured from `capture`
+(default the box's centre; put it at eye height in the room), each wall seen where it stands,
+fading into the sky and the next probe over `blend` units past the box's faces (overlapping probes
+share their light, so no seam shows). The cube is
+captured from the scene the first frame the probe appears, and again when the sky changes or the
+probe's box or capture point moves: objects that move later are not in it. The device's quality
+gives cubes to the first probes a frame declares (4 on `low`, 8 on `medium`, 16 on `high` and
+`ultra`; 2 to 8 on phones); the rest reflect the sky. Give a probe to each room or courtyard,
+not to open ground (the sky is its reflection already).
+
 Give a frame an environment with `frame.environment(..)` (`use genex::render::Environment;`): it
 lights the scene beyond its lights and is drawn behind it, the same on every device.
 `Environment::sky()` is the physical sky, coloured by the frame's own sun, tuned with
