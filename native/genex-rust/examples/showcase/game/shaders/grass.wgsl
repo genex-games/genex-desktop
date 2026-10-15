@@ -3,7 +3,8 @@
 // through them. Blades fade out with distance and into the look's fog.
 
 struct Wind {
-    // x: simulated seconds; y: how much wider each blade is drawn (fewer blades on weaker devices).
+    // x: simulated seconds; y: how much wider each blade is drawn (fewer blades on weaker devices);
+    // z: the previous frame's simulated seconds (its motion vectors sway from there).
     params: vec4<f32>,
 }
 
@@ -15,11 +16,19 @@ struct BladeIn {
 }
 
 struct GrassOut {
-    @builtin(position) clip: vec4<f32>,
+    // Invariant: the motion pipeline rasterises the blade exactly where the world pipeline did.
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) along: f32,
     @location(3) @interpolate(flat) sun_tint: vec2<f32>,
+}
+
+// A blade in TAA's motion target: where it is now and where it was last frame (unjittered clip).
+struct GrassMotionOut {
+    @builtin(position) @invariant clip: vec4<f32>,
+    @location(0) now: vec4<f32>,
+    @location(1) before: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> gx_frame: GxFrameV2;
@@ -35,9 +44,13 @@ const FADE_END: f32 = 50.0;
 const FLOWER_TINT: f32 = 0.965;
 // The blades' width against the layout's: slim, as a meadow's are.
 const BLADE_WIDTH: f32 = 0.45;
+// How far the gust leans a blade and the flutter shivers it, per unit of its curve.
+const GUST_LEAN: f32 = 0.38;
+const FLUTTER: f32 = 0.06;
 
-@vertex
-fn vs_grass(@builtin(vertex_index) i: u32, blade: BladeIn) -> GrassOut {
+// Vertex `i` of `blade` (a seven-vertex strip: three segments and a tip) `t` seconds in, swaying
+// in genex's shared wind (`gx_wind`).
+fn blade_point(i: u32, blade: BladeIn, t: f32) -> vec3<f32> {
     let level = f32(min(i / 2u, 3u)) / LEVELS;
     var side = f32(i % 2u) * 2.0 - 1.0;
     if i == 6u {
@@ -52,13 +65,24 @@ fn vs_grass(@builtin(vertex_index) i: u32, blade: BladeIn) -> GrassOut {
     let width = blade.shape.y * BLADE_WIDTH * wind.params.y * (1.0 - level * 0.85) * (1.0 + smoothstep(8.0, 40.0, distance_to_eye) * 1.6);
     let facing = vec3<f32>(cos(yaw), 0.0, sin(yaw));
     let across = vec3<f32>(-sin(yaw), 0.0, cos(yaw));
-    let t = wind.params.x;
-    let gust = 0.5 + 0.3 * sin(t * 1.6 + root.x * 0.21 + root.z * 0.13) + 0.2 * sin(t * 0.55 + root.x * 0.045 - root.z * 0.03);
-    let wind_dir = normalize(vec3<f32>(0.55, 0.0, 0.83));
+    let air = gx_wind(root, t);
     let curve = level * level * height;
-    let flutter = 0.06 * sin(t * 4.0 + root.x * 1.7 + root.z * 1.3) * curve;
-    let position = root + across * width * side * 0.5 + vec3<f32>(0.0, height * level * (1.0 - 0.15 * gust * level), 0.0)
-        + wind_dir * (0.38 * gust * curve + flutter) + facing * 0.18 * curve;
+    let flutter = FLUTTER * air.flutter * curve;
+    return root + across * width * side * 0.5 + vec3<f32>(0.0, height * level * (1.0 - 0.15 * air.gust * level), 0.0)
+        + GX_WIND_DIR * (GUST_LEAN * air.gust * curve + flutter) + facing * 0.18 * curve;
+}
+
+@vertex
+fn vs_grass(@builtin(vertex_index) i: u32, blade: BladeIn) -> GrassOut {
+    let level = f32(min(i / 2u, 3u)) / LEVELS;
+    var side = f32(i % 2u) * 2.0 - 1.0;
+    if i == 6u {
+        side = 0.0;
+    }
+    let yaw = blade.root_yaw.w;
+    let facing = vec3<f32>(cos(yaw), 0.0, sin(yaw));
+    let across = vec3<f32>(-sin(yaw), 0.0, cos(yaw));
+    let position = blade_point(i, blade, wind.params.x);
     var out: GrassOut;
     out.clip = gx_frame.view_proj * vec4<f32>(position, 1.0);
     out.world = position;
@@ -66,6 +90,27 @@ fn vs_grass(@builtin(vertex_index) i: u32, blade: BladeIn) -> GrassOut {
     out.along = level;
     out.sun_tint = blade.shape.zw;
     return out;
+}
+
+// The blade's motion for TAA (renderer pass 2, B.7): the sway between last frame's time and this
+// frame's, through the unjittered cameras, so its history is reprojected with it.
+@vertex
+fn vs_grass_motion(@builtin(vertex_index) i: u32, blade: BladeIn) -> GrassMotionOut {
+    let position = blade_point(i, blade, wind.params.x);
+    var out: GrassMotionOut;
+    out.clip = gx_frame.view_proj * vec4<f32>(position, 1.0);
+    out.now = gx_frame.unjittered_view_proj * vec4<f32>(position, 1.0);
+    out.before = gx_frame.prev_view_proj * vec4<f32>(blade_point(i, blade, wind.params.z), 1.0);
+    return out;
+}
+
+@fragment
+fn fs_grass_motion(in: GrassMotionOut) -> @location(0) vec4<f32> {
+    // A point behind last frame's camera has no reprojection: no motion (the renderer's rule).
+    if in.before.w <= 1e-6 || in.now.w <= 1e-6 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(in.now.xy / in.now.w - in.before.xy / in.before.w, 0.0, 0.0);
 }
 
 // The sun's visibility at `world` from the cascade its view depth falls in (one bilinear

@@ -636,11 +636,13 @@ impl WorldStage for Part2Stage<'_> {
     }
 
     fn reactive_draws(&self) -> bool {
-        self.particles.draws()
+        self.particles.draws() || self.custom.reactive_draws()
     }
 
     fn reactive(&self, pass: &mut wgpu::RenderPass<'_>, node: &crate::post::taa::ReactiveNode) {
         self.particles.draw_reactive(pass, node);
+        // The Level-3 passes' coverage last: their pipelines set everything they bind.
+        self.custom.reactive(pass, node);
     }
 
     fn pre_exposure_source(&self) -> Option<&Buffer> {
@@ -723,6 +725,16 @@ impl FrameNodesOf<'_> {
         }
         self.stage.custom.after_prepass(&views);
         self.prepass = Some(views);
+    }
+
+    /// Node 15a, ahead of the reactive coverage: the Level-3 in-world passes' own motion
+    /// (`PassFrame::motion_draws`) over the prepass's, against (and into) the prepass depth, so
+    /// TAA reprojects what they move (renderer pass 2, B.7).
+    fn encode_pass_motion(&mut self, frame: &mut FrameEncoder) {
+        let (Some(motion), Some(prepass)) = (&self.motion, &self.prepass) else { return };
+        if self.stage.custom.temporal_motion(frame.encoder(), motion, &prepass.depth) {
+            frame.count_render_passes(1);
+        }
     }
 
     /// What this frame's post passes bind beside the base frame: the v2 frame bytes, the
@@ -857,6 +869,11 @@ impl FrameNodes for FrameNodesOf<'_> {
             NodeId::Environment => {
                 self.world.encode(id, frame, &mut self.stage);
                 self.hand_environment();
+                Ok(())
+            }
+            NodeId::Reactive => {
+                self.encode_pass_motion(frame);
+                self.world.encode(id, frame, &mut self.stage);
                 Ok(())
             }
             _ => {
@@ -1194,7 +1211,7 @@ impl FrameRenderer {
         let ev_compensation = if scene.hdr && self.renderer.quality().exposure { look.ev_compensation } else { 0.0 };
         self.materials.set_frame_facts(v2_frame_facts(&self.renderer, frame, &history, &scene, ev_compensation));
         self.materials.keep_frame_v2(frame.post.iter().any(|id| self.posts.api(*id) == Some(crate::abi::ABI_V2)));
-        custom.begin_frame(&StageFrame { history, ev_compensation });
+        custom.begin_frame(&StageFrame { history, ev_compensation, camera: frame.scene().camera });
         // The environment as it stands (graph node 11 hands over a new bake when it lands): the
         // frames that bake nothing, or whose node 11 does not run, bind what the forward pass binds.
         let environment = self.renderer.environment_views();

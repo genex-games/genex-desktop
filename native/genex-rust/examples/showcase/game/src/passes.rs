@@ -144,6 +144,44 @@ fn world_pipeline(setup: &mut PassSetup<'_>, group: Option<&gpu::BindGroupLayout
     })
 }
 
+/// A pipeline drawing into TAA's motion target or reactive mask (graph node 15a, renderer pass 2
+/// B.7): the tables at group 0 and `group` at 1, one sample, against the prepass depth.
+struct TemporalPipeline<'a> {
+    label: &'a str,
+    module: &'a gpu::ShaderModule,
+    vertex: &'a str,
+    fragment: &'a str,
+    buffers: &'a [Option<gpu::VertexBufferLayout<'a>>],
+    topology: gpu::PrimitiveTopology,
+    target: gpu::ColorTargetState,
+    depth: gpu::DepthStencilState,
+}
+
+fn temporal_pipeline(setup: &mut PassSetup<'_>, group: Option<&gpu::BindGroupLayout>, desc: &TemporalPipeline<'_>) -> gpu::RenderPipeline {
+    let tables = setup.tables_layout();
+    let groups = [Some(tables), group];
+    let count = if group.is_some() { 2 } else { 1 };
+    let layout =
+        setup.create_pipeline_layout(&gpu::PipelineLayoutDescriptor { label: Some(desc.label), bind_group_layouts: &groups[..count], immediate_size: 0 });
+    let targets = [Some(desc.target.clone())];
+    setup.create_render_pipeline(&gpu::RenderPipelineDescriptor {
+        label: Some(desc.label),
+        layout: Some(&layout),
+        vertex: gpu::VertexState { module: desc.module, entry_point: Some(desc.vertex), compilation_options: Default::default(), buffers: desc.buffers },
+        primitive: gpu::PrimitiveState { topology: desc.topology, cull_mode: None, ..Default::default() },
+        depth_stencil: Some(desc.depth.clone()),
+        multisample: setup.temporal_multisample(),
+        fragment: Some(gpu::FragmentState {
+            module: desc.module,
+            entry_point: Some(desc.fragment),
+            compilation_options: Default::default(),
+            targets: &targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// Premultiplied alpha: a glow adds (alpha 0), a solid covers.
 const PREMULTIPLIED: gpu::BlendState = gpu::BlendState {
     color: gpu::BlendComponent { src_factor: gpu::BlendFactor::One, dst_factor: gpu::BlendFactor::OneMinusSrcAlpha, operation: gpu::BlendOperation::Add },
@@ -171,10 +209,21 @@ pub fn grass_share(quality: &genex::render::Quality) -> f32 {
     }
 }
 
-/// The grass: every blade of the layout, instanced.
+/// The grass: every blade of the layout, instanced, swaying in genex's shared wind. Under TAA it
+/// draws its own motion too (`motion_draws`: the sway between last frame's time and this one's), so
+/// TAA reprojects the blades instead of trailing them (renderer pass 2, B.7).
 #[derive(Default)]
 pub struct Grass {
-    resources: Option<(gpu::Buffer, gpu::Buffer, gpu::BindGroup, gpu::RenderPipeline, u32)>,
+    resources: Option<GrassResources>,
+}
+
+struct GrassResources {
+    instances: gpu::Buffer,
+    params: gpu::Buffer,
+    group: gpu::BindGroup,
+    pipeline: gpu::RenderPipeline,
+    motion: gpu::RenderPipeline,
+    count: u32,
 }
 
 impl GpuPass<World> for Grass {
@@ -203,26 +252,40 @@ impl GpuPass<World> for Grass {
             depth_write: true,
         };
         let pipeline = world_pipeline(setup, Some(&layout), &desc);
+        let motion_desc = TemporalPipeline {
+            label: "grass motion",
+            module: &module,
+            vertex: "vs_grass_motion",
+            fragment: "fs_grass_motion",
+            buffers: &buffers,
+            topology: gpu::PrimitiveTopology::TriangleStrip,
+            target: setup.motion_target(),
+            depth: setup.temporal_depth(true),
+        };
+        let motion = temporal_pipeline(setup, Some(&layout), &motion_desc);
         let count = u32::try_from(blades.len()).unwrap_or(u32::MAX);
-        self.resources = Some((instances, buffer, group, pipeline, count));
+        self.resources = Some(GrassResources { instances, params: buffer, group, pipeline, motion, count });
         Ok(())
     }
 
     fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
-        let Some((instances, buffer, group, pipeline, count)) = &self.resources else { return };
-        let time = seconds(ctx.sim().world.tick);
+        let Some(grass) = &self.resources else { return };
+        let tick = ctx.sim().world.tick;
+        let time = seconds(tick);
+        // Last frame's time (this frame's after a history reset and in a capture): the sway's
+        // motion starts there.
+        let before = seconds(tick.saturating_sub(ctx.tick() - ctx.prev_tick()));
         // Weaker devices draw a share of the meadow (the layout's blades are in random order, so
         // any first share is spread evenly), each blade wider to keep the cover.
         let share = grass_share(ctx.quality());
-        let _ = ctx.write_buffer(buffer, 0, &floats(&[time, 1.0 / share.sqrt(), 0.0, 0.0]));
-        let drawn = ((*count as f32) * share) as u32;
-        let Some(draws) = ctx.draws() else { return };
-        draws
-            .set_pipeline(pipeline)
-            .bind_tables(0)
-            .set_bind_group(1, group, &[])
-            .set_vertex_buffer(0, instances, ..)
-            .draw(0..BLADE_VERTICES, 0..drawn);
+        let _ = ctx.write_buffer(&grass.params, 0, &floats(&[time, 1.0 / share.sqrt(), before, 0.0]));
+        let drawn = ((grass.count as f32) * share) as u32;
+        if let Some(draws) = ctx.draws() {
+            draws.set_pipeline(&grass.pipeline).bind_tables(0).set_bind_group(1, &grass.group, &[]).set_vertex_buffer(0, &grass.instances, ..).draw(0..BLADE_VERTICES, 0..drawn);
+        }
+        if let Some(draws) = ctx.motion_draws() {
+            draws.set_pipeline(&grass.motion).bind_tables(0).set_bind_group(1, &grass.group, &[]).set_vertex_buffer(0, &grass.instances, ..).draw(0..BLADE_VERTICES, 0..drawn);
+        }
     }
 
     fn api(&self) -> u32 {
@@ -382,12 +445,13 @@ impl Sprite {
         Sprite { center, half_width, color, axis: Vec3::ZERO, kind: GLOW, half_height: 0.0 }
     }
 
-    fn push(&self, out: &mut Vec<f32>) {
+    /// Its instance row, with `before` (its centre last frame) for TAA's reactive coverage.
+    fn push(&self, before: Vec3, out: &mut Vec<f32>) {
         let c = self.center;
         let a = self.axis;
         out.extend([c.x, c.y, c.z, self.half_width]);
         out.extend(self.color);
-        out.extend([a.x, a.y, a.z, self.kind, self.half_height, 0.0, 0.0, 0.0]);
+        out.extend([a.x, a.y, a.z, self.kind, self.half_height, before.x, before.y, before.z]);
     }
 }
 
@@ -461,10 +525,20 @@ fn chimney_smoke(sprites: &mut Vec<Sprite>, t: f32) {
 
 /// The light sprites: fireflies, pollen, the ducks' glints, the chimney's smoke and the lanterns'
 /// and windows' pools on the grass (the lanterns and the windows are the scene's own lights and
-/// emissive materials, `draw.rs`, which Level-3 passes do not receive yet).
+/// emissive materials, `draw.rs`, which Level-3 passes do not receive yet). Under TAA a glow draws
+/// its own motion where it owns most of the pixel (`motion_draws`) and a sprite moving against the
+/// scene writes its coverage into the reactive mask elsewhere (`reactive_draws`), so a halo is
+/// neither trailed nor popped by history that belongs to the scene behind it (renderer pass 2, B.7).
 #[derive(Default)]
 pub struct Sprites {
-    resources: Option<(gpu::Buffer, gpu::RenderPipeline)>,
+    resources: Option<SpriteResources>,
+}
+
+struct SpriteResources {
+    instances: gpu::Buffer,
+    pipeline: gpu::RenderPipeline,
+    motion: gpu::RenderPipeline,
+    reactive: gpu::RenderPipeline,
 }
 
 impl GpuPass<World> for Sprites {
@@ -493,23 +567,53 @@ impl GpuPass<World> for Sprites {
             depth_write: false,
         };
         let pipeline = world_pipeline(setup, None, &desc);
-        self.resources = Some((instances, pipeline));
+        let reactive_desc = TemporalPipeline {
+            label: "sprites reactive",
+            module: &module,
+            vertex: "vs_sprite_reactive",
+            fragment: "fs_sprite_reactive",
+            buffers: &buffers,
+            topology: gpu::PrimitiveTopology::TriangleList,
+            target: setup.reactive_target(),
+            depth: setup.temporal_depth(false),
+        };
+        let reactive = temporal_pipeline(setup, None, &reactive_desc);
+        let motion_desc = TemporalPipeline {
+            label: "sprites motion",
+            vertex: "vs_sprite_motion",
+            fragment: "fs_sprite_motion",
+            target: setup.motion_target(),
+            ..reactive_desc
+        };
+        let motion = temporal_pipeline(setup, None, &motion_desc);
+        self.resources = Some(SpriteResources { instances, pipeline, motion, reactive });
         Ok(())
     }
 
     fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
-        let Some((instances, pipeline)) = &self.resources else { return };
-        let list = sprites(seconds(ctx.sim().world.tick));
+        let Some(SpriteResources { instances, pipeline, motion, reactive }) = &self.resources else { return };
+        let tick = ctx.sim().world.tick;
+        let list = sprites(seconds(tick));
+        // The same sprites last frame (every list holds the same sprites in the same order): what
+        // each moved from (itself after a history reset and in a capture).
+        let before = sprites(seconds(tick.saturating_sub(ctx.tick() - ctx.prev_tick())));
         let mut data = Vec::with_capacity(list.len() * 16);
-        for sprite in &list {
-            sprite.push(&mut data);
+        for (i, sprite) in list.iter().enumerate() {
+            sprite.push(before.get(i).map_or(sprite.center, |was| was.center), &mut data);
         }
         if ctx.write_buffer(instances, 0, &floats(&data)).is_err() {
             return;
         }
         let count = u32::try_from(list.len()).unwrap_or(0);
-        let Some(draws) = ctx.draws() else { return };
-        draws.set_pipeline(pipeline).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        if let Some(draws) = ctx.draws() {
+            draws.set_pipeline(pipeline).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
+        if let Some(draws) = ctx.motion_draws() {
+            draws.set_pipeline(motion).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
+        if let Some(draws) = ctx.reactive_draws() {
+            draws.set_pipeline(reactive).bind_tables(0).set_vertex_buffer(0, instances, ..).draw(0..6, 0..count);
+        }
     }
 
     fn api(&self) -> u32 {

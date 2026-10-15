@@ -86,6 +86,8 @@ pub mod pacing;
 pub mod world_text;
 /// Custom GPU passes (extension ladder level 3, M2.19): raw wgpu work registered into the frame.
 pub mod custom_pass;
+/// The shared wind field vertex animation evaluates at two times for its motion (pass 2, B.7).
+pub mod wind;
 
 // --- Renderer follow-up (RQ0.1 registers every RQ0 module, so wave-1 work never edits this file).
 // Settings and the frozen ABI are registry files: each tier's contracts WP appends to them ---

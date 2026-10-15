@@ -3002,6 +3002,17 @@ impl Renderer {
         Ok(rows.as_chunks::<4>().0.iter().map(|texel| [half([texel[0], texel[1]]), half([texel[2], texel[3]])]).collect())
     }
 
+    /// The last frame's TAA reactive mask, top row first (0: history kept, 1: the current sample;
+    /// renderer pass 2, B.7). Refused as [`Renderer::read_motion`].
+    pub fn read_reactive(&self, gpu: &Gpu) -> Result<Vec<f32>, RenderError> {
+        let targets = self.kept_prepass()?;
+        let Some((texture, _)) = targets.reactive.as_ref() else {
+            return Err(crate::readback::capture_failed("the last frame wrote no reactive mask"));
+        };
+        let rows = self.read_texture(gpu, texture, 1, wgpu::TextureAspect::All)?;
+        Ok(rows.iter().map(|texel| f32::from(*texel) / 255.0).collect())
+    }
+
     /// The last frame's prepass targets, when they were kept for a readback.
     fn kept_prepass(&self) -> Result<&PrepassTargets, RenderError> {
         let kept = self.targets.prepass.as_ref().filter(|_| self.last_prepass.is_some() && self.targets.spec.depth_readback);

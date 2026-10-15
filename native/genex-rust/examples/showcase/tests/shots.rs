@@ -600,8 +600,8 @@ fn metal_live_taa_frames_leave_no_trails_against_a_settled_capture() {
         let (w, h) = (live.width() as usize, live.height() as usize);
         // A trail is a filled blob: a tile most of whose pixels depart from the settled picture.
         // Edges differ sparsely (Live's longer history against the capture's one jitter cycle, the
-        // grass a Level-3 pass sways with no motion of its own), so each 8 x 8 tile is read at its
-        // 25th-percentile difference: a trail lifts it, a few edge pixels do not.
+        // grass a Level-3 pass sways and draws its own motion for), so each 8 x 8 tile is read at
+        // its 25th-percentile difference: a trail lifts it, a few edge pixels do not.
         let tile_quartile = |(tx, ty): (usize, usize)| {
             let mut tile: Vec<u8> = (0..8).flat_map(|y| (0..8).map(move |x| (x, y))).map(|(x, y)| diffs[(ty * 8 + y) * w + tx * 8 + x]).collect();
             tile.sort_unstable();
@@ -861,8 +861,10 @@ fn studio_shot_with(name: &str, change: genex::render::RenderChange) -> Option<C
 }
 
 /// The wide shot's far forest (the pines and broadleaves on the far hill), and the luma (0..255) a
-/// pixel there passes only as a specular glint blown to white.
-const FAR_FOREST: (std::ops::Range<u32>, std::ops::Range<u32>) = (900..1160, 100..260);
+/// pixel there passes only as a specular glint blown to white. Rows start at 120: above that the
+/// sky shows between the tree tops, and since the Level-3 passes get the frame's camera (renderer
+/// pass 2 B.7) its clouds sit in the world there with tops brighter than the glint luma.
+const FAR_FOREST: (std::ops::Range<u32>, std::ops::Range<u32>) = (900..1160, 120..260);
 const GLINT_LUMA: f64 = 230.0;
 /// The most of the far forest that may be glints: none settle under TAA (0.18% at high before),
 /// and a preset without TAA shades sub-pixel leaves once per pixel, where every glint stays (gate

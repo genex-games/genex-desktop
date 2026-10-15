@@ -508,7 +508,12 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     var weight = max(average, floor);
     weight = max(weight, clamp(motion_px * gx_taa.params.w, 0.0, 1.0));
     weight = max(weight, reactive);
-    let offscreen = any(prev_uv < vec2<f32>(0.0)) || any(prev_uv > vec2<f32>(1.0));
+    // History up to a texel past the frame's edge is read clamped to it (renderer pass 2, B.7): on
+    // a camera turning about a pitched axis an edge row's history falls just outside the frame on
+    // some frames and not others, and taking the current sample on those popped the frame's bottom
+    // row (about 100 pixels of every Lakeside pan's pops). Farther out the history is rejected.
+    let edge = gx_taa.size.zw;
+    let offscreen = any(prev_uv < -edge) || any(prev_uv > vec2<f32>(1.0) + edge);
     let tolerance = gx_taa.params.z;
     // The neighbourhood's closest key as it was last frame (the camera's motion scales every key of
     // a static surface by about the centre's ratio). The history is disoccluded when even the

@@ -300,6 +300,16 @@ fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len().max(1) as f64
 }
 
+/// The pixels `on` flags in frame `frame` and `off` does not, as (x, y) at `width`, at most
+/// [`WORST_PIXELS_LISTED`]: where a row's worst frame popped (the record's evidence aid).
+fn attributed_pixels(on: &[Vec<u32>], off: &[Vec<u32>], frame: usize, width: usize) -> Vec<(usize, usize)> {
+    let (Some(on), Some(off)) = (on.get(frame), off.get(frame)) else { return Vec::new() };
+    on.iter().filter(|i| !off.contains(i)).take(WORST_PIXELS_LISTED).map(|i| (*i as usize % width, *i as usize / width)).collect()
+}
+
+/// The most pixels a row's record lists for its worst frame.
+const WORST_PIXELS_LISTED: usize = 48;
+
 /// What `on` adds over `off` in each frame: the pixels flagged in `on` and not at the same pixel of
 /// the same frame in `off` (the runs follow one camera path over one simulation, so a pixel the
 /// geometry, the texture or the animation flags is flagged in both).
@@ -472,6 +482,12 @@ fn lakeside_row(name: &str, (path, radius): (Path, usize), preset: QualityPreset
     let on = lakeside_run(path, radius, &Drawn { preset, class, off: SHADOW_ROW_ISOLATED.to_vec() }, true)?;
     let off = lakeside_run(path, radius, &Drawn { preset, class, off: [shadows, SHADOW_ROW_ISOLATED].concat() }, false)?;
     let label = format!("{name}-{}-{}", preset.wire(), class.wire());
+    Some(judge_row(&label, radius, &on, &off, class))
+}
+
+/// The record of a shadow row's pair of runs (`on` with the shadows, `off` without) and, when the
+/// shadows add pops or flicker past the bounds, the problem; its maps written under `label`.
+fn judge_row(label: &str, radius: usize, on: &Run, off: &Run, class: DeviceClass) -> (String, Option<String>) {
     write_png(&out_dir().join(format!("pops-{label}.png")), &on.pop_map());
     write_png(&out_dir().join(format!("pops-{label}-shadows-off.png")), &off.pop_map());
     let pixels = on.popped.len();
@@ -479,14 +495,17 @@ fn lakeside_row(name: &str, (path, radius): (Path, usize), preset: QualityPreset
     let worst = pops.iter().copied().max().unwrap_or(0);
     let worst_frame = pops.iter().position(|count| *count == worst).unwrap_or(0);
     let total: usize = pops.iter().sum();
+    let width = on.last.as_ref().map_or(1, |last| last.width() as usize);
+    let worst_pixels: Vec<String> = attributed_pixels(&on.pops, &off.pops, worst_frame, width).iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
     let flicker: Vec<f64> = attributed(&on.flickers, &off.flickers, pixels).iter().map(|count| *count as f64 / on.pixels()).collect();
     let (flicker_mean, flicker_max) = (mean(&flicker), flicker.iter().copied().fold(0.0, f64::max));
     let step_frame = flicker.iter().position(|share| *share == flicker_max).unwrap_or(0);
-    write_step(&label, &on, &off, step_frame);
+    write_step(label, on, off, step_frame);
     let record = format!(
-        "{{\"row\": \"{label}\", \"frames\": {PATH_FRAMES}, \"radiusPx\": {radius}, \"popsOn\": {}, \"popsOff\": {}, \"shadowPops\": {total}, \"worstShadowPops\": {worst}, \"worstFrame\": {worst_frame}, \"shadowFlickerMean\": {flicker_mean:.5}, \"shadowFlickerMax\": {flicker_max:.5}, \"stepFrame\": {step_frame}, \"flickerOnMean\": {:.5}, \"flickerOffMean\": {:.5}}}",
+        "{{\"row\": \"{label}\", \"frames\": {PATH_FRAMES}, \"radiusPx\": {radius}, \"popsOn\": {}, \"popsOff\": {}, \"shadowPops\": {total}, \"worstShadowPops\": {worst}, \"worstFrame\": {worst_frame}, \"worstPixels\": [{}], \"shadowFlickerMean\": {flicker_mean:.5}, \"shadowFlickerMax\": {flicker_max:.5}, \"stepFrame\": {step_frame}, \"flickerOnMean\": {:.5}, \"flickerOffMean\": {:.5}}}",
         on.total_pops(),
         off.total_pops(),
+        worst_pixels.join(", "),
         on.mean_flicker(),
         off.mean_flicker()
     );
@@ -502,7 +521,7 @@ fn lakeside_row(name: &str, (path, radius): (Path, usize), preset: QualityPreset
         problems.push(format!("the shadows change {:.3}% of the picture at once at frame {step_frame}", flicker_max * 100.0));
     }
     let problem = (!problems.is_empty()).then(|| format!("{label}: {}", problems.join("; ")));
-    Some((record, problem))
+    (record, problem)
 }
 
 /// Write the frames around the shadows' worst single-frame change (`step` is the change from frame
@@ -793,6 +812,107 @@ fn metal_lakeside_open_ground_holds_still_under_the_low_sun_while_the_camera_cre
         problems.extend(problem);
     }
     finish("lakeside-open-ground-creep", &records, &problems);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Harbour Street (renderer pass 2, B.7: the shadow rows on the second scene, the street at dusk
+// under its low sun with the sun's screen mask on desktop high and ultra)
+
+/// A Harbour Street camera path: the free camera's eye and target at measured frame `k`.
+type HarbourPath = fn(f32) -> (Vec3, Vec3);
+
+/// Harbour Street's wide street shot.
+fn harbour_wide() -> (Vec3, Vec3) {
+    let shot = &showcase_game::harbour::SHOTS[0];
+    (shot.eye, shot.target)
+}
+
+/// The yaw one pixel at the screen's centre turns in the street-wide shot, radians.
+fn harbour_pixel_angle() -> f32 {
+    let [_, height] = showcase_game::harbour::WORLD_SIZE;
+    2.0 * genex::math::tan(showcase_game::harbour::SHOTS[0].fovy.to_radians() * 0.5) / height as f32
+}
+
+/// The street-wide shot turning about its eye at [`PAN_PX_PER_FRAME`].
+fn harbour_pan(k: f32) -> (Vec3, Vec3) {
+    let (eye, target) = harbour_wide();
+    (eye, eye + turned(target - eye, k * PAN_PX_PER_FRAME * harbour_pixel_angle()))
+}
+
+/// The street-wide shot sliding sideways at [`CREEP_PX`] a frame at its target's distance.
+fn harbour_creep(k: f32) -> (Vec3, Vec3) {
+    let (eye, target) = harbour_wide();
+    let side = (target - eye).cross(Vec3::Y).normalize();
+    let step = side * (k * CREEP_PX * harbour_pixel_angle() * (target - eye).length());
+    (eye + step, target + step)
+}
+
+/// Harbour Street drawn Live along `path` as `drawn` says ([`lakeside_run`]'s schedule).
+fn harbour_run(path: HarbourPath, radius: usize, drawn: &Drawn, keep: bool) -> Option<Run> {
+    use showcase_game::harbour::{CameraMode as HarbourCamera, FreeCam as HarbourFree, World as Harbour};
+    let mut presenter = Presenter::open(showcase_game::harbour::WORLD_SIZE, showcase_game::harbour_assets()).ok()?;
+    let mut runtime = genex::Runtime::new(showcase_game::harbour_game()).expect("installs");
+    runtime.seed(1);
+    runtime.start();
+    runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
+    assert!(presenter.install_for(&mut runtime).is_empty(), "every pass installs");
+    let pose = |runtime: &mut genex::Runtime<Harbour>, k: f32| {
+        let (eye, target) = path(k);
+        let world = &mut runtime.sim_mut().world;
+        world.mode = HarbourCamera::Free;
+        world.hud_hidden = true;
+        world.free = HarbourFree::looking(eye, target);
+    };
+    pose(&mut runtime, -(WARM_FRAMES as f32));
+    presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
+    let change = RenderChange {
+        preset: Some(Some(PresetChoice::Preset(drawn.preset))),
+        device_class: Some(Some(drawn.class)),
+        features: drawn.off.iter().map(|feature| (*feature, false)).collect(),
+        render_scale_lock: Some(Some(1.0)),
+        ..RenderChange::default()
+    };
+    presenter.render_settings().expect("the game's settings attached").borrow_mut().apply(&change);
+    presenter.resilient.renderer_mut().renderer_mut().set_depth_readback(true);
+    let mut run = if keep { Run::keeping(radius) } else { Run::new(radius) };
+    for k in 0..WARM_FRAMES + PATH_FRAMES {
+        runtime.step(FIXED_STEP_MS);
+        pose(&mut runtime, k as f32 - WARM_FRAMES as f32);
+        presenter.draw_view(&mut runtime, View::Game).expect("a view").expect("drawn");
+        if k >= WARM_FRAMES {
+            let capture = presenter.resilient.capture().expect("the Live picture");
+            let fast = fast_pixels(&presenter, (capture.width(), capture.height()), radius);
+            run.push_moving(capture, fast);
+        }
+    }
+    assert!(presenter.take_pass_refusals().is_empty(), "every pass draws");
+    Some(run)
+}
+
+/// Renderer pass 2, B.7: Harbour Street's wide street panned at 2 px a frame and crept at a
+/// fiftieth of a pixel, at high and ultra on desktop-high (the sun's screen mask on): its sun
+/// shadows add no one-frame pops (D9), flicker on no more than 0.15% of pixels a frame and change
+/// no more than 0.25% of the picture at once, as the Lakeside rows hold them.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_harbour_street_shadows_add_no_one_frame_pops_on_a_pan_or_a_creep() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut records = Vec::new();
+    let mut problems = Vec::new();
+    let paths: [(&str, HarbourPath, usize); 2] = [("harbour-pan", harbour_pan, PAN_RADIUS), ("harbour-creep", harbour_creep, MEADOW_RADIUS)];
+    for (name, path, radius) in paths {
+        for preset in [QualityPreset::High, QualityPreset::Ultra] {
+            let class = desktop_high();
+            let Some(on) = harbour_run(path, radius, &Drawn { preset, class, off: SHADOW_ROW_ISOLATED.to_vec() }, true) else { return };
+            let Some(off) = harbour_run(path, radius, &Drawn { preset, class, off: [SUN_SHADOWS, SHADOW_ROW_ISOLATED].concat() }, false) else { return };
+            let (record, problem) = judge_row(&format!("{name}-{}-{}", preset.wire(), class.wire()), radius, &on, &off, class);
+            records.push(record);
+            problems.extend(problem);
+        }
+    }
+    finish("harbour-street-paths", &records, &problems);
 }
 
 // ---------------------------------------------------------------------------------------------

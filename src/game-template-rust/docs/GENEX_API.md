@@ -538,9 +538,13 @@ prepass's motion vectors at the same stages, as `gx_motion` and `ctx.prepass_mot
 declaration alone makes the prepass write them, with or without TAA): `rg16float` NDC motion,
 current minus previous with the jitter removed, so the pixel at `uv` was at
 `uv - motion * vec2(0.5, -0.5)` last frame (where no geometry drew, the sky included, the motion is
-the camera's own). Geometry a pass draws in the world has no motion of its own (its pixels keep the
-motion of what is behind them), so under TAA a fast-moving in-world pass draw may trail: keep
-such geometry slow, or draw it at `PostHdr`. In the world and at `PostHdr` a v2 pass draws in the scene format
+the camera's own). Under TAA an in-world pass hands TAA what it moves itself:
+`ctx.motion_draws()` draws its motion (a vertex animation evaluated at `ctx.tick()` and
+`ctx.prev_tick()`, for example with the shared `gx_wind`; pipelines use `setup.motion_target()`,
+`setup.temporal_depth(true)` and `setup.temporal_multisample()`), and `ctx.reactive_draws()` the
+coverage of blended work moving over the scene (a glow sprite: `setup.reactive_target()`,
+`setup.temporal_depth(false)`), so neither trails; without them its pixels keep the motion of what
+is behind them. In the world and at `PostHdr` a v2 pass draws in the scene format
 (`setup.world_format()`): write linear radiance times `pre_exposure` on the HDR scene, and
 sRGB-encoded colour when `scene_ldr` is 1; under `depth_reversed` the far plane is depth 0 and
 `setup.world_depth(..)` already compares `Greater`. A v2 pass that lights with the environment
