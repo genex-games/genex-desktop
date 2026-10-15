@@ -128,3 +128,86 @@ fn metal_every_harbour_shot_is_drawn_the_same_twice_exposed_and_written_as_a_png
     assert!(failures.is_empty(), "{} exposure checks failed:\n{}", failures.len(), failures.join("\n"));
     check_digests(&digests);
 }
+
+/// Plan A.4's acceptance on Harbour Street: the white rug beside the café's red brick takes at
+/// least this many times the chroma it has under the sky's SH9 alone. The café is lit by warm
+/// lamps, so the rug's colour is first white-balanced by its own far end (its strip farthest from
+/// the brick, under the same lamps): what is left is the colour the brick bounces onto it.
+const RUG_BLEED_RATIO_MIN: f64 = 2.0;
+
+/// Chroma of linear `rgb`: its spread over its largest channel (0 for a grey).
+fn chroma(rgb: [f64; 3]) -> f64 {
+    let (max, min) = (rgb.iter().copied().fold(f64::MIN, f64::max), rgb.iter().copied().fold(f64::MAX, f64::min));
+    (max - min) / max.max(1e-9)
+}
+
+/// The mean linear colour of `capture` where the floor strip `x` (world) by the rug's depth lands
+/// for `view_proj` (points off screen skipped).
+fn rug_strip(capture: &Capture, view_proj: genex::math::Mat4, x: (f32, f32)) -> [f64; 3] {
+    use showcase_game::street::BLEED_FLOOR;
+    let (width, height) = (capture.width(), capture.height());
+    let (min, max) = (BLEED_FLOOR.min, BLEED_FLOOR.max);
+    let mut sum = [0.0_f64; 3];
+    let mut count = 0.0;
+    for i in 0..8 {
+        for j in 0..16 {
+            let point = genex::math::vec3(x.0 + (x.1 - x.0) * (i as f32 + 0.5) / 8.0, max.y, min.z + (max.z - min.z) * (j as f32 + 0.5) / 16.0);
+            let clip = view_proj * point.extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            let (px, py) = (((ndc.x + 1.0) * 0.5 * width as f32) as i64, ((1.0 - ndc.y) * 0.5 * height as f32) as i64);
+            if clip.w <= 0.0 || !(0..i64::from(width)).contains(&px) || !(0..i64::from(height)).contains(&py) {
+                continue;
+            }
+            let at = ((py as u32 * width + px as u32) * 4) as usize;
+            let bgra = &capture.bgra()[at..at + 4];
+            for (c, value) in sum.iter_mut().zip([bgra[2], bgra[1], bgra[0]]) {
+                *c += f64::from(genex_render::texture::srgb_to_linear(value));
+            }
+            count += 1.0;
+        }
+    }
+    assert!(count > 0.0, "the rug is in the café's shot");
+    sum.map(|c| c / count)
+}
+
+#[test]
+#[ignore = "real GPU: run with --ignored metal"]
+fn metal_the_cafe_rug_beside_the_red_brick_takes_its_colour() {
+    // The café's shot at tick 600 drawn through the frame renderer (settled, the untextured
+    // stand-ins) at desktop high, with the café's irradiance volume and with none baked; the rug's
+    // strip nearest the brick white-balanced by its strip farthest from it.
+    use genex_platform_web::{MeshCache, to_scene};
+    use genex_render::device_class::DeviceClass;
+    use genex_render::presets::preset_quality;
+    use genex_render::settings::{Look, QualityPreset};
+    use showcase_game::street::BLEED_FLOOR;
+    let Some(gpu) = gpu() else { return };
+    let mut runtime = harbour_at_shot_tick();
+    let camera = runtime.camera(View::Named("cafe")).expect("the café's camera");
+    let frame = runtime.frame(View::Named("cafe")).expect("the café's frame");
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let with = preset_quality(QualityPreset::High, class);
+    let mut without = with;
+    without.environment.irradiance_volumes = 0;
+    let (near, far) = ((BLEED_FLOOR.min.x, BLEED_FLOOR.min.x + 0.8), (BLEED_FLOOR.max.x - 0.8, BLEED_FLOOR.max.x));
+    let mut bleeds = Vec::new();
+    for (name, quality) in [("sh9", without), ("volume", with)] {
+        let capture = support::game_capture(&gpu, class, Some(&quality), &Look::default(), &|on| {
+            let mut meshes = MeshCache::default();
+            meshes.load(&frame, harbour_assets(), |mesh| on.renderer.add_mesh(on.gpu, mesh));
+            on.renderer.set_environment(&frame.declared_environment().cloned().unwrap_or(genex_render::settings::Environment::Color));
+            to_scene(&frame, &camera, &meshes)
+        });
+        write_png(&out_dir().join(format!("harbour-cafe-rug-{name}.png")), &capture);
+        let view_proj = to_scene(&frame, &camera, &MeshCache::default()).camera.view_proj(capture.width() as f32 / capture.height() as f32);
+        let (by_brick, far_end) = (rug_strip(&capture, view_proj, near), rug_strip(&capture, view_proj, far));
+        let balanced: [f64; 3] = std::array::from_fn(|c| by_brick[c] / far_end[c].max(1e-9));
+        println!("{name}: the rug by the brick {by_brick:?}, at its far end {far_end:?}, balanced {balanced:?} (chroma {:.4})", chroma(balanced));
+        bleeds.push(balanced);
+    }
+    let ratio = chroma(bleeds[1]) / chroma(bleeds[0]).max(1e-9);
+    println!("{{\"row\":\"harbour-cafe-rug-bleed\",\"adapter\":\"{}\",\"sh9Chroma\":{:.5},\"volumeChroma\":{:.5},\"ratio\":{ratio:.3}}}", gpu.receipt().adapter, chroma(bleeds[0]), chroma(bleeds[1]));
+    let red = |rgb: [f64; 3]| rgb[0] / (rgb[0] + rgb[1] + rgb[2]);
+    assert!(red(bleeds[1]) > red(bleeds[0]), "the rug turns toward the brick's red by it: {:?} -> {:?}", bleeds[0], bleeds[1]);
+    assert!(ratio >= RUG_BLEED_RATIO_MIN, "the rug's chroma by the red brick is {ratio:.2}x the SH9's (at least {RUG_BLEED_RATIO_MIN}x)");
+}

@@ -1897,6 +1897,18 @@ fn lighting(lights: &Lights) -> Lighting {
             intensity: probe.intensity,
         })
         .collect();
+    // The renderer holds or drops a hostile volume (`irradiance::IrradianceVolume::held`).
+    lighting.irradiance_volumes = lights
+        .irradiance_volumes
+        .iter()
+        .map(|volume| genex_render::irradiance::IrradianceVolume {
+            min: volume.min.to_array(),
+            max: volume.max.to_array(),
+            cells: volume.cells,
+            blend: volume.blend,
+            intensity: volume.intensity,
+        })
+        .collect();
     lighting
 }
 

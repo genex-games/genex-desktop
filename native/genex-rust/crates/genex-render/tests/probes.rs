@@ -114,7 +114,9 @@ fn the_forward_shader_with_probes_stays_within_the_forward_stage_budget() {
     assert_eq!(rows.binding.as_ref().map(|binding| binding.binding), Some(22));
     let (storage, textures) = fragment_counts(&module, &info, "fs_main");
     assert_eq!(storage, 6, "one storage buffer more than A.0's five (the rows): {storage} of 8");
-    assert_eq!(textures, genex_render::abi::FORWARD_FRAGMENT_TEXTURES_MAX, "no sampled texture more: the array takes the cube's slot");
+    // Renderer pass 2 A.4 flipped 14 (the cap then) -> 15: the irradiance volumes' atlas; the
+    // probes' cube array still takes the sky cube's slot.
+    assert_eq!(textures, 15, "no sampled texture more for the probes: the array takes the cube's slot");
     assert!(textures <= genex_render::abi::FORWARD_FRAGMENT_TEXTURES_MAX);
     // The capture's pipelines compile the probes out.
     let constants: naga::back::PipelineConstants = [("GX_PROBES".to_owned(), 0.0)].into_iter().collect();
@@ -220,7 +222,7 @@ fn frame(gpu: &Gpu, maps: &mut EnvironmentMaps, (environment, quality): (&Enviro
     maps.bake(&mut encoder, &request, None);
     let action = maps.last_work().action;
     let order: Vec<u32> = (0..probes.len() as u32).collect();
-    let prep = ProbePrep { declared: probes, order: &order, quality, sky: None, frame_index, settle, sun_dir: [0.0, 1.0, 0.0], depth_reversed: true };
+    let prep = ProbePrep { declared: probes, order: &order, quality, sky: None, frame_index, settle, sun_dir: [0.0, 1.0, 0.0], depth_reversed: true, volume_rows: &[] };
     let (work, _) = maps.prepare_probes(&mut encoder, &prep);
     for (slot, step) in &work {
         if let Some(face) = maps.probe_face(*slot, *step, &prep) {

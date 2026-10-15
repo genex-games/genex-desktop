@@ -13,8 +13,17 @@
 //! What a capture leaves out (open, recorded with A.3): transparent draws, alpha-masked and
 //! double-sided variants, skinned meshes' motion, particles, lines, Level-2 custom materials and
 //! Level-3 passes; spot lights unshadowed; the sky's sun disk (the analytic sun lights instead).
+//!
+//! The irradiance volumes' bake (renderer pass 2 A.4, `crate::irradiance`) runs first in the
+//! node, because the probes' table carries the volumes' rows: each cell due this frame is six
+//! faces of a small cube drawn the same way from the cell's centre (both sides of every triangle,
+//! so a cell inside a wall sees it close by everywhere), the sun's map of the volume's box drawn
+//! once per batch, then the batch's reduce and, when it completes the volume, its publish. A
+//! settled capture's whole bake submits after each batch, so the per-face rows and the capture
+//! targets hold one batch.
 
 use super::*;
+use crate::irradiance::{GridBatch, GridPrep};
 use crate::probes::{CaptureStep, FaceCapture, ProbePrep};
 
 /// The bytes between two faces' frame rows in the capture's uniform buffer (core's uniform offset
@@ -36,6 +45,12 @@ impl Renderer {
         if !crate::probes::LANDED {
             return counters;
         }
+        if crate::irradiance::LANDED {
+            let grid = self.encode_irradiance(frame, prep);
+            counters.render += grid.render;
+            counters.compute += grid.compute;
+            counters.submissions += grid.submissions;
+        }
         let plan = &prep.plan;
         let binned = plan.binned.as_ref().filter(|_| self.path.hdr);
         let (declared, order): (&[crate::probes::ReflectionProbe], &[u32]) = binned.map_or((&[], &[]), |binned| (&binned.reflection_probes, &binned.bins.probes));
@@ -49,6 +64,7 @@ impl Renderer {
             settle: self.environment_settle,
             sun_dir: [sun[0], sun[1], sun[2]],
             depth_reversed: self.path.depth_reversed,
+            volume_rows: &[],
         };
         let (work, passes) = self.environment.borrow_mut().prepare_probes(frame, &probe_prep);
         counters.compute += passes;
@@ -88,8 +104,103 @@ impl Renderer {
         counters
     }
 
+    /// Graph node 11's irradiance part: the volumes' schedule, then each batch due this frame (its
+    /// cells' faces, the reduce, the publish). Nothing (and the volumes released) off the HDR
+    /// scene or without binned lights, which carry the volumes' bins.
+    fn encode_irradiance(&self, frame: &mut FrameEncoder, prep: &FramePrep) -> PassCounters {
+        let mut counters = PassCounters::default();
+        let plan = &prep.plan;
+        let binned = plan.binned.as_ref().filter(|_| self.path.hdr);
+        let declared: &[crate::irradiance::IrradianceVolume] = binned.map_or(&[], |binned| &binned.irradiance_volumes);
+        let grid_prep = GridPrep { declared, quality: &self.quality.environment, lit_by: None, frame_index: self.frame_index, settle: self.environment_settle };
+        let device = self.device.clone();
+        let work = self.environment.borrow_mut().prepare_irradiance(&device, &grid_prep);
+        if work.is_empty() {
+            return counters;
+        }
+        let faces = (BATCH_FACES as u64).max(1);
+        let rows = plan.visible_slots.max(1);
+        let visible_stride = (u64::from(rows) * 2 * 4).next_multiple_of(256);
+        let resources = self.capture_pipeline(CaptureKind::Irradiance).and_then(|pipeline| {
+            let buffers = self.environment.borrow_mut().irradiance_store().buffers(&self.device, faces * FRAME_ROW_STRIDE, faces * visible_stride)?;
+            Ok((pipeline, buffers))
+        });
+        let (pipeline, (uniforms, visible)) = match resources {
+            Ok(resources) => resources,
+            Err(error) => {
+                // Nothing is drawn: the volumes' last bakes stay bound (none yet: no weight).
+                log::error!("irradiance volume bake skipped: {error}");
+                return counters;
+            }
+        };
+        let sun = plan.frame.sun_dir;
+        let sun = [sun[0], sun[1], sun[2]];
+        let reversed = self.path.depth_reversed;
+        let last = work.len() - 1;
+        for (index, batch) in work.iter().enumerate() {
+            let buffers = CaptureRegions { uniforms: &uniforms, uniform_at: 0, visible: &visible, visible_at: 0, visible_bytes: visible_stride };
+            // A Live slice reuses the volume's shadow map an earlier slice drew for this sun (the
+            // bake holds the scene still); a settled capture draws it again, so it is the same
+            // picture after any Live frames.
+            let held = !self.environment_settle && self.environment.borrow().irradiance().shadow_held(batch.slot, sun);
+            counters.render += self.encode_cell_faces(frame, prep, batch, (&buffers, &pipeline), (sun, reversed, held));
+            self.environment.borrow_mut().irradiance_hold_shadow(batch.slot, sun);
+            counters.compute += self.environment.borrow_mut().encode_irradiance_batch(frame, batch, reversed);
+            if index < last {
+                // The next batch rewrites the same per-face rows and capture targets.
+                frame.submit();
+                counters.submissions += 1;
+            }
+        }
+        counters
+    }
+
+    /// The faces of `batch`'s cells: the sun's map of the volume's box with the first face (unless
+    /// `held`: the map already holds it), then every face (render passes opened).
+    fn encode_cell_faces(&self, frame: &mut FrameEncoder, prep: &FramePrep, batch: &GridBatch, (regions, pipeline): (&CaptureRegions<'_>, &RenderPipeline), (sun, reversed, held): ([f32; 3], bool, bool)) -> u32 {
+        let mut passes = 0;
+        let mut drawn = 0u64;
+        for (index, cell) in batch.cells.iter().enumerate() {
+            for face in 0..6 {
+                let Some(cell_face) = self.environment.borrow().irradiance().cell_face(batch.slot, index, *cell, face) else { continue };
+                let capture = FaceCapture {
+                    slot: batch.slot,
+                    view_proj: crate::probes::face_view_proj(&cell_face.probe, face, reversed),
+                    light: crate::probes::probe_light_view_proj(&cell_face.probe, sun),
+                    probe: cell_face.probe,
+                    face,
+                    color: cell_face.color,
+                    depth: cell_face.depth,
+                    depth_clear: if reversed { 0.0 } else { 1.0 },
+                    shadow: cell_face.shadow,
+                    shadow_array: cell_face.shadow_array,
+                    shadow_drawn: held || drawn > 0,
+                    ambient: false,
+                };
+                let at = CaptureRegions {
+                    uniforms: regions.uniforms,
+                    uniform_at: drawn * FRAME_ROW_STRIDE,
+                    visible: regions.visible,
+                    visible_at: drawn * regions.visible_bytes,
+                    visible_bytes: regions.visible_bytes,
+                };
+                passes += if capture.shadow_drawn { 1 } else { 2 };
+                self.encode_probe_face(frame, prep, &capture, &at, pipeline);
+                drawn += 1;
+            }
+        }
+        passes
+    }
+
     /// The capture's forward pipeline for this renderer's HDR scene (made once per surface key).
     fn probe_capture_pipeline(&self) -> Result<Compiled<RenderPipeline>, RenderError> {
+        self.capture_pipeline(CaptureKind::Probe)
+    }
+
+    /// The forward pipeline a capture of `kind` draws with: a probe's culls back faces, an
+    /// irradiance cell's draws both sides (so a cell inside a wall sees the wall close by in every
+    /// direction and its reach hides it from every point).
+    fn capture_pipeline(&self, kind: CaptureKind) -> Result<Compiled<RenderPipeline>, RenderError> {
         let reversed = self.path.depth_reversed;
         let key = SurfaceKey {
             shadow_filter: ShadowFilter::Pcf3x3,
@@ -103,7 +214,7 @@ impl Renderer {
         let mut constants: Vec<(&str, f64)> = surface_constants(reversed, crate::probes::CAPTURE_COLOR_FORMAT, key).to_vec();
         constants.push(("GX_PROBES", 0.0));
         let bits: Vec<u64> = constants.iter().map(|(_, value)| value.to_bits()).collect();
-        if let Some(pipeline) = self.environment.borrow_mut().probe_store().pipeline(&bits) {
+        if let Some(pipeline) = kind.store(&mut self.environment.borrow_mut()).pipeline(&bits) {
             return Ok(pipeline);
         }
         let module = shader(&self.device, "probe capture", crate::shaders::FORWARD)?;
@@ -116,7 +227,7 @@ impl Renderer {
             vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: options.clone(), buffers: &buffers },
             // A cube face is a mirror image of a right-handed view (`probes::face_basis`): its
             // front faces wind clockwise.
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: Some(wgpu::Face::Back), front_face: wgpu::FrontFace::Cw, ..Default::default() },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: kind.cull(), front_face: wgpu::FrontFace::Cw, ..Default::default() },
             depth_stencil: Some(depth_state(true, reversed)),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
@@ -128,7 +239,7 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        self.environment.borrow_mut().probe_store().set_pipeline(bits, pipeline.clone());
+        kind.store(&mut self.environment.borrow_mut()).set_pipeline(bits, pipeline.clone());
         Ok(pipeline)
     }
 
@@ -141,7 +252,7 @@ impl Renderer {
         let shadows = plan.frame.cascade_splits[3] > 0.5 && plan.views > 1;
         let lod = plan.cull_views.lod;
         let face_cull = crate::cull::cpu_cull(&crate::cull::frustum_planes_for(face.view_proj, reversed), lod, &plan.batches, &plan.instances, rows);
-        let light_cull = shadows.then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), lod, &plan.batches, &plan.instances, rows));
+        let light_cull = (shadows && !face.shadow_drawn).then(|| crate::cull::cpu_cull(&crate::cull::frustum_planes(face.light.0), lod, &plan.batches, &plan.instances, rows));
         let mut lists = face_cull.visible.clone();
         lists.extend(light_cull.as_ref().map_or_else(|| vec![0; rows], |cull| cull.visible.clone()));
         let row = capture_frame(&plan.frame, face, (shadows, reversed), rows as u32);
@@ -253,6 +364,35 @@ impl Renderer {
     }
 }
 
+/// Faces one irradiance batch draws (`irradiance::BATCH_CELLS` cells of six).
+const BATCH_FACES: usize = crate::irradiance::BATCH_CELLS * 6;
+
+/// What a capture pipeline draws for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureKind {
+    /// A reflection probe's faces (back faces culled).
+    Probe,
+    /// An irradiance cell's faces (both sides drawn).
+    Irradiance,
+}
+
+impl CaptureKind {
+    fn cull(self) -> Option<wgpu::Face> {
+        match self {
+            CaptureKind::Probe => Some(wgpu::Face::Back),
+            CaptureKind::Irradiance => None,
+        }
+    }
+
+    /// The store that keeps the pipeline.
+    fn store(self, environment: &mut crate::ibl::EnvironmentMaps) -> &mut crate::probes::CaptureStore {
+        match self {
+            CaptureKind::Probe => environment.probe_store(),
+            CaptureKind::Irradiance => environment.irradiance_store(),
+        }
+    }
+}
+
 /// Where one face's rows go in the capture's buffers.
 struct CaptureRegions<'a> {
     uniforms: &'a Buffer,
@@ -262,10 +402,10 @@ struct CaptureRegions<'a> {
     visible_bytes: u64,
 }
 
-/// The frame row a capture face draws with: the frame's lights, sun, ambient and fog, seen from
-/// the capture point along the face, unjittered, at pre-exposure 1 (the cube holds radiance), its
-/// one cascade the probe's box (`shadows`) or none, its frustum planes of `reversed` depth, and
-/// `rows` visible rows per view.
+/// The frame row a capture face draws with: the frame's lights, sun, ambient (none when the face's
+/// `ambient` is off: the flat path with black) and fog, seen from the capture point along the face,
+/// unjittered, at pre-exposure 1 (the cube holds radiance), its one cascade the probe's box
+/// (`shadows`) or none, its frustum planes of `reversed` depth, and `rows` visible rows per view.
 fn capture_frame(frame: &GpuFrame, face: &FaceCapture, (shadows, reversed): (bool, bool), rows: u32) -> GpuFrame {
     let (forward, _, _) = crate::probes::face_basis(face.face);
     let [x, y, z] = face.probe.capture;
@@ -292,5 +432,8 @@ fn capture_frame(frame: &GpuFrame, face: &FaceCapture, (shadows, reversed): (boo
     row.shadow_params = [row.cascade_bias[0], offset, 0.0, 1.0 / crate::probes::CAPTURE_SHADOW_PX as f32];
     row.shadow_soft = [frame.shadow_soft[0], 0.0, 0.0, 0.0];
     row.shadow_counts = [u32::from(shadows), 0, frame.shadow_counts[2], 0];
+    if !face.ambient {
+        row.ambient = [0.0; 4];
+    }
     row
 }

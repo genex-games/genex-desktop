@@ -2,9 +2,10 @@
 // (RQ2) when a sky or a map lights the scene. Reads the forward bindings `frame`, `env_sh`,
 // `brdf_lut` and `env_sampler` (the Level-2 v2 material map declares the same names), the
 // environment's prefiltered cubes through the accessors its bindings' file defines
-// (`gx_env_levels`, `gx_env_sky`, `gx_env_reflection`: shaders/forward_env.wgsl, the v2 prelude's
-// material_v2.wgsl; renderer pass 2 A.3: the forward pass's reflection reads the reflection probes
-// around the surface, a v2 material's the sky's cube) and the `gx_ambient_occlusion` accessor
+// (`gx_env_levels`, `gx_env_sky`, `gx_env_light`: shaders/forward_env.wgsl, the v2 prelude's
+// material_v2.wgsl; renderer pass 2 A.3 and A.4: the forward pass's reflection reads the
+// reflection probes around the surface and its diffuse light the irradiance volumes, a v2
+// material's the sky's cube and SH9) and the `gx_ambient_occlusion` accessor
 // (shaders/effects.wgsl).
 //
 // The environment's light is the split sum (Karis 2013) over the bake RQ2.1 writes: SH9 irradiance
@@ -237,11 +238,13 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     let fms_ems = e_ms * fss_ess * f_avg / (vec3<f32>(1.0) - e_ms * f_avg);
     let k_d = s.albedo * (1.0 - s.metallic) * (vec3<f32>(1.0) - fss_ess - fms_ems);
     let r = reflect(-s.v, s.n);
-    // The reflection probes around the surface where the frame has them, else the sky (A.3).
-    let radiance = gx_env_reflection(s.world_pos, gx_specular_dominant(s.n, r, s.roughness), gx_env_lod(s.roughness));
     let ao = gx_surface_occlusion(s);
     let occlusion = ao.w;
-    let irradiance = gx_env_irradiance(gx_diffuse_normal(s.n, ao.xyz, occlusion));
+    // The reflection probes around the surface where the frame has them, else the sky (A.3); the
+    // irradiance volumes around it, else the sky's SH9 (A.4): one walk of the probe bins.
+    let light = gx_env_light(s.world_pos, gx_specular_dominant(s.n, r, s.roughness), gx_env_lod(s.roughness), gx_diffuse_normal(s.n, ao.xyz, occlusion));
+    let radiance = light.reflection;
+    let irradiance = light.diffuse;
     let ao_lagarde = gx_specular_occlusion(n_dot_v, occlusion, s.roughness);
     var ao_specular = ao_lagarde;
     if dot(ao.xyz, ao.xyz) > 0.0 {

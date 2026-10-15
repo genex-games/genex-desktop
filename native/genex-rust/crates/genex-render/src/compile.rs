@@ -238,6 +238,7 @@ pub const WORKGROUP_AUDIT: &[(&str, &str)] = &[
     ("sky-multiscatter", "each of the 64 lanes stores its direction's gathers before the reduction's first barrier"),
     ("ibl-sh9", "each lane stores partial[lane] and lowest[lane] before reading; lane 0 stores ringing before the uniform load"),
     ("meshlet-cull", "cull_mark, cull_scan and cull_scatter store every lane's scan_a, scan_b, marks and lane_slots before a barrier"),
+    ("irradiance-passes", "cs_irradiance_reduce: each of the 64 lanes stores lane_light[lane][a] and lane_reach[lane][a] for all six directions before the reduction's first barrier"),
 ];
 
 /// Compilation options for a kernel in [`WORKGROUP_AUDIT`]: no workgroup zeroing on native, where

@@ -1409,18 +1409,19 @@ fn shading_probe_source() -> String {
     let base = genex_render::shaders::FORWARD;
     let patched = base.replacen("fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {", "fn gx_ambient_occlusion_unprobed(world_pos: vec3<f32>) -> vec4<f32> {", 1);
     assert_ne!(patched, base, "forward_effects.wgsl no longer answers the AO term here: the probe stands in for it");
-    // Renderer pass 2 A.3: a compute probe has no light bins, so the reflection is the sky's
-    // layer of the probe array (the forward pass walks the probes binned at the pixel).
-    let reflection = "fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {";
-    let patched = patched.replacen(reflection, "fn gx_env_reflection_binned(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {", 1);
+    // Renderer pass 2 A.3 and A.4: a compute probe has no light bins, so the reflection is the
+    // sky's layer of the probe array and the diffuse light the sky's SH9 (the forward pass walks
+    // the probes and irradiance volumes binned at the pixel).
+    let walk = "fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {";
+    let patched = patched.replacen(walk, "fn gx_env_light_binned(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {", 1);
     format!(
         "{patched}\n{}",
         r"
 @group(0) @binding(20) var<storage, read_write> probe_rows: array<vec4<f32>>;
 var<private> probe_ao: vec4<f32>;
 
-fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
-    return gx_env_sky(dir, lod);
+fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {
+    return GxEnvLight(gx_env_sky(dir, lod), gx_env_irradiance(n));
 }
 
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {

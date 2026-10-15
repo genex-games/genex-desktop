@@ -727,8 +727,9 @@ pub const L2_V2_SAMPLERS_MAX: u32 = 16;
 /// Storage buffers a Level-2 v2 stage binds at most, core's 8.
 pub const L2_V2_STORAGE_BUFFERS_MAX: u32 = 8;
 /// Sampled textures the renderer's own forward fragment stage binds at most (its material arrays
-/// included), of core's 16.
-pub const FORWARD_FRAGMENT_TEXTURES_MAX: u32 = 14;
+/// included): all of core's 16 since renderer pass 2 A.4 (owner decision D1: the irradiance
+/// volumes' atlas takes the 15th, A.6's screen reflections the 16th; it was 14 with two spare).
+pub const FORWARD_FRAGMENT_TEXTURES_MAX: u32 = 16;
 /// Texture arrays the forward pass may bind beyond group 0's two (the six material texture size
 /// classes, `layout::FRAME_MATERIAL_CLASS_BINDINGS`); the slot a seventh would have taken went to
 /// the v2 map's contact-shadow mask (RQ4 review).

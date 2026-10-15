@@ -885,7 +885,7 @@ pub(crate) fn compute(device: &Device, label: &str, source: &str, entry_point: &
 
 /// [`compute`], zero-initializing its workgroup memory only when `zero_init` (WebGPU's default;
 /// a kernel that writes every workgroup variable before reading it may skip it).
-fn compute_with(device: &Device, (label, source, entry_point): (&str, &str, &str), layout: &BindGroupLayout, zero_init: bool) -> Result<Compiled<ComputePipeline>, RenderError> {
+pub(crate) fn compute_with(device: &Device, (label, source, entry_point): (&str, &str, &str), layout: &BindGroupLayout, zero_init: bool) -> Result<Compiled<ComputePipeline>, RenderError> {
     let module = crate::shaders::module(device, label, source)?;
     let pipeline_layout = crate::tables::pipeline_layout(device, label, &[layout]);
     Ok(crate::compile::compute_pipeline(device, &wgpu::ComputePipelineDescriptor {
@@ -1229,6 +1229,9 @@ pub struct EnvironmentMaps {
     /// Bumped whenever the bound specular cube is replaced (a bake landed, or released): what the
     /// probes' captures are lit by and their layer 0 holds.
     cube_generation: u64,
+    /// The irradiance volumes (renderer pass 2 A.4): their atlas and the rows the probes' table
+    /// carries for them.
+    irradiance: crate::irradiance::IrradianceMaps,
 }
 
 /// The v2 material map's row of the environment input `name` (one of `FRAME_ENV_BINDINGS`).
@@ -1256,6 +1259,7 @@ impl EnvironmentMaps {
             radiance: None,
             probes: crate::probes::ProbeMaps::new(device, queue),
             cube_generation: 0,
+            irradiance: crate::irradiance::IrradianceMaps::new(device, queue),
         }
     }
 
@@ -1370,10 +1374,10 @@ impl EnvironmentMaps {
         self.map.as_ref()?.sun.as_ref().map(|sun| world_sun(sun, hdri))
     }
 
-    /// Which resources the frame bind group holds: a new value means rebuild it (the bake's, then
-    /// the reflection probes').
+    /// Which resources the frame bind group holds: a new value means rebuild it (the bake's, the
+    /// reflection probes' and the irradiance volumes'; each only grows).
     pub fn generation(&self) -> u64 {
-        self.generation + self.probes.generation()
+        self.generation + self.probes.generation() + self.irradiance.generation()
     }
 
     /// Whether the environment replaces the frame's flat ambient term: an environment that lights
@@ -1421,7 +1425,9 @@ impl EnvironmentMaps {
     /// The forward pass's reflection-probe bindings (renderer pass 2 A.3, `probes::FRAME_PROBE_BINDINGS`):
     /// `env_probes`, the probe cube array (the bound specular cube as a one-cube array while no
     /// probe is held, the neutral black array while nothing is baked or the environment does not
-    /// light the scene), and `env_probe_rows`, the rows in binned order. None for any other name.
+    /// light the scene), and `env_probe_rows`, the rows in binned order (the irradiance volumes'
+    /// after the probes'); and the irradiance volumes' atlas `env_irradiance` (A.4, a black
+    /// 1-texel volume while none is held). None for any other name.
     fn probe_binding(&self, name: &str) -> Option<BindingResource<'_>> {
         match name {
             crate::probes::ENV_PROBES => {
@@ -1430,6 +1436,7 @@ impl EnvironmentMaps {
                 Some(BindingResource::TextureView(self.probes.cube_array(sky)))
             }
             crate::probes::ENV_PROBE_ROWS => Some(self.probes.rows().as_entire_binding()),
+            crate::irradiance::ENV_IRRADIANCE => Some(BindingResource::TextureView(self.irradiance.view())),
             _ => None,
         }
     }
@@ -1448,7 +1455,8 @@ impl EnvironmentMaps {
         let sky = self.maps.as_ref().filter(|_| lit).map(|maps| (&maps.specular, self.cube_generation));
         let device = frame.device().clone();
         let queue = frame.queue().clone();
-        let prep = crate::probes::ProbePrep { sky, ..*prep };
+        let volume_rows = self.irradiance.rows().to_vec();
+        let prep = crate::probes::ProbePrep { sky, volume_rows: &volume_rows, ..*prep };
         match self.probes.prepare(&device, &queue, frame.encoder(), &prep) {
             Ok(work) => work,
             Err(error) => {
@@ -1462,6 +1470,50 @@ impl EnvironmentMaps {
     /// What the renderer's probe capture draws keep between frames.
     pub fn probe_store(&mut self) -> &mut crate::probes::CaptureStore {
         self.probes.store()
+    }
+
+    /// The irradiance volumes' state (renderer pass 2 A.4).
+    pub fn irradiance(&self) -> &crate::irradiance::IrradianceMaps {
+        &self.irradiance
+    }
+
+    /// What the renderer's irradiance bake draws keep between frames.
+    pub fn irradiance_store(&mut self) -> &mut crate::probes::CaptureStore {
+        self.irradiance.store()
+    }
+
+    /// The irradiance bake's shadow map now holds volume `slot`'s casters for the sun toward `sun`
+    /// (`irradiance::IrradianceMaps::hold_shadow`).
+    pub fn irradiance_hold_shadow(&mut self, slot: usize, sun: [f32; 3]) {
+        self.irradiance.hold_shadow(slot, sun);
+    }
+
+    /// Graph node 11's irradiance part, after the bake and before the probes' (their table carries
+    /// the volumes' rows): `irradiance::IrradianceMaps::prepare` lit by the bound specular cube's
+    /// generation. Nothing while the environment does not light the scene or nothing is baked (the
+    /// volumes are released).
+    pub fn prepare_irradiance(&mut self, device: &Device, prep: &crate::irradiance::GridPrep<'_>) -> crate::irradiance::GridWork {
+        let lit = self.environment.lights_scene() && self.baked();
+        let lit_by = self.maps.as_ref().filter(|_| lit).map(|_| self.cube_generation);
+        let prep = crate::irradiance::GridPrep { lit_by, ..*prep };
+        match self.irradiance.prepare(device, &prep) {
+            Ok(work) => work,
+            Err(error) => {
+                log::error!("irradiance volumes skipped: {error}");
+                self.irradiance.release();
+                crate::irradiance::GridWork::new()
+            }
+        }
+    }
+
+    /// Encode an irradiance batch's reduce and publish over the bound specular cube
+    /// (`irradiance::IrradianceMaps::encode_batch`): the compute passes it opened.
+    pub fn encode_irradiance_batch(&mut self, frame: &mut FrameEncoder, batch: &crate::irradiance::GridBatch, depth_reversed: bool) -> u32 {
+        let Some(maps) = self.maps.as_ref() else { return 0 };
+        let device = frame.device().clone();
+        let queue = frame.queue().clone();
+        let sky = (maps.specular_cube.clone(), self.cube_generation);
+        self.irradiance.encode_batch(&device, &queue, frame.encoder(), batch, (&sky.0, sky.1), depth_reversed)
     }
 
     /// The face a probe capture step draws (`probes::ProbeMaps::face`).
@@ -1554,6 +1606,7 @@ impl EnvironmentMaps {
             self.cube_generation += 1;
         }
         self.probes.release();
+        self.irradiance.release();
         self.back = None;
         self.radiance = None;
         self.schedule = Schedule::default();

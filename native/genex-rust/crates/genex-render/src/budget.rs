@@ -177,6 +177,10 @@ pub struct BudgetInput {
     /// cube array, the capture's targets and rows; 0: no probe held; the
     /// [`REFLECTION_PROBES_LABEL`] entry of `Renderer::buffer_ledger`).
     pub reflection_probe_bytes: u64,
+    /// The bytes the irradiance volumes hold (renderer pass 2 A.4,
+    /// `irradiance::IrradianceMaps::bytes`: the atlas, the staging block and the bake's targets;
+    /// 0: no volume held; the [`IRRADIANCE_VOLUMES_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub irradiance_volume_bytes: u64,
 }
 
 /// The ledger label of the look's 3D grading LUT ([`BudgetKind::Ibl`]; renderer pass 2 A.2).
@@ -184,6 +188,9 @@ pub const GRADING_LUT_LABEL: &str = "grading-lut";
 /// The ledger label of the reflection probes' cubes and capture targets ([`BudgetKind::Ibl`];
 /// renderer pass 2 A.3).
 pub const REFLECTION_PROBES_LABEL: &str = "reflection-probes";
+/// The ledger label of the irradiance volumes' atlas and bake targets ([`BudgetKind::Ibl`];
+/// renderer pass 2 A.4).
+pub const IRRADIANCE_VOLUMES_LABEL: &str = "irradiance-volumes";
 
 impl BudgetInput {
     /// An input with no materials and no passes.
@@ -203,16 +210,19 @@ impl BudgetInput {
             buffers: Vec::new(),
             grading_lut_bytes: 0,
             reflection_probe_bytes: 0,
+            irradiance_volume_bytes: 0,
         }
     }
 
     /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers), its
-    /// grading LUT ([`GRADING_LUT_LABEL`]) and its reflection probes ([`REFLECTION_PROBES_LABEL`]).
+    /// grading LUT ([`GRADING_LUT_LABEL`]), its reflection probes ([`REFLECTION_PROBES_LABEL`]) and
+    /// its irradiance volumes ([`IRRADIANCE_VOLUMES_LABEL`]).
     pub fn with_buffers(mut self, held: &BudgetLedger) -> BudgetInput {
         self.buffers = held.entries().iter().filter(|entry| entry.kind == BudgetKind::Buffers).map(|entry| (entry.label.clone(), entry.bytes)).collect();
         let labelled = |label: &str| held.entries().iter().filter(|entry| entry.label == label).map(|entry| entry.bytes).sum();
         self.grading_lut_bytes = labelled(GRADING_LUT_LABEL);
         self.reflection_probe_bytes = labelled(REFLECTION_PROBES_LABEL);
+        self.irradiance_volume_bytes = labelled(IRRADIANCE_VOLUMES_LABEL);
         self
     }
 
@@ -458,6 +468,9 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
     }
     if input.reflection_probe_bytes > 0 {
         ledger.register(BudgetKind::Ibl, REFLECTION_PROBES_LABEL, input.reflection_probe_bytes);
+    }
+    if input.irradiance_volume_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, IRRADIANCE_VOLUMES_LABEL, input.irradiance_volume_bytes);
     }
     register_window(&mut ledger, input);
     ledger

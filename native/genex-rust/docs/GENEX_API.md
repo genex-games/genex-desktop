@@ -199,6 +199,21 @@ gives cubes to the first probes a frame declares (4 on `low`, 8 on `medium`, 16 
 `ultra`; 2 to 8 on phones); the rest reflect the sky. Give a probe to each room or courtyard,
 not to open ground (the sky is its reflection already).
 
+A room's surfaces take the sky's diffuse light through its walls, and a white floor stays white
+beside a sunlit red wall, until it has an irradiance volume:
+`frame.irradiance_volume(&IrradianceVolume::new(min, max).with_blend(0.3))`
+(`use genex::render::IrradianceVolume;`) covers the axis-aligned box `min..max` with a grid of
+cells (about one per metre; `.with_cells([x, y, z])`, 1 to 32 each, at most 4096) baked from the
+scene: surfaces in it take their diffuse ambient light from the cells around them, the light the
+room's own walls, floor and lamps bounce, fading into the sky's over `blend` units past the box's
+faces. A cell behind a wall lends a surface no light, so a volume may reach across a wall into the
+next room or the street. The grid is baked a few cells a frame the first time the volume appears
+and fades in once baked, and again when the sky changes or the box or its cells change: objects
+that move later do not change it. Only scenes the sky or an HDR map lights take it. The device's
+quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`, 2 to 4
+on phones, none on `low` and the low phones); the rest take the sky's light. Give a volume to each
+room or courtyard whose bounced colour matters, alongside its reflection probe.
+
 Give a frame an environment with `frame.environment(..)` (`use genex::render::Environment;`): it
 lights the scene beyond its lights and is drawn behind it, the same on every device.
 `Environment::sky()` is the physical sky, coloured by the frame's own sun, tuned with

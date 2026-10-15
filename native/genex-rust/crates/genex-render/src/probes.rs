@@ -17,7 +17,7 @@
 //!   (`cluster::ClusterKind::Probe`, LG-16), and its row ([`GpuProbeRow`]: the box, the fade, the
 //!   capture point, the layer, the multiplier) is read in binned order from one storage table
 //!   (binding 22, `env_probe_rows`; the forward fragment stage's sixth storage buffer of eight).
-//! - **Shading** (`shaders/forward_env_probes.wgsl`, `gx_env_reflection`): the fragment walks the
+//! - **Shading** (`shaders/forward_env.wgsl`, `gx_env_light`): the fragment walks the
 //!   probes of its tile and z-bin, weighs each by its fade past the box ([`influence`]), looks it up along the
 //!   reflection corrected to the box (box projection, [`parallax_direction`]; Bevy v0.20
 //!   `light_probe/environment_map.wesl`, MIT OR Apache-2.0), and fills what the probes leave of the
@@ -263,7 +263,7 @@ pub fn parallax_direction(row: &GpuProbeRow, p: [f32; 3], dir: [f32; 3]) -> [f32
     if corrected.length_squared() < 1.0e-12 { dir } else { corrected.to_array() }
 }
 
-/// How the probes at a point share its reflection (`gx_env_reflection`'s weights): each row's
+/// How the probes at a point share its reflection (`gx_env_light`'s reflection weights): each row's
 /// [`influence`] (an inactive row weighs nothing), divided by their sum when it passes 1, and the
 /// sky's what is left of 1. Returns the probes' weights in row order and the sky's.
 pub fn blend(rows: &[GpuProbeRow], p: [f32; 3]) -> (Vec<f32>, f32) {
@@ -609,7 +609,8 @@ pub const ENV_PROBE_ROWS: &str = "env_probe_rows";
 pub const FRAME_PROBE_BINDINGS: [(u32, &str); 2] = [(11, ENV_PROBES), (22, ENV_PROBE_ROWS)];
 
 /// The forward frame layout's entry of probe binding `name` at `binding` (fragment stage): the
-/// filterable `texture_cube_array<f32>` or the read-only row table; None for another name.
+/// filterable `texture_cube_array<f32>`, the read-only row table, or the irradiance volumes'
+/// atlas (`irradiance::frame_env_entry`); None for another name.
 pub fn frame_env_entry(binding: u32, name: &str) -> Option<BindGroupLayoutEntry> {
     let ty = match name {
         ENV_PROBES => wgpu::BindingType::Texture {
@@ -622,7 +623,8 @@ pub fn frame_env_entry(binding: u32, name: &str) -> Option<BindGroupLayoutEntry>
             has_dynamic_offset: false,
             min_binding_size: wgpu::BufferSize::new(PROBE_ROW_BYTES),
         },
-        _ => return None,
+        // The irradiance volumes' atlas (renderer pass 2 A.4) rides the probes' entry point.
+        _ => return crate::irradiance::frame_env_entry(binding, name),
     };
     Some(BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty, count: None })
 }
@@ -795,6 +797,14 @@ pub struct FaceCapture {
     /// The sun's view-projection the shadow map is drawn with and the shading reads, and its texel
     /// in world units ([`probe_light_view_proj`]).
     pub light: (Mat4, f32),
+    /// Whether the shadow map already holds the box's casters for this light (an irradiance
+    /// volume's cell faces after its batch's first, renderer pass 2 A.4): the face only reads it.
+    pub shadow_drawn: bool,
+    /// Whether the captured surfaces take the environment's (or the flat) ambient light. A probe's
+    /// do; an irradiance cell's do not (A.4): its bake is the scene's first bounce, and the sky's
+    /// SH9, which no wall stops, would light a closed room's walls in the capture and leak the sky
+    /// into the room through them.
+    pub ambient: bool,
 }
 
 /// What [`ProbeMaps::prepare`] reads of a frame.
@@ -817,6 +827,10 @@ pub struct ProbePrep<'a> {
     pub sun_dir: [f32; 3],
     /// Whether the scene's depth is reversed (the captures clear to 0, else 1).
     pub depth_reversed: bool,
+    /// The irradiance volumes' rows in declaration order (renderer pass 2 A.4,
+    /// `irradiance::IrradianceMaps::rows`): binned after the reflection probes, they share the
+    /// probes' table (a binned index past the held probes is a volume's).
+    pub volume_rows: &'a [GpuProbeRow],
 }
 
 impl ProbeMaps {
@@ -928,7 +942,7 @@ impl ProbeMaps {
         let cap = usize::from(prep.quality.reflection_probes).min(MAX_PROBE_CUBES);
         let Some((sky, sky_generation)) = prep.sky.filter(|_| cap > 0 && !self.probes.is_empty() && prep.quality.ibl) else {
             self.release();
-            self.write_rows(queue, prep.order);
+            self.write_rows(queue, prep.order, prep.volume_rows);
             return Ok((CaptureWork::new(), 0));
         };
         let side = probe_side(sky.width(), prep.quality);
@@ -963,7 +977,7 @@ impl ProbeMaps {
             settle: prep.settle,
         };
         self.work = self.schedule.advance(&frame);
-        self.write_rows(queue, prep.order);
+        self.write_rows(queue, prep.order, prep.volume_rows);
         Ok((self.work.clone(), passes))
     }
 
@@ -982,6 +996,8 @@ impl ProbeMaps {
             shadow: gpu.shadow_attachment.clone(),
             shadow_array: gpu.shadow_array.clone(),
             light: probe_light_view_proj(probe, prep.sun_dir),
+            shadow_drawn: false,
+            ambient: true,
         })
     }
 
@@ -1034,9 +1050,17 @@ impl ProbeMaps {
         }
     }
 
-    /// Write the rows of the held probes in binned order `order` when they changed.
-    fn write_rows(&mut self, queue: &Queue, order: &[u32]) {
-        let rows: Vec<GpuProbeRow> = self.schedule.rows(&self.probes, &order[..order.len().min(MAX_PROBES)]);
+    /// Write the rows of the held probes and the irradiance volumes (`volumes`, declaration order,
+    /// binned after the probes) in binned order `order` when they changed.
+    fn write_rows(&mut self, queue: &Queue, order: &[u32], volumes: &[GpuProbeRow]) {
+        let order = &order[..order.len().min(MAX_PROBES)];
+        let held = self.probes.len();
+        let mut rows: Vec<GpuProbeRow> = self.schedule.rows(&self.probes, order);
+        for (row, index) in rows.iter_mut().zip(order) {
+            if let Some(volume) = (*index as usize).checked_sub(held) {
+                *row = volumes.get(volume).copied().unwrap_or_default();
+            }
+        }
         if rows == self.written_rows {
             return;
         }

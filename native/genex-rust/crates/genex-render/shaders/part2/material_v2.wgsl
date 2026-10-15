@@ -48,8 +48,15 @@ fn gx_env_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
     return textureSampleLevel(env_specular, env_sampler, dir, lod).rgb;
 }
 
-fn gx_env_reflection(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
-    return gx_env_sky(dir, lod);
+// A v2 material's environment light: the sky's cube and its SH9 (renderer pass 2 A.3 and A.4:
+// reflection probes and irradiance volumes reach the forward pass only).
+struct GxEnvLight {
+    reflection: vec3<f32>,
+    diffuse: vec3<f32>,
+}
+
+fn gx_env_light(world_pos: vec3<f32>, dir: vec3<f32>, lod: f32, n: vec3<f32>) -> GxEnvLight {
+    return GxEnvLight(gx_env_sky(dir, lod), gx_env_irradiance(n));
 }
 // Screen-space ambient occlusion (RQ4; render size, 1 = unoccluded).
 @group(0) @binding(13) var ao_map: texture_2d<f32>;

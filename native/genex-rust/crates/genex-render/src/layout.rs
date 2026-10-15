@@ -441,10 +441,18 @@ pub const FRAME_ENV_BINDINGS: [(u32, &str); 4] = [(11, "env_specular"), (12, "en
 
 /// What the forward frame group binds for the environment, as (binding, name of
 /// `ibl::EnvironmentMaps::binding`): [`FRAME_ENV_BINDINGS`] with binding 11 the reflection probes'
-/// cube array (renderer pass 2 A.3: its layer 0 the sky's cube, the v2 map keeps the cube) and the
-/// probes' rows at binding 22 (`probes::FRAME_PROBE_BINDINGS`).
-pub const FRAME_ENV_BOUND: [(u32, &str); 5] =
-    [(11, crate::probes::ENV_PROBES), (12, "env_sh"), (13, "brdf_lut"), (14, "env_sampler"), (22, crate::probes::ENV_PROBE_ROWS)];
+/// cube array (renderer pass 2 A.3: its layer 0 the sky's cube, the v2 map keeps the cube), the
+/// probes' rows at binding 22 (`probes::FRAME_PROBE_BINDINGS`) and the irradiance volumes' atlas at
+/// binding 32 (A.4, `irradiance::FRAME_IRRADIANCE_BINDINGS`; the forward stage's 15th sampled
+/// texture of 16, owner decision D1).
+pub const FRAME_ENV_BOUND: [(u32, &str); 6] = [
+    (11, crate::probes::ENV_PROBES),
+    (12, "env_sh"),
+    (13, "brdf_lut"),
+    (14, "env_sampler"),
+    (22, crate::probes::ENV_PROBE_ROWS),
+    (32, crate::irradiance::ENV_IRRADIANCE),
+];
 
 /// The forward frame group's slots reserved for the RQ4 screen effects (RQ4.0), as (binding, WGSL
 /// name): the fog row (`GxFog`), ambient occlusion, the aerial-perspective volume and the
@@ -488,7 +496,7 @@ pub fn frame_light_v2_twin(name: &str) -> &str {
 /// (whose arrays are bindings 8 and 9). Each is a filterable `texture_2d_array<f32>`, a 1 × 1
 /// placeholder until its class holds a texture (RQ6.4, sampled since RQ6.7 through the surface
 /// chunk's `gx_class_texel`); the forward fragment stage stays within
-/// `abi::FORWARD_FRAGMENT_TEXTURES_MAX` (14 of core's 16) with every RQ4 effect slot bound too.
+/// `abi::FORWARD_FRAGMENT_TEXTURES_MAX` (16 of core's 16 since A.4) with every RQ4 effect slot bound too.
 pub const FRAME_MATERIAL_CLASS_BINDINGS: [(u32, &str); 6] = [
     (24, "color_textures_512"),
     (25, "data_textures_512"),

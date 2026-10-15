@@ -116,6 +116,12 @@ pub const PROBES_PER_PRESET: [u8; 4] = [4, 8, 16, 16];
 /// The most reflection probes a phone of each tier (low, mid, high, ultra) gives a cube, whatever
 /// the preset asks (plan A.3: 2 on mobile-low, 4 on mobile-mid).
 pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
+/// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
+/// pass 2 A.4: medium and up).
+pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
+/// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes, whatever the
+/// preset asks (plan A.4: none on mobile-low, which keeps the sky's SH9).
+pub const MOBILE_VOLUMES_PER_TIER: [u8; 4] = [0, 2, 4, 4];
 /// The most local lights a phone bins (`LightQuality::cap`), whatever the preset asks.
 pub const MOBILE_MAX_LIGHTS: u32 = 256;
 /// The smallest binning tile a phone uses, in pixels (fewer tiles to bin and walk).
@@ -275,6 +281,8 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         reflection_probes: 0,
         probe_side_max: PROBE_SIDE_MAX_PX,
         continuous_sky: false,
+        irradiance_volumes: 0,
+        irradiance_leak_control: true,
     }
 }
 
@@ -316,6 +324,7 @@ fn low_row(quality: &mut Quality, form: FormFactor) {
     quality.exposure_input_divisor = 16;
     quality.environment = environment(64, (64, 36), 8, 20, false);
     quality.environment.reflection_probes = PROBES_PER_PRESET[0];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[0];
     // Two cascades (pass-1 gate findings 01, 01b and 02): one 1024 px cascade over 50 units has
     // 8 cm texels under a 45° camera (9 cm for a phone's 768 px over 40), so a figure's legs
     // washed out of its shadow, which stood 30 px off the feet, and a block's shadow lost a wedge
@@ -343,6 +352,7 @@ fn medium_row(quality: &mut Quality) {
     quality.exposure_input_divisor = 8;
     quality.environment = environment(128, (96, 54), 4, 10, true);
     quality.environment.reflection_probes = PROBES_PER_PRESET[1];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth32, &MEDIUM_REACH);
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 1, steps: 4, temporal: false };
@@ -356,6 +366,7 @@ fn high_row(quality: &mut Quality) {
     quality.exposure_input_divisor = 4;
     quality.environment = environment(256, (192, 108), 1, 5, true);
     quality.environment.reflection_probes = PROBES_PER_PRESET[2];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[2];
     // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
     // sample count; phones keep the time-sliced cycle).
     quality.environment.continuous_sky = true;
@@ -380,6 +391,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // An HDR map's detail is worth a 512 px cube on ultra (plan §2.4); the smooth sky is not.
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
     quality.environment.reflection_probes = PROBES_PER_PRESET[3];
+    quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
     quality.shadows = shadows(4, map_size, ShadowFilter::Pcss, ShadowFormat::Depth32, &ULTRA_REACH);
     // Three slices of eight steps at full resolution with history. The unbiased estimate (gate
@@ -551,8 +563,14 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.environment.reflection_probes = quality.environment.reflection_probes.min(tier_probes);
     quality.environment.probe_side_max = MOBILE_PROBE_SIDE_MAX_PX;
     quality.environment.continuous_sky = false;
+    // A.4: phones read a volume's ambient cube in three trilinear fetches, no leak control.
+    let tier_volumes = MOBILE_VOLUMES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
+    quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(tier_volumes);
+    quality.environment.irradiance_leak_control = false;
     // Ten passes of Filament's ring gather are a desktop's: phones take Godot's circular gather.
     quality.dof = DofTier::Circular;
+    // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").
+    quality.motion_blur = if class.tier == PerformanceTier::Low { MotionBlurTier::Off } else { MotionBlurTier::Direct };
 }
 
 /// The widest HDR environment map `class` keeps on the GPU (an equirect `width × width / 2`

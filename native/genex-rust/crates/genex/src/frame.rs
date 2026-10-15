@@ -392,6 +392,57 @@ pub struct Lights {
     /// Reflection probes in call order (renderer pass 2 A.3): the first the device's quality gives
     /// a cube to reflect their box's own surroundings; the rest reflect the sky.
     pub reflection_probes: Vec<ReflectionProbe>,
+    /// Irradiance volumes in call order (renderer pass 2 A.4): the first the device's quality bakes
+    /// light their box's surfaces with the scene's own bounced light; the rest take the sky's.
+    pub irradiance_volumes: Vec<IrradianceVolume>,
+}
+
+/// An irradiance volume: an axis-aligned box of the world (a room, a courtyard, a stretch of
+/// street) whose surfaces take their diffuse ambient light from a grid of cells baked in the scene
+/// instead of the sky: a white floor beside a sunlit red wall turns pink, and a closed room is not
+/// lit by the sky through its walls (a cell behind a wall lends a surface no light). The grid is
+/// baked a few cells a frame (again when the sky changes or the box or its cells change), so a
+/// volume suits a static room or street; a moving object is not seen in it until a rebake. It
+/// lights only scenes the sky or an HDR map lights.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IrradianceVolume {
+    /// The box's least corner.
+    pub min: Vec3,
+    /// The box's greatest corner.
+    pub max: Vec3,
+    /// Cells along x, y and z (each 1 to 32, at most 4096 in all; their centres split the box
+    /// evenly).
+    pub cells: [u32; 3],
+    /// How far past the box's faces its light fades into the sky's (0: a hard edge).
+    pub blend: f32,
+    /// The multiplier of its light (1: as baked).
+    pub intensity: f32,
+}
+
+impl IrradianceVolume {
+    /// A volume over the box `min..max` with a cell about every metre, fading out over a tenth of
+    /// its smallest side, at full intensity.
+    pub fn new(min: Vec3, max: Vec3) -> IrradianceVolume {
+        let cells = genex_render::irradiance::IrradianceVolume::new(min.to_array(), max.to_array()).cells;
+        let smallest = (max - min).abs().min_element();
+        IrradianceVolume { min, max, cells, blend: 0.1 * smallest, intensity: 1.0 }
+    }
+
+    /// The volume with `cells` cells along x, y and z (finer cells follow smaller rooms and thinner
+    /// walls; each cell costs six small captures of the scene to bake).
+    pub fn with_cells(self, cells: [u32; 3]) -> IrradianceVolume {
+        IrradianceVolume { cells, ..self }
+    }
+
+    /// The volume fading out over `blend` units past its faces.
+    pub fn with_blend(self, blend: f32) -> IrradianceVolume {
+        IrradianceVolume { blend, ..self }
+    }
+
+    /// The volume's light times `intensity`.
+    pub fn with_intensity(self, intensity: f32) -> IrradianceVolume {
+        IrradianceVolume { intensity, ..self }
+    }
 }
 
 /// A reflection probe: an axis-aligned box of the world (a room's inside: its floor, walls and
@@ -709,6 +760,13 @@ impl Frame {
     /// surroundings instead of the sky. Not a draw.
     pub fn reflection_probe(&mut self, probe: &ReflectionProbe) -> &mut Self {
         self.lights.reflection_probes.push(*probe);
+        self
+    }
+
+    /// Add an irradiance volume (renderer pass 2 A.4): surfaces inside its box take their diffuse
+    /// ambient light from the scene around them instead of the sky. Not a draw.
+    pub fn irradiance_volume(&mut self, volume: &IrradianceVolume) -> &mut Self {
+        self.lights.irradiance_volumes.push(*volume);
         self
     }
 

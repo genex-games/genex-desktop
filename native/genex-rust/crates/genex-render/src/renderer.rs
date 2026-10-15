@@ -931,6 +931,13 @@ fn sampler_entry(binding: u32, kind: wgpu::SamplerBindingType) -> BindGroupLayou
     BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: BindingType::Sampler(kind), count: None }
 }
 
+/// Whether `binned` bins a local light, a decal, a reflection probe or an irradiance volume (graph
+/// node 4 has work).
+fn bins_anything(binned: &crate::lights::BinnedFrame) -> bool {
+    let bins = &binned.bins;
+    !(bins.order.is_empty() && bins.decals.is_empty() && bins.probes.is_empty())
+}
+
 fn bind_group_layout(device: &Device, label: &str, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
 }
@@ -2002,8 +2009,9 @@ impl<'a> WorldNodes<'a> {
         match id {
             NodeId::Tables | NodeId::BeforeCull | NodeId::Opaque | NodeId::AfterOpaque | NodeId::Transparent => true,
             NodeId::Skinning => !plan.skin_jobs.is_empty(),
-            // A frame without local lights keeps the zero bin header Uploads wrote.
-            NodeId::LightBinning => plan.binned.as_ref().is_some_and(|binned| !binned.bins.order.is_empty()),
+            // A frame that bins nothing keeps the zero bin header Uploads wrote (renderer pass 2
+            // A.4: reflection probes and irradiance volumes are binned in a frame with no light).
+            NodeId::LightBinning => plan.binned.as_ref().is_some_and(bins_anything),
             NodeId::Prepass => self.prep.prepass.is_some(),
             NodeId::Ao => self.prepass_serves(PrepassConsumers::AO) && self.renderer.frame_ao().is_some(),
             NodeId::ContactShadows => self.prepass_serves(PrepassConsumers::CONTACT_SHADOWS) && plan.cascades.is_some(),

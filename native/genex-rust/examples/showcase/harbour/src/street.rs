@@ -6,11 +6,14 @@
 //! each with an untextured colour standing in where the asset cache holds none. Lights are real:
 //! festoon bulbs over the street, neon signs, street lamps (two with spot shadow maps) and the café's
 //! pendant lamps, every one a binned local light. Glass is blended (it casts no shadow, so the sun
-//! reaches the café's floor). Every animation derives from the world's tick, never a clock.
+//! reaches the café's floor). Every animation derives from the world's tick, never a clock. The A.13
+//! detail pass dresses the blockout: scanned wood, marble, metal, granite and iron on the furniture,
+//! the kerbs and the drains, road markings at the crossing, awnings over the lit shops, panelled
+//! counter and bottled shelves in the café, slatted chairs and bench, and the café's menu board.
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::{ReflectionProbe, SpotLight};
+use genex::render::{IrradianceVolume, ReflectionProbe, SpotLight};
 
 use crate::harbour::World;
 
@@ -480,12 +483,17 @@ fn cafe(frame: &mut Frame, s: &Surfaces) {
 }
 
 /// The café's room: the parquet, the red brick wall (west), plaster elsewhere, the ceiling, the
-/// counter and its shelves, three tables with chairs under pendant lamps, the white rug by the red
-/// wall, two plants and a cup on the window table.
+/// counter with its marble top and panelled front, the shelves of bottles behind it, three tables
+/// with chairs under pendant lamps, the white rug by the red wall, two plants and a cup on the
+/// window table.
 fn cafe_inside(frame: &mut Frame, s: &Surfaces) {
     frame.tag("cafe-inside");
     // The polished parquet reflects the room, not the sky (A.3).
     frame.reflection_probe(&ReflectionProbe::new(CAFE_INSIDE.min, CAFE_INSIDE.max).with_capture(CAFE_PROBE_CAPTURE).with_blend(CAFE_PROBE_BLEND));
+    // The lamps' light bounced off the red brick reaches the white rug beside it, and the street's
+    // sky stays outside the room's walls (A.4): a cell about every metre, fading out over the front
+    // wall's thickness like the probe.
+    frame.irradiance_volume(&IrradianceVolume::new(CAFE_INSIDE.min, CAFE_INSIDE.max).with_blend(CAFE_PROBE_BLEND));
     let (x, z) = ((CAFE_WEST, CAFE_EAST), (CAFE_FRONT, CAFE_BACK));
     floor(frame, x, z, KERB, PARQUET_TILE, &s.parquet);
     floor(frame, x, z, CAFE_CEILING + SLAB, PLASTER_TILE, &s.plaster);

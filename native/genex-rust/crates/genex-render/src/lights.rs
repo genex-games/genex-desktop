@@ -120,6 +120,9 @@ pub struct Lighting {
     /// The reflection probes (renderer pass 2 A.3, [`crate::probes`]): binned with the lights,
     /// the first the quality's `reflection_probes` of them captured into cubes.
     pub reflection_probes: Vec<ReflectionProbe>,
+    /// The irradiance volumes (renderer pass 2 A.4, [`crate::irradiance`]): binned with the lights
+    /// after the reflection probes, the first the quality's `irradiance_volumes` of them baked.
+    pub irradiance_volumes: Vec<crate::irradiance::IrradianceVolume>,
     /// How far from the camera, in view depth, shadows reach; 0 (the default) takes the quality's
     /// distance (`ShadowQuality::distance`: 40 on the legacy renderer, longer on higher presets).
     pub shadow_distance: f32,
@@ -138,6 +141,7 @@ impl Default for Lighting {
             shadows: true,
             shadow_distance: QUALITY_SHADOW_DISTANCE,
             reflection_probes: Vec::new(),
+            irradiance_volumes: Vec::new(),
         }
     }
 }
@@ -253,6 +257,10 @@ pub struct BinnedFrame {
     /// The reflection probes binned after the lights (A.3; `probes::held_probes` of the scene's,
     /// in declaration order: `bins.probes` indexes them).
     pub reflection_probes: Vec<ReflectionProbe>,
+    /// The irradiance volumes binned after the reflection probes (A.4; `irradiance::held_volumes`
+    /// of the scene's, in declaration order: a `bins.probes` index past the probes is
+    /// `reflection_probes.len()` plus the volume's).
+    pub irradiance_volumes: Vec<crate::irradiance::IrradianceVolume>,
 }
 
 /// `lighting`'s local lights for `camera` drawing a `render`-sized frame under `quality`: the rows of
@@ -268,11 +276,15 @@ pub fn binned_frame(lighting: &Lighting, quality: &LightQuality, camera: &Camera
     // The reflection probes' influence spheres share the lights' index space (A.3, LG-16): a frame
     // without probes bins exactly as before.
     let reflection_probes = crate::probes::held_probes(&lighting.reflection_probes);
-    let spheres: Vec<crate::cluster::ClusterSphere> = reflection_probes.iter().map(ReflectionProbe::sphere).collect();
+    // The irradiance volumes after them, in the same kind (A.4): a frame without either bins
+    // exactly as before.
+    let irradiance_volumes = crate::irradiance::held_volumes(&lighting.irradiance_volumes);
+    let probe_spheres = reflection_probes.iter().map(ReflectionProbe::sphere);
+    let spheres: Vec<crate::cluster::ClusterSphere> = probe_spheres.chain(irradiance_volumes.iter().map(crate::irradiance::IrradianceVolume::sphere)).collect();
     let others = ClusterInput { decals: &[], probes: &spheres };
     let bins = LightBinFrame::prepare_clusterables(&rows, &others, camera, render, quality);
     let (lights, ext) = split_rows(&bins.sorted(&rows));
-    BinnedFrame { lights, ext, bins, reflection_probes }
+    BinnedFrame { lights, ext, bins, reflection_probes, irradiance_volumes }
 }
 
 /// Scale the radiance of the rows the cap is about to drop ([`crate::cluster::cap_fade`]), so a

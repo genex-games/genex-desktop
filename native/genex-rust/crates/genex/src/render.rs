@@ -100,8 +100,10 @@ pub use genex_render::settings::{Environment, EnvironmentKind, HdriEnvironment, 
 /// [`RenderConfig::fog`] or `genex.toml` `[render.look]`'s `fog_*` keys. Off at the default density 0.
 pub use genex_render::settings::Fog;
 /// A spot light with its own cone or a shadow map ([`crate::Frame::spot_light_with`], RQ6), and the
-/// cone [`crate::Frame::spot_light`] gives one by default.
-pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, ReflectionProbe, SpotLight};
+/// cone [`crate::Frame::spot_light`] gives one by default; a reflection probe
+/// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
+/// ([`crate::Frame::irradiance_volume`], A.4).
+pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
 
 /// The tonemapper of a game's look: how the HDR scene becomes display colour.
 /// [`Tonemap::KhronosNeutral`] (the default) keeps authored colours as they are up to the

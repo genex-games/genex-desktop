@@ -462,15 +462,18 @@ fn the_v2_group_map_with_a_full_game_group_fits_webgpu_core() {
     assert_eq!((GAME_TEXTURES_MAX, GAME_SAMPLERS_MAX), (4, 2));
 }
 
+// Renderer pass 2 A.4 renamed this row (was `..._stays_within_fourteen_sampled_textures`) and
+// flipped the cap 14 -> 16: owner decision D1 gives the forward stage all of core's 16 (the
+// irradiance volumes' atlas the 15th, A.6's screen reflections the 16th).
 #[test]
-fn the_internal_forward_fragment_stage_stays_within_fourteen_sampled_textures() {
+fn the_internal_forward_fragment_stage_stays_within_sixteen_sampled_textures() {
     let forward = counts_in(&parse("forward", shader("forward")));
     assert!(forward.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX, "today's forward: {forward:?}");
     // The forward pass binds the renderer's group 0 (its two material arrays included) plus the
     // extra material arrays reserved for texture size classes.
     let group_zero = StageCounts::of(MATERIAL_V2_BINDINGS).sampled_textures;
     assert!(group_zero + FORWARD_EXTRA_MATERIAL_ARRAYS_MAX <= FORWARD_FRAGMENT_TEXTURES_MAX);
-    assert_eq!(FORWARD_FRAGMENT_TEXTURES_MAX, 14);
+    assert_eq!(FORWARD_FRAGMENT_TEXTURES_MAX, 16);
 }
 
 #[test]
@@ -635,8 +638,10 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
     // sampler PCSS's blocker search gathers the shadow map with (16 per stage in core).
     assert_eq!(
         (counts.uniform_buffers, counts.storage_buffers, counts.sampled_textures, counts.samplers),
-        // Renderer pass 2 A.3 flipped 8 -> 9 storage buffers: the reflection probes' rows.
-        (4, 9, FORWARD_FRAGMENT_TEXTURES_MAX, 4),
+        // Renderer pass 2 A.3 flipped 8 -> 9 storage buffers: the reflection probes' rows. A.4
+        // flipped the sampled textures from the cap then (14) to 15 of the cap now (16): the
+        // irradiance volumes' atlas at binding 32.
+        (4, 9, 15, 4),
         "{counts:?}"
     );
     // WebGPU's limits are per stage: the fragment stage reads five tables (materials, lights, the
@@ -1544,8 +1549,10 @@ fn the_forward_frame_layout_binds_the_rq6_tables_under_the_v2_maps_names_and_typ
     assert!(FRAME_MATERIAL_CLASS_BINDINGS.len() as u32 <= FORWARD_EXTRA_MATERIAL_ARRAYS_MAX);
 }
 
+// Renderer pass 2 A.4 renamed this row (was `..._fits_webgpu_core_with_headroom`): D1 spends the
+// two sampled textures of headroom it held.
 #[test]
-fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core_with_headroom() {
+fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core() {
     let core = wgpu::Limits::defaults();
     let entries = genex_render::renderer::frame_layout_entries();
     let mut fragment = stage_counts(&entries, wgpu::ShaderStages::FRAGMENT);
@@ -1557,13 +1564,15 @@ fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core_with_headr
     // reflection probes' rows (A.3 flipped 5 -> 6); shadow array, two class-0 arrays, the env
     // cube (A.3: the probe cube array in its slot), BRDF LUT, six size-class arrays, AO, aerial
     // perspective, contact shadows; shadow comparison, texture, environment and point samplers.
+    // Renderer pass 2 A.4 flipped the sampled textures 14 -> 15 (the irradiance volumes' atlas)
+    // and the headroom row: under owner decision D1 the forward stage may use all of core's 16.
     assert_eq!(
         (fragment.uniform_buffers, fragment.storage_buffers, fragment.sampled_textures, fragment.samplers),
-        (3, 6, 14, 4),
+        (3, 6, 15, 4),
         "{fragment:?}"
     );
     assert!(fragment.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX);
-    assert!(FORWARD_FRAGMENT_TEXTURES_MAX + 2 <= core.max_sampled_textures_per_shader_stage, "two sampled textures of headroom");
+    assert!(FORWARD_FRAGMENT_TEXTURES_MAX <= core.max_sampled_textures_per_shader_stage, "the forward stage's cap is within core's");
     assert!(fragment.storage_buffers <= core.max_storage_buffers_per_shader_stage);
     assert!(fragment.uniform_buffers <= core.max_uniform_buffers_per_shader_stage);
     assert!(fragment.samplers <= core.max_samplers_per_shader_stage);
