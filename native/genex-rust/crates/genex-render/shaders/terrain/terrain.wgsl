@@ -184,6 +184,66 @@ fn gx_terrain_gather(id: u32, weight: f32) {
     }
 }
 
+// The gathered layers at world `xz` (footprint `dx`, `dy`) blended by weight and height: each
+// layer's height plus its weight against the highest's, within the blend depth. Sums before the
+// division by `total`.
+struct GxTerrainBlend {
+    albedo: vec3<f32>,
+    normal: vec2<f32>,
+    roughness: f32,
+    occlusion: f32,
+    total: f32,
+}
+
+// Add `b` of `texel` to `blend`.
+fn gx_terrain_add(blend: ptr<function, GxTerrainBlend>, texel: GxTerrainTexel, b: f32) {
+    (*blend).albedo += texel.albedo * b;
+    (*blend).normal += texel.normal * b;
+    (*blend).roughness += texel.roughness * b;
+    (*blend).occlusion += texel.occlusion * b;
+    (*blend).total += b;
+}
+
+// The height blend of the gathered layers (`gx_terrain_gather`). Hex-tiled (three taps a
+// texture) the texels are held between the two passes; plain, the second pass samples each layer
+// again from the warm cache: held there, the eight texels spilled out of registers and the
+// terrain cost 0.82-0.87 ms over the mesh ground at medium 1440p against 0.71-0.75 sampled twice
+// (GA1, same picture: the same samples summed in the same order).
+fn gx_terrain_blend(xz: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> GxTerrainBlend {
+    let taps = gx_terrain_taps;
+    var blend = GxTerrainBlend(vec3<f32>(0.0), vec2<f32>(0.0), 0.0, 0.0, 0.0);
+    var top = -1e9;
+    if GX_TERRAIN_DETILE {
+        var texels: array<GxTerrainTexel, 8>;
+        for (var t = 0u; t < taps; t++) {
+            if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
+                texels[t] = gx_terrain_layer(gx_terrain_ids[t], xz, dx, dy);
+                top = max(top, texels[t].height + gx_terrain_weights[t]);
+            }
+        }
+        for (var t = 0u; t < taps; t++) {
+            if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
+                gx_terrain_add(&blend, texels[t], max(texels[t].height + gx_terrain_weights[t] - (top - gx_terrain.blend.x), 0.0));
+            }
+        }
+        return blend;
+    }
+    var heights: array<f32, 8>;
+    for (var t = 0u; t < taps; t++) {
+        if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
+            heights[t] = gx_terrain_layer(gx_terrain_ids[t], xz, dx, dy).height;
+            top = max(top, heights[t] + gx_terrain_weights[t]);
+        }
+    }
+    for (var t = 0u; t < taps; t++) {
+        if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
+            let texel = gx_terrain_layer(gx_terrain_ids[t], xz, dx, dy);
+            gx_terrain_add(&blend, texel, max(heights[t] + gx_terrain_weights[t] - (top - gx_terrain.blend.x), 0.0));
+        }
+    }
+    return blend;
+}
+
 // The terrain's surface at world point `world`, its view direction still unset (the caller's,
 // as `gx_surface`'s); sets `gx_material_ao` to the blended occlusion. Call it in uniform control
 // flow: its derivatives are taken here.
@@ -221,35 +281,12 @@ fn gx_terrain_surface(world: vec3<f32>) -> Surface {
     }
     // Each layer that weighs anything, then the height blend: a layer's height plus its weight
     // against the highest's, within the blend depth.
-    let taps = gx_terrain_taps;
-    var texels: array<GxTerrainTexel, 8>;
-    var top = -1e9;
-    for (var t = 0u; t < taps; t++) {
-        if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
-            texels[t] = gx_terrain_layer(gx_terrain_ids[t], world.xz, dx, dy);
-            top = max(top, texels[t].height + gx_terrain_weights[t]);
-        }
-    }
-    var albedo = vec3<f32>(0.0);
-    var normal_ts = vec2<f32>(0.0);
-    var roughness = 0.0;
-    var occlusion = 0.0;
-    var total = 0.0;
-    for (var t = 0u; t < taps; t++) {
-        if gx_terrain_weights[t] > GX_TERRAIN_MIN_WEIGHT {
-            let b = max(texels[t].height + gx_terrain_weights[t] - (top - gx_terrain.blend.x), 0.0);
-            albedo += texels[t].albedo * b;
-            normal_ts += texels[t].normal * b;
-            roughness += texels[t].roughness * b;
-            occlusion += texels[t].occlusion * b;
-            total += b;
-        }
-    }
-    let inv = 1.0 / max(total, 1e-5);
-    albedo *= inv;
-    normal_ts *= inv;
-    roughness *= inv;
-    occlusion *= inv;
+    let blended = gx_terrain_blend(world.xz, dx, dy);
+    let inv = 1.0 / max(blended.total, 1e-5);
+    var albedo = blended.albedo * inv;
+    let normal_ts = blended.normal * inv;
+    var roughness = blended.roughness * inv;
+    let occlusion = blended.occlusion * inv;
     // A broad brightness variation over every layer (no two tiles the same), then the wetness:
     // darker and glossier.
     albedo *= 1.0 + gx_terrain.look.x * (2.0 * gx_terrain_noise(world.xz * gx_terrain.look.y) - 1.0);
