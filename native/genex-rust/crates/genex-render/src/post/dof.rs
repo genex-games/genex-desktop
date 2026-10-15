@@ -22,9 +22,10 @@
 //!   Godot's composite with a CoC-aware upsample. Six passes (the downsample and the tiles are
 //!   the ring tier's).
 //!
-//! Neither tier keys its noise to the frame: the ring gather's interleaved-gradient noise is
-//! spatial only, so a still camera draws the same blur every frame (TAA cannot resolve noise drawn
-//! after it; the prior art's still-camera row). In-focus tiles pass the scene through unchanged.
+//! Neither tier draws noise (the ring gather drops Filament's jitter of its centre), so a still
+//! camera draws the same blur every frame and a steady pan a steady one (TAA cannot resolve noise
+//! drawn after it; the prior art's still-camera row). In-focus tiles pass the scene through
+//! unchanged.
 //! The render size need not be a multiple of 16: the half-resolution targets are padded up to
 //! whole tiles and every read past the render size is clamped to its edge.
 //!

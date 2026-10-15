@@ -2,7 +2,7 @@
 // dofMedian.mat (Apache-2.0, Copyright (C) 2021 The Android Open Source Project), after "Life of a
 // Bokeh" (Abadie, SIGGRAPH 2018) for the background field and Jimenez's two-layer accumulation
 // ("Next Generation Post Processing in Call of Duty: Advanced Warfare", SIGGRAPH 2014) for the
-// foreground field. A circular diaphragm, mipmapped taps and spatial (never frame-keyed) noise.
+// foreground field. A circular diaphragm and mipmapped taps; no gather noise (fs_dof_ring).
 
 // The half-resolution colour (rgb) with its CoC (a) and three mips.
 @group(0) @binding(3) var dof_colour: texture_2d<f32>;
@@ -42,11 +42,6 @@ fn dof_mip_level(rings: f32, size: f32) -> f32 {
 fn dof_sample_count(rings: f32) -> f32 {
     let side = rings * 2.0 - 1.0;
     return side * side;
-}
-
-// Interleaved gradient noise (Jimenez 2014) at pixel `p`: spatial only.
-fn dof_ign(p: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
 // A ring's accumulation (Filament's Bucket).
@@ -244,9 +239,13 @@ fn fs_dof_ring(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let uv = frag.xy * dof.size.zw;
-    let angle = dof_ign(frag.xy) * 2.0 * DOF_PI;
-    let random_radius = 0.5 * sqrt(dof_ign(frag.xy * vec2<f32>(5099.0, 3499.0)));
-    let random_disk = vec2<f32>(cos(angle), sin(angle));
+    // No per-pixel noise moves the gather's centre (Filament jitters it by up to a ring's spacing
+    // with interleaved gradient noise): noise drawn after TAA stays on the screen while the content
+    // pans under it (a blurred wall panning 16 px a frame moved 1.35% of its pixels by more than a
+    // display level; none without), and the mipmapped taps and the median fill a bokeh disc
+    // evenly without it (luma spread 0.023 of the mean; 0.017 with the noise).
+    let random_radius = 0.0;
+    let random_disk = vec2<f32>(1.0, 0.0);
     if dof_fast_tile(tiles) {
         return dof_fast(uv, tiles, random_radius, random_disk);
     }

@@ -14,6 +14,7 @@
 use crate::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs};
 use crate::post::bloom::CHAIN_RESOLUTION;
 use crate::post::dof::DofTier;
+use crate::post::motion_blur::MotionBlurTier;
 use crate::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
@@ -254,6 +255,9 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
     quality.fog = true;
     quality.lights.clustered = true;
     quality.upscaler = if preset == QualityPreset::Low { Upscaler::Bilinear } else { Upscaler::Fsr1 };
+    // Bevy's one-pass blur (A.9); high and ultra take KinoMotion's reconstruction. The look's
+    // switch decides whether either runs.
+    quality.motion_blur = MotionBlurTier::Direct;
     match preset {
         QualityPreset::Low => low_row(&mut quality, form),
         QualityPreset::Medium => medium_row(&mut quality),
@@ -377,6 +381,7 @@ fn high_row(quality: &mut Quality) {
     quality.lights = lights(1024, 16, 2);
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
+    quality.motion_blur = MotionBlurTier::Reconstruction;
     with_geometry_features(quality);
 }
 

@@ -34,6 +34,8 @@ const CIRCULAR_MS_MAX: f32 = 0.4;
 const COST_NODES_PER_SAMPLE: u32 = 16;
 /// Cost samples per row (the row reports their median).
 const COST_SAMPLES: usize = 15;
+/// Samples drawn and dropped before the measured ones (the GPU's clocks ramp up over them).
+const COST_WARM_UP_SAMPLES: usize = 5;
 
 fn proj(size: (u32, u32)) -> Mat4 {
     glam::camera::rh::proj::directx::perspective_infinite_reverse(FOV_Y_DEG.to_radians(), size.0 as f32 / size.1 as f32, NEAR)
@@ -215,6 +217,9 @@ enum Paint {
     Solid([f32; 3]),
     /// Vertical stripes `period` pixels wide, alternating `a` and `b`.
     Stripes { a: [f32; 3], b: [f32; 3], period: u32 },
+    /// A deterministic texture of uneven stripes and blotches moved `shift` pixels to the right
+    /// (the pan row's wall).
+    Texture { shift: i64 },
 }
 
 /// A rectangle of the synthetic frame: pixels `[x0, x1) x [y0, y1)` at `distance` world units.
@@ -256,6 +261,7 @@ impl Frame {
                                     b
                                 }
                             }
+                            Paint::Texture { shift } => texture_at(i64::from(x) - shift, i64::from(y)),
                         };
                     }
                 }
@@ -267,6 +273,13 @@ impl Frame {
     fn index(&self, x: u32, y: u32) -> usize {
         (y * self.size.0 + x) as usize
     }
+}
+
+/// The pan row's texture at its own pixel `(u, v)`.
+fn texture_at(u: i64, v: i64) -> [f32; 3] {
+    let wave = libm::sinf(u as f32 * 0.37) * 0.5 + libm::sinf(u as f32 * 0.071 + v as f32 * 0.05) * 0.3 + libm::sinf(v as f32 * 0.13) * 0.2;
+    let base = 0.35 + 0.3 * wave;
+    [base, base * 0.9 + 0.05, base * 0.7 + 0.1]
 }
 
 /// f32 to IEEE half bits (round to nearest even; the test's values are finite and in range).
@@ -663,6 +676,108 @@ fn metal_a_still_camera_draws_the_same_blur_every_frame_and_damps_the_taa_residu
 
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_steady_pan_draws_a_steady_blur() {
+    let Some(gpu) = gpu() else { return };
+    // A textured wall 60 m away, blurred to the tier's radius, panning 16 px a frame (a whole tile:
+    // the half-resolution grid and the tiles line up with the content every frame). A pixel and the
+    // one 16 px to its left last frame see the same blur unless the gather's noise stays on the
+    // screen while the content slides under it.
+    let step = 16i64;
+    let margin = 48u32;
+    for tier in TIERS {
+        let mut node = DofNode::new(&gpu.device).expect("node");
+        let (mut moved, mut total, mut luma_sum) = (0usize, 0usize, 0f32);
+        let mut previous: Option<Texels> = None;
+        for t in 0..8 {
+            let wall = Rect { x0: 0, y0: 0, x1: SIZE.0, y1: SIZE.1, distance: 60.0, paint: Paint::Texture { shift: step * t } };
+            let frame = Frame::new(SIZE, &[wall]);
+            let drawn = draw_with(&gpu, &mut node, &frame, STRONG, tier, 1);
+            if let Some(last) = &previous {
+                for y in margin..SIZE.1 - margin {
+                    for x in margin + step as u32..SIZE.0 - margin {
+                        let (now, then) = (drawn[frame.index(x, y)], last[frame.index(x - step as u32, y)]);
+                        total += 1;
+                        moved += usize::from((0..3).any(|c| (level(now[c]) - level(then[c])).abs() > 1));
+                        luma_sum += (luma(now) - luma(then)).abs();
+                    }
+                }
+            }
+            previous = Some(drawn);
+        }
+        let (share, mean) = (moved as f32 / total as f32, luma_sum / total as f32);
+        println!("pan flicker {tier:?}: {:.3}% pixels moved more than a level (sharp pan 0), mean luma step {mean:.5}", 100.0 * share);
+        assert!(share <= 0.005, "{tier:?}: at most 0.5% of the panning pixels flicker ({:.3}%)", 100.0 * share);
+        assert!(mean <= 0.002, "{tier:?}: mean luma step {mean}");
+    }
+}
+
+/// `texels` written as a 24-bit BMP named `name` under `GENEX_RENDER_EVIDENCE_DIR` (when set),
+/// tonemapped `x / (1 + x)` and sRGB-encoded, for a person to look at.
+fn evidence_image(name: &str, size: (u32, u32), texels: &[[f32; 4]]) {
+    let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") else { return };
+    let row = (size.0 * 3).div_ceil(4) * 4;
+    let mut bytes = Vec::with_capacity((54 + row * size.1) as usize);
+    let file_size = 54 + row * size.1;
+    bytes.extend_from_slice(b"BM");
+    for value in [file_size, 0, 54, 40, size.0, size.1] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&24u16.to_le_bytes());
+    for value in [0u32, row * size.1, 2835, 2835, 0, 0] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for y in (0..size.1).rev() {
+        for x in 0..size.0 {
+            let t = texels[(y * size.0 + x) as usize];
+            for c in [2, 1, 0] {
+                bytes.push(level(t[c] / (1.0 + t[c])).clamp(0, 255) as u8);
+            }
+        }
+        bytes.resize(bytes.len() + (row - size.0 * 3) as usize, 0);
+    }
+    std::fs::create_dir_all(&dir).expect("evidence dir");
+    std::fs::write(std::path::Path::new(&dir).join(name), bytes).expect("evidence image");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_bright_point_blurs_into_an_even_disc() {
+    let Some(gpu) = gpu() else { return };
+    // Small highlights 60 m away on a dark wall: each blurs into a bokeh disc of the tier's radius
+    // (14 px here). Without the gather's noise the rings of taps must still fill the disc evenly.
+    let wall = Rect { x0: 0, y0: 0, x1: SIZE.0, y1: SIZE.1, distance: 60.0, paint: Paint::Solid([0.02, 0.02, 0.02]) };
+    let points: Vec<(u32, u32)> = vec![(120, 90), (240, 135), (360, 180), (121, 200), (359, 70)];
+    let mut rects = vec![wall];
+    rects.extend(points.iter().map(|&(x, y)| Rect { x0: x - 1, y0: y - 1, x1: x + 2, y1: y + 2, distance: 60.0, paint: Paint::Solid([40.0, 30.0, 20.0]) }));
+    let frame = Frame::new(SIZE, &rects);
+    for tier in TIERS {
+        let output = draw(&gpu, &frame, STRONG, tier, 1);
+        evidence_image(&format!("dof-bokeh-{}.bmp", tier.as_str()), SIZE, &output);
+        // The disc's inner two thirds: the spread of luma about its mean.
+        let radius = 0.6 * CocParams::new(&STRONG, proj(SIZE), SIZE.1).radius(depth_of(60.0), tier.max_coc()).abs();
+        let mut worst = 0f32;
+        for &(px, py) in &points {
+            let values: Vec<f32> = (0..SIZE.1)
+                .flat_map(|y| (0..SIZE.0).map(move |x| (x, y)))
+                .filter(|&(x, y)| libm::hypotf(x as f32 - px as f32, y as f32 - py as f32) <= radius)
+                .map(|(x, y)| luma(output[frame.index(x, y)]))
+                .collect();
+            let mean = values.iter().sum::<f32>() / values.len() as f32;
+            let deviation = (values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32).sqrt();
+            worst = worst.max(deviation / mean);
+        }
+        println!("bokeh {tier:?}: disc radius {radius:.1} px inside, worst luma spread / mean {worst:.4}");
+        // Judged for the ring tier, whose gather noise this row stands in for. The circular tier's
+        // nearest-texel spiral draws a mottled disc (0.29 on 2026-10-15), a recorded finding.
+        if tier == DofTier::Ring {
+            assert!(worst <= 0.25, "{tier:?}: an even disc ({worst})");
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_multisampled_depth_draws_as_its_single_sampled_twin() {
     let Some(gpu) = gpu() else { return };
     let frame = prop_frame(SIZE, 60.0, 1.0);
@@ -724,8 +839,7 @@ fn cost_ms(gpu: &Gpu, frame: &Frame, settings: DepthOfField, tier: DofTier) -> O
     let staging = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 16, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
     let period = gpu.queue.get_timestamp_period();
     let mut costs = Vec::new();
-    // One warm-up sample, then the measured ones.
-    for sample in 0..=COST_SAMPLES {
+    for sample in 0..COST_WARM_UP_SAMPLES + COST_SAMPLES {
         let mut encoder = device.create_command_encoder(&Default::default());
         for run in 0..COST_NODES_PER_SAMPLE {
             let input = DofInput {
@@ -755,7 +869,7 @@ fn cost_ms(gpu: &Gpu, frame: &Frame, settings: DepthOfField, tier: DofTier) -> O
             std::array::from_fn(|i| u64::from_le_bytes(data[i * 8..i * 8 + 8].try_into().expect("8 bytes")))
         };
         staging.unmap();
-        if sample == 0 {
+        if sample < COST_WARM_UP_SAMPLES {
             continue;
         }
         match genex_render::timing::span_ms(ticks[0], ticks[1], period) {

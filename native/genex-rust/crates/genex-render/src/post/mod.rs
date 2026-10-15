@@ -25,3 +25,6 @@ pub mod grading;
 /// Gather depth of field between TAA (node 17) and `post-hdr` (node 18): Filament's ring tier and
 /// Godot's circular tier (A.9).
 pub mod dof;
+/// Motion blur after depth of field, before `post-hdr` (node 18): KinoMotion's reconstruction tier
+/// and Bevy's direct tier (A.9).
+pub mod motion_blur;

@@ -302,6 +302,10 @@ pub struct Look {
     /// ([`crate::post::dof::DepthOfField`]; off, the default, draws nothing). Settled captures draw
     /// without it unless the shot asks.
     pub depth_of_field: crate::post::dof::DepthOfField,
+    /// Motion blur (A.9): the HDR scene blurred along its motion over the shutter's share of the
+    /// frame, after depth of field ([`crate::post::motion_blur::MotionBlur`]; off, the default,
+    /// draws nothing). Settled captures draw without it unless the shot asks.
+    pub motion_blur: crate::post::motion_blur::MotionBlur,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -594,6 +598,7 @@ const DEFAULT_LOOK: Look = Look {
     tint: 0.0,
     grading: crate::post::grading::Grading::NEUTRAL,
     depth_of_field: crate::post::dof::DepthOfField::OFF,
+    motion_blur: crate::post::motion_blur::MotionBlur::OFF,
 };
 
 impl Default for Look {
@@ -674,6 +679,12 @@ impl Look {
     /// The look with `depth_of_field`, each knob held to its range.
     pub fn with_depth_of_field(mut self, depth_of_field: crate::post::dof::DepthOfField) -> Look {
         self.depth_of_field = depth_of_field.held();
+        self
+    }
+
+    /// The look with `motion_blur`, its shutter held to its range.
+    pub fn with_motion_blur(mut self, motion_blur: crate::post::motion_blur::MotionBlur) -> Look {
+        self.motion_blur = motion_blur.held();
         self
     }
 
@@ -1570,6 +1581,12 @@ pub struct EnvironmentQuality {
     /// `ibl::CONTINUOUS_SUN_DEGREES` (renderer pass 2 A.3, SI-02 step 2: desktop and web `high`
     /// and `ultra`), instead of over a time-sliced cycle once it turned `sun_rebake_tenths`.
     pub continuous_sky: bool,
+    /// Most irradiance volumes baked (renderer pass 2 A.4, `irradiance`): the first this many a
+    /// frame declares; 0 bakes none (the sky's SH9 alone). A resource knob.
+    pub irradiance_volumes: u8,
+    /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
+    /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
+    pub irradiance_leak_control: bool,
 }
 
 /// Local lights.
@@ -1718,6 +1735,10 @@ pub struct Quality {
     /// The depth-of-field gather where the look turns it on (A.9): Filament's ring gather on
     /// desktop and web `high` and `ultra`, Godot's circular gather elsewhere. A pipeline knob.
     pub dof: crate::post::dof::DofTier,
+    /// The motion blur where the look turns it on (A.9): KinoMotion's reconstruction on desktop
+    /// and web `high` and `ultra`, Bevy's direct blur on `low`, `medium` and phones, none on the
+    /// low-tier phone or the legacy renderer. A pipeline knob.
+    pub motion_blur: crate::post::motion_blur::MotionBlurTier,
 }
 
 impl Quality {
@@ -1764,6 +1785,8 @@ impl Quality {
                 reflection_probes: 0,
                 probe_side_max: 0,
                 continuous_sky: false,
+                irradiance_volumes: 0,
+                irradiance_leak_control: false,
             },
             lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0 },
             textures: TextureQuality::OFF,
@@ -1773,6 +1796,7 @@ impl Quality {
             specular_aa: false,
             anisotropy: 1,
             dof: crate::post::dof::DofTier::Circular,
+            motion_blur: crate::post::motion_blur::MotionBlurTier::Off,
         }
     }
 
