@@ -6,7 +6,7 @@ use genex::render::{Bloom, Exposure, Fog, QualityPreset, RenderConfig, ShadowCon
 
 use crate::draw::{HORIZON, draw};
 use crate::passes;
-use crate::world::{Models, SHOTS, TERRAIN_WGSL, World, scene_probe, update};
+use crate::world::{Models, SHOTS, World, scene_probe, update};
 
 /// Auto exposure's compensation in EV, against the renderer's metering of the golden-hour frame:
 /// none. AgX punchy holds middle grey where plain AgX draws it (pass 2, P2-0.10), so the +0.9 EV
@@ -89,7 +89,6 @@ pub fn render_config() -> RenderConfig {
 pub fn new_game() -> Game<World> {
     let mut game = Game::new(World::default()).title("Lakeside").world_size(WORLD_SIZE[0], WORLD_SIZE[1]).background(HORIZON);
     game.render_settings(render_config());
-    game.wgsl(TERRAIN_WGSL, include_str!("../shaders/terrain.wgsl"));
     game
 }
 

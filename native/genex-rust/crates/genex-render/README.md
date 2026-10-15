@@ -94,6 +94,58 @@ by the fade (eased in with the weight) and fills what the probes leave with the 
 leave out transparent draws, alpha-masked and double-sided variants, particles, lines and
 Level-2/3 passes; Level-2 v2 materials reflect the sky's cube.
 
+## Irradiance volumes
+
+`Lighting::irradiance_volumes` (`irradiance::IrradianceVolume`; the facade's
+`frame.irradiance_volume`) are boxes of the world whose diffuse environment light comes from a
+grid of cells baked in the scene instead of the sky's SH9. Each cell is an ambient cube (six
+`rgba16float` texels, Bevy's `IrradianceVolume` packing: X x 2Y x 3Z texels a volume): rgb the
+cosine-weighted mean radiance around each axis direction, alpha both reaches of the axis (how far
+the cell sees before a surface each way, 5-bit codes). The first
+`EnvironmentQuality::irradiance_volumes` a frame declares (4 medium, 8 high and ultra; 2 to 4 on
+mid and high phones, none on low and the low phones) get a block of one 3D atlas, binding 32 of
+the forward frame group (the stage's 15th sampled texture of 16, owner decision D1); their rows
+share the probes' table at binding 22 and their bins (`ClusterKind::Probe`, after the probes).
+Node 11 bakes them before the probes' captures: a cell is six 16-texel faces drawn from its centre
+with the capture pipeline (both sides of every triangle, no ambient term: the bake is the scene's
+first bounce, sun and local lights, the sky where no geometry covers a texel), reduced into its
+ambient cube in a staging block that is copied into the volume's block once every cell is baked.
+Two cells a Live frame (a cold volume fades in over 30 frames once published; a stale one rebakes
+on the cadence while its last bake stays bound); a settled capture bakes what differs whole, eight
+cells a submission. The forward pass (`gx_env_light`, one walk of the probe bins for the
+reflection and the diffuse light) weighs each binned volume by its fade past the box, offsets the
+point along its normal by 0.3 of a cell and reads the three ambient-cube faces toward the normal
+through the sampler's trilinear filter; with `irradiance_leak_control` (desktop and web) the
+position first moves along each axis toward the side whose cell sees the point (its reach that way
+against the point's distance), so a cell behind a wall lends no light. Level-2 v2 materials take
+the sky's SH9. The ledger's `irradiance-volumes` row counts the atlas, the staging block and the
+bake's targets.
+
+## Terrain
+
+`Renderer::set_terrain` (`terrain::TerrainDesc`; the facade's `Terrain` and `frame.terrain`) holds
+one heightmap terrain: up to 2049 x 2049 heights quantized to 16 bits, a control word per sample
+(base layer, overlay layer, blend, wetness) and up to 16 layers whose base colour (height in alpha)
+and data (normal xy, roughness, occlusion) textures live in the material arrays (size classes and
+the `MaterialSize` rung apply). Each frame the CPU selects CDLOD nodes (Strugar 2010) by their
+distance from the camera, with no frustum, then culls them per view (the camera, each drawn
+cascade) into one row table; every node is an instance of one 16 x 16-quad grid (a quarter node
+draws its first 8 x 8). The ranges are floored at build so a node is never beside one two levels
+coarser and a coarser neighbour's own morph has not started on their shared edge; odd grid
+vertices slide onto their even neighbours through the morph band, at integer sample positions
+exactly, so shared edges meet bit for bit and a node equals its parent's grid when it is
+replaced. The terrain's own pipelines (`renderer/terrain_draw.rs`) draw it in node 6 (each drawn
+cascade's casters), node 7 (depth, the per-pixel normal, and motion on TAA frames: the motion
+group at group 3) and node 12 (after the opaque batches; `Equal` against the prepass depth where
+the world pass reuses it), over the forward frame group, the pass view and the terrain group
+(group 2: its row, the frame's rows, one storage table of heights, control words and a normal
+pyramid). The surface is made per pixel: the normal from the pyramid at the pixel's footprint
+(trilinear, the lost length folded into roughness), the layers from the four control texels
+around the pixel blended by weight and height, hex-tiled (Mikkelsen 2022) on desktop `high` and
+`ultra`, then lit by the forward pass's chunks. It adds no sampled texture and one fragment storage
+buffer to the forward stage's (tests/terrain.rs). Probe captures and spot shadows leave the
+terrain out. The ledger's `terrain` buffers row counts its tables and grid.
+
 ## Output size and window present
 
 A renderer is made at the game's logical `world_size` (`Renderer::logical_size`: the 2D layer's

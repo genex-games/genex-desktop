@@ -399,6 +399,73 @@ pub fn height(x: f32, z: f32) -> f32 {
     h - 0.14 * (1.0 - smoothstep(0.6, 2.2, path_distance(x, z)))
 }
 
+/// How much of each terrain layer covers (x, z): soil (the path and the yard), sand (the beach and
+/// the lake bed), rock (steep slopes) and the meadow's dryness (0 lush to 1 golden); grass is what
+/// the other layers leave. Each 0..1, soft-edged, from the layout's own functions.
+pub fn splat_weights(x: f32, z: f32) -> [f32; 4] {
+    let p = vec2(x, z);
+    let edge = 0.25 * (value_noise(p * 1.7, 21) - 0.5);
+    let path = 1.0 - smoothstep(-0.25, 0.3, path_distance(x, z) - path_half_width(x, z) + edge);
+    let d = p - CABIN;
+    let yard = 1.0 - smoothstep(-0.6, 0.4, d.length() - yard_radius(math::atan2(d.y, d.x)) + edge * 2.0);
+    let soil = path.max(yard);
+    let h = height(x, z);
+    let shore = (1.0 - smoothstep(0.02, 0.22, h - WATER_LEVEL + edge * 0.4)) * (1.0 - smoothstep(1.15, 1.3, lake_radius(x, z)));
+    let grassy_bank = smoothstep(0.62, 0.74, value_noise(p * 0.12, 9)) * smoothstep(-0.25, 0.0, h - WATER_LEVEL);
+    let sand = (shore * (1.0 - grassy_bank)).max(1.0 - smoothstep(-0.35, -0.1, h - WATER_LEVEL));
+    let steep = smoothstep(0.93, 0.84, normal(x, z).y) * smoothstep(2.0, 3.5, h);
+    let patch = fbm(p * 0.045, 3, 7) + 0.18 * (value_noise(p * 0.35, 8) - 0.5);
+    let dry = smoothstep(0.38, 0.66, patch);
+    [soil, sand * (1.0 - soil), steep * (1.0 - soil), dry]
+}
+
+/// Metres between the terrain's height samples (renderer pass 2 A.7: the built-in terrain's
+/// height field, a finer grid than the 0.75 m mesh it replaced).
+pub const TERRAIN_SPACING: f32 = 0.5;
+/// Height samples a side: `-TERRAIN_HALF..=TERRAIN_HALF` every [`TERRAIN_SPACING`].
+pub const TERRAIN_SAMPLES: u32 = 385;
+
+/// The terrain's layers in control-map order (`world::terrain` makes them): lush grass, dry grass,
+/// soil, sand, rock and the lake bed (the sand under the water, darkened with depth).
+pub const TERRAIN_LAYERS: usize = 6;
+
+/// What the terrain is made of at (x, z) as one control texel: the two layers that cover most of
+/// it (the second's share of the pair as the blend) and how wet it is beside the water.
+pub fn terrain_texel(x: f32, z: f32) -> genex::TerrainTexel {
+    let [soil, sand, rock, dry] = splat_weights(x, z);
+    let h = height(x, z);
+    let grass = (1.0 - soil - sand - rock).max(0.0);
+    let bed = 1.0 - smoothstep(WATER_LEVEL - 1.4, WATER_LEVEL - 0.1, h);
+    let weights = [grass * (1.0 - dry), grass * dry, soil, sand * (1.0 - bed), rock, sand * bed];
+    let mut order: [usize; TERRAIN_LAYERS] = [0, 1, 2, 3, 4, 5];
+    // The heaviest two, ties to the earlier layer (a fixed order: the same texel on every target).
+    order.sort_by(|a, b| weights[*b].total_cmp(&weights[*a]).then(a.cmp(b)));
+    let (first, second) = (order[0], order[1]);
+    let pair = weights[first] + weights[second];
+    let amount = if pair > 0.0 { weights[second] / pair } else { 0.0 };
+    let wet = 1.0 - smoothstep(WATER_LEVEL + 0.02, WATER_LEVEL + 0.35, h);
+    genex::TerrainTexel::blend(first as u8, second as u8, amount).with_wetness(wet)
+}
+
+/// The terrain's heights and control map over `-TERRAIN_HALF..=TERRAIN_HALF`, computed once per
+/// process (the layout never changes).
+pub fn terrain_ground() -> &'static (Vec<f32>, Vec<genex::TerrainTexel>) {
+    static GROUND: OnceLock<(Vec<f32>, Vec<genex::TerrainTexel>)> = OnceLock::new();
+    GROUND.get_or_init(|| {
+        let n = TERRAIN_SAMPLES;
+        let at = |k: u32| -TERRAIN_HALF + k as f32 * TERRAIN_SPACING;
+        let mut heights = Vec::with_capacity((n * n) as usize);
+        let mut control = Vec::with_capacity((n * n) as usize);
+        for j in 0..n {
+            for i in 0..n {
+                heights.push(height(at(i), at(j)));
+                control.push(terrain_texel(at(i), at(j)));
+            }
+        }
+        (heights, control)
+    })
+}
+
 /// The terrain's unit normal at (x, z).
 pub fn normal(x: f32, z: f32) -> Vec3 {
     let e = 0.35;

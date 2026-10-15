@@ -269,6 +269,11 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("motion-background", crate::motion::BACKGROUND_MOTION),
     // Renderer pass 2 A.3: the reflection probes' capture passes (sky fill, copy).
     ("probe-passes", crate::probes::PROBE_PASSES),
+    // Renderer pass 2 A.7: the terrain's world pass, prepass and motion prepass, and its casters.
+    ("terrain", crate::terrain::gpu::TERRAIN),
+    ("terrain-shadow", crate::terrain::gpu::TERRAIN_SHADOW),
+    // Renderer pass 2 A.4: the irradiance volumes' bake reduce.
+    ("irradiance-passes", crate::irradiance::IRRADIANCE_PASSES),
 ];
 
 /// A shader module from WGSL checked against [`crate::WGSL_MAX_BYTES`].

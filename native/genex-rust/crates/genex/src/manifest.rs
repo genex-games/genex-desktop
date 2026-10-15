@@ -116,6 +116,22 @@ pub const LIGHT_CALLS: [&str; 7] =
 /// (`frame.group(..)`).
 pub const INSTANCE_GROUP_CALLS: [&str; 6] =
     ["InstanceGroup::cubes", "InstanceGroup::spheres", "InstanceGroup::models", "InstanceGroup::models_with", "group.update", "frame.group"];
+/// The terrain calls of the facade (renderer pass 2 A.7), as agents call them: a height field made
+/// once (`Terrain::from_fn(..)`, `Terrain::from_heights(..)`), its layers (`TerrainLayer::textured(..)`,
+/// `TerrainLayer::flat(..)`, `.with_layers(..)`) and control map (`TerrainTexel::blend(..)`,
+/// `.with_control(..)`), drawn each frame (`frame.terrain(..)`) and asked for its height
+/// (`terrain.height(..)`).
+pub const TERRAIN_CALLS: [&str; 9] = [
+    "Terrain::from_fn",
+    "Terrain::from_heights",
+    "TerrainLayer::textured",
+    "TerrainLayer::flat",
+    ".with_layers",
+    "TerrainTexel::blend",
+    ".with_control",
+    "frame.terrain",
+    "terrain.height",
+];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];

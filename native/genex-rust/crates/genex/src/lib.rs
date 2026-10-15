@@ -44,6 +44,7 @@ pub mod render;
 mod rng;
 mod runtime;
 mod sim;
+mod terrain;
 #[cfg(all(feature = "studio", not(target_arch = "wasm32")))]
 mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.
@@ -59,11 +60,14 @@ pub use camera::{Camera, Projection};
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
 pub use frame::{
-    Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, Lights, Material, PointLight, PostDraw,
-    ReflectionProbe, Shape, SpotLight, Sun, Transform,
+    Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, IrradianceVolume, Lights, Material, PointLight,
+    PostDraw, ReflectionProbe, Shape, SpotLight, Sun, Transform,
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
+pub use terrain::{TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
+/// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
+pub use genex_render::terrain::TerrainLook;
 pub use gfx::{AssetTable, Assets, Gfx, Model};
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};

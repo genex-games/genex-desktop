@@ -517,7 +517,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         Shape::Group { group } => group.material(),
         Shape::Line { .. } => None,
     });
-    materials.flat_map(|material| {
+    let drawn = materials.flat_map(|material| {
         let slots = [
             (material.base_texture(), TextureKind::Color),
             (material.normal_texture(), TextureKind::Normal),
@@ -525,7 +525,50 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
             (material.emissive_texture(), TextureKind::Color),
         ];
         slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
-    })
+    });
+    // The terrain's layers (renderer pass 2 A.7): base colour and height, then the data texture.
+    let terrain = frame.drawn_terrain().into_iter().flat_map(|terrain| terrain.layers().iter()).flat_map(|layer| {
+        let slots = [(layer.albedo(), TextureKind::Color), (layer.data(), TextureKind::Data)];
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+    });
+    drawn.chain(terrain)
+}
+
+/// The terrain `frame` draws as the renderer takes it (renderer pass 2 A.7), its layers' textures
+/// from `assets` (a missing one draws its layer flat), with its version; None without one. A
+/// renderer drawn without the presenter (a scene bridge) hands it to `Renderer::set_terrain`.
+pub fn terrain_of(frame: &Frame, assets: &AssetCache) -> Option<(genex_render::terrain::TerrainDesc, u64)> {
+    let terrain = frame.drawn_terrain()?;
+    Some((terrain_desc(terrain, assets), terrain.version()))
+}
+
+/// The renderer's terrain for `terrain`, its layers' textures from `assets` (a missing one draws
+/// its layer flat).
+fn terrain_desc(terrain: &crate::Terrain, assets: &AssetCache) -> genex_render::terrain::TerrainDesc {
+    let layers = terrain
+        .layers()
+        .iter()
+        .map(|layer| {
+            let (tint, fallback, tile, roughness, normal_strength) = layer.look();
+            let texture = |path: Option<&str>, kind| path.and_then(|path| assets.texture(path, kind));
+            let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+            let albedo = texture(layer.albedo(), TextureKind::Color);
+            // Without its base colour the layer is flat in its fallback colour.
+            let tint = match albedo {
+                Some(_) => tint.to_array(),
+                None => [linear(fallback.r), linear(fallback.g), linear(fallback.b)],
+            };
+            genex_render::terrain::TerrainLayer {
+                albedo,
+                data: texture(layer.data(), TextureKind::Data),
+                tint,
+                tile,
+                roughness,
+                normal_strength,
+            }
+        })
+        .collect();
+    genex_render::terrain::TerrainDesc { heights: terrain.heights().clone(), control: terrain.control().to_vec(), layers, look: terrain.look() }
 }
 
 /// A texture file decoded, or `None` (logged) when its path is unsafe, it is not in the game's
@@ -728,6 +771,8 @@ pub struct Presenter {
     /// The environment map last handed to the device: the device's generation, the map's path and
     /// whether the upload was taken (a new device after a loss uploads it again; a refusal is
     /// logged once per device).
+    /// The terrain version the renderer refused (logged once; not tried again until it changes).
+    terrain_refused: Option<u64>,
     environment_map: Option<(u32, String, bool)>,
     /// The samples per pixel Live's world pass is fixed to and the settings generation that fixed
     /// them (`RenderControl::pipeline_generation`); None before the first Live frame.
@@ -870,6 +915,7 @@ impl Presenter {
             facts: None,
             level2: Level2::default(),
             environment_map: None,
+            terrain_refused: None,
             live_samples: None,
             refused_rebuild: None,
             off_thread: false,
@@ -1144,6 +1190,7 @@ impl Presenter {
         self.load(frame)?;
         self.admit(frame)?;
         self.light(frame)?;
+        self.terrain(frame)?;
         let (mut immediate, mut drawn) = self.immediate(frame, camera);
         // The tick's simulated seconds (`gx_draw.params.x`, `gx_post.params.x`), never wall time.
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
@@ -1450,6 +1497,30 @@ impl Presenter {
             renderer.set_environment(&environment);
         }
         Ok(())
+    }
+
+    /// Hand the renderer the terrain `frame` draws (renderer pass 2 A.7), once per terrain version
+    /// and device (again after a device loss or a warmed renderer's swap), or take it away. A
+    /// refused terrain is logged once and the frame draws without it; a lost device stops the
+    /// frame (`device-lost`).
+    fn terrain(&mut self, frame: &Frame) -> Result<(), RenderError> {
+        let wanted = frame.drawn_terrain();
+        let held = self.resilient.renderer().renderer().terrain_version();
+        let version = wanted.map(crate::Terrain::version);
+        if held == version || (version.is_some() && version == self.terrain_refused) {
+            return Ok(());
+        }
+        let desc = wanted.map(|terrain| terrain_desc(terrain, &self.assets));
+        let (gpu, renderer) = self.resilient.parts_mut();
+        match renderer.renderer_mut().set_terrain(gpu, desc.as_ref().zip(version)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
+            Err(error) => {
+                self.terrain_refused = version;
+                (self.log)(&format!("terrain refused: {error}: drawing the frame without it"));
+                Ok(())
+            }
+        }
     }
 
     /// Create on the device every Level-2 extension `frame` uses that is not there yet, and re-send

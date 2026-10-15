@@ -83,6 +83,12 @@ const MESHLET_VARIANTS: readonly string[] = [
   "shader-taa-reactive",
   "shader-easu",
   "shader-rcas",
+  // Renderer pass 2 A.7: the terrain's pipelines (casters, the prepass with motion, the world
+  // pass's MSAA and `Equal` variants) and its modules.
+  "terrain-medium",
+  "terrain-high",
+  "shader-terrain",
+  "shader-terrain-shadow",
 ];
 /** The variant the browser row injects so its error scope must report it (web.rs). */
 const INJECTED_VARIANT = "injected-invalid";

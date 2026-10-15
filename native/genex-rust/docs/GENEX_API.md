@@ -461,6 +461,47 @@ replaces a range and only those rows are uploaded again. A group holds at most
 (`range-out-of-group`) and changes nothing. A missing model draws the checker at every transform.
 Things that move every tick stay ordinary draws.
 
+## Terrain
+
+Ground that spans the world (hills, a valley, a beach) is a heightmap terrain: made once, drawn
+every frame with `frame.terrain(&terrain)`, one logical draw. The renderer draws it finer near
+the camera and coarser far away (continuous levels of detail that morph, so the ground never
+pops or cracks), casts it into the sun's shadows, and shades it per pixel from up to
+`TERRAIN_LAYER_MAX` (16) material layers.
+
+```rust
+// on_reset: heights every 0.5 m over 192 m, two layers, a control texel per height sample.
+let terrain = Terrain::from_fn([385, 385], vec2(-96.0, -96.0), 0.5, |x, z| hills(x, z))
+    .expect("heights")
+    .with_layers(vec![
+        TerrainLayer::textured("ground/grass-layer.png", "ground/grass-data.png", 2.0).with_fallback(Color::rgb(54, 79, 34)),
+        TerrainLayer::flat(Color::rgb(138, 134, 126)),
+    ])
+    .expect("layers");
+let texels: Vec<TerrainTexel> = samples.iter().map(|s| TerrainTexel::blend(0, 1, s.rockiness)).collect();
+sim.world.ground = Some(terrain.with_control(&texels).expect("a control texel per sample"));
+// on_draw:
+if let Some(ground) = &sim.world.ground { frame.terrain(ground); }
+```
+
+`Terrain::from_fn(samples, origin, spacing, |x, z| height)` or `Terrain::from_heights(samples,
+origin, spacing, &heights)` (row-major, x fastest) make one: at most `TERRAIN_SAMPLES_MAX` (2049)
+samples a side. A layer is `TerrainLayer::textured(albedo, data, tile)` (two files under
+`assets/`: the base colour with the layer's height in alpha, and a data texture with the normal's
+x and y in red and green, roughness in blue and occlusion in alpha, one tile every `tile` metres,
+`.with_tint(..)`, `.with_fallback(..)` for the colour it draws without its texture) or
+`TerrainLayer::flat(color)`. `terrain.with_layers(..)` sets them; without a control map every
+sample is layer 0. `TerrainTexel::layer(i)`, `TerrainTexel::blend(base, overlay, amount)` and
+`.with_wetness(..)` make one control texel per height sample for `terrain.with_control(..)`; the
+renderer blends the texels around each pixel by weight and by each layer's height, and hex-tiles
+the layers on desktop `high` and `ultra` so no tile repeats visibly. `terrain.height(x, z)`
+answers the ground's height anywhere (the same bits on every destination): place things and
+build colliders with it. Refusals change nothing: `terrain-heights-invalid` (a side outside
+2..=2049, a spacing that is not positive, a height that is not a number),
+`terrain-layers-invalid` (no layer, more than 16, a tile that is not positive) and
+`terrain-control-invalid` (a control map of another size, a texel naming a missing layer). A
+frame draws one terrain.
+
 ## Custom materials and post passes
 
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,

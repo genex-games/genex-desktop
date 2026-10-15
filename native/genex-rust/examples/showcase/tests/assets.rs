@@ -1,5 +1,5 @@
-//! The committed GLBs and the splat map are exactly what the generator writes, every GLB loads in
-//! the renderer, the CC0 HDR map decodes, the terrain material is admitted, the fetched golden map
+//! The committed GLBs are exactly what the generator writes, every GLB loads in the renderer, the
+//! CC0 HDR map decodes, the terrain's control map names the layout's layers, the fetched golden map
 //! (when cached) is turned to the lakeside's sun, and the faceted meshes face outwards.
 
 use genex_render::mesh::MeshData;
@@ -15,7 +15,7 @@ fn the_committed_glbs_are_the_generators_output() {
         assert!(on_disk == bytes, "{name} differs from the generator: run the showcase-assets binary");
     }
     let generated = assets().iter().filter(|(name, _)| !name.contains('/')).count();
-    assert_eq!(generated, all_assets().len(), "game/assets holds exactly the generated GLBs and splat map");
+    assert_eq!(generated, all_assets().len(), "game/assets holds exactly the generated GLBs");
 }
 
 #[test]
@@ -44,14 +44,18 @@ fn faceted_spheres_face_outwards() {
     }
 }
 
-/// The terrain material is admitted at material API v2 in WebGPU core (a refused source would
-/// draw the terrain as the magenta checker), and binds the three textures it is handed.
+/// The control map's texels name only the terrain's six layers and blend the two that cover most
+/// of the ground: the path is soil, the deep lake bed is the bed layer, a steep hillside is rock.
 #[test]
-fn the_terrain_material_is_admitted_in_webgpu_core_with_its_three_textures() {
-    use genex_render::extension::{ExtensionContext, ExtensionKind, validate_api};
-    let source = std::fs::read_to_string(format!("{}/game/{}", env!("CARGO_MANIFEST_DIR"), showcase_game::world::TERRAIN_WGSL)).expect("the terrain source");
-    let admitted = validate_api(ExtensionKind::Material, 2, &source, &ExtensionContext::core()).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(admitted.game_textures(), 3);
+fn the_control_map_names_the_layer_the_layout_puts_there() {
+    use showcase_game::layout::{CABIN, LAKE_CENTER, PATH, TERRAIN_LAYERS, terrain_texel};
+    let (_, control) = showcase_game::layout::terrain_ground();
+    assert!(control.iter().all(|texel| (texel.control().base() as usize) < TERRAIN_LAYERS && (texel.control().overlay() as usize) < TERRAIN_LAYERS));
+    let (soil, bed) = (2, 5);
+    assert_eq!(terrain_texel(PATH[2].x, PATH[2].y).control().base(), soil, "the path");
+    assert_eq!(terrain_texel(CABIN.x + 3.0, CABIN.y).control().base(), soil, "the yard");
+    assert_eq!(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().base(), bed, "the middle of the lake");
+    assert_eq!(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().wetness(), 255, "under the water: wet");
 }
 
 /// The fetched golden-hour map (when the asset cache holds it) is turned so its sun, which becomes

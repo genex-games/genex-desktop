@@ -198,7 +198,7 @@ fn studio_shot_as(name: &str, drawn_as: DrawnAs) -> Option<(Capture, genex_rende
     }
     let stopped = presenter.take_pass_refusals();
     assert!(stopped.is_empty(), "{name}: every pass draws on the HDR scene: {stopped:?}");
-    // The terrain material (Level 2) is admitted: a refused one draws the checker.
+    // Every Level-2 source is admitted: a refused one draws the checker.
     let extensions = runtime.state()["volatile"]["extensions"].clone();
     let refused: Vec<&genex::Value> = extensions.as_array().into_iter().flatten().filter(|row| !row["code"].is_null()).collect();
     assert!(refused.is_empty(), "{name}: every Level-2 source is admitted: {refused:?}");

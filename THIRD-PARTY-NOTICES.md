@@ -263,9 +263,70 @@ credits its source in a comment.
 | `shaders/post/sun_mask_denoise.wgsl` (`fs_sun_mask_temporal`, `gx_mask_history`, `gx_mask_depth_tolerance`, `gx_mask_alpha`, `gx_mask_input`, `gx_mask_atrous`), `src/post/sun_mask.rs` (the constants) | The sun-shadow screen mask's denoise: temporal reprojection with the view-alignment-scaled disocclusion test, the neighbourhood clamp, the sample-count damper, the variance boost of a young history and the accumulation schedule; the 3x3 a-trous kernel with the shadow edge-stopping weight (Genex ports it to fragment passes without wave intrinsics or tile bitmasks, for a continuous PCSS visibility: one filter step instead of three, a depth weight instead of the normal's, and the shadow weight over the variance of the accumulated estimate) | AMD FidelityFX Denoiser (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser), `ffx-shadows-dnsr/ffx_denoiser_shadows_tileclassification.h` and `ffx_denoiser_shadows_filter.h` | Advanced Micro Devices, Inc. | MIT (see [FidelityFX Denoiser](#fidelityfx-denoiser)) |
 | `shaders/pbr.wgsl` (`gx_sun_area_direction`) | The sun as a disc for specular: the direction inside the sun's disc closest to the mirror direction | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_light_directional.fs` (`sampleSunAreaLight`) | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/post/contact_shadow.wgsl` (`gx_contact_edge_fade`, `gx_contact_soft_hit`, the screen-space step count and the per-step tolerance) | Contact shadows: the occlusion faded out across the screen's outer twelfth, the thickness at least the ray's change in view distance per step; the steps set by the depth texels the ray spans on the screen and the soft hit over the back half of the thickness | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_shadowing.fs` (`screenSpaceContactShadow`); Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/ssr/raymarch.wesl` (`depth_ray_march_march`) and `crates/bevy_pbr/src/render/pbr_functions.wesl` (`calculate_contact_shadow`) | The Android Open Source Project; Tomasz Stachowiak and Bevy contributors | Apache 2.0 (Filament); MIT OR Apache-2.0, used under Apache 2.0 (Bevy) (see [Apache License 2.0](#apache-license-20)) |
-| `shaders/forward_env_probes.wgsl` (`gx_probe_parallax`), `src/probes.rs` (`parallax_direction`) | Reflection probes' box projection: where a reflected ray leaves the probe's box, seen from its capture point, with the largest float standing in for an axis the ray never leaves (WGSL has no infinity); Genex projects onto the box grown by the probe's fade and eases the projection in with the probe's weight | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/light_probe/environment_map.wesl` (`compute_cubemap_sample_dir`) | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
-| `shaders/post/dof_prepare.wgsl`, `shaders/post/dof_ring.wgsl`, `shaders/post/dof_combine.wgsl` (`fs_dof_combine`), `src/post/dof.rs` (`CocParams`) | Gather depth of field, ring tier: the circle of confusion as a madd on the depth buffer, the half-resolution downsample keeping the smallest CoC, its mips, the min/max CoC tiles and their dilation, the ring gather with foreground (two layers) and background (ring-occlusion merge) buckets and a fast path, the 3x3 median network and the combine (Genex keeps the colour's plain mean, reduces the tiles in two passes and leaves in-focus texels out of the median) | Filament v1.77.3 (https://github.com/google/filament), `filament/src/materials/dof/` (`dof.mat`, `dofDownsample.mat`, `dofMipmap.mat`, `dofTiles.mat`, `dofDilate.mat`, `dofMedian.mat`, `dofCombine.mat`, `dofUtils.fs`) and `filament/src/PostProcessManager.cpp` (`PostProcessManager::dof`) | The Android Open Source Project; the methods after Jimenez (SIGGRAPH 2014), Abadie ("Life of a Bokeh", SIGGRAPH 2018) and McGuire ("A Fast, Small-Radius GPU Median Filter", 2008) | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/forward_env.wgsl` (`gx_probe_parallax`), `src/probes.rs` (`parallax_direction`) | Reflection probes' box projection: where a reflected ray leaves the probe's box, seen from its capture point, with the largest float standing in for an axis the ray never leaves (WGSL has no infinity); Genex projects onto the box grown by the probe's fade and eases the projection in with the probe's weight | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/light_probe/environment_map.wesl` (`compute_cubemap_sample_dir`) | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/forward_env.wgsl` (`gx_volume_irradiance`), `src/irradiance.rs` (`atlas_texel`, `ambient_irradiance`, `grid_irradiance`) | Irradiance volumes' ambient-cube packing and lookup: each cell's six axis-direction texels in an `X x 2Y x 3Z` block (the negative directions in the upper half of y, the axes in thirds of z), the three faces toward the normal read with the sampler's trilinear filter inside their sub-block and weighted by the normal's squared components (Genex packs every volume's block into one atlas, offsets the lookup along the normal, moves it toward the cells that see the point by their reaches and bakes the cells in the scene on the GPU) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/light_probe/irradiance_volume.wesl` (`irradiance_volume_light`) and `crates/bevy_pbr/src/light_probe/irradiance_volume.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/post/dof_prepare.wgsl`, `shaders/post/dof_ring.wgsl`, `shaders/post/dof_combine.wgsl` (`fs_dof_combine`), `src/post/dof.rs` (`CocParams`) | Gather depth of field, ring tier: the circle of confusion as a madd on the depth buffer, the half-resolution downsample keeping the smallest CoC, its mips, the min/max CoC tiles and their dilation, the ring gather with foreground (two layers) and background (ring-occlusion merge) buckets and a fast path, the 3x3 median network and the combine (Genex keeps the colour's plain mean, reduces the tiles in two passes, leaves in-focus texels out of the median and does not jitter the gather by a noise) | Filament v1.77.3 (https://github.com/google/filament), `filament/src/materials/dof/` (`dof.mat`, `dofDownsample.mat`, `dofMipmap.mat`, `dofTiles.mat`, `dofDilate.mat`, `dofMedian.mat`, `dofCombine.mat`, `dofUtils.fs`) and `filament/src/PostProcessManager.cpp` (`PostProcessManager::dof`) | The Android Open Source Project; the methods after Jimenez (SIGGRAPH 2014), Abadie ("Life of a Bokeh", SIGGRAPH 2018) and McGuire ("A Fast, Small-Radius GPU Median Filter", 2008) | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/post/dof_circular.wgsl`, `shaders/post/dof_combine.wgsl` (`fs_dof_composite`) | Gather depth of field, circular tier: the single-pass golden-angle gather whose samples behind the centre are limited by its CoC, and the composite by the pixel's or the gathered CoC (Genex bounds the spiral by the tile's CoC and a sample budget and upsamples by CoC likeness) | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/bokeh_dof_raster.glsl` (`MODE_BOKEH_CIRCULAR`, `MODE_COMPOSITE_BOKEH`) | Godot Engine contributors; the method after Tuxedo Labs ("Bokeh depth of field in a single pass", 2018) | MIT (see [Godot Engine](#godot-engine)) |
+| `shaders/post/motion_blur_common.wgsl` (`mb_velocity`, `mb_vmax`), `shaders/post/motion_blur_tiles.wgsl`, `shaders/post/motion_blur.wgsl` (`fs_mb_reconstruct`), `src/post/motion_blur.rs` (`MAX_BLUR_HEIGHT_SHARE`, `depth_row`) | Motion blur, reconstruction tier: half the exposure vector in pixels clamped to the largest radius, the longest velocity of each tile and of its 3x3 neighbourhood (centre favoured by 1%), the tile lookup jittered by a quarter tile, and the gather along the neighbourhood's and the pixel's velocities with its depth-softened foreground and background weights, triangular window and centre weight (Genex reduces the tiles in a compute pass, spaces samples a pixel apart without per-pixel noise and reads whole texels) | keijiro/KinoMotion (https://github.com/keijiro/KinoMotion), `Assets/Kino/Motion/Shader/Prefilter.cginc` (`frag_VelocitySetup`, `frag_TileMax*`, `frag_NeighborMax`), `Reconstruction.cginc` (`frag_Reconstruction`, `JitterTile`) and `Common.cginc` (`LinearizeDepth`) | Keijiro Takahashi; the method after McGuire, Hennessy, Bukowski and Osman ("A Reconstruction Filter for Plausible Motion Blur", I3D 2012) | MIT (see [KinoMotion](#kinomotion)) |
+| `shaders/post/motion_blur.wgsl` (`fs_mb_direct`) | Motion blur, direct tier: samples along the pixel's own exposure vector, a nearer sample kept only where its own motion along that direction reaches the pixel, the scene kept below a pixel of motion (Genex compares the sample's exposure with the pixel's, spaces samples a pixel apart without noise and reads whole texels) | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/motion_blur/motion_blur.wesl` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `src/terrain/mod.rs` (`TerrainTree::select`, `TerrainLod`, `TerrainTree::vertex`), `shaders/terrain/terrain_core.wgsl` (`gx_terrain_morph_k`, `gx_terrain_vertex`) | Continuous distance-dependent level of detail for heightmap terrain: the quadtree selection by distance ranges with partial (quarter) nodes, the morph constants and the vertex morph of odd grid vertices onto their even neighbours (Genex selects on the CPU without a frustum and culls per view, floors the ranges so no node is two levels from a neighbour, reads 16-bit heights from a storage table and samples integer positions exactly) | CDLOD (https://github.com/fstrugar/CDLOD), `source/BasicCDLOD/CDLODQuadTree.cpp` (`LODSelect`), `CDLODRenderer.cpp` and the shader's `morphVertex` | Filip Strugar | MIT (see [CDLOD](#cdlod)) |
+| `shaders/terrain/hextile.wgsl` | Hex-tiling: the triangle grid of hexagons, each tile's rotation and offset, its centre, and the luminance-weighted blend of the three tiles' samples (Genex hashes the vertex ids with integers instead of `sin`, shares the tiles between a layer's colour and data textures and turns the data texture's normal back onto the surface) | mmikk/hextile-demo (https://github.com/mmikk/hextile-demo), `hextile-demo/hextiling.h` (`TriangleGrid`, `hash`, `MakeCenST`, `LoadRot2x2`, `hex2colTex`) | Morten S. Mikkelsen ("Practical Real-Time Hex-Tiling", JCGT 11(2) 2022) | MIT (see [hextile-demo](#hextile-demo)) |
+
+### CDLOD
+
+The licence of the CDLOD code the terrain's selection and morph port (table above).
+
+```
+MIT License
+
+Copyright (c) 2010 Filip Strugar
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### hextile-demo
+
+The licence of the hex-tiling code the terrain's layers port (table above).
+
+```
+MIT License
+
+Copyright (c) 2022 mmikk
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### XeGTAO
 

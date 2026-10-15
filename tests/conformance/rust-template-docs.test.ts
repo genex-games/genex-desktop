@@ -90,6 +90,7 @@ const FACADE = JSON.parse(
   environment: { calls: string[]; kinds: string[]; hdriSun: string[] };
   lights: { calls: string[] };
   instanceGroups: { calls: string[]; refusals: string[] };
+  terrain: { calls: string[]; refusals: string[] };
 };
 
 /** The seed's recipes, whose `evidence` cites sections of the reference. */
@@ -260,6 +261,12 @@ describe("GENEX_API.md is the facade's reference", () => {
       assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
     for (const refusal of FACADE.instanceGroups.refusals)
       assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("teaches every terrain call and refusal", () => {
+    const text = api();
+    for (const call of FACADE.terrain.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
+    for (const refusal of FACADE.terrain.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
   });
 
   it("teaches every local-light and emission call, and the template points at them", () => {

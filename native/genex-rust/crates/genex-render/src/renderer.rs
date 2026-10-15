@@ -112,7 +112,10 @@ pub mod live_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
 mod probe_capture;
+mod terrain_draw;
 mod variants;
+
+pub use terrain_draw::TerrainStats;
 
 use wgpu::{
     BindGroup, BindGroupLayout, BindGroupLayoutEntry, BindingType, Buffer, BufferUsages, Device, Queue, RenderPass,
@@ -822,6 +825,10 @@ pub struct Renderer {
     /// The draw variants' pipelines (P2-0.12: double-sided and alpha-tested batches), made on the
     /// first frame that draws each.
     variants: variants::VariantPipelines,
+    /// The terrain (renderer pass 2 A.7, [`Renderer::set_terrain`]) and its pipelines, made on the
+    /// first frame that draws each.
+    terrain: Option<crate::terrain::gpu::TerrainGpu>,
+    terrain_pipelines: terrain_draw::TerrainPipelines,
     shadow_sampler: Sampler,
     /// PCSS's blocker search gathers the shadow map through it (`layout::SHADOW_BLOCKER_SAMPLER`).
     point_sampler: Sampler,
@@ -2278,6 +2285,8 @@ impl<'a> WorldNodes<'a> {
                         self.stats.meshlet_draws += 1;
                     }
                 }
+                // The terrain (A.7), after the opaque batches.
+                renderer.draw_terrain(pass, &groups.frame, &groups.pass);
                 if !plan.lines.is_empty() {
                     pass.set_pipeline(&renderer.scene_pipelines().lines);
                     pass.set_bind_group(0, &groups.lines, &[]);
@@ -2527,6 +2536,8 @@ impl Renderer {
             shadow_draws: CascadeDraws::default(),
             spot_shadow: None,
             variants: variants::VariantPipelines::default(),
+            terrain: None,
+            terrain_pipelines: terrain_draw::TerrainPipelines::default(),
             shadow_sampler,
             point_sampler,
             texture_sampler,
@@ -3737,6 +3748,8 @@ impl Renderer {
                 custom_draws += 1;
             }
         }
+        // The terrain's depth, normals and motion (A.7), after every other geometry.
+        self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         if let Some((group, motion_pipelines, _, _)) = motion {
             // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
             // horizon), after every draw of the pass: `Equal` against the cleared far plane.
@@ -4090,6 +4103,7 @@ impl Renderer {
         }
         self.ensure_temporal(&scene_path)?;
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
@@ -4472,10 +4486,20 @@ impl Renderer {
         if lut > 0 {
             ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::GRADING_LUT_LABEL, lut);
         }
+        // The terrain's row, maps, rows and grid (A.7).
+        let terrain = self.terrain_bytes();
+        if terrain > 0 {
+            ledger.register(Buffers, crate::terrain::TERRAIN_LEDGER_LABEL, terrain);
+        }
         // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
         let probes = self.environment.borrow().probes().bytes();
         if probes > 0 {
             ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::REFLECTION_PROBES_LABEL, probes);
+        }
+        // The irradiance volumes' atlas, staging block and bake targets (A.4), outside the pool.
+        let volumes = self.environment.borrow().irradiance().bytes();
+        if volumes > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::IRRADIANCE_VOLUMES_LABEL, volumes);
         }
         ledger
     }
@@ -4975,6 +4999,8 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        // The terrain's casters (A.7) before the batches' (it binds its own groups and grid).
+        self.draw_terrain_casters(&mut pass, prep, cascade);
         if plan.batches.is_empty() {
             return;
         }

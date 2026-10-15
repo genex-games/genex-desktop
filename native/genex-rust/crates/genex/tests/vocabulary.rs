@@ -138,3 +138,12 @@ fn the_instance_group_calls_and_refusals_are_the_fixtures() {
     let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup].map(InstanceGroupErrorCode::wire);
     assert_eq!(names(&pinned["instanceGroups"]["refusals"]), refusals);
 }
+
+#[test]
+fn the_terrain_calls_and_refusals_are_the_fixtures() {
+    use genex::TerrainErrorCode;
+    let pinned = fixture();
+    assert_eq!(names(&pinned["terrain"]["calls"]), genex::manifest::TERRAIN_CALLS);
+    let refusals = TerrainErrorCode::ALL.map(TerrainErrorCode::wire);
+    assert_eq!(names(&pinned["terrain"]["refusals"]), refusals);
+}

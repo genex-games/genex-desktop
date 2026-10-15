@@ -3,9 +3,9 @@
 //! stand-ins where it does not, branching trees with three levels of detail, emissive lanterns,
 //! windows and fireflies with real point and spot lights, four PCSS shadow cascades, GPU culling),
 //! its environment (the physical sky, or an HDR sky map: image-based light and the backdrop), the
-//! look (AgX, auto exposure, height fog, bloom, AO, contact shadows), a Level-2 terrain material
-//! (four PBR layers blended by a splat map and their heights) and four custom GPU passes for what no
-//! built-in draws (clouds, grass, lake, light sprites). A slow tour flies through five named shots;
+//! look (AgX, auto exposure, height fog, bloom, AO, contact shadows), the built-in terrain (six PBR
+//! layers blended per pixel by a control map and their heights, with continuous levels of detail)
+//! and four custom GPU passes for what no built-in draws (clouds, grass, lake, light sprites). A slow tour flies through five named shots;
 //! 1–5 hold a shot, F flies a free camera, B steps through the skies, O opens the graphics settings
 //! (also the HUD's settings button), H hides the HUD.
 

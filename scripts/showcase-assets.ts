@@ -14,7 +14,7 @@
  * - `--pin` records the sha256 of a file the manifest has none for yet (a new asset's first fetch,
  *   reviewed in the manifest's diff). Without it an unpinned file is refused.
  * - Then `showcase-assets fetched` (the showcase crate's processing tool, through the cargo env
- *   helper) packs the terrain atlases where the manifest has terrain layers and copies the
+ *   helper) packs each terrain layer's two files where the manifest has terrain layers and copies the
  *   material maps and the sky maps into `.studio-dev/assets-cache/<scene>/assets/fetched/`, which
  *   the workspace's scene reads. `--install` also copies them into the scene's game folder
  *   (`assets/fetched/`, ignored by Git) for a Studio run.

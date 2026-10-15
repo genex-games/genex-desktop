@@ -790,6 +790,38 @@ fn textures_variant(gpu: &Gpu) -> Result<(), RenderError> {
     renderer.render(gpu, &frame, CullPath::Gpu, None).map(drop)
 }
 
+/// The terrain's pipelines (renderer pass 2 A.7) at `preset` on desktop-high: a small rolling
+/// height field with a flat and a textured layer, two frames (the casters, the prepass with motion
+/// on a TAA preset, the world pass's `Equal` or MSAA variant).
+fn terrain_variant(gpu: &Gpu, preset: QualityPreset) -> Result<(), RenderError> {
+    use genex_render::terrain::{ControlTexel, Heightfield, TerrainDesc, TerrainLayer};
+    let class = DeviceClass::from_wire("desktop-high").ok_or_else(|| RenderError::refused(RenderCode::DeviceFailed, "no desktop-high class"))?;
+    let quality = preset_quality(preset, class);
+    let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
+    let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
+    let part1 = renderer.renderer_mut();
+    part1.set_scene_format(SceneFormat::Rgba16Float);
+    part1.set_device_class(class);
+    part1.set_quality(&quality);
+    let heights = Heightfield::from_fn((65, 65), [-16.0, -16.0], 0.5, |x, z| 0.8 * ((x * 0.4).floor() - (z * 0.3).floor()).abs().min(3.0))?;
+    let texture = TextureData::rgba8(4, 4, vec![128; 64])?;
+    let albedo = renderer.add_texture(gpu, &texture, TextureKind::Color)?;
+    let data = renderer.add_texture(gpu, &texture, TextureKind::Data)?;
+    let layers = vec![TerrainLayer::flat([0.2, 0.3, 0.1]), TerrainLayer::textured(Some(albedo), Some(data), 2.0)];
+    let control = (0..65 * 65).map(|i| ControlTexel::blend(0, 1, (i % 255) as u8)).collect();
+    let desc = TerrainDesc { heights, control, layers, look: Default::default() };
+    renderer.renderer_mut().set_terrain(gpu, Some((&desc, 1)))?;
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 4.0, 8.0], [0.0, 0.0, 0.0]), [0, 0, 0, 255]);
+    for tick in 1..=2 {
+        frame.set_tick(tick);
+        renderer.render(gpu, &frame, CullPath::Gpu, None)?;
+    }
+    match renderer.renderer().terrain_stats() {
+        Some(stats) if stats.camera_rows > 0 => Ok(()),
+        _ => Err(RenderError::refused(RenderCode::DeviceFailed, "the terrain drew no row")),
+    }
+}
+
 /// Every renderer pipeline variant on `gpu`, each under its own scopes: the renderer with and
 /// without MSAA at each check scale, a shadowed HDR frame per shadow filter and layout, the RQ4
 /// screen effects per preset row, the meshlet path with and without occlusion, RQ6's binned lights
@@ -835,6 +867,9 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
         variants.push(variant(gpu, name, |gpu| lights_variant(gpu, hdr)));
     }
     variants.push(variant(gpu, "textures-classes".to_owned(), textures_variant));
+    for (preset, name) in [(QualityPreset::Medium, "terrain-medium"), (QualityPreset::High, "terrain-high")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset)));
+    }
     variants.push(variant(gpu, "hud".to_owned(), |gpu| {
         drop(HudPainter::new(&gpu.device, WORLD_FORMAT));
         Ok(())

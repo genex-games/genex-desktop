@@ -70,6 +70,20 @@
     ],
     "refusals": ["too-many-instances", "range-out-of-group"]
   },
+  "terrain": {
+    "calls": [
+      "Terrain::from_fn",
+      "Terrain::from_heights",
+      "TerrainLayer::textured",
+      "TerrainLayer::flat",
+      ".with_layers",
+      "TerrainTexel::blend",
+      ".with_control",
+      "frame.terrain",
+      "terrain.height"
+    ],
+    "refusals": ["terrain-heights-invalid", "terrain-layers-invalid", "terrain-control-invalid"]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,

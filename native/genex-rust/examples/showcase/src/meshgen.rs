@@ -1,22 +1,15 @@
-//! The procedural meshes behind `game/assets/`: the terrain, the trees ([`crate::trees`]), the
-//! rocks, the cabin's and the dock's parts ([`crate::props`]), a cylinder and a smooth sphere, each
-//! written as a GLB (positions, normals, texture coordinates, indices in one embedded buffer), and
-//! the terrain's splat map ([`splat_png`]). Deterministic: the same bytes on every run. The faceted
+//! The procedural meshes behind `game/assets/`: the trees ([`crate::trees`]), the rocks, the
+//! cabin's and the dock's parts ([`crate::props`]), a cylinder and a smooth sphere, each written as
+//! a GLB (positions, normals, texture coordinates, indices in one embedded buffer). The ground is
+//! the renderer's built-in terrain over the layout's heights (`layout::terrain_ground`).
+//! Deterministic: the same bytes on every run. The faceted
 //! pines, canopies and rocks of the lakeside before its remaster stay for the bench scenes.
 
 use genex::json;
-use image::ImageEncoder;
 use genex::math::{self, Vec2, Vec3, vec2, vec3};
 
-use crate::layout::{CABIN, TERRAIN_HALF, WATER_LEVEL, fbm, height, lake_radius, normal, path_distance, path_half_width, smoothstep, value_noise, yard_radius};
+use crate::layout::fbm;
 
-/// Terrain grid cells per side.
-pub const TERRAIN_CELLS: u32 = 256;
-/// The terrain's texture coordinates: one unit per this many metres (the terrain material reads the
-/// world position itself; the coordinates serve the tangents).
-const TERRAIN_UV_METRES: f32 = 4.0;
-/// The splat map's texels per side over the whole terrain (`terrain-splat.png`).
-pub const SPLAT_TEXELS: u32 = 512;
 
 /// An indexed triangle mesh, counter-clockwise seen from outside.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -127,69 +120,6 @@ pub fn glb(mesh: &Mesh) -> Vec<u8> {
     out.extend(b"BIN\0");
     out.extend(bin);
     out
-}
-
-/// The whole terrain as one grid with smooth normals from the height field, drawn with the
-/// terrain material (its layers blended per pixel from the splat map, `shaders/terrain.wgsl`).
-pub fn terrain() -> Mesh {
-    let n = TERRAIN_CELLS;
-    let step = TERRAIN_HALF * 2.0 / n as f32;
-    let mut mesh = Mesh::default();
-    for j in 0..=n {
-        for i in 0..=n {
-            let p = vec2(-TERRAIN_HALF + i as f32 * step, -TERRAIN_HALF + j as f32 * step);
-            mesh.vertex(vec3(p.x, height(p.x, p.y), p.y), normal(p.x, p.y), p / TERRAIN_UV_METRES);
-        }
-    }
-    let row = n + 1;
-    for j in 0..n {
-        for i in 0..n {
-            let a = j * row + i;
-            mesh.indices.extend([a, a + row, a + 1, a + 1, a + row, a + row + 1]);
-        }
-    }
-    mesh
-}
-
-/// How much of each terrain layer covers (x, z): soil (the path and the yard), sand (the beach and
-/// the lake bed), rock (steep slopes) and the meadow's dryness (0 lush to 1 golden); grass is what
-/// the other layers leave. Each 0..1, soft-edged, from the layout's own functions.
-pub fn splat_weights(x: f32, z: f32) -> [f32; 4] {
-    let p = vec2(x, z);
-    let edge = 0.25 * (value_noise(p * 1.7, 21) - 0.5);
-    let path = 1.0 - smoothstep(-0.25, 0.3, path_distance(x, z) - path_half_width(x, z) + edge);
-    let d = p - CABIN;
-    let yard = 1.0 - smoothstep(-0.6, 0.4, d.length() - yard_radius(math::atan2(d.y, d.x)) + edge * 2.0);
-    let soil = path.max(yard);
-    let h = height(x, z);
-    let shore = (1.0 - smoothstep(0.02, 0.22, h - WATER_LEVEL + edge * 0.4)) * (1.0 - smoothstep(1.15, 1.3, lake_radius(x, z)));
-    let grassy_bank = smoothstep(0.62, 0.74, value_noise(p * 0.12, 9)) * smoothstep(-0.25, 0.0, h - WATER_LEVEL);
-    let sand = (shore * (1.0 - grassy_bank)).max(1.0 - smoothstep(-0.35, -0.1, h - WATER_LEVEL));
-    let steep = smoothstep(0.93, 0.84, normal(x, z).y) * smoothstep(2.0, 3.5, h);
-    let patch = fbm(p * 0.045, 3, 7) + 0.18 * (value_noise(p * 0.35, 8) - 0.5);
-    let dry = smoothstep(0.38, 0.66, patch);
-    [soil, sand * (1.0 - soil), steep * (1.0 - soil), dry]
-}
-
-/// The splat map as an RGBA PNG over the whole terrain ([`SPLAT_TEXELS`] per side, texel centres
-/// from -TERRAIN_HALF): soil, sand and rock in R, G and B, stored sRGB-encoded so the terrain
-/// material's sRGB texture decodes the weight itself, and dryness in A (never decoded).
-pub fn splat_png() -> Vec<u8> {
-    let side = SPLAT_TEXELS;
-    let mut rgba = Vec::with_capacity((side * side * 4) as usize);
-    for j in 0..side {
-        for i in 0..side {
-            let at = |k: u32| -TERRAIN_HALF + (k as f32 + 0.5) / side as f32 * TERRAIN_HALF * 2.0;
-            let [soil, sand, rock, dry] = splat_weights(at(i), at(j));
-            rgba.extend([soil, sand, rock].map(crate::fetched::srgb_byte));
-            rgba.push((dry.clamp(0.0, 1.0) * 255.0).round() as u8);
-        }
-    }
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Best, image::codecs::png::FilterType::Adaptive)
-        .write_image(&rgba, side, side, image::ExtendedColorType::Rgba8)
-        .expect("the splat map encodes");
-    png
 }
 
 /// A deterministic 0..1 noise over a direction (for displacing spheres).
@@ -466,10 +396,10 @@ pub fn smooth_rock(variant: u32) -> Mesh {
     mesh
 }
 
-/// Every asset of `game/assets/` as (file name, bytes), in a fixed order: the GLBs and the splat
-/// map.
+/// Every asset of `game/assets/` as (file name, bytes), in a fixed order: the GLBs (the ground is
+/// the renderer's built-in terrain over the layout's heights, renderer pass 2 A.7: no mesh).
 pub fn all_assets() -> Vec<(String, Vec<u8>)> {
-    let mut assets: Vec<(String, Vec<u8>)> = vec![("terrain.glb".to_owned(), glb(&terrain())), ("terrain-splat.png".to_owned(), splat_png())];
+    let mut assets: Vec<(String, Vec<u8>)> = Vec::new();
     assets.extend((0..3).map(|i| (format!("rock-{i}.glb"), glb(&smooth_rock(i)))));
     assets.push(("cylinder.glb".to_owned(), glb(&cylinder())));
     assets.push(("sphere.glb".to_owned(), glb(&sphere())));

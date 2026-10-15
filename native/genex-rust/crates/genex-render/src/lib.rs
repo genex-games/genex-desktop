@@ -126,6 +126,11 @@ pub mod sky;
 pub mod hdri;
 /// Reflection probes (renderer pass 2 A.3): box-projected local cubes captured in the scene.
 pub mod probes;
+/// Irradiance volumes (renderer pass 2 A.4): grids of ambient cubes baked in the scene.
+pub mod irradiance;
+/// Heightmap terrain (renderer pass 2 A.7): CDLOD selection and morph over a quantized height
+/// field, its own pipelines, and splat materials from a control map.
+pub mod terrain;
 
 // --- RQ4: the depth/normal prepass, bloom, GTAO, fog, contact shadows (RQ4.0 registers every RQ4
 // module; bloom, AO and contact shadows are `post` nodes) ---

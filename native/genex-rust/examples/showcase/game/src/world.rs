@@ -4,7 +4,7 @@
 use genex::math::{self, Vec3, vec3};
 use genex::prelude::*;
 use genex::render::{Environment, HdriEnvironment, SkyParams};
-use genex::{CustomMaterial, Gfx, Model};
+use genex::{Gfx, Model, Terrain, TerrainLayer};
 
 use crate::layout::{TreeLod, layout, tree_asset};
 
@@ -195,10 +195,8 @@ pub struct TreeMeshes {
 /// The model handles and materials the draw hook uses, one per asset, made once per seed.
 #[derive(Clone, Debug, Default)]
 pub struct Models {
-    /// The terrain grid.
-    pub terrain: Model,
-    /// The terrain's material (`shaders/terrain.wgsl`).
-    pub terrain_material: CustomMaterial,
+    /// The ground: the renderer's built-in terrain over the layout's heights ([`terrain`]).
+    pub terrain: Option<Terrain>,
     /// Broadleaf meshes: per variant, per level of detail ([`TreeLod::ALL`]).
     pub broadleaf: Vec<Vec<TreeMeshes>>,
     /// Pine meshes: per variant, per level of detail.
@@ -215,22 +213,39 @@ pub struct Models {
     pub surfaces: crate::draw::Surfaces,
 }
 
-/// The terrain material's uniforms: the terrain's half extent, the water level and how far its
-/// detail reaches, then each layer's tile in metres (grass, soil, sand, rock: the fetched
-/// textures' real sizes, assets-manifest.json `worldSizeMetres`, the sand's smaller than its own).
-fn terrain_uniforms() -> [f32; 8] {
-    [crate::layout::TERRAIN_HALF, crate::layout::WATER_LEVEL, TERRAIN_DETAIL_REACH, 0.0, 2.0, 2.0, 3.0, 2.4]
+/// The fetched CC0 layers (`assets/fetched/`, `scripts/showcase-assets.ts fetch`): each a base
+/// colour with its height in alpha and a data map (normal, roughness, occlusion), named by the
+/// manifest's terrain outputs. Without the asset cache every layer draws flat in its fallback.
+fn layer(name: &str, tile: f32) -> TerrainLayer {
+    TerrainLayer::textured(&format!("fetched/{name}-layer.png"), &format!("fetched/{name}-data.png"), tile)
 }
 
-/// How far the terrain's bumps reach (metres): beyond it the ground keeps only its colour.
-const TERRAIN_DETAIL_REACH: f32 = 90.0;
-/// The terrain material's source (`genex.toml`'s `[[wgsl]]` row) and its textures: the splat map
-/// the layout writes, and the fetched atlases (missing without the asset cache: the material
-/// draws its procedural layers then).
-pub const TERRAIN_WGSL: &str = "shaders/terrain.wgsl";
-const SPLAT_MAP: &str = "terrain-splat.png";
-const ALBEDO_ATLAS: &str = "fetched/terrain-albedo.png";
-const DETAIL_ATLAS: &str = "fetched/terrain-detail.png";
+/// The lakeside's ground on the built-in terrain (renderer pass 2 A.7): the layout's heights every
+/// [`crate::layout::TERRAIN_SPACING`] metres and its control map, six layers (tiles in metres: the
+/// fetched textures' real sizes, assets-manifest.json `worldSizeMetres`): the scanned forest floor
+/// greened for the lush meadow and gilded where it dries, the soil, the sand, the rock and the
+/// lake bed (the sand darkened under the water). Made once per process.
+pub fn terrain() -> Terrain {
+    static TERRAIN: std::sync::OnceLock<Terrain> = std::sync::OnceLock::new();
+    TERRAIN
+        .get_or_init(|| {
+            use crate::layout::{TERRAIN_HALF, TERRAIN_SAMPLES, TERRAIN_SPACING, terrain_ground};
+            let (heights, control) = terrain_ground();
+            let origin = math::vec2(-TERRAIN_HALF, -TERRAIN_HALF);
+            let ground = Terrain::from_heights([TERRAIN_SAMPLES; 2], origin, TERRAIN_SPACING, heights).expect("the layout's heights");
+            let layers = vec![
+                layer("terrain-grass", 2.0).with_tint(vec3(0.68, 1.0, 0.5)).with_fallback(Color::rgb(54, 79, 34)),
+                layer("terrain-grass", 2.0).with_tint(vec3(1.3, 1.08, 0.58)).with_fallback(Color::rgb(126, 108, 66)),
+                layer("terrain-soil", 2.0).with_fallback(Color::rgb(108, 84, 62)),
+                layer("terrain-sand", 3.0).with_fallback(Color::rgb(170, 152, 125)),
+                layer("terrain-rock", 2.4).with_fallback(Color::rgb(138, 134, 126)),
+                layer("terrain-sand", 3.0).with_tint(vec3(0.42, 0.4, 0.36)).with_fallback(Color::rgb(104, 92, 76)),
+            ];
+            let look = genex::TerrainLook { macro_variation: 0.2, macro_scale: 9.0, wet_darkening: 0.45, wet_roughness: 0.32, blend_depth: 0.18 };
+            ground.with_layers(layers).and_then(|ground| ground.with_control(control)).expect("the layout's control map").with_look(look)
+        })
+        .clone()
+}
 
 impl Models {
     /// Every handle, from the game's `assets/`.
@@ -242,10 +257,8 @@ impl Models {
                 .map(|lod| TreeMeshes { wood: assets.model(&tree_asset(pine, variant, *lod, false)), foliage: assets.model(&tree_asset(pine, variant, *lod, true)) })
                 .collect()
         };
-        let textures = [SPLAT_MAP, ALBEDO_ATLAS, DETAIL_ATLAS].map(|path| gfx.texture(path));
         Models {
-            terrain: assets.model("terrain.glb"),
-            terrain_material: gfx.material_textured(TERRAIN_WGSL, &terrain_uniforms(), &[&textures[0], &textures[1], &textures[2]]),
+            terrain: Some(terrain()),
             broadleaf: (0..3).map(|v| tree(false, v)).collect(),
             pine: (0..2).map(|v| tree(true, v)).collect(),
             rock: (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect(),

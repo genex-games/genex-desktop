@@ -1,6 +1,6 @@
 //! The lakeside's rules headless (no GPU): it replays from a seed, its shots are named cameras,
-//! only the passes no built-in draws are registered, all at custom-pass API v2, the terrain is its
-//! Level-2 material, its look (fog included) is its own, the grass follows the device's tier, and
+//! only the passes no built-in draws are registered, all at custom-pass API v2, the ground is the
+//! built-in terrain, its look (fog included) is its own, the grass follows the device's tier, and
 //! the camera keys switch between the tour, a shot and free flight.
 
 use genex::gpu::PassStage;
@@ -116,17 +116,28 @@ fn the_lakeside_is_lit_by_the_physical_sky_and_b_steps_through_the_golden_map_an
 }
 
 #[test]
-fn the_terrain_is_one_draw_of_its_level_2_material_with_the_splat_map_and_the_fetched_atlases() {
-    use showcase_game::world::TERRAIN_WGSL;
+fn the_ground_is_the_built_in_terrain_with_six_fetched_layers_over_the_layouts_heights() {
+    use showcase_game::layout::{TERRAIN_HALF, TERRAIN_LAYERS, TERRAIN_SAMPLES, TERRAIN_SPACING, height};
     let mut runtime = runtime();
     run(&mut runtime, 10);
     let frame = runtime.frame(View::Game).expect("its frame");
-    let terrain: Vec<_> = frame.custom_draws().iter().filter(|draw| draw.material.path() == TERRAIN_WGSL).collect();
-    assert_eq!(terrain.len(), 1, "the whole terrain is one draw");
-    assert!(terrain[0].material.refusal().is_none(), "the terrain material is admitted: {:?}", terrain[0].material.refusal());
-    let requested = runtime.state()["assets"].clone();
-    for texture in ["terrain-splat.png", "fetched/terrain-albedo.png", "fetched/terrain-detail.png"] {
-        assert!(requested.as_array().is_some_and(|paths| paths.iter().any(|path| path == texture)), "{texture} is asked for: {requested}");
+    let ground = frame.drawn_terrain().expect("the frame draws the terrain");
+    assert_eq!(frame.tags().get("terrain"), Some(&1), "the whole terrain is one draw");
+    assert!(frame.custom_draws().iter().all(|draw| !draw.material.path().contains("terrain")), "no Level-2 terrain material is left");
+    assert_eq!(ground.heights().samples(), (TERRAIN_SAMPLES, TERRAIN_SAMPLES));
+    assert_eq!((TERRAIN_SAMPLES - 1) as f32 * TERRAIN_SPACING, 2.0 * TERRAIN_HALF, "the samples span the layout");
+    // The drawn heights are the layout's, within a quantization step, between samples too.
+    let (_, step) = ground.heights().quantization();
+    for (x, z) in [(-30.0, 12.0), (6.0, 2.0), (-9.0, -21.0), (80.0, -60.0)] {
+        let sampled = |x: f32, z: f32| height((x / TERRAIN_SPACING).round() * TERRAIN_SPACING, (z / TERRAIN_SPACING).round() * TERRAIN_SPACING);
+        assert!((ground.height(x, z) - sampled(x, z)).abs() <= step, "({x}, {z})");
+    }
+    assert_eq!(ground.layers().len(), TERRAIN_LAYERS);
+    assert_eq!(ground.control().len(), (TERRAIN_SAMPLES * TERRAIN_SAMPLES) as usize);
+    let named: Vec<&str> = ground.layers().iter().flat_map(|layer| [layer.albedo(), layer.data()]).flatten().collect();
+    for output in showcase_game::fetched::TERRAIN_LAYERS {
+        assert!(named.contains(&format!("fetched/{}", showcase_game::fetched::layer_file(output)).as_str()), "{output}'s base colour: {named:?}");
+        assert!(named.contains(&format!("fetched/{}", showcase_game::fetched::data_file(output)).as_str()), "{output}'s data: {named:?}");
     }
 }
 

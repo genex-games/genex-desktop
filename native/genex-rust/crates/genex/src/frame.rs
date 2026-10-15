@@ -577,6 +577,7 @@ pub struct Frame {
     clear: Color,
     lights: Lights,
     environment: Option<Environment>,
+    terrain: Option<crate::terrain::Terrain>,
 }
 
 impl Default for Frame {
@@ -592,6 +593,7 @@ impl Default for Frame {
             clear: Color::BACKGROUND,
             lights: Lights::default(),
             environment: None,
+            terrain: None,
         }
     }
 }
@@ -750,6 +752,21 @@ impl Frame {
     /// The environment this frame declared ([`Frame::environment`]); None draws the flat colour.
     pub fn declared_environment(&self) -> Option<&Environment> {
         self.environment.as_ref()
+    }
+
+    /// Draw `terrain` ([`crate::Terrain`]): one logical draw. A frame draws one terrain (a second
+    /// call replaces the first).
+    pub fn terrain(&mut self, terrain: &crate::terrain::Terrain) -> &mut Self {
+        if self.terrain.is_none() {
+            self.count();
+        }
+        self.terrain = Some(terrain.clone());
+        self
+    }
+
+    /// The terrain this frame draws ([`Frame::terrain`]), if any.
+    pub fn drawn_terrain(&self) -> Option<&crate::terrain::Terrain> {
+        self.terrain.as_ref()
     }
 
     /// Draw a line segment.
