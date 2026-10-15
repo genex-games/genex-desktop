@@ -204,6 +204,8 @@ pub const AGX_PUNCHY_CONTRAST: f32 = 1.4;
 pub const AGX_PUNCHY_WHITE: f32 = 16.29;
 /// AgX punchy's saturation about Rec. 709 luminance, after the curve (grey stays grey).
 pub const AGX_PUNCHY_SATURATION: f32 = 1.4;
+/// The display encoding punchy's saturation is applied in (gamma 2.2, pass 1's sigmoid output).
+const PUNCHY_SATURATION_GAMMA: f32 = 2.2;
 
 /// The allenwp tonemapping curve's parameters (Godot 4.7.2 `environment_storage.cpp`
 /// `environment_get_tonemap_parameters`, MIT), solved for a crossover at [`AGX_CROSSOVER`] that
@@ -340,12 +342,15 @@ const AGX_GODOT_OUTSET: Mat3 = [
     [-0.108_898_916_004_672, -0.027_084_599_715_057_1, 1.402_536_711_956_48],
 ];
 
-/// AgX punchy: Godot's AgX through `curve`, then [`AGX_PUNCHY_SATURATION`] about luminance.
+/// AgX punchy: Godot's AgX through `curve`, then [`AGX_PUNCHY_SATURATION`] about luminance on
+/// display-encoded values.
 fn agx_punchy(color: [f32; 3], curve: &AgxCurve) -> [f32; 3] {
     let shaped = mul(&AGX_GODOT_INSET, color).map(|c| curve.at(c).min(1.0));
     let c = mul(&AGX_GODOT_OUTSET, shaped);
-    let luma = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
-    clamp01(c.map(|v| luma + AGX_PUNCHY_SATURATION * (v - luma)))
+    // Saturated on display-encoded values (gamma 2.2), as the shader does (G0 leftovers).
+    let e = c.map(|v| libm::powf(v.max(0.0), 1.0 / PUNCHY_SATURATION_GAMMA));
+    let luma = e[0] * 0.2126 + e[1] * 0.7152 + e[2] * 0.0722;
+    clamp01(e.map(|v| luma + AGX_PUNCHY_SATURATION * (v - luma))).map(|v| libm::powf(v, PUNCHY_SATURATION_GAMMA))
 }
 
 fn neutral(color: [f32; 3]) -> [f32; 3] {

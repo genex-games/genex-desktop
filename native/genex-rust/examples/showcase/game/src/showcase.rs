@@ -29,8 +29,14 @@ const FOG_HEIGHT_FALLOFF: f32 = 0.16;
 /// its way down, and this warms what the sky's blue fill would cool. A light touch: under AgX
 /// punchy's saturation (P2-0.10) pass 1's [1.0, 0.9, 0.76] turned the grass and canopy acid
 /// yellow-green and the dock orange (G0 look: mean chroma 24.6 -> 32.3 on the wide shot, at the same
-/// luma); at these gains each shot is within 5% of pass 1's chroma.
-pub const WHITE_BALANCE: [f32; 3] = [1.0, 0.98, 0.94];
+/// luma). Green is held down with blue (G0 leftovers): at [1.0, 0.98, 0.94] the frame lost pass
+/// 1's red with its blue, and the sunlit meadow and canopy turned acid yellow (mean hue 2.7-4.6
+/// degrees yellower than pass 1 on every shot). Punchy now saturates display-encoded values, as
+/// pass 1 did, which keeps a sunlit blade's blue (acid-yellow share at 720p high: wide 0.09%,
+/// forest 0.09%): at these gains each shot's hue is within 0.6 degrees of pass 1's and the
+/// closeup keeps 90% of the art's chroma at every preset (at [1.0, 0.955, 0.93] it fell to 88%;
+/// at [1.0, 0.93, 0.92] the cabin was 3.5 degrees redder).
+pub const WHITE_BALANCE: [f32; 3] = [1.0, 0.945, 0.9];
 /// Bloom: the lanterns', windows' and fireflies' glow and the sun's sheen on the water, held soft.
 const BLOOM_INTENSITY: f32 = 0.05;
 const BLOOM_RADIUS: f32 = 1.4;

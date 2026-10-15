@@ -688,6 +688,33 @@ fn metal_the_golden_hour_keeps_pass_one_s_saturation() {
     assert!(problems.is_empty(), "{problems:#?}");
 }
 
+/// How far a golden-hour shot's mean hue may sit from pass 1's ([`ART_COLOUR`], recorded on the
+/// pass-1 head), in degrees.
+const GOLDEN_HUE_DEGREES: f64 = 2.0;
+
+/// G0 look leftovers (2026-10-15): with chroma back near pass 1, the golden hour still read
+/// yellow-orange against pass 1 (acid-yellow sunlit meadow, an orange-washed log wall). The mean
+/// colour's hue sat 2.7-4.6 degrees yellower on every shot (wide 39.2 against 35.2, cabin 39.2
+/// against 34.6 at 1440p): the white balance lost pass 1's red with the green, so sunlit greens
+/// turned yellow. At `high` each shot's hue stays within [`GOLDEN_HUE_DEGREES`] of pass 1's.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_golden_hour_keeps_pass_one_s_hue() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut problems = Vec::new();
+    for (name, _, pass1) in ART_COLOUR {
+        let (capture, _) = studio_shot_as(name, DrawnAs::Preset(QualityPreset::High)).expect("a presenter");
+        let hue = LookStats::of(&capture).hue;
+        eprintln!("{name} at high: hue {hue:.1} against pass 1's {pass1}");
+        if (hue - pass1).abs() > GOLDEN_HUE_DEGREES {
+            problems.push(format!("{name}: hue {hue:.1} against pass 1's {pass1}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
 /// The cabin shot's chimney smoke: the columns it rises through and the rows read (below the top
 /// edge, beside the HUD card), and how far either side of a pixel the sky beside it is read.
 const SMOKE_COLUMNS: std::ops::Range<u32> = 490..580;

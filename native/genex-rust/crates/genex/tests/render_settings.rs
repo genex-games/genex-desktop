@@ -1363,16 +1363,33 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let handle = runtime.render();
         let class_target = handle.borrow().gpu_target_ms();
         // Calibrate a load of about 40% of the class's target at full scale (held while measuring).
+        // G0 leftovers: under another process's 4K captures the first calibration read the shared
+        // GPU's queue as load (light frames near the class's time), so the row failed its premise
+        // and never reached dynamic resolution. It calibrates up to CALIBRATIONS times; a host
+        // whose GPU never gave the premise fails naming the busy host, not dynamic resolution.
+        const CALIBRATIONS: usize = 4;
         handle.borrow_mut().apply(&RenderChange { render_scale_lock: Some(Some(1.0)), ..RenderChange::default() });
-        let light = measured_ms(&mut presenter, &mut runtime, 15);
-        iterations.set(1024);
-        let heavier = measured_ms(&mut presenter, &mut runtime, 15);
-        let per_iteration = ((heavier - light) / 960.0).max(1.0e-6);
-        iterations.set((64.0 + (0.4 * class_target - light) / per_iteration).clamp(64.0, 1.0e6) as u32);
-        let loaded = measured_ms(&mut presenter, &mut runtime, 15);
-        let budget = (loaded / 2.0).max(genex::render::FRAME_BUDGET_MS_MIN);
-        eprintln!("class target {class_target:.2} ms; load {loaded:.2} ms at scale 1; budget {budget:.2} ms");
-        assert!(loaded < class_target * 0.8 && loaded > budget * 1.5, "the premise: inside the class's time, over the budget");
+        let mut tries = Vec::new();
+        let (loaded, budget) = loop {
+            iterations.set(64);
+            let light = measured_ms(&mut presenter, &mut runtime, 15);
+            iterations.set(1024);
+            let heavier = measured_ms(&mut presenter, &mut runtime, 15);
+            let per_iteration = ((heavier - light) / 960.0).max(1.0e-6);
+            iterations.set((64.0 + (0.4 * class_target - light) / per_iteration).clamp(64.0, 1.0e6) as u32);
+            let loaded = measured_ms(&mut presenter, &mut runtime, 15);
+            let budget = (loaded / 2.0).max(genex::render::FRAME_BUDGET_MS_MIN);
+            eprintln!("class target {class_target:.2} ms; light {light:.2} ms; load {loaded:.2} ms at scale 1; budget {budget:.2} ms");
+            tries.push(format!("light {light:.2}, load {loaded:.2}"));
+            if loaded < class_target * 0.8 && loaded > budget * 1.5 {
+                break (loaded, budget);
+            }
+            assert!(
+                tries.len() < CALIBRATIONS,
+                "the premise (a load inside the class's {class_target:.2} ms, over the budget) never held in {CALIBRATIONS} calibrations ({tries:?} ms): the host's GPU is busy, not dynamic resolution"
+            );
+        };
+        eprintln!("calibrated in {} tries: load {loaded:.2} ms, budget {budget:.2} ms", tries.len());
         // The class's own target keeps the full scale under this load.
         handle.borrow_mut().apply(&RenderChange { render_scale_lock: Some(None), ..RenderChange::default() });
         let inside = landed_frames(&mut presenter, &mut runtime, 60, (class_target, class_target), &|| false);

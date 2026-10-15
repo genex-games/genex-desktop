@@ -163,7 +163,9 @@ fn gx_tm_awp(x: vec3<f32>) -> vec3<f32> {
 }
 
 // Godot's `tonemap_agx` (MIT): the combined Rec. 709 -> Rec. 2020 -> AgX inset matrix, the curve,
-// a clip at white and the combined outset -> Rec. 709 matrix; then the punchy saturation.
+// a clip at white and the combined outset -> Rec. 709 matrix; then the punchy saturation, on
+// display-encoded values (gamma 2.2) as pass 1's punchy saturated the sigmoid's output: on
+// display-linear values it pushed a sunlit blade's small blue channel to 0 (acid yellow grass).
 fn gx_tm_agx_punchy(color: vec3<f32>) -> vec3<f32> {
     let inset = mat3x3<f32>(
         vec3<f32>(0.544814746488245, 0.140416948464053, 0.0888104196149096),
@@ -176,8 +178,10 @@ fn gx_tm_agx_punchy(color: vec3<f32>) -> vec3<f32> {
         vec3<f32>(-0.108898916004672, -0.0270845997150571, 1.40253671195648)
     );
     let c = outset * min(gx_tm_awp(inset * color), vec3<f32>(1.0));
-    let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-    return clamp(luma + GX_AWP_SATURATION * (c - luma), vec3<f32>(0.0), vec3<f32>(1.0));
+    let e = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    let luma = dot(e, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let saturated = clamp(luma + GX_AWP_SATURATION * (e - luma), vec3<f32>(0.0), vec3<f32>(1.0));
+    return pow(saturated, vec3<f32>(2.2));
 }
 
 fn gx_tm_agx(color: vec3<f32>) -> vec3<f32> {
