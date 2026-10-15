@@ -44,7 +44,7 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 7 | depth/normal prepass | pass |
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
-| 10, 10a | ambient occlusion, contact shadows | pass |
+| 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
 | 11 | environment: sky LUTs, IBL bake | compute |
 | 12-15 | opaque, sky, Level-2 materials and `after-opaque`, transparent | in the world pass |
 | 15a, 16, 17 | reactive mask, MSAA resolve, TAA | pass |

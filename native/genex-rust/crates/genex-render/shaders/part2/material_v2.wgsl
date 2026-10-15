@@ -236,6 +236,12 @@ fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
     return gx_ao_decode(textureLoad(ao_map, gx_screen_texel_v2(world_pos, textureDimensions(ao_map)), 0));
 }
 
+// The sun's visibility from the screen mask (renderer pass 2, B.7): none for a v2 material (-1),
+// which is drawn after the prepass the mask was made from, so the sun chunk shades it inline.
+fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
+    return -1.0;
+}
+
 // The sun's screen-space contact shadow at `world_pos` (1: unshadowed).
 fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
     return textureLoad(contact_shadow_mask, gx_screen_texel_v2(world_pos, textureDimensions(contact_shadow_mask)), 0).r;

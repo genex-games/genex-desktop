@@ -1,6 +1,7 @@
 // Lighting chunk: the sun. Its direct light through the cascaded shadow maps and the screen-space
 // contact shadows. Reads the forward bindings `frame`, `shadow_map` and `shadow_sampler` and the
-// accessors `gx_contact_shadow` (shaders/effects.wgsl; 1 where none are drawn) and
+// accessors `gx_contact_shadow` (shaders/effects.wgsl; 1 where none are drawn),
+// `gx_sun_screen_shadow` (the sun-shadow screen mask, renderer pass 2 B.7; -1 where none) and
 // `gx_sun_cascade_bias` (each cascade's comparison bias: the frame uniforms' per-cascade row in the
 // forward pass, the shared `shadow_params.x` in the v2 prelude); `shade` is pbr.wgsl's BRDF.
 //
@@ -537,14 +538,31 @@ fn gx_sun_banded(world_pos: vec3<f32>, n: vec3<f32>, depth: f32, cascade: u32, c
     return mix(near, gx_sun_cascade_shadow(world_pos, n, cascade + 1u, offset), fade);
 }
 
+// The sun's visibility on the surface `s` through the cascaded maps: the screen mask's where the
+// frame made one for this opaque surface (renderer pass 2, B.7, SH-04: the same chunk evaluated
+// after the prepass, accumulated over frames and filtered edge-aware by its own denoise, so a
+// soft edge holds still under motion instead of leaving the turning taps' noise to the colour TAA;
+// `gx_sun_screen_shadow`, -1 where there is none), else `sun_shadow` inline. A blended surface
+// always shades inline: the mask holds the opaque surface behind it.
+fn gx_sun_visibility(s: Surface) -> f32 {
+    if GX_SHADOW_TEMPORAL && s.alpha >= 1.0 {
+        let screen = gx_sun_screen_shadow(s.world_pos);
+        if screen >= 0.0 {
+            return screen;
+        }
+    }
+    return sun_shadow(s.world_pos, s.geometric);
+}
+
 // The sun's shadowed light on `s` from the unit direction `sun` (toward the sun), which the
-// caller normalizes once per fragment and adds the result itself. The cascaded maps' visibility is
-// multiplied by the screen-space contact shadow (`gx_contact_shadow`, shaders/effects.wgsl): the
-// small-scale occlusion the maps miss, 1 where the frame draws no contact shadows. A blended
-// surface takes no contact shadow: the mask holds the opaque surface behind it, as the AO map does
-// (pass-1 gate: a lake's water sheet wore the stippled contact shadow of the shallow bed under it).
+// caller normalizes once per fragment and adds the result itself. The cascaded maps' visibility
+// (`gx_sun_visibility`) is multiplied by the screen-space contact shadow (`gx_contact_shadow`,
+// shaders/effects.wgsl): the small-scale occlusion the maps miss, 1 where the frame draws no
+// contact shadows. A blended surface takes no contact shadow: the mask holds the opaque surface
+// behind it, as the AO map does (pass-1 gate: a lake's water sheet wore the stippled contact
+// shadow of the shallow bed under it).
 fn gx_sun(s: Surface, sun: vec3<f32>) -> vec3<f32> {
     let contact = select(gx_contact_shadow(s.world_pos), 1.0, s.alpha < 1.0);
-    let visibility = sun_shadow(s.world_pos, s.geometric) * contact;
+    let visibility = gx_sun_visibility(s) * contact;
     return shade(s.n, s.v, sun, frame.sun_color.rgb, s.albedo, s.metallic, s.roughness) * visibility;
 }

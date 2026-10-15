@@ -220,7 +220,9 @@ Neighbouring cascades blend across the band, so no seam shows where one ends, an
 out before the shadow distance instead of stopping on a line. Shadows hold still while the camera
 moves: the band lerps both cascades on every frame, PCSS finds the same blockers on every frame,
 and the depth bias is one world-space distance per cascade, so a contact gap never changes size as
-other objects come into view. Phones are held to 2 cascades of at
+other objects come into view. At `high` and `ultra` under TAA an opaque surface's soft sun shadow
+comes from a screen mask that averages PCSS over frames and filters it edge-aware, so a penumbra
+holds still on a pan; transparent surfaces filter inline. Phones are held to 2 cascades of at
 most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame
 (and on every frame something in it moves, so a walking character's shadow never steps at half
 rate); the weakest phone class draws 512 px cascades. The low desktop tier also draws 16-bit depth with the far cascade every second frame. A request never passes a class's caps, so one config is right

@@ -275,6 +275,7 @@ fn shadows(cascades: u8, map_size: u32, filter: ShadowFilter, format: ShadowForm
         split_percent: reach.split_percent,
         blend_percent: reach.blend_percent,
         fade_percent: reach.fade_percent,
+        screen_mask: true,
     }
 }
 

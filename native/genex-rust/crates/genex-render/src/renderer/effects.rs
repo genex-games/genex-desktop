@@ -9,6 +9,11 @@
 //!   puts Live's history aside and Live takes it back after ([`ScreenEffects::stash_live_ao`]).
 //! - **Contact shadows** (`contact_shadow_mask`, binding 19): graph node 10a
 //!   ([`ContactShadowNode`]) on the prepass depth, through a `GxFrameV2` row of the frame's camera.
+//! - **The sun-shadow screen mask** (renderer pass 2, B.7; [`SunMaskNode`]): in node 10a after the
+//!   contact shadows, where [`crate::post::sun_mask::key`] lets it run, the sun's soft-shadow
+//!   visibility with its own temporal and spatial filter, written beside the contact shadow into
+//!   the texture bound at binding 19 instead of the contact mask (r contact, g the sun, a 0). Its
+//!   history resets and is stashed for captures with AO's.
 //!
 //! Both nodes bring their half-resolution result to the render size with the joint-bilateral
 //! upsample (post::upsample) and take every target from the renderer's target pool
@@ -17,7 +22,7 @@
 //! (unoccluded, unshadowed), so it draws the picture from before RQ4 byte for byte.
 
 use glam::Mat4;
-use wgpu::{Buffer, BufferUsages, CommandEncoder, Device, Queue, TextureView};
+use wgpu::{Buffer, BufferUsages, CommandEncoder, Device, Queue, Sampler, TextureView};
 
 use crate::abi::GxFrameV2;
 use crate::error::RenderError;
@@ -25,6 +30,7 @@ use crate::post::ao::{AoCamera, AoFrameFacts, AoInput, AoNode, AoSettings, depth
 use crate::settings::AoQuality;
 use crate::target_pool::TargetPool;
 use crate::post::contact_shadow::{ContactShadowCamera, ContactShadowFacts, ContactShadowInput, ContactShadowNode};
+use crate::post::sun_mask::{SunMaskInput, SunMaskKey, SunMaskNode};
 use crate::settings::Look;
 use crate::tables::buffer;
 
@@ -53,6 +59,12 @@ pub(super) struct EffectFrame<'a> {
     pub(super) taa: bool,
     /// The pooled inputs' identity (bind groups are rebuilt when it moves).
     pub(super) generation: u64,
+    /// The forward frame uniforms, the sun's cascaded maps and the samplers the forward pass reads
+    /// them with: the sun-shadow mask shades through them (B.7).
+    pub(super) frame_uniforms: &'a Buffer,
+    pub(super) shadow_map: &'a TextureView,
+    pub(super) shadow_sampler: &'a Sampler,
+    pub(super) point_sampler: &'a Sampler,
 }
 
 /// The screen effects' resources and the views the forward frame group binds this frame.
@@ -68,6 +80,9 @@ pub(super) struct ScreenEffects {
     march_frame: Buffer,
     ao: Option<AoNode>,
     contact: Option<ContactShadowNode>,
+    /// The sun-shadow screen mask (B.7) and the constants it runs with this frame (None: off).
+    sun_mask: Option<SunMaskNode>,
+    sun_mask_key: Option<SunMaskKey>,
     /// The AO term this frame's world pass binds (None: neutral).
     ao_view: Option<TextureView>,
     /// The contact-shadow mask this frame's world pass binds (None: neutral).
@@ -143,6 +158,8 @@ impl ScreenEffects {
             march_frame: buffer(device, "contact shadow frame", size_of::<GxFrameV2>() as u64, usage)?,
             ao: None,
             contact: None,
+            sun_mask: None,
+            sun_mask_key: None,
             ao_view: None,
             contact_view: None,
             ao_reset: false,
@@ -150,10 +167,10 @@ impl ScreenEffects {
     }
 
     /// Start a `render`-sized frame: every effect neutral until its node runs, and the nodes this
-    /// frame runs (AO under `ao`, contact shadows when `contact`) made now with their targets
-    /// taken from `pool` (so the ledger holds them). A node that does not run gives its targets
-    /// back: the ledger counts them freed, and they are.
-    pub(super) fn prepare(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), ao: Option<&AoQuality>, contact: bool) -> Result<(), RenderError> {
+    /// frame runs (AO under `ao`, contact shadows when `contact`, the sun-shadow mask beside them
+    /// under `sun_mask`) made now with their targets taken from `pool` (so the ledger holds them).
+    /// A node that does not run gives its targets back: the ledger counts them freed, and they are.
+    pub(super) fn prepare(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), ao: Option<&AoQuality>, contact: bool, sun_mask: Option<SunMaskKey>) -> Result<(), RenderError> {
         self.ao_view = None;
         self.contact_view = None;
         match ao {
@@ -180,7 +197,24 @@ impl ScreenEffects {
                 None => crate::post::contact_shadow::LABELS.iter().for_each(|label| pool.release(label)),
             }
         }
-        Ok(())
+        self.prepare_sun_mask(device, pool, render, sun_mask.filter(|_| contact))
+    }
+
+    /// The sun-shadow mask's part of [`ScreenEffects::prepare`]: made and its targets taken under
+    /// `key`, its targets given back without one.
+    fn prepare_sun_mask(&mut self, device: &Device, pool: &mut TargetPool, render: (u32, u32), key: Option<SunMaskKey>) -> Result<(), RenderError> {
+        self.sun_mask_key = key;
+        if key.is_none() {
+            match self.sun_mask.as_mut() {
+                Some(node) => node.release(pool),
+                None => crate::post::sun_mask::LABELS.iter().for_each(|label| pool.release(label)),
+            }
+            return Ok(());
+        }
+        if self.sun_mask.is_none() {
+            self.sun_mask = Some(SunMaskNode::new(device)?);
+        }
+        self.sun_mask.as_mut().expect("made above").acquire(device, pool, render)
     }
 
     /// The neutral environment cube.
@@ -199,15 +233,21 @@ impl ScreenEffects {
         [self.ao_view.as_ref().unwrap_or(&self.neutral).clone(), self.contact_view.as_ref().unwrap_or(&self.neutral).clone()]
     }
 
-    /// AO's history starts over at its next frame.
+    /// AO's history starts over at its next frame, and the sun-shadow mask's with it.
     pub(super) fn reset_ao_history(&mut self) {
         self.ao_reset = true;
+        if let Some(node) = self.sun_mask.as_mut() {
+            node.reset_history();
+        }
     }
 
     /// A settled capture begins: Live's AO history is put aside (RQ5 review), so the capture's
     /// re-renders never become it.
     pub(super) fn stash_live_ao(&mut self, device: &Device, queue: &Queue) {
         if let Some(node) = self.ao.as_mut() {
+            node.stash_live(device, queue);
+        }
+        if let Some(node) = self.sun_mask.as_mut() {
             node.stash_live(device, queue);
         }
     }
@@ -217,11 +257,15 @@ impl ScreenEffects {
         if let Some(node) = self.ao.as_mut() {
             node.restore_live();
         }
+        if let Some(node) = self.sun_mask.as_mut() {
+            node.restore_live();
+        }
     }
 
-    /// Bytes AO keeps beside its pooled targets (Live's history put aside for captures).
+    /// Bytes AO and the sun-shadow mask keep beside their pooled targets (Live's history put
+    /// aside for captures).
     pub(super) fn ao_stash_bytes(&self) -> u64 {
-        self.ao.as_ref().map_or(0, AoNode::stash_bytes)
+        self.ao.as_ref().map_or(0, AoNode::stash_bytes) + self.sun_mask.as_ref().map_or(0, SunMaskNode::stash_bytes)
     }
 
     /// Graph node 10: AO of `settings` for `frame`. The render passes it opened (0: none).
@@ -268,10 +312,36 @@ impl ScreenEffects {
         };
         self.contact_view = node.encode(device, queue, encoder, input);
         // The march, and the upsample when the mask is smaller than the scene.
-        match &self.contact_view {
+        let contact = match &self.contact_view {
             Some(_) if crate::post::contact_shadow::mask_size(frame.render) != frame.render => 2,
             Some(_) => 1,
             None => 0,
-        }
+        };
+        contact + self.encode_sun_mask(device, queue, encoder, frame)
+    }
+
+    /// The sun-shadow mask (B.7) after the contact shadows, where this frame runs it: its mask
+    /// replaces the contact mask at binding 19 (it carries the contact shadow in r). The render
+    /// passes it opened (0: none).
+    fn encode_sun_mask(&mut self, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, frame: &EffectFrame<'_>) -> u32 {
+        let (Some(key), Some(node), Some(contact)) = (self.sun_mask_key, self.sun_mask.as_mut(), self.contact_view.as_ref()) else { return 0 };
+        let input = SunMaskInput {
+            depth: frame.depth,
+            normals: frame.normals,
+            motion: frame.motion,
+            frame_uniforms: frame.frame_uniforms,
+            shadow_map: frame.shadow_map,
+            shadow_sampler: frame.shadow_sampler,
+            point_sampler: frame.point_sampler,
+            contact,
+            render: frame.render,
+            view: frame.view,
+            proj: frame.proj,
+            depth_reversed: frame.depth_reversed,
+            key,
+        };
+        let Some(mask) = node.encode(device, queue, encoder, input) else { return 0 };
+        self.contact_view = Some(mask);
+        crate::post::sun_mask::PASSES
     }
 }

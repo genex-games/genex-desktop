@@ -591,6 +591,11 @@ fn register_post(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape) {
     if quality.contact_shadows {
         ledger.register(BudgetKind::Target, "contact-shadows", crate::post::contact_shadow::mask_bytes(render));
     }
+    // The sun-shadow mask's raw, two state and mask targets (renderer pass 2, B.7) where its key
+    // lets it run: soft shadows on the HDR scene under TAA.
+    if crate::post::sun_mask::key(quality, quality.hdr, shape.taa).is_some() {
+        ledger.register(BudgetKind::Target, "sun-shadow-mask", crate::post::sun_mask::mask_bytes(render));
+    }
     let bloom = shape.bloom_px(quality);
     if bloom > 0 {
         // The chain is `rgba16float` whatever the scene format: storage-capable in WebGPU core.
@@ -644,6 +649,12 @@ pub enum DegradeRung {
     ShadowFormat,
     /// MSAA 4x → no AA (`from`/`to`: samples). Pipeline: boot or explicit only.
     Msaa,
+    /// The sun-shadow screen mask → the forward pass's inline soft shadows (`from`/`to`: 1 on, 0
+    /// off; renderer pass 2, B.7). It is the first resource rung: its 28 bytes a pixel (58 MB at
+    /// 1080p) would otherwise take AO, the shadow and IBL sizes and then TAA from a browser that
+    /// hides `deviceMemory`, and the inline path draws the same shadows with a little more
+    /// still-camera flicker.
+    SunMask,
     /// TAA → MSAA 4x where MSAA is transient, else no AA (`from`/`to`: history buffers 2 → 0).
     /// Pipeline: boot or explicit only. It comes after the resource rungs (AO, bloom resolution, spot
     /// shadows, shadow and IBL size; RQ5 review): its history pair is a fraction of what they
@@ -671,9 +682,10 @@ pub enum DegradeRung {
 
 impl DegradeRung {
     /// The ladder, in order.
-    pub const ALL: [DegradeRung; 10] = [
+    pub const ALL: [DegradeRung; 11] = [
         DegradeRung::ShadowFormat,
         DegradeRung::Msaa,
+        DegradeRung::SunMask,
         DegradeRung::Ao,
         DegradeRung::BloomResolution,
         DegradeRung::SpotShadows,
@@ -698,6 +710,7 @@ impl DegradeRung {
             DegradeRung::ShadowFormat => "shadow-format",
             DegradeRung::Msaa => "msaa",
             DegradeRung::TaaHistory => "taa-history",
+            DegradeRung::SunMask => "sun-mask",
             DegradeRung::Ao => "ao",
             DegradeRung::BloomResolution => "bloom-resolution",
             DegradeRung::SpotShadows => "spot-shadows",
@@ -760,6 +773,7 @@ fn step_down(rung: DegradeRung, quality: &mut Quality, materials: &mut [Material
         DegradeRung::ShadowFormat => step_shadow_format(quality),
         DegradeRung::Msaa => step_msaa(quality),
         DegradeRung::TaaHistory => step_taa(quality, transient),
+        DegradeRung::SunMask => step_sun_mask(quality),
         DegradeRung::Ao => step_ao(quality),
         DegradeRung::BloomResolution => step_bloom(quality),
         DegradeRung::SpotShadows => step_spot_shadows(quality),
@@ -805,6 +819,14 @@ fn step_bloom(quality: &mut Quality) -> Option<(u32, u32)> {
     }
     quality.bloom.resolution = resolution / 2;
     Some((u32::from(resolution), u32::from(resolution / 2)))
+}
+
+fn step_sun_mask(quality: &mut Quality) -> Option<(u32, u32)> {
+    if !quality.shadows.screen_mask {
+        return None;
+    }
+    quality.shadows.screen_mask = false;
+    Some((1, 0))
 }
 
 fn step_spot_shadows(quality: &mut Quality) -> Option<(u32, u32)> {

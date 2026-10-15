@@ -671,11 +671,14 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // 174_738_984), desktop-high at 1080p +960 (seven for six; was 178_780_572), mobile-high
         // medium +549_544 (was 31_077_764) and mobile-mid high -1_043_696 (was 57_281_868 and
         // 100_506_444; a 166 x 360 chain and its 332 x 720 pre-level). The low rows draw no bloom.
-        ("desktop-high", QualityPreset::High, (2560, 1440), false, 283_121_652),
+        // Pass 2 B.7 flips the high and ultra rows (named in the log): the sun-shadow screen mask's
+        // raw, two state and mask targets, 28 bytes a render pixel: +103_219_200 at 1440p (was
+        // 283_121_652 and 614_289_268) and +58_060_800 at 1080p (was 178_781_532).
+        ("desktop-high", QualityPreset::High, (2560, 1440), false, 386_340_852),
         ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 174_743_784),
-        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 614_289_268),
+        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 717_508_468),
         ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
-        ("desktop-high", QualityPreset::High, (1920, 1080), false, 178_781_532),
+        ("desktop-high", QualityPreset::High, (1920, 1080), false, 236_842_332),
         ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_627_308),
         ("mobile-mid", QualityPreset::Low, (824, 1830), true, 20_668_292),
         ("mobile-mid", QualityPreset::Low, (1080, 2400), true, 33_231_356),
@@ -851,6 +854,7 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
         [
             DegradeRung::ShadowFormat,
             DegradeRung::Msaa,
+            DegradeRung::SunMask,
             DegradeRung::Ao,
             DegradeRung::BloomResolution,
             DegradeRung::SpotShadows,
@@ -883,10 +887,14 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // of spot maps). RQ5 review flipped (named in the log): the TAA history rung comes after the
     // resource rungs, so ultra keeps TAA and the ladder takes bloom's mips and one shadow-size
     // step instead (it was [shadow-format, taa-history, ao, ao] at 258_537_444 bytes, no AA).
+    // Pass 2 B.7 flipped (named in the log): ultra's sun-shadow screen mask (28 bytes a pixel,
+    // 103_219_200 at 1440p) is given up first among the resource rungs, then the same steps to the
+    // same total (it was [shadow-format, ao, ao, bloom-resolution, shadow-size]).
     assert_eq!(
         boot.steps,
         vec![
             step(DegradeRung::ShadowFormat, 32, 16),
+            step(DegradeRung::SunMask, 1, 0),
             step(DegradeRung::Ao, 2, 1),
             step(DegradeRung::Ao, 1, 0),
             step(DegradeRung::BloomResolution, 540, 270),
@@ -905,9 +913,11 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // frame fits once the shadow maps are halved twice (it stepped every resource rung down to
     // one cascade and stayed over budget at 270_566_532 bytes).
     let runtime = fit(&ultra, &at, 256 * MIB, DegradeMode::Runtime);
-    assert_eq!(runtime.steps[..2], boot.steps[1..3], "the boot ladder without its pipeline rungs, then further");
+    // Pass 2 B.7 flipped (named in the log): the sun-mask rung is a resource rung, so the runtime
+    // ladder takes it too (it compared steps[..2] with the boot's [1..3]).
+    assert_eq!(runtime.steps[..3], boot.steps[1..4], "the boot ladder without its pipeline rungs, then further");
     assert_eq!(
-        runtime.steps[2..],
+        runtime.steps[3..],
         [
             step(DegradeRung::BloomResolution, 540, 270),
             step(DegradeRung::ShadowSize, 4096, 2048),

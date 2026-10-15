@@ -1468,6 +1468,10 @@ pub struct ShadowQuality {
     /// The share of the last cascade's depth range over which the shadows fade out before the
     /// shadow distance, in percent (0: a hard end; at most 50).
     pub fade_percent: u8,
+    /// Whether a soft filter's sun shadows may come from the screen mask where its key lets it
+    /// run (renderer pass 2, B.7; `post::sun_mask::key`). A resource knob: the degrade ladder's
+    /// `sun-mask` rung turns it off, and the forward pass then shades the sun inline.
+    pub screen_mask: bool,
 }
 
 /// Bloom. The chain is sized from the output, never the render size, and keeps one mip count
@@ -1716,6 +1720,7 @@ impl Quality {
                 split_percent: 50,
                 blend_percent: 0,
                 fade_percent: 0,
+                screen_mask: true,
             },
             contact_shadows: false,
             bloom: BloomQuality { enabled: false, resolution: 0 },

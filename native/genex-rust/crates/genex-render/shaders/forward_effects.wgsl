@@ -80,6 +80,23 @@ fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
     return textureLoad(contact_shadow_mask, gx_screen_texel(world_pos, textureDimensions(contact_shadow_mask)), 0).r;
 }
 
+// The sun's visibility from the screen mask (renderer pass 2, B.7, SH-04; post::sun_mask) at the
+// pixel (`gx_sun_context.pixel`), or -1 where the frame binds none: the mask shares the
+// contact-shadow slot (r contact, g the sun's visibility) and marks itself with alpha 0, while the
+// neutral white texel and the contact shadows' own `r8unorm` mask read alpha 1. Only a pipeline
+// whose taps turn under TAA asks (`GX_SHADOW_TEMPORAL`): the transparent pipeline and every frame
+// without TAA shade the sun inline. The fragment reads its own pixel's texel, as AO's: read
+// bilinearly where the position projects (with the jitter), the colour box TAA builds from the
+// moving neighbourhood swung on thin shadows, and the still fence flickered four times as much.
+fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
+    if !GX_SHADOW_TEMPORAL {
+        return -1.0;
+    }
+    let last = vec2<i32>(textureDimensions(contact_shadow_mask)) - vec2<i32>(1);
+    let texel = textureLoad(contact_shadow_mask, clamp(vec2<i32>(gx_sun_context.pixel), vec2<i32>(0), last), 0);
+    return select(-1.0, texel.g, texel.a < 0.5);
+}
+
 // The aerial-perspective volume's texel at `world_pos`: sampled with the environment's filtering
 // sampler inside half a texel of the edges (so no address mode wraps), and faded to no air in
 // front of the first slice's centre (the air nearer than it is negligible, never a full slice's).

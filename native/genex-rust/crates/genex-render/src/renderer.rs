@@ -2782,6 +2782,10 @@ impl Renderer {
             depth_reversed: self.path.depth_reversed,
             taa: self.path.taa,
             generation: self.pool.generation(),
+            frame_uniforms: &self.frame_uniforms,
+            shadow_map: &self.shadow_maps.array,
+            shadow_sampler: &self.shadow_sampler,
+            point_sampler: &self.point_sampler,
         }
     }
 
@@ -4002,7 +4006,10 @@ impl Renderer {
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
         let ao = self.frame_ao().filter(|_| consumers.contains(PrepassConsumers::AO)).map(|settings| settings.quality);
         let contact = consumers.contains(PrepassConsumers::CONTACT_SHADOWS);
-        self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact)?;
+        // Renderer pass 2, B.7: the sun-shadow mask runs beside the contact shadows where the
+        // quality draws PCSS on the HDR scene under TAA.
+        let sun_mask = crate::post::sun_mask::key(&self.quality, scene_path.hdr, scene_path.taa);
+        self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact, sun_mask)?;
         self.sky.get_mut().begin_frame();
         self.prepare_bloom()?;
         let groups = self.ensure_groups();
