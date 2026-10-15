@@ -58,7 +58,7 @@ pub const REDUCE_ENTRY: &str = "hiz_reduce";
 pub const COST_BUILDS_PER_SAMPLE: u32 = 64;
 
 /// The Hi-Z build: the common structs, the depth reduction (mip 0) and the mip reduction.
-pub const HIZ_BUILD: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/hiz_build.wgsl"));
+pub const HIZ_BUILD: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/hiz_build.wgsl")));
 
 /// How four depths become one Hi-Z texel: keep the farthest.
 #[non_exhaustive]

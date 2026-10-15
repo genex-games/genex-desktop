@@ -630,7 +630,7 @@ pub fn frame_env_entry(binding: u32, name: &str) -> Option<BindGroupLayoutEntry>
 // --- GPU state ---
 
 /// The capture's compute passes (shaders/ibl/probe.wgsl) after the common structs.
-pub const PROBE_PASSES: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/ibl/probe.wgsl"));
+pub const PROBE_PASSES: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/ibl/probe.wgsl")));
 /// The sky-fill entry point.
 pub const SKY_FILL_ENTRY: &str = "cs_probe_sky_fill";
 /// The copy entry point.

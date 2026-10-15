@@ -179,9 +179,9 @@ impl TaaFlags {
 }
 
 /// The resolve (graph node 17): a full-screen fragment pass.
-pub const TAA: &str = include_str!("../../shaders/post/taa.wgsl");
+pub const TAA: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/taa.wgsl"));
 /// The reactive coverage (graph node 15a): the transparent draws as coverage.
-pub const REACTIVE: &str = concat!(
+pub const REACTIVE: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/clip_position.wgsl"),
     // Mirrors `layout::GpuPrevModel` (`motion::PREV_MODEL_WGSL`, held to it by tests/layout.rs).
@@ -192,11 +192,11 @@ struct PrevModel {
 }
 ",
     include_str!("../../shaders/post/reactive.wgsl")
-);
+));
 /// The particles' reactive coverage: their billboards (`particles_draw.wgsl`'s shape, its
 /// `particles_drawn` binding unchanged) as soft coverage into the same mask, jittered like the
 /// mesh entry ([`REACTIVE`]).
-pub const REACTIVE_PARTICLES: &str = concat!(
+pub const REACTIVE_PARTICLES: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/part2/particle.wgsl"),
     include_str!("../../shaders/clip_position.wgsl"),
@@ -243,7 +243,7 @@ fn fs_reactive_particle(in: ReactiveParticleOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.alpha * fade, 0.0, 0.0, 1.0);
 }
 "
-);
+));
 
 /// The most coverage a transparent mesh writes into the reactive mask where it needs any: its
 /// material's alpha, capped here, so a moving transparent keeps at least a tenth of its history

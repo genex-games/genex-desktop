@@ -26,6 +26,10 @@ script's header names the work package that replaces it.
   bench and stress scenes, judged on the median of 5 interleaved runs (Lakeside rows informational). Its
   rows, including the real-GPU gate under `GENEX_REQUIRE_METAL=1`, are
   `tests/conformance/render-perf-gate.test.ts`.
+- `web-showcase.sh` packages Lakeside for the web as a web export is built (the lane's size
+  profile, `wasm-bindgen`, `wasm-opt -Oz`), so its gzip size is the export's;
+  `web-cold-start.ts` times a packaged web build's first lit frame in headless Chromium, cold
+  (`--cold-shaders`: no shader cache answers) and with its pipelines pre-warmed asynchronously.
 
 `rustfmt` is not pinned: no check formats Rust yet. It joins the pins with the store's Rust
 components when a formatting gate needs it.

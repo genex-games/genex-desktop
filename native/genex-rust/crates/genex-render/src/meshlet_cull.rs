@@ -53,14 +53,14 @@ pub const fn occlusion_landed() -> bool {
 }
 
 /// The meshlet cull and its scan.
-pub const MESHLET_CULL: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/meshlet_cull.wgsl"));
+pub const MESHLET_CULL: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/meshlet_cull.wgsl")));
 /// The meshlet draws' vertex pulling.
-pub const MESHLET_DRAW: &str = concat!(
+pub const MESHLET_DRAW: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/shadow_caster.wgsl"),
     include_str!("../shaders/meshlet_draw.wgsl")
-);
+));
 /// The meshlet draw's vertex entry point (a depth writer: `@invariant`, `gx_clip_position`),
 /// paired with the forward module's fragments.
 pub const MESHLET_DRAW_VERTEX_ENTRY: &str = "vs_meshlet";

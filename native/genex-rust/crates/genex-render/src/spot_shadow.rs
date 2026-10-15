@@ -51,7 +51,7 @@ use crate::tables::{entry, pipeline_layout, storage, uniform};
 pub const LANDED: bool = true;
 
 /// The spot shadow depth pass: the casters of one spot's cull view into its atlas tile.
-pub const SPOT_SHADOW: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/spot_shadow.wgsl"));
+pub const SPOT_SHADOW: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/spot_shadow.wgsl")));
 /// The spot shadow depth pass's vertex entry point.
 pub const SPOT_SHADOW_VERTEX_ENTRY: &str = "vs_spot_shadow";
 

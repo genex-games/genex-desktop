@@ -51,7 +51,7 @@ use crate::tables::{buffer, compute_storage, compute_uniform, entry, pipeline_la
 pub const LANDED: bool = true;
 
 /// The light binning compute shader (graph node 4).
-pub const LIGHT_BIN: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/light_bin.wgsl"));
+pub const LIGHT_BIN: &str = crate::shaders::minify::shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/light_bin.wgsl")));
 /// The axis-mask entry point: one invocation per mask word of each tile column and tile row.
 pub const LIGHT_AXES_ENTRY: &str = "cs_light_axes";
 /// The tile-mask entry point: one invocation per mask word of `light_tiles`.

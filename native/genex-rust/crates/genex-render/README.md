@@ -16,6 +16,11 @@ architecture; they live in the crate so an ejected game keeps them. The game-fac
   (write-only) and `r32float` (read-write); at most 4 per stage, at most 16 KB of workgroup memory.
 - Every depth-writing vertex shader computes its position with `gx_clip_position`
   (`shaders/clip_position.wgsl`) and declares it `@invariant`.
+- A renderer pass's WGSL constant is wrapped in `shipped_wgsl!` (`src/shaders/minify.rs`): a web
+  build embeds it without comments, indentation or blank lines (made at compile time; the same
+  module, which `shaders::minify`'s rows hold to by MSL). Native builds keep the files' own lines.
+  The extension preludes (and anything a game's WGSL is joined to) stay as written, because a
+  game's shader diagnostics count their lines.
 - The Sim never reads the GPU: captures are a pure function of (state, camera, pinned settings,
   adapter, build). Temporal effects key their sequences to the renderer frame index and reset on
   camera cuts, resizes, settled captures and device re-creation.

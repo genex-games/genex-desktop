@@ -97,7 +97,7 @@ pub const DRAW_VERTEX_ENTRY: &str = "vs_prepass_draw_motion";
 /// The prepass's motion fragment entry point.
 pub const FRAGMENT_ENTRY: &str = "fs_prepass_motion";
 /// The background-motion module (T-03): the camera's motion where no geometry was drawn.
-pub const BACKGROUND_MOTION: &str = include_str!("../shaders/motion_background.wgsl");
+pub const BACKGROUND_MOTION: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../shaders/motion_background.wgsl"));
 /// Its vertex entry point (one full-screen triangle at the far plane).
 pub const BACKGROUND_VERTEX_ENTRY: &str = "vs_background_motion";
 /// Its fragment entry point (the motion target alone).

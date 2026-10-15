@@ -151,10 +151,10 @@ pub fn visibility_source() -> String {
 }
 
 /// The denoise module: the mask's row and the temporal and spatial passes.
-pub const DENOISE: &str = concat!(
+pub const DENOISE: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/post/sun_mask_common.wgsl"),
     include_str!("../../shaders/post/sun_mask_denoise.wgsl")
-);
+));
 
 /// The mask's uniform (`SunMaskParams` in shaders/post/sun_mask_common.wgsl).
 #[repr(C)]
