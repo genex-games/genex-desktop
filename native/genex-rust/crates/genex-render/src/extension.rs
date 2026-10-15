@@ -1288,7 +1288,7 @@ pub struct GpuPost {
 /// grew, a texture was added, shadows reallocated) or a new environment bake rebuilds the group.
 #[derive(Clone, Debug, PartialEq)]
 struct V2FrameKey {
-    buffers: [Buffer; 5],
+    buffers: [Buffer; 4],
     views: [wgpu::TextureView; 6],
     environment: Option<EnvironmentViews>,
     /// The material sampler (a quality's anisotropy replaces it; renderer pass 2 P2-0.12).
@@ -1298,7 +1298,7 @@ struct V2FrameKey {
 impl V2FrameKey {
     fn of(world: &WorldPass<'_>, environment: Option<&EnvironmentViews>) -> V2FrameKey {
         V2FrameKey {
-            buffers: [world.lights.clone(), world.materials.clone(), world.light_ext.clone(), world.light_tiles.clone(), world.light_zbins.clone()],
+            buffers: [world.lights.clone(), world.materials.clone(), world.light_ext.clone(), world.light_bins.clone()],
             views: [
                 world.shadow_map.clone(),
                 world.color_textures.clone(),
@@ -1433,6 +1433,11 @@ impl SunShadowConstants {
         ]
     }
 }
+
+/// The far plane's index among `cull::frustum_planes`' six, and the plane every point is inside of:
+/// the Level-2 draws' cull keeps no far plane (LG-20).
+const FAR_PLANE: usize = 5;
+const ALWAYS_INSIDE: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 const MATERIAL_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
 
@@ -1701,24 +1706,28 @@ impl CustomMaterials {
         // models feed the prepass's motion and `GxDrawV2::prev_model`, last frame's time `prev_time`.
         let rows: Vec<crate::motion::CustomRow> = draws.iter().map(|draw| custom_row(draw, library)).collect();
         let (prevs, prev_seconds) = self.motion.apply(&rows, seconds);
-        let v2_drawn = draws.iter().any(|draw| self.api_of(draw.material) == ABI_V2);
+        // LG-20: the draws in the camera's view, by material (one pipeline bind per material);
+        // every draw keeps its motion history above and its index in the frame below.
+        let order = self.drawn_order(draws, &rows);
+        let v2_drawn = order.iter().any(|at| self.api_of(draws[*at].material) == ABI_V2);
         self.frame_v2_due = v2_drawn || self.keep_frame_v2;
         if let Some(shared) = self.shared.as_mut().filter(|_| v2_drawn || self.keep_frame_v2) {
             // A material binds the renderer's light table and sun shadows ([`CustomMaterials::bind_frame`]).
             let facts = FrameFacts { renderer_lights: true, ..self.frame_facts };
             shared.frame.write(&gpu.queue, &facts, seconds);
         }
-        if draws.is_empty() {
+        if order.is_empty() {
             self.frame_prev.clear();
             return Ok(0);
         }
-        let bytes = draws.len() as u64 * DRAW_STRIDE;
+        let bytes = order.len() as u64 * DRAW_STRIDE;
         let mut v1_rows = vec![0u8; bytes as usize];
         let mut v2_rows = vec![0u8; if v2_drawn { bytes as usize } else { 0 }];
-        for (i, (draw, prev)) in draws.iter().zip(&prevs).enumerate() {
+        for (slot, i) in order.iter().copied().enumerate() {
+            let (draw, prev) = (&draws[i], &prevs[i]);
             let normal = crate::instance::instance_row(&draw.model, [0.0; 3], 0.0, 0).normal;
             let params = [seconds, i as f32, prev_seconds, 0.0];
-            let at = i * DRAW_STRIDE as usize;
+            let at = slot * DRAW_STRIDE as usize;
             if self.api_of(draw.material) == ABI_V1 {
                 let row = GpuCustomDraw { model: draw.model, normal, tint: draw.tint.map(|c| f32::from(c) / 255.0), params };
                 v1_rows[at..at + size_of::<GpuCustomDraw>()].copy_from_slice(bytemuck::bytes_of(&row));
@@ -1739,9 +1748,26 @@ impl CustomMaterials {
         if let Some(target) = self.rows_v2.buffer.as_ref().filter(|_| v2_drawn) {
             gpu.queue.write_buffer(target, 0, &v2_rows);
         }
-        self.frame = draws.to_vec();
-        self.frame_prev = prevs;
+        self.frame = order.iter().map(|at| draws[*at]).collect();
+        self.frame_prev = order.iter().map(|at| prevs[*at]).collect();
         Ok(bytes)
+    }
+
+    /// The indices of `draws` the frame draws, in drawing order (renderer pass 2 A.0, LG-20): the
+    /// ones whose world sphere (`rows`' bounds) is inside the camera's side and near planes (no far
+    /// plane, so either depth convention keeps them), sorted by material, equal materials in frame
+    /// order. Every draw without a camera.
+    fn drawn_order(&self, draws: &[CustomDraw], rows: &[crate::motion::CustomRow]) -> Vec<usize> {
+        let planes = self.frame_facts.camera.map(|camera| {
+            let (width, height) = self.frame_facts.output_size;
+            let mut planes = crate::cull::frustum_planes(camera.view_proj(width.max(1) as f32 / height.max(1) as f32));
+            planes[FAR_PLANE] = ALWAYS_INSIDE;
+            planes
+        });
+        let seen = |at: &usize| planes.as_ref().is_none_or(|planes| crate::cull::in_frustum(planes, rows[*at].bounds));
+        let mut order: Vec<usize> = (0..draws.len()).filter(seen).collect();
+        order.sort_by_key(|at| draws[*at].material.0);
+        order
     }
 
     /// Refresh the v1 frame bytes (and the v2 frame, when due) from the world pass's
@@ -1756,6 +1782,7 @@ impl CustomMaterials {
             let key = V2FrameKey::of(world, self.environment.as_ref());
             if self.frame_group_v2.as_ref().is_none_or(|(held, _)| *held != key) {
                 let frame = sized(shared.frame.buffer(), GX_FRAME_V2_BYTES);
+                let (light_zbins, light_tiles) = crate::tables::light_bin_slices(world.light_bins);
                 let mut bound = vec![
                     ("frame", frame),
                     ("lights", world.lights.as_entire_binding()),
@@ -1763,8 +1790,9 @@ impl CustomMaterials {
                     // z-bins the forward pass walks, so a v2 material is lit by the frame's points
                     // and spots as a built-in surface is.
                     ("light_ext", world.light_ext.as_entire_binding()),
-                    ("light_tiles", world.light_tiles.as_entire_binding()),
-                    ("light_zbins", world.light_zbins.as_entire_binding()),
+                    // Two slices of the one bin table (LG-16), so the v2 map is unchanged.
+                    ("light_tiles", wgpu::BindingResource::Buffer(light_tiles)),
+                    ("light_zbins", wgpu::BindingResource::Buffer(light_zbins)),
                     ("materials", world.materials.as_entire_binding()),
                     ("color_textures", wgpu::BindingResource::TextureView(world.color_textures)),
                     ("data_textures", wgpu::BindingResource::TextureView(world.data_textures)),
@@ -1807,6 +1835,7 @@ impl CustomMaterials {
         pass.set_vertex_buffer(0, world.vertices.slice(..));
         pass.set_index_buffer(world.indices.slice(..), wgpu::IndexFormat::Uint32);
         let mut bound_api = None;
+        let mut bound_material = None;
         for (i, draw) in self.frame.iter().enumerate() {
             let (Some(material), Some(mesh)) = (self.materials.get(draw.material.0 as usize), world.library.entry(draw.mesh)) else { continue };
             let api = material.extension.api;
@@ -1819,11 +1848,15 @@ impl CustomMaterials {
             }
             // A rebuild the backend refused draws nothing (its admission compiled clean).
             let Ok(pipeline) = material.pipeline.get() else { continue };
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
-            if let Some(game) = &material.game {
-                pass.set_bind_group(2, &game.group, &[]);
+            // The draws come sorted by material (LG-20): its pipeline and game group bind once.
+            if bound_material != Some(draw.material) {
+                pass.set_pipeline(pipeline);
+                if let Some(game) = &material.game {
+                    pass.set_bind_group(2, &game.group, &[]);
+                }
+                bound_material = Some(draw.material);
             }
+            pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
             pass.draw_indexed(mesh.first_index..mesh.first_index + mesh.index_count, mesh.base_vertex, 0..1);
         }
     }
@@ -1831,6 +1864,13 @@ impl CustomMaterials {
     /// Draws this frame issues.
     pub fn frame_draws(&self) -> u32 {
         self.frame.len() as u32
+    }
+
+    /// Pipeline binds this frame's draws make ([`CustomMaterials::draw`]: one per run of a
+    /// material, the draws being sorted by material).
+    pub fn frame_pipeline_binds(&self) -> u32 {
+        let changes = self.frame.windows(2).filter(|pair| pair[0].material != pair[1].material).count();
+        (changes + usize::from(!self.frame.is_empty())) as u32
     }
 }
 

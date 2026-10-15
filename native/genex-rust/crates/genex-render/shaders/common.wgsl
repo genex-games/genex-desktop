@@ -71,12 +71,17 @@ struct LightExt {
 }
 
 // The light bins' grid and depth mapping (RQ6.0): the binning dispatch's uniform and the header
-// of `light_zbins` (its first GX_LIGHT_BIN_HEADER_WORDS words; the depths are f32 bits).
+// of the bin table (its first GX_LIGHT_BIN_HEADER_WORDS words; the depths are f32 bits).
 struct LightBinParams {
     // x, y: tiles across and down; z: mask words per tile; w: tile side in pixels.
     grid: vec4<u32>,
     // x: z-bins; y: lights binned; z: view depth where z-bin 0 starts; w: z-bins per unit depth.
     depth: vec4<u32>,
+    // The clusterable kinds' ends in the binned index space (pass 2 A.0, LG-16): x lights, y
+    // decals, z probes (every object); w reserved.
+    ranges: vec4<u32>,
+    // The decals' (xy) and probes' (zw) own z-bin start depth and z-bins per unit depth.
+    kind_depth: vec4<u32>,
 }
 
 const GX_LIGHT_POINT: u32 = 0u;
@@ -87,7 +92,11 @@ const GX_SPOT_SHADOW_UNFADED: f32 = 0.0;
 // The LOD crossfade of an instance-table row that is not fading (the instance fade table's value,
 // layout::INSTANCE_FADE_WHOLE): drawn whole.
 const GX_INSTANCE_FADE_WHOLE: f32 = 1.0;
-const GX_LIGHT_BIN_HEADER_WORDS: u32 = 8u;
+const GX_LIGHT_BIN_HEADER_WORDS: u32 = 16u;
+// Z-bins per clusterable kind (cluster::LIGHT_ZBINS); kind k's start at the header plus k of them.
+const GX_LIGHT_ZBINS: u32 = 64u;
+// Where the tile masks start in the bin table, in words (cluster::LIGHT_TILES_OFFSET_WORDS).
+const GX_LIGHT_TILES_OFFSET_WORDS: u32 = 256u;
 // A z-bin no light touches: lowest index 0xFFFF above highest 0.
 const GX_ZBIN_EMPTY: u32 = 0x0000ffffu;
 const GX_ZBIN_INDEX_BITS: u32 = 16u;

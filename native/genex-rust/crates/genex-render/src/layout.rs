@@ -442,12 +442,25 @@ pub const FRAME_EFFECT_BOUND: [(u32, &str); 5] =
     [(15, "frame_fog"), (16, "ao_map"), (17, "aerial_perspective"), SHADOW_BLOCKER_SAMPLER, (19, "contact_shadow_mask")];
 
 /// The forward frame group's local-light and material-extension tables (RQ6.0), as (binding, WGSL
-/// name): the names and types the Level-2 v2 material map gives them, so the shared lighting
-/// chunks read one set of names in the forward pass and in `gx_shade_pbr`. The renderer binds
-/// them from the first frame (each a table that is at least one row, zero until its producer
-/// lands: no light is binned and no material emits); the forward pass declares one once its
-/// work package reads it.
-pub const FRAME_LIGHT_BINDINGS: [(u32, &str); 4] = [(20, "light_ext"), (21, "light_tiles"), (22, "light_zbins"), (23, "material_ext")];
+/// name): the types the Level-2 v2 material map gives them ([`frame_light_v2_twin`]). The
+/// renderer binds them from the first frame (each a table that is at least one row, zero until
+/// its producer lands: no light is binned and no material emits). Renderer pass 2 A.0 (LG-16)
+/// merged the tile masks into the z-bin table: `light_bins` holds the bin header and every
+/// clusterable kind's z-bins, then the tile masks at `cluster::LIGHT_TILES_OFFSET_WORDS`, so the
+/// forward fragment stage reads five storage buffers and binding 22 is free. The shared lighting
+/// chunks read the bins through `gx_light_bin_word` and `gx_light_tile_word`.
+pub const FRAME_LIGHT_BINDINGS: [(u32, &str); 3] = [(20, "light_ext"), (21, FRAME_LIGHT_BINS), (23, "material_ext")];
+
+/// The forward pass's one light-bin table (LG-16): the v2 map binds its z-bins (`light_zbins`,
+/// from offset 0) and its tile masks (`light_tiles`, from `cluster::LIGHT_TILES_OFFSET_WORDS`) as
+/// two slices of the same buffer, so a v2 material's map is unchanged.
+pub const FRAME_LIGHT_BINS: &str = "light_bins";
+
+/// The Level-2 v2 map row whose binding type the forward light binding `name` takes: its own, or
+/// for [`FRAME_LIGHT_BINS`] the z-bins' (both read-only `array<u32>` storage).
+pub fn frame_light_v2_twin(name: &str) -> &str {
+    if name == FRAME_LIGHT_BINS { "light_zbins" } else { name }
+}
 
 /// The forward frame group's texture arrays of the larger material size classes (RQ6.0), as
 /// (binding, WGSL name), colour then data per class of [`TEXTURE_SIZE_CLASSES`] past class 0
@@ -569,7 +582,7 @@ pub struct GpuPrevModel {
 }
 
 /// What the light binning writes and the shading reads about the bins (`LightBinParams`, RQ6.0):
-/// the light binning dispatch's uniform, and the header of the `light_zbins` table (its first
+/// the light binning dispatch's uniform, and the header of the `light_bins` table (its first
 /// [`crate::cluster::LIGHT_BIN_HEADER_WORDS`] words), so the forward pass and the Level-2 v2
 /// prelude find the grid without another binding. All `u32`: the two depths are f32 bits.
 #[repr(C)]
@@ -581,6 +594,13 @@ pub struct GpuLightBinParams {
     /// x: z-bins; y: lights binned (the depth-sorted list's length); z: the view depth where
     /// z-bin 0 starts (f32 bits); w: z-bins per unit of view depth (f32 bits).
     pub depth: [u32; 4],
+    /// The clusterable kinds' index ranges in the binned list (renderer pass 2 A.0, LG-16): x the
+    /// end of the lights (= `depth.y`), y the end of the decals, z the end of the probes (every
+    /// object binned); w reserved (0). Kind `k` holds indices from the previous end to its own.
+    pub ranges: [u32; 4],
+    /// The decals' and probes' own z-bin depth mappings (f32 bits; the lights' is `depth.zw`):
+    /// x, y where the decals' z-bin 0 starts and their z-bins per unit depth; z, w the probes'.
+    pub kind_depth: [u32; 4],
 }
 
 /// The bind group the meshlet draw's vertex pulling reads (R2.0): group 2, after the frame (0)

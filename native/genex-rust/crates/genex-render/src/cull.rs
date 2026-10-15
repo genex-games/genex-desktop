@@ -1,16 +1,20 @@
-//! Frustum culling. The compute pass (`shaders/cull.wgsl`) tests every opaque instance of every
-//! batch against every active cull view (the camera, then each drawn shadow cascade, then each
-//! shadowed spot) in one dispatch of `batches × views` workgroups, compacts the survivors in order
-//! into the view's region of the visible list and writes the view's tightly packed
-//! `draw_indexed_indirect` arguments. The CPU cull here is the same test in the same order: the
-//! reference the GPU path is held to.
+//! Frustum culling. The compute pass (`shaders/cull.wgsl`) tests every opaque instance against
+//! every active cull view (the camera, then each drawn shadow cascade, then each shadowed spot),
+//! one invocation per (instance, view), compacts each batch's survivors in order into the view's
+//! region of the visible list and writes the view's tightly packed `draw_indexed_indirect`
+//! arguments. The CPU cull here is the same test in the same order: the reference the GPU path is
+//! held to.
+//!
+//! Renderer pass 2 A.0 (LG-06): three dispatches of a deterministic ordered compaction without
+//! atomics (the meshlet cull's): mark (each 256-row block's survivor bits and count), scan (each
+//! view's block prefixes, then every batch's arguments from the prefixes at its ends) and scatter
+//! (each survivor's slot: its prefix less its batch's first row's). Before it one workgroup walked
+//! a batch serially in chunks of 64, so one 100k-instance batch took 3.3 ms against 0.04-0.16 ms
+//! for the same instances over a hundred batches (M4 Max, tests/scatter.rs).
 //!
 //! The cull views uniform reserves [`MAX_VIEWS`] views (RQ3.0: the camera, four cascades, four
 //! shadowed spots); a frame activates [`active_views`] of them, and only the active views get a
 //! visible-list region and indirect arguments, so a reserved view costs 96 bytes of uniform.
-//!
-//! One workgroup walks one batch in chunks of 64, so a single large batch is serial in its chunks
-//! (the timing row in tests/golden_part1.rs measures 10 000 instances in one batch).
 //!
 //! The HDR path draws camera views with reverse-Z (RQ1.1): [`frustum_planes_for`] takes the
 //! reversed (and possibly infinite) projection and answers the same six inward planes, so the
@@ -23,8 +27,26 @@ use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 use crate::error::RenderError;
 use crate::layout::{GpuBatch, GpuInstance, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS};
 
-/// Invocations per cull workgroup (`WORKGROUP` in cull.wgsl).
-pub const CULL_WORKGROUP: u32 = 64;
+/// Opaque rows per cull block: one workgroup's invocations (`GX_CULL_BLOCK` in cull.wgsl).
+pub const CULL_BLOCK: u32 = 256;
+/// Survivor-bit words per block.
+const CULL_BLOCK_WORDS: u32 = CULL_BLOCK / 32;
+
+/// The cull's blocks over `rows` opaque rows.
+pub const fn cull_blocks(rows: u32) -> u32 {
+    rows.div_ceil(CULL_BLOCK)
+}
+
+/// Scratch words one view's cull takes over `rows` opaque rows: every block's survivor bits, then
+/// each block's prefix and the view's total.
+pub const fn scratch_words_per_view(rows: u32) -> u64 {
+    cull_blocks(rows) as u64 * (CULL_BLOCK_WORDS as u64 + 1) + 1
+}
+
+/// Scratch bytes of a frame of `views` active views over `rows` opaque rows.
+pub const fn scratch_bytes(rows: u32, views: u32) -> u64 {
+    scratch_words_per_view(rows) * views as u64 * 4
+}
 
 /// The active cull views of a frame drawing `cascades` sun cascades and `spots` shadowed spot
 /// lights (each clamped to its reserve): the camera, then the cascades, then the spots.
@@ -45,6 +67,13 @@ pub const fn spot_view(cascades: usize, spot: usize) -> u32 {
 }
 
 const _: () = assert!(active_views(MAX_CASCADES, MAX_SHADOWED_SPOTS) as usize == MAX_VIEWS);
+
+/// The cull's first entry point: each block's survivor bits and count.
+pub const CULL_MARK_ENTRY: &str = "cull_mark";
+/// The second: each view's block prefixes and every batch's indirect arguments.
+pub const CULL_SCAN_ENTRY: &str = "cull_scan";
+/// The third: each survivor's slot in its batch's region of the visible list.
+pub const CULL_SCATTER_ENTRY: &str = "cull_scatter";
 
 /// The CPU cull's result for one view, laid out as the compute pass writes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,10 +137,12 @@ pub fn cpu_cull(planes: &[[f32; 4]; 6], batches: &[GpuBatch], instances: &[GpuIn
     CpuCull { visible, counts }
 }
 
-/// The cull pipeline and its bind group layout.
+/// The cull's three pipelines and their bind group layout.
 pub(crate) struct CullPass {
     layout: BindGroupLayout,
-    pipeline: Compiled<ComputePipeline>,
+    mark: Compiled<ComputePipeline>,
+    scan: Compiled<ComputePipeline>,
+    scatter: Compiled<ComputePipeline>,
 }
 
 /// What one cull dispatch reads and writes.
@@ -121,6 +152,8 @@ pub(crate) struct CullBuffers<'a> {
     pub batches: &'a Buffer,
     pub visible: &'a Buffer,
     pub args: &'a Buffer,
+    /// The survivor bits and block prefixes ([`scratch_bytes`]).
+    pub scratch: &'a Buffer,
 }
 
 impl CullPass {
@@ -134,24 +167,36 @@ impl CullPass {
                 compute_storage(2, true),
                 compute_storage(3, false),
                 compute_storage(4, false),
+                compute_storage(5, false),
             ],
         });
         let module = crate::shaders::module(device, "cull", crate::shaders::CULL)?;
         let pipeline_layout = crate::tables::pipeline_layout(device, "cull", &[&layout]);
-        let pipeline = crate::compile::compute_pipeline(device, &wgpu::ComputePipelineDescriptor {
-            label: Some("cull"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("cull"),
-            // A8.6: every lane writes its scan slot first (`compile::WORKGROUP_AUDIT`).
-            compilation_options: crate::compile::written_first(),
-            cache: None,
-        });
-        Ok(CullPass { layout, pipeline })
+        let pipeline = |entry: &str| {
+            crate::compile::compute_pipeline(device, &wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                // A8.6: every lane writes its scan slot first (`compile::WORKGROUP_AUDIT`).
+                compilation_options: crate::compile::written_first(),
+                cache: None,
+            })
+        };
+        Ok(CullPass { mark: pipeline(CULL_MARK_ENTRY), scan: pipeline(CULL_SCAN_ENTRY), scatter: pipeline(CULL_SCATTER_ENTRY), layout })
     }
 
-    /// One workgroup per (batch, view).
-    pub(crate) fn encode(&self, device: &Device, encoder: &mut wgpu::CommandEncoder, buffers: &CullBuffers<'_>, batches: u32, views: u32) {
+    /// The three dispatches over `rows` opaque rows and `views` active views, in one pass;
+    /// `timestamps` around it (a cost row).
+    pub(crate) fn encode(
+        &self,
+        device: &Device,
+        encoder: &mut wgpu::CommandEncoder,
+        buffers: &CullBuffers<'_>,
+        rows: u32,
+        views: u32,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) {
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cull"),
             layout: &self.layout,
@@ -161,11 +206,19 @@ impl CullPass {
                 crate::tables::entry(2, buffers.batches),
                 crate::tables::entry(3, buffers.visible),
                 crate::tables::entry(4, buffers.args),
+                crate::tables::entry(5, buffers.scratch),
             ],
         });
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cull"), timestamp_writes: None });
-        pass.set_pipeline(&self.pipeline);
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cull"), timestamp_writes: timestamps });
+        let blocks = cull_blocks(rows).max(1);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(batches, views, 1);
+        // Each dispatch is its own usage scope: the scan reads what the mark wrote, the scatter
+        // what the scan wrote.
+        pass.set_pipeline(&self.mark);
+        pass.dispatch_workgroups(blocks, views, 1);
+        pass.set_pipeline(&self.scan);
+        pass.dispatch_workgroups(1, views, 1);
+        pass.set_pipeline(&self.scatter);
+        pass.dispatch_workgroups(blocks, views, 1);
     }
 }

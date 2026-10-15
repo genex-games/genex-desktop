@@ -106,8 +106,11 @@ fn the_outdoor_sky_placeholder_has_no_hard_band_edges() {
 fn the_city_draws_at_least_fifty_thousand_instances_of_many_meshes() {
     let (scene, _) = load(SceneId::City);
     let drawn = scene.scene(0);
-    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).collect();
-    assert!(drawn.draws.len() >= 50_000, "{} instances", drawn.draws.len());
+    // Renderer pass 2 A.0b flipped `draws` -> retained groups: the city's static instances are
+    // retained groups (`mesh_instances` counts both).
+    let meshes: BTreeSet<u32> = drawn.draws.iter().map(|d| d.mesh.raw()).chain(drawn.groups.iter().map(|g| g.group.mesh().raw())).collect();
+    assert!(drawn.mesh_instances() >= 50_000, "{} instances", drawn.mesh_instances());
+    assert!(drawn.groups.len() >= 24, "{} retained groups", drawn.groups.len());
     assert!(meshes.len() >= 24, "{} distinct meshes", meshes.len());
     assert!(drawn.logical_draws() < 1_000, "instances are not grouped into instanced draws ({})", drawn.logical_draws());
 }

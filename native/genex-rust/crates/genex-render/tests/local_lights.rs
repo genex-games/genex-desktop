@@ -237,7 +237,9 @@ fn every_light_the_window_lets_reach_a_fragment_is_in_its_walk_and_the_bins_cull
     let camera = probe_camera();
     let frame = binned_frame(&scattered(PAIR_LIGHTS, 6.0, 11), &all_lights(PROBE_TILE_PX, 0), &camera, PROBE_SIZE);
     let tables = tables(&frame);
-    assert_eq!(tables.zbins.len(), (LIGHT_BIN_HEADER_WORDS + LIGHT_ZBINS) as usize);
+    // Pass 2 A.0 (LG-16) flipped HEADER + ZBINS -> HEADER + ZBINS x kinds: each clusterable kind
+    // (lights, decals, probes) has its own z-bins.
+    assert_eq!(tables.zbins.len(), (LIGHT_BIN_HEADER_WORDS + LIGHT_ZBINS * genex_render::cluster::CLUSTER_KINDS as u32) as usize);
     assert_eq!(frame.bins.params.depth[1], PAIR_LIGHTS as u32);
     let samples = ground_samples(&camera, PROBE_SIZE, 3);
     let (mut walked, mut reached) = (0usize, 0usize);

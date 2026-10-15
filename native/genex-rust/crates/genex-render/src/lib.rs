@@ -41,6 +41,8 @@ pub mod mesh;
 pub mod scene;
 /// Instance-table rows.
 pub mod instance;
+/// Retained static instance groups (renderer pass 2 A.0b; owner decision D4).
+pub mod retained;
 /// The storage-buffer tables and per-frame uploads.
 pub mod tables;
 /// The compute frustum cull and its CPU reference.

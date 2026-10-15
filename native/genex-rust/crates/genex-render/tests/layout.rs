@@ -117,11 +117,14 @@ const GOLDEN: [(&str, usize); 34] = [
     ("RcasParams", 32),
     ("LightExt", 32),
     ("GxMaterialExt", 32),
-    ("LightBinParams", 32),
+    // Renderer pass 2 A.0 (LG-16) flipped 32 -> 64: the clusterable kinds' index ranges and the
+    // decals' and probes' own depth mappings (lights, decals and probes share one index space).
+    ("LightBinParams", 64),
     // Pass 2's contracts wave: the tonemap's uniform joins the table at 128 bytes, its white
     // balance a 3x3 matrix (three 16-byte columns) where the gains row was (96 before). P2-0.10
-    // flipped 128 -> 144: AgX punchy's curve row (Godot's AgX, contrast, toe, slope and w).
-    ("GxTonemapParams", 144),
+    // flipped 128 -> 144: AgX punchy's curve row (Godot's AgX, contrast, toe, slope and w). A.2
+    // flipped 144 -> 256: grading's seven rows (global knobs, ranges, five per-section knobs).
+    ("GxTonemapParams", 256),
 ];
 
 fn parse(name: &str, source: &str) -> naga::Module {
@@ -599,8 +602,9 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
     let module = parse("forward", shader("forward"));
     let info = validated("forward", &module);
     let counts = counts_in(&module);
-    // Declared: frame + env_sh + the pass view + the fog row; nine tables (five, the binned local
-    // lights' extension rows, tile masks and z-bins, RQ6.2, and the material extensions, RQ6.3);
+    // Declared: frame + env_sh + the pass view + the fog row; eight tables (five, the binned local
+    // lights' extension rows and one light-bin table, RQ6.2 and pass 2 A.0 LG-16, which flipped
+    // 9 -> 8 by merging the tile masks into the z-bin table, and the material extensions, RQ6.3);
     // shadow, two material arrays, env cube, BRDF LUT, the AO term, the aerial-perspective volume
     // and the contact-shadow mask (RQ4.6), and the larger size classes' six material arrays
     // (RQ6.7 flipped 8 -> 14: the forward pass samples them); shadow comparison, texture,
@@ -608,13 +612,14 @@ fn the_forward_frame_group_stays_within_webgpu_core_per_stage_limits() {
     // sampler PCSS's blocker search gathers the shadow map with (16 per stage in core).
     assert_eq!(
         (counts.uniform_buffers, counts.storage_buffers, counts.sampled_textures, counts.samplers),
-        (4, 9, FORWARD_FRAGMENT_TEXTURES_MAX, 4),
+        (4, 8, FORWARD_FRAGMENT_TEXTURES_MAX, 4),
         "{counts:?}"
     );
-    // WebGPU's limits are per stage: the fragment stage reads six tables (materials, lights, the
-    // three binned light tables and the material extensions), the vertex stage the instance side.
+    // WebGPU's limits are per stage: the fragment stage reads five tables (materials, lights, the
+    // light extensions, the one light-bin table and the material extensions; pass 2 A.0 LG-16
+    // flipped 6 -> 5), the vertex stage the instance side.
     let fragment = stage_counts_in(&module, &info, naga::ShaderStage::Fragment);
-    assert_eq!(fragment.storage_buffers, 6, "{fragment:?}");
+    assert_eq!(fragment.storage_buffers, 5, "{fragment:?}");
     for stage in [naga::ShaderStage::Vertex, naga::ShaderStage::Fragment] {
         let used = stage_counts_in(&module, &info, stage);
         assert!(used.uniform_buffers <= core.max_uniform_buffers_per_shader_stage, "{stage:?}: {used:?}");
@@ -794,7 +799,9 @@ fn the_lighting_chunks_find_the_effect_accessors_in_the_forward_pass_and_the_v2_
     let functions = |module: &naga::Module| -> Vec<String> { module.functions.iter().filter_map(|(_, f)| f.name.clone()).collect() };
     let forward = functions(&parse("forward", shader("forward")));
     let material = functions(&parse("v2", &format!("{MATERIAL_V2_PRELUDE}\n@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> {{ return in.tint; }}")));
-    for accessor in ["gx_fog", "gx_ambient_occlusion", "gx_contact_shadow", "gx_oct_encode", "gx_oct_decode", "gx_clip_position"] {
+    // Pass 2 A.0 (LG-16): the light walk reads the bins through accessors, one merged table in
+    // the forward pass and the v2 map's two bindings (slices of it) in the prelude.
+    for accessor in ["gx_fog", "gx_ambient_occlusion", "gx_contact_shadow", "gx_oct_encode", "gx_oct_decode", "gx_clip_position", "gx_light_bin_word", "gx_light_tile_word"] {
         assert!(forward.iter().any(|f| f == accessor), "forward offers {accessor}");
         assert!(material.iter().any(|f| f == accessor), "material v2 offers {accessor}");
     }
@@ -1320,7 +1327,7 @@ fn the_light_and_material_tables_keep_their_rows_and_grow_parallel_extensions() 
     assert_eq!((members, size), (vec![("spot".to_owned(), 0), ("params".to_owned(), 16)], size_of::<GpuLightExt>()));
     assert_eq!(size_of::<GpuLightExt>(), LIGHT_EXT_VEC4S * 16, "light_ext is array<vec4<f32>>: two vec4s per light");
     let (members, size) = wgsl_members(&module, "LightBinParams");
-    assert_eq!((members, size), (vec![("grid".to_owned(), 0), ("depth".to_owned(), 16)], size_of::<GpuLightBinParams>()));
+    assert_eq!((members, size), (vec![("grid".to_owned(), 0), ("depth".to_owned(), 16), ("ranges".to_owned(), 32), ("kind_depth".to_owned(), 48)], size_of::<GpuLightBinParams>()));
     // The rows the Level-2 v2 map already binds do not move: the light row, the material row and
     // the material extension are the ones v2 materials read.
     let v2 = |name: &str| MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name).unwrap_or_else(|| panic!("v2 binds {name}"));
@@ -1344,7 +1351,7 @@ fn u32_constants(module: &naga::Module) -> Vec<(String, u32)> {
 
 #[test]
 fn the_wgsl_light_bin_and_texture_constants_are_the_rust_ones() {
-    use genex_render::cluster::{LIGHT_BIN_HEADER_WORDS, ZBIN_EMPTY, ZBIN_INDEX_BITS};
+    use genex_render::cluster::{LIGHT_BIN_HEADER_WORDS, LIGHT_TILES_OFFSET_WORDS, LIGHT_ZBINS, ZBIN_EMPTY, ZBIN_INDEX_BITS};
     use genex_render::layout::{LIGHT_EXT_VEC4S, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, SPOT_MATRIX_VEC4S, TEXTURE_CLASS_SHIFT, TEXTURE_LAYER_MASK};
     let constants = u32_constants(&parse("forward", shader("forward")));
     let value = |name: &str| constants.iter().find(|(declared, _)| declared == name).map(|(_, value)| *value).unwrap_or_else(|| panic!("{name} declared"));
@@ -1354,6 +1361,8 @@ fn the_wgsl_light_bin_and_texture_constants_are_the_rust_ones() {
     assert_eq!(value("GX_SPOT_MATRIX_VEC4S") as usize, SPOT_MATRIX_VEC4S);
     assert_eq!(value("GX_LIGHT_BIN_HEADER_WORDS"), LIGHT_BIN_HEADER_WORDS);
     assert_eq!(value("GX_ZBIN_EMPTY"), ZBIN_EMPTY);
+    assert_eq!(value("GX_LIGHT_ZBINS"), LIGHT_ZBINS);
+    assert_eq!(value("GX_LIGHT_TILES_OFFSET_WORDS"), LIGHT_TILES_OFFSET_WORDS);
     assert_eq!(value("GX_ZBIN_INDEX_BITS"), ZBIN_INDEX_BITS);
     assert_eq!(value("GX_TEXTURE_CLASS_SHIFT"), TEXTURE_CLASS_SHIFT);
     assert_eq!(value("GX_TEXTURE_LAYER_MASK"), TEXTURE_LAYER_MASK);
@@ -1480,7 +1489,9 @@ fn the_forward_frame_layout_binds_the_rq6_tables_under_the_v2_maps_names_and_typ
     let entries = genex_render::renderer::frame_layout_entries();
     let at = |binding: u32| entries.iter().find(|entry| entry.binding == binding).unwrap_or_else(|| panic!("the frame layout binds {binding}"));
     for (binding, name) in FRAME_LIGHT_BINDINGS {
-        let v2 = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name).unwrap_or_else(|| panic!("the v2 map names {name}"));
+        // LG-16: the one bin table takes the type of the v2 map's z-bins (both slices of it).
+        let twin = genex_render::layout::frame_light_v2_twin(name);
+        let v2 = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == twin).unwrap_or_else(|| panic!("the v2 map names {twin}"));
         assert_eq!(at(binding).ty, v2.kind.binding_type(false, v2.bytes), "{name}");
         assert_eq!(at(binding).visibility, wgpu::ShaderStages::FRAGMENT, "{name}");
     }
@@ -1515,12 +1526,13 @@ fn the_forward_frame_layout_with_every_reserved_slot_fits_webgpu_core_with_headr
     for (_, name) in unbound_effect_slots() {
         fragment.add(effect_kind(name));
     }
-    // frame, env_sh, fog; lights, materials, light_ext, light_tiles, light_zbins, material_ext;
+    // frame, env_sh, fog; lights, materials, light_ext, light_bins, material_ext (pass 2 A.0
+    // LG-16 flipped 6 -> 5 storage buffers: the tile masks share the z-bin table);
     // shadow array, two class-0 arrays, env cube, BRDF LUT, six size-class arrays, AO, aerial
     // perspective, contact shadows; shadow comparison, texture, environment and point samplers.
     assert_eq!(
         (fragment.uniform_buffers, fragment.storage_buffers, fragment.sampled_textures, fragment.samplers),
-        (3, 6, 14, 4),
+        (3, 5, 14, 4),
         "{fragment:?}"
     );
     assert!(fragment.sampled_textures <= FORWARD_FRAGMENT_TEXTURES_MAX);
@@ -1585,4 +1597,40 @@ fn the_light_binning_node_lands_and_the_legacy_plan_keeps_its_light_table() {
     let with = FramePlan::build(&scene, &MeshLibrary::new(), 1.0).expect("plan");
     assert_eq!(with.lights, without.lights);
     assert_eq!(with.frame, without.frame, "no light count, no shadowed spot");
+}
+
+/// The forward fragment stage's storage-buffer plan (renderer pass 2 section 2, LG-16): five
+/// today, then the reflection-probe rows (A.3) and the decal rows (A.10) take one each, so it ends
+/// at seven of core's eight. Lights, decals and probes are binned into one table (`light_bins`).
+const FORWARD_FRAGMENT_STORAGE_TODAY: u32 = 5;
+const FORWARD_FRAGMENT_STORAGE_TIER_A: u32 = FORWARD_FRAGMENT_STORAGE_TODAY + 2;
+
+#[test]
+fn the_forward_fragment_stage_leaves_tier_a_its_storage_slots_and_every_stage_stays_within_eight() {
+    let core = wgpu::Limits::defaults();
+    assert_eq!(core.max_storage_buffers_per_shader_stage, 8);
+    let module = parse("forward", shader("forward"));
+    let info = validated("forward", &module);
+    let fragment = stage_counts_in(&module, &info, naga::ShaderStage::Fragment);
+    assert_eq!(fragment.storage_buffers, FORWARD_FRAGMENT_STORAGE_TODAY, "LG-16: one light-bin table for tiles and z-bins: {fragment:?}");
+    assert!(FORWARD_FRAGMENT_STORAGE_TIER_A < core.max_storage_buffers_per_shader_stage, "probe and decal rows fit with one slot spare");
+    let entries = genex_render::renderer::frame_layout_entries();
+    let stage = |visibility: wgpu::ShaderStages| {
+        let storage = |entry: &&wgpu::BindGroupLayoutEntry| matches!(entry.ty, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { .. }, .. });
+        entries.iter().filter(|entry| entry.visibility.contains(visibility)).filter(storage).count() as u32
+    };
+    assert_eq!(stage(wgpu::ShaderStages::FRAGMENT), FORWARD_FRAGMENT_STORAGE_TODAY, "the frame layout counted the WebGPU way");
+    // Every renderer shader's every entry point reads at most core's eight (the planning rule).
+    for (name, source) in SHADERS {
+        let module = parse(name, source);
+        let info = validated(name, &module);
+        for (index, entry) in module.entry_points.iter().enumerate() {
+            let used = module
+                .global_variables
+                .iter()
+                .filter(|(handle, global)| matches!(global.space, naga::AddressSpace::Storage { .. }) && !info.get_entry_point(index)[*handle].is_empty())
+                .count() as u32;
+            assert!(used <= core.max_storage_buffers_per_shader_stage, "{name} {}: {used} storage buffers", entry.name);
+        }
+    }
 }

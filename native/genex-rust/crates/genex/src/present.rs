@@ -388,6 +388,10 @@ fn read_environment(path: &str, source: &dyn ModelSource, log: &mut dyn FnMut(&s
 fn model_paths(frame: &Frame) -> impl Iterator<Item = &str> {
     let shapes = frame.draws().iter().filter_map(|draw| match &draw.shape {
         Shape::Model { model, .. } => model.path(),
+        Shape::Group { group } => match group.shape() {
+            crate::GroupShape::Model(model) => model.path(),
+            crate::GroupShape::Cube | crate::GroupShape::Sphere => None,
+        },
         Shape::Cube { .. } | Shape::Sphere { .. } | Shape::Line { .. } => None,
     });
     let custom = frame.custom_draws().iter().filter_map(|draw| match &draw.mesh {
@@ -402,6 +406,7 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
     let materials = frame.draws().iter().filter_map(|draw| match &draw.shape {
         Shape::Model { material, .. } => material.as_ref(),
         Shape::Cube { material, .. } | Shape::Sphere { material, .. } => Some(material),
+        Shape::Group { group } => group.material(),
         Shape::Line { .. } => None,
     });
     materials.flat_map(|material| {
@@ -1209,6 +1214,8 @@ impl Presenter {
             let scene = self.resilient.renderer().renderer().last_scene();
             handle.borrow_mut().note_ldr_reason(scene.and_then(|scene| scene.ldr_reason));
         }
+        // The buffers the renderer holds (LG-13), counted at the device budget's next fit.
+        handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
         if let Ok(drawn) = &drawn {
@@ -1708,6 +1715,8 @@ trait WorldSink {
     /// draw to its last frame by it (RQ5.1).
     fn id(&mut self, id: Option<DrawId>);
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material);
+    /// A retained instance group drawing with `material` (renderer pass 2 A.0b).
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material);
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]);
     fn lighting(&mut self) -> &mut Lighting;
 }
@@ -1721,6 +1730,10 @@ impl WorldSink for Scene {
 
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
         self.draw(mesh, model, material);
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        self.draw_group_with(group, material);
     }
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
@@ -1745,6 +1758,10 @@ impl WorldSink for ImmediateFrame {
 
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
         ImmediateFrame::mesh(self, mesh, model, material);
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        ImmediateFrame::group(self, group, material);
     }
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
@@ -1800,6 +1817,41 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
         Shape::Line { from, to, color } => {
             sink.line(from.to_array(), to.to_array(), rgba(*color));
             0
+        }
+        Shape::Group { group } => push_group(sink, assets, missing, group),
+    }
+}
+
+/// Add one retained instance group to `sink` (renderer pass 2 A.0b): the renderer's group of
+/// each mesh it draws, with the material the matching single draw would take; answers its
+/// triangles (every transform's).
+fn push_group(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, group: &crate::InstanceGroup) -> u32 {
+    let count = group.len() as u32;
+    let white = crate::Material::color(Color::WHITE);
+    let own = || surface(group.material().unwrap_or(&white), Color::WHITE, assets);
+    match group.shape() {
+        crate::GroupShape::Cube => {
+            sink.group(&group.render_group(MeshId::CUBE), own());
+            CUBE_TRIANGLES.saturating_mul(count)
+        }
+        crate::GroupShape::Sphere => {
+            sink.group(&group.render_group(MeshId::SPHERE), own());
+            SPHERE_TRIANGLES.saturating_mul(count)
+        }
+        crate::GroupShape::Model(model) => {
+            let Some(loaded) = model.path().and_then(|path| assets.model(path)) else {
+                sink.group(&group.render_group(MeshId::CUBE), Material::missing());
+                note_missing(missing, model.path());
+                return CUBE_TRIANGLES.saturating_mul(count);
+            };
+            for part in &loaded.parts {
+                let drawn_with = match (group.material(), &part.material) {
+                    (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
+                    _ => own(),
+                };
+                sink.group(&group.render_group(part.mesh), drawn_with);
+            }
+            loaded.triangles.saturating_mul(count)
         }
     }
 }

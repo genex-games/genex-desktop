@@ -36,6 +36,9 @@ pub enum BudgetKind {
     MaterialArrays,
     /// A Level-3 custom pass's own resources (`PassSetup::bytes`).
     Pass,
+    /// A GPU buffer the renderer holds: a frame table, the mesh library, a uniform or a node's own
+    /// (renderer pass 2 A.0, LG-13; `Renderer::buffer_ledger`).
+    Buffers,
 }
 
 /// One registered allocation.
@@ -165,7 +168,15 @@ pub struct BudgetInput {
     /// None for a capture or a frame no window shows: its staged image (the HUD paints over it)
     /// and, when the output is smaller, EASU's image are counted at this size.
     pub window: Option<(u32, u32)>,
+    /// The GPU buffers the renderer holds, by label (LG-13; `Renderer::buffer_ledger`).
+    pub buffers: Vec<(String, u64)>,
+    /// The bytes of the look's 3D grading LUT the tonemap holds (renderer pass 2 A.2; 0: none;
+    /// the [`GRADING_LUT_LABEL`] entry of `Renderer::buffer_ledger`).
+    pub grading_lut_bytes: u64,
 }
+
+/// The ledger label of the look's 3D grading LUT ([`BudgetKind::Ibl`]; renderer pass 2 A.2).
+pub const GRADING_LUT_LABEL: &str = "grading-lut";
 
 impl BudgetInput {
     /// An input with no materials and no passes.
@@ -182,7 +193,17 @@ impl BudgetInput {
             passes: Vec::new(),
             environment_map_width: 0,
             window: None,
+            buffers: Vec::new(),
+            grading_lut_bytes: 0,
         }
+    }
+
+    /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers) and
+    /// its grading LUT ([`GRADING_LUT_LABEL`]).
+    pub fn with_buffers(mut self, held: &BudgetLedger) -> BudgetInput {
+        self.buffers = held.entries().iter().filter(|entry| entry.kind == BudgetKind::Buffers).map(|entry| (entry.label.clone(), entry.bytes)).collect();
+        self.grading_lut_bytes = held.entries().iter().filter(|entry| entry.label == GRADING_LUT_LABEL).map(|entry| entry.bytes).sum();
+        self
     }
 
     /// The input with the window present filling a `letterbox` (a Live frame's), or none.
@@ -419,8 +440,86 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
     for (name, bytes) in &input.passes {
         ledger.register(BudgetKind::Pass, name, *bytes);
     }
+    for (label, bytes) in &input.buffers {
+        ledger.register(BudgetKind::Buffers, label, *bytes);
+    }
+    if input.grading_lut_bytes > 0 {
+        ledger.register(BudgetKind::Ibl, GRADING_LUT_LABEL, input.grading_lut_bytes);
+    }
     register_window(&mut ledger, input);
     ledger
+}
+
+/// What a frame's buffers hold, in rows (LG-13): what [`buffer_model`] reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferCounts {
+    /// Instance-table rows (opaque and transparent).
+    pub instances: u64,
+    /// Opaque instance rows (each cull view's visible-list region).
+    pub opaque_instances: u64,
+    /// Transparent draws.
+    pub transparent: u64,
+    /// Active cull views.
+    pub views: u64,
+    /// Opaque batches.
+    pub batches: u64,
+    /// Material-table rows.
+    pub materials: u64,
+    /// Light-table rows.
+    pub lights: u64,
+    /// Bytes of the light extension rows (with the shadowed spots' matrices).
+    pub light_ext_bytes: u64,
+    /// Bytes of the light-bin table (`cluster::bins_bytes`).
+    pub light_bin_bytes: u64,
+    /// Pass-view entries (256 bytes each).
+    pub pass_views: u64,
+    /// Slot-base rows.
+    pub slot_base: u64,
+    /// Whether previous models are written (motion vectors).
+    pub motion: bool,
+    /// The mesh library: vertices, indices and skin vertices.
+    pub vertices: u64,
+    /// Library indices.
+    pub indices: u64,
+    /// Skin-vertex rows.
+    pub skin_vertices: u64,
+}
+
+/// A frame table of `bytes` as allocated: the table rounding (16 bytes, at least 256) grown to
+/// the next power of two (`tables::Table::ensure`).
+pub fn table_bytes(bytes: u64) -> u64 {
+    crate::tables::aligned(bytes).next_power_of_two()
+}
+
+/// Bytes of the renderer's fixed buffers beside the frame tables and the library: the frame
+/// uniforms, cull views, fog and background rows, and the light binning's uniform, bounds rows
+/// and starting axis scratch.
+const FIXED_BUFFER_BYTES: u64 = 4 * 1024 + (crate::cluster::MAX_CLUSTERABLES as u64) * 16 + 32 * 1024;
+
+/// The model of the buffers a frame of `counts` makes the renderer hold (renderer pass 2 A.0,
+/// LG-13): every frame table at its rows' bytes as tables grow, the library as uploaded and the
+/// fixed buffers. A frame drawn after a larger one holds the larger tables (tables never shrink).
+pub fn buffer_model(counts: &BufferCounts) -> u64 {
+    use crate::layout::{DrawIndexedArgs, GpuBatch, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuMeshVertex, GpuPrevModel};
+    let rows = |count: u64, stride: usize| table_bytes(count * stride as u64);
+    let visible = counts.views * counts.opaque_instances + counts.transparent;
+    let tables = [
+        rows(counts.instances, size_of::<GpuInstance>()),
+        rows(counts.materials, size_of::<GpuMaterial>()),
+        rows(counts.materials, size_of::<GpuMaterialExt>()),
+        rows(counts.lights, size_of::<GpuLight>()),
+        rows(counts.batches, size_of::<GpuBatch>()),
+        rows(counts.slot_base, 4),
+        rows(visible, 4),
+        rows(counts.views * counts.batches, size_of::<DrawIndexedArgs>()),
+        table_bytes(crate::cull::scratch_bytes(counts.opaque_instances as u32, counts.views as u32)),
+        rows(counts.pass_views.max(1), crate::tables::PASS_VIEW_STRIDE as usize),
+        if counts.motion { rows(counts.instances, size_of::<GpuPrevModel>()) } else { table_bytes(0) },
+        table_bytes(counts.light_ext_bytes),
+        table_bytes(counts.light_bin_bytes),
+    ];
+    let library = [counts.vertices * size_of::<GpuMeshVertex>() as u64, counts.vertices * 4, counts.indices * 4, counts.skin_vertices * 32].map(crate::tables::aligned);
+    tables.iter().chain(&library).sum::<u64>() + FIXED_BUFFER_BYTES
 }
 
 /// The window present's images ([`crate::letterbox::present`]) at the letterbox's size: the staged

@@ -32,6 +32,7 @@ mod ctx;
 mod extend;
 mod frame;
 mod game;
+mod group;
 mod gfx;
 pub mod gpu;
 mod input;
@@ -62,6 +63,7 @@ pub use frame::{
     Shape, SpotLight, Sun, Transform,
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
+pub use group::{GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
 pub use gfx::{AssetTable, Assets, Gfx, Model};
 pub use input::Input;
 pub use map::{DeterministicState, Map, Set};

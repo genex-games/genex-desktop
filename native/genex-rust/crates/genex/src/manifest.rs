@@ -110,6 +110,12 @@ pub const ENVIRONMENT_CALLS: [&str; 5] = ["frame.environment", "Environment::sky
 /// `.with_emissive_texture(..)`).
 pub const LIGHT_CALLS: [&str; 7] =
     ["frame.point_light", "frame.spot_light", "frame.spot_light_with", "SpotLight::new", "Material::emissive", ".with_emissive", ".with_emissive_texture"];
+/// The retained instance group calls of the facade (renderer pass 2 A.0b), as agents call them:
+/// a group made once (`InstanceGroup::cubes(..)`, `::spheres(..)`, `::models(..)`,
+/// `::models_with(..)`), changed by range (`group.update(..)`) and drawn each frame
+/// (`frame.group(..)`).
+pub const INSTANCE_GROUP_CALLS: [&str; 6] =
+    ["InstanceGroup::cubes", "InstanceGroup::spheres", "InstanceGroup::models", "InstanceGroup::models_with", "group.update", "frame.group"];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
 pub const WGSL_EXTENSION_APIS: [i64; 2] = [1, 2];

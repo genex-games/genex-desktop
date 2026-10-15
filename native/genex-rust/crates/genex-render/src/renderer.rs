@@ -590,7 +590,7 @@ struct Upscale {
 /// regrown, a texture array grown), not every frame.
 #[derive(Clone, PartialEq)]
 struct GroupsKey {
-    buffers: [Buffer; 10],
+    buffers: [Buffer; 9],
     /// The shadow array, then every material texture array ([`Renderer::texture_views`]).
     views: (TextureView, [TextureView; 8]),
     /// The environment maps' generation (the neutral inputs until the bake replaces them).
@@ -710,6 +710,8 @@ struct LastFrame {
     batches: u32,
     views: u32,
     skinned_vertices: u32,
+    /// The opaque instance-table rows (each view's visible-list region).
+    opaque_instances: u32,
 }
 
 /// Draws scenes into a world target and reads it back.
@@ -867,6 +869,10 @@ pub struct Renderer {
     hiz_pyramid: Option<HizPyramid>,
     /// What the last frame drew through meshlets.
     last_meshlets: Option<MeshletFrame>,
+    /// The instance table the last upload wrote and the retained spans it holds (A.0b).
+    retained_held: std::cell::RefCell<Option<(Buffer, Vec<crate::retained::RetainedSpan>)>>,
+    /// Bytes of instance rows the last upload wrote.
+    last_instance_bytes: std::cell::Cell<u64>,
     /// The history set the next frames draw on (Live, or a settled capture's; RQ5.6).
     history_set: HistorySet,
     /// Whether a frame index of 0 keeps TAA's and the motion history (a dynamic-resolution step:
@@ -929,9 +935,11 @@ fn frame_env_entries() -> impl Iterator<Item = BindGroupLayoutEntry> {
 }
 
 /// The frame layout's local-light and material-extension tables ([`FRAME_LIGHT_BINDINGS`], RQ6.0):
-/// each the binding type the Level-2 v2 material map gives the table of the same name.
+/// each the binding type the Level-2 v2 material map gives the table of the same name (the one
+/// bin table the type of the v2 map's z-bins, a slice of it; LG-16).
 fn frame_light_entries() -> impl Iterator<Item = BindGroupLayoutEntry> {
     FRAME_LIGHT_BINDINGS.into_iter().filter_map(|(binding, name)| {
+        let name = crate::layout::frame_light_v2_twin(name);
         let row = MATERIAL_V2_BINDINGS.iter().find(|row| row.name == name)?;
         Some(BindGroupLayoutEntry { binding, visibility: ShaderStages::FRAGMENT, ty: row.kind.binding_type(false, row.bytes), count: None })
     })
@@ -1674,10 +1682,9 @@ pub struct WorldPass<'a> {
     pub lights: &'a Buffer,
     /// Each local light's extension row (`light_ext`, RQ6), row for row with `lights`.
     pub light_ext: &'a Buffer,
-    /// The binned path's per-tile light masks (`light_tiles`, RQ6), built for this frame.
-    pub light_tiles: &'a Buffer,
-    /// The binned path's header and z-bins (`light_zbins`, RQ6; a zero header bins no light).
-    pub light_zbins: &'a Buffer,
+    /// The binned path's bin table (`light_bins`, RQ6; pass 2 A.0 LG-16): the header and z-bins
+    /// (a zero header bins no light), then the tile masks, built for this frame.
+    pub light_bins: &'a Buffer,
     /// The sun's cascaded shadow maps (`texture_depth_2d_array`), drawn this frame when shadows are on.
     pub shadow_map: &'a TextureView,
     /// The comparison sampler the forward pass reads the shadow maps with.
@@ -2530,6 +2537,8 @@ impl Renderer {
             hiz: std::cell::RefCell::new(None),
             hiz_pyramid: None,
             last_meshlets: None,
+            retained_held: std::cell::RefCell::new(None),
+            last_instance_bytes: std::cell::Cell::new(0),
             history_set: HistorySet::Live,
             temporal_kept: false,
             temporal: FrameTemporal::NONE,
@@ -3266,10 +3275,11 @@ impl Renderer {
         let easu = scene_path.hdr && scene_path.fsr.easu;
         plan.frame.texture_lod[0] = crate::settings::frame_texture_lod_bias(&self.quality.taa, scene_path.hdr && temporal.taa, easu, self.render_scale);
         let previous_skinned = self.plan_motion(&mut plan, temporal);
-        let uploads = Uploads::new(&mut plan, path)?;
+        let instance_rows = self.instance_rows(&plan);
+        let uploads = Uploads::new(&mut plan, path, instance_rows)?;
         self.tables.ensure(&self.device, &plan, &uploads)?;
         self.keep_previous_skinned(previous_skinned)?;
-        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices };
+        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.opaque_instances };
         Ok((plan, uploads, environment_sun))
     }
 
@@ -3914,8 +3924,8 @@ impl Renderer {
         self.path.hdr && auto_exposure(&self.look, &self.quality)
     }
 
-    /// Graph node 4: the binned frame's tile masks and z-bins into `light_tiles` and `light_zbins`
-    /// (the tables the forward pass and v2 materials read). False when the frame bins nothing or
+    /// Graph node 4: the binned frame's tile masks and z-bins into `light_bins` (the table the
+    /// forward pass reads whole and v2 materials as two slices). False when the frame bins nothing or
     /// the node refused its tables, which then keep the zero header Uploads wrote: no local light
     /// is shaded rather than a stale one.
     fn encode_light_bins(&self, frame: &mut FrameEncoder, plan: &FramePlan) -> bool {
@@ -3923,7 +3933,7 @@ impl Renderer {
         let mut node = self.light_bins.borrow_mut();
         let Some(node) = node.as_mut() else { return false };
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
-        let input = crate::cluster::LightBinInput { frame: &binned.bins, tiles: self.tables.light_tiles.get(), zbins: self.tables.light_zbins.get() };
+        let input = crate::cluster::LightBinInput { frame: &binned.bins, bins: self.tables.light_bins.get() };
         node.encode(&device, &queue, frame.encoder(), input).is_ok()
     }
 
@@ -3935,6 +3945,26 @@ impl Renderer {
         writes.extend(uploads.writes(&self.tables, plan));
         writes.extend_from_slice(frame_rows);
         self.upload_arena.borrow_mut().upload(encoder, &writes);
+        // The instance table now holds this frame's rows: its retained spans are the next frame's
+        // to compare with (A.0b).
+        *self.retained_held.borrow_mut() = Some((self.tables.instances.get().clone(), plan.retained.clone()));
+        self.last_instance_bytes.set(uploads.instance_bytes());
+    }
+
+    /// The instance-table rows `plan` writes: all of them, less its retained groups' rows the
+    /// table holds unchanged since the last upload into this very table (A.0b).
+    fn instance_rows(&self, plan: &FramePlan) -> Vec<std::ops::Range<usize>> {
+        let bytes = std::mem::size_of_val(plan.instances.as_slice()) as u64;
+        let held = self.retained_held.borrow();
+        let same_table = |(table, _): &&(Buffer, Vec<crate::retained::RetainedSpan>)| self.tables.instances.holds(bytes) && table == self.tables.instances.get();
+        let spans = held.as_ref().filter(same_table).map(|(_, spans)| spans.as_slice());
+        crate::tables::instance_upload_ranges(plan.instances.len(), &plan.retained, spans)
+    }
+
+    /// Bytes of instance rows the last frame wrote (renderer pass 2 A.0b: a static retained
+    /// group's rows are written once).
+    pub fn last_instance_upload_bytes(&self) -> u64 {
+        self.last_instance_bytes.get()
     }
 
     /// Prepare a frame of `scene`: plan and room in the tables, the targets of the current scale
@@ -4005,6 +4035,11 @@ impl Renderer {
     }
 
     fn encode_cull(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan) {
+        self.encode_cull_timed(encoder, plan, None);
+    }
+
+    /// [`Renderer::encode_cull`] with the cull pass's timestamp writes (a cost row).
+    fn encode_cull_timed(&self, encoder: &mut wgpu::CommandEncoder, plan: &FramePlan, timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>) {
         if plan.batches.is_empty() {
             return;
         }
@@ -4014,8 +4049,9 @@ impl Renderer {
             batches: self.tables.batches.get(),
             visible: self.tables.visible.get(),
             args: self.tables.args.get(),
+            scratch: self.tables.cull_scratch.get(),
         };
-        self.cull.encode(&self.device, encoder, &buffers, plan.batches.len() as u32, plan.views);
+        self.cull.encode(&self.device, encoder, &buffers, plan.opaque_instances, plan.views, timestamps);
     }
 
     /// The frame's meshlet candidates (R2), before occlusion is decided: None when the game's
@@ -4293,6 +4329,84 @@ impl Renderer {
         library + self.meshlet_node.as_ref().map_or(0, MeshletCullNode::bytes)
     }
 
+    /// The GPU buffers this renderer holds now, under [`crate::budget::BudgetKind::Buffers`] by
+    /// label (renderer pass 2 A.0, LG-13): every frame table, the mesh library, the frame's
+    /// uniforms, last frame's skinned vertices and the light binning's and meshlet path's own
+    /// buffers; and the look's grading LUT under [`crate::budget::BudgetKind::Ibl`] (A.2). What
+    /// the budget fit reads beside its targets (`BudgetInput::with_buffers`).
+    pub fn buffer_ledger(&self) -> crate::budget::BudgetLedger {
+        use crate::budget::BudgetKind::Buffers;
+        let mut ledger = crate::budget::BudgetLedger::new();
+        for (label, bytes) in self.tables.held() {
+            ledger.register(Buffers, label, bytes);
+        }
+        let meshes = &self.meshes;
+        let fixed = [
+            ("mesh vertices", &meshes.vertices),
+            ("mesh slots", &meshes.slots),
+            ("mesh indices", &meshes.indices),
+            ("mesh skin", &meshes.skin),
+            ("frame uniforms", &self.frame_uniforms),
+            ("background", &self.background),
+            ("cull views", &self.cull_views),
+            ("fog row", &self.fog_row),
+        ];
+        for (label, buffer) in fixed {
+            ledger.register(Buffers, label, buffer.size());
+        }
+        if let Some(previous) = &self.skinned_prev.buffer {
+            ledger.register(Buffers, "previous skinned vertices", previous.size());
+        }
+        if let Some(node) = self.light_bins.borrow().as_ref() {
+            for (label, bytes) in node.buffers() {
+                ledger.register(Buffers, label, bytes);
+            }
+        }
+        let meshlets = self.meshlet_bytes();
+        if meshlets > 0 {
+            ledger.register(Buffers, "meshlet tables and cull", meshlets);
+        }
+        // The look's 3D grading LUT (A.2), a texture outside the target pool.
+        let lut = self.post.borrow().as_ref().map_or(0, |(tonemap, _)| tonemap.grading_lut_bytes());
+        if lut > 0 {
+            ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::GRADING_LUT_LABEL, lut);
+        }
+        ledger
+    }
+
+    /// The budget's model of the buffers drawing `scene` makes this renderer hold
+    /// ([`crate::budget::buffer_model`] of the frame's counts under the current quality; LG-13),
+    /// computed on the CPU without drawing.
+    pub fn buffer_model(&self, scene: &Scene) -> Result<u64, RenderError> {
+        let aspect = self.width as f32 / self.height as f32;
+        let quality = &self.quality.shadows;
+        let shadows = quality.enabled.then(|| ShadowSettings::from_quality(quality, scene.lighting.shadow_distance, self.environment_choice.sun_angular_radius()));
+        let plan = FramePlan::build_with(scene, &self.library, aspect, &PlanOptions { shadows, depth_reversed: false, sun: None })?;
+        let binned = (crate::lights::BINNED_SHADING_LANDED && self.quality.lights.clustered)
+            .then(|| crate::lights::binned_frame(&scene.lighting, &self.quality.lights, &scene.camera, self.render_size()));
+        let (lights, light_ext_bytes, light_bin_bytes) = binned.as_ref().map_or((plan.lights.len(), 0, 0), |binned| {
+            (binned.lights.len(), std::mem::size_of_val(binned.ext.as_slice()) as u64, crate::cluster::bins_bytes(&binned.bins.grid))
+        });
+        let counts = crate::budget::BufferCounts {
+            instances: plan.instances.len() as u64,
+            opaque_instances: u64::from(plan.opaque_instances),
+            transparent: plan.transparent.len() as u64,
+            views: u64::from(plan.views),
+            batches: plan.batches.len() as u64,
+            materials: plan.materials.len() as u64,
+            lights: lights as u64,
+            light_ext_bytes,
+            light_bin_bytes: light_bin_bytes.max(u64::from(crate::cluster::LIGHT_TILES_OFFSET_WORDS) * 4 + 4),
+            pass_views: u64::from(plan.views) + plan.transparent.len() as u64,
+            slot_base: plan.slot_base.len() as u64,
+            motion: false,
+            vertices: self.library.vertices().len() as u64,
+            indices: self.library.indices().len() as u64,
+            skin_vertices: self.library.skin().len() as u64,
+        };
+        Ok(crate::budget::buffer_model(&counts))
+    }
+
     /// Read the last meshlet frame's cull back (diagnostics and tests): each pass's kept meshlets
     /// and indices, the drawn slots and every visibility bitset.
     pub fn read_meshlets(&self, gpu: &Gpu) -> Result<MeshletReadback, RenderError> {
@@ -4369,6 +4483,42 @@ impl Renderer {
         Ok(())
     }
 
+    /// The GPU milliseconds of `scene`'s instance cull (graph node 2), one per sample of
+    /// `samples`, from timestamps around its compute pass after one upload of the frame's tables;
+    /// None without `TIMESTAMP_QUERY`. The cull cost rows (renderer pass 2 A.0, LG-06) read it.
+    pub fn cull_gpu_ms(&mut self, gpu: &Gpu, scene: &Scene, samples: u32) -> Result<Option<Vec<f32>>, RenderError> {
+        if !self.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return Ok(None);
+        }
+        let scene_path = self.scene_path(self.render_size(), None);
+        let (plan, uploads, _) = self.prepare(scene, CullPath::Gpu, &scene_path, &FrameTemporal::NONE)?;
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost uploads") });
+        self.write_uploads(&mut encoder, &uploads, &plan, &[]);
+        gpu.queue.submit([encoder.finish()]);
+        let query_set = self.device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("cull cost"), ty: wgpu::QueryType::Timestamp, count: 2 });
+        let resolve = crate::tables::buffer(&self.device, "cull cost resolve", 16, wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC)?;
+        let period = gpu.queue.get_timestamp_period();
+        let mut costs = Vec::with_capacity(samples as usize);
+        for _ in 0..samples {
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost") });
+            let stamps = wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1) };
+            self.encode_cull_timed(&mut encoder, &plan, Some(stamps));
+            gpu.queue.submit([encoder.finish()]);
+            // Resolved in a later submission: Metal resolves counter samples without waiting for
+            // the passes that write them (timing.rs).
+            gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| crate::readback::capture_failed(e.to_string()))?;
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cull cost resolve") });
+            encoder.resolve_query_set(&query_set, 0..2, &resolve, 0);
+            gpu.queue.submit([encoder.finish()]);
+            let staging = crate::readback::stage_buffer(gpu, &resolve, 0, 16)?;
+            let ticks: Vec<u64> = bytemuck::pod_collect_to_vec(&crate::readback::map_read_blocking(gpu, &staging, 16)?[..16]);
+            if let Some(ms) = crate::timing::span_ms(ticks[0], ticks[1], period) {
+                costs.push(ms);
+            }
+        }
+        Ok(Some(costs))
+    }
+
     /// What the frame bind groups bind right now.
     fn groups_key(&self) -> GroupsKey {
         let t = &self.tables;
@@ -4381,8 +4531,7 @@ impl Renderer {
                 t.lights.get().clone(),
                 t.pass_views.get().clone(),
                 t.light_ext.get().clone(),
-                t.light_tiles.get().clone(),
-                t.light_zbins.get().clone(),
+                t.light_bins.get().clone(),
                 t.material_ext.get().clone(),
             ],
             views: (self.shadow_maps.array.clone(), self.texture_views()),
@@ -4469,13 +4618,8 @@ impl Renderer {
             wgpu::BindGroupEntry { binding: aerial, resource: wgpu::BindingResource::TextureView(&aerial_volume) },
             wgpu::BindGroupEntry { binding: contact, resource: wgpu::BindingResource::TextureView(&contact_mask) },
         ]);
-        let [light_ext, light_tiles, light_zbins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
-        entries.extend([
-            entry(light_ext, t.light_ext.get()),
-            entry(light_tiles, t.light_tiles.get()),
-            entry(light_zbins, t.light_zbins.get()),
-            entry(material_ext, t.material_ext.get()),
-        ]);
+        let [light_ext, light_bins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
+        entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
         let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry {
             binding,
@@ -4758,8 +4902,7 @@ impl Renderer {
             materials: self.tables.materials.get(),
             lights: self.tables.lights.get(),
             light_ext: self.tables.light_ext.get(),
-            light_tiles: self.tables.light_tiles.get(),
-            light_zbins: self.tables.light_zbins.get(),
+            light_bins: self.tables.light_bins.get(),
             shadow_map: &self.shadow_maps.array,
             shadow_sampler: &self.shadow_sampler,
             color_textures: self.textures.view(TextureClass::S256, TextureKind::Color),
@@ -4901,6 +5044,17 @@ impl Renderer {
             return Ok(Vec::new());
         }
         let staging = stage_buffer(gpu, self.tables.args.get(), u64::from(view) * bytes, bytes)?;
+        Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
+    }
+
+    /// View `view`'s region of the visible list the last GPU-path frame's cull wrote: one slot per
+    /// opaque instance row, each batch's survivors at the start of its range (the rest unwritten).
+    pub fn read_view_visible(&self, gpu: &Gpu, view: u32) -> Result<Vec<u32>, RenderError> {
+        let bytes = u64::from(self.last.opaque_instances) * 4;
+        if bytes == 0 || view >= self.last.views {
+            return Ok(Vec::new());
+        }
+        let staging = stage_buffer(gpu, self.tables.visible.get(), u64::from(view) * bytes, bytes)?;
         Ok(bytemuck::pod_collect_to_vec(&map_read_blocking(gpu, &staging, bytes)?))
     }
 

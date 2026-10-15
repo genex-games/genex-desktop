@@ -228,7 +228,7 @@ impl ImmediateFrame {
     /// captures settled).
     pub fn from_scene(scene: Scene) -> ImmediateFrame {
         let mut frame = ImmediateFrame::new(scene.camera, scene.clear);
-        frame.counter.add(WORLD_TAG, (scene.draws.len() + scene.skinned.len()) as u32);
+        frame.counter.add(WORLD_TAG, (scene.mesh_instances() + scene.skinned.len()) as u32);
         frame.scene = scene;
         frame
     }
@@ -403,6 +403,13 @@ impl ImmediateFrame {
     /// The 3D scene so far.
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    /// Draw a retained instance group (renderer pass 2 A.0b) with `material`: one logical draw.
+    pub fn group(&mut self, group: &crate::retained::InstanceGroup, material: Material) -> &mut Self {
+        self.scene.draw_group_with(group, material);
+        self.counter.count();
+        self
     }
 
     /// The custom-material draws so far, in call order.
@@ -1067,6 +1074,12 @@ impl FrameRenderer {
         textures: &[TextureData],
     ) -> Result<PostPassId, RenderError> {
         self.posts.add_api(gpu, api, stage, wgsl, uniforms, textures)
+    }
+
+    /// The last frame's Level-2 material draws: (draws issued, pipeline binds) (renderer pass 2
+    /// A.0, LG-20).
+    pub fn custom_material_draws(&self) -> (u32, u32) {
+        (self.materials.frame_draws(), self.materials.frame_pipeline_binds())
     }
 
     /// Bytes the frame holds on the GPU beside the mesh library: the renderer's pooled targets,

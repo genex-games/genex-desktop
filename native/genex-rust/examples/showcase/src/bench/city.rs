@@ -6,6 +6,7 @@
 use genex::math::{self, Vec3, vec3};
 use genex_render::RenderError;
 use genex_render::mesh::MeshData;
+use genex_render::retained::InstanceGroup;
 use genex_render::scene::{Lighting, Material, MeshId, Scene};
 
 use super::geometry::{broadleaf, building, from_mesh, heightfield};
@@ -71,8 +72,9 @@ fn plot(ix: i32, iz: i32) -> (usize, usize) {
 
 pub(super) struct City {
     ground: MeshId,
-    /// Each instanced group: mesh, material and models.
-    groups: Vec<(MeshId, Material, Vec<[f32; 16]>)>,
+    /// Each static group of one mesh and one material, retained (renderer pass 2 A.0b): its rows
+    /// are computed and uploaded once, the city's camera path moving nothing but the camera.
+    groups: Vec<InstanceGroup>,
 }
 
 impl City {
@@ -102,7 +104,7 @@ impl City {
                 }
                 let (color, roughness) = PALETTE[paint];
                 let [r, g, b] = color;
-                groups.push((mesh, Material::color([r, g, b, 255]).with_pbr(0.0, roughness), list));
+                groups.push(InstanceGroup::new(mesh, Material::color([r, g, b, 255]).with_pbr(0.0, roughness), list)?);
             }
         }
         Ok(City { ground, groups })
@@ -124,8 +126,8 @@ impl BenchScene for City {
         let mut scene = Scene::new(camera(eye, target, 55.0, 1200.0), [178, 196, 214, 255]);
         scene.lighting = Lighting { sun_dir: [0.35, 0.8, 0.45], sun_intensity: 2.4, ambient_intensity: 0.12, shadow_distance: 80.0, ..Lighting::default() };
         scene.draw(self.ground, placed(Vec3::ZERO, 0.0, Vec3::ONE), Material::color([84, 86, 90, 255]).with_pbr(0.0, 0.9));
-        for (mesh, material, models) in &self.groups {
-            scene.draw_instanced(*mesh, models, *material);
+        for group in &self.groups {
+            scene.draw_group(group);
         }
         scene
     }

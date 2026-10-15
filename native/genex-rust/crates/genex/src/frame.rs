@@ -449,6 +449,12 @@ pub enum Shape {
         /// Its colour.
         color: Color,
     },
+    /// A retained instance group: its shape at every transform (renderer pass 2 A.0b).
+    #[non_exhaustive]
+    Group {
+        /// The group.
+        group: crate::group::InstanceGroup,
+    },
 }
 
 /// The mesh a custom material draws: a model from the game's assets, or a built-in shape.
@@ -617,6 +623,12 @@ impl Frame {
     /// Draw a sphere with `material`.
     pub fn sphere_with(&mut self, center: Vec3, radius: f32, material: &Material) -> &mut Self {
         self.push(Shape::Sphere { center, radius, material: material.clone() })
+    }
+
+    /// Draw a retained instance group ([`crate::InstanceGroup`]): its shape at every transform,
+    /// one logical draw. Its rows are computed and uploaded once, not every frame.
+    pub fn group(&mut self, group: &crate::group::InstanceGroup) -> &mut Self {
+        self.push(Shape::Group { group: group.clone() })
     }
 
     /// Light the frame with a sun shining from `direction` (towards the sun): it replaces the

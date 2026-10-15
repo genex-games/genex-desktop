@@ -568,6 +568,8 @@ mod tests {
         let lights = vec![GpuLight { position_range: [0.0, 3.0, 0.0, 8.0], color: [1.0; 4] }; ext.len()];
         let bins = crate::cluster::LightBinFrame {
             order: (0..ext.len() as u32).collect(),
+            decals: Vec::new(),
+            probes: Vec::new(),
             grid: crate::cluster::LightGrid::new((64, 64), 16, ext.len() as u32),
             params: GpuLightBinParams::default(),
             bounds: Vec::new(),

@@ -899,6 +899,9 @@ pub struct RenderControl {
     /// Whether the renderer holds the spot atlas layer (the game asked for a shadowed spot under a
     /// quality that draws them, `Renderer::uses_shadowed_spots`): the budget counts it from then on.
     spot_atlas: bool,
+    /// The GPU buffers the renderer held after its last Live frame (`Renderer::buffer_ledger`,
+    /// renderer pass 2 A.0 LG-13): the device's own budget counts them at its next fit.
+    buffers: genex_render::budget::BudgetLedger,
     /// The session's material arrays ([`RenderControl::texture_arrays`]), resolved with the rest.
     textures: (DeviceClass, TextureQuality),
     /// Explicit settings changes so far (the probe, a saved choice loaded, the person's panel, the
@@ -1041,6 +1044,7 @@ impl RenderControl {
             pipeline_deferred: false,
             ldr_reason: None,
             spot_atlas: false,
+            buffers: genex_render::budget::BudgetLedger::new(),
             textures: (class, TextureQuality::OFF),
             generation: 0,
             world_samples: None,
@@ -1183,7 +1187,8 @@ impl RenderControl {
     fn budget_for(&self, profile: &RenderProfile, scale: f32, facts: &DeviceFacts, own: bool, surface: BudgetSurface) -> (BudgetInput, Vec<MaterialClass>) {
         // Captures never count the spot atlas: it appears with the first frame that asks for a
         // shadowed spot, and a capture's settings must not depend on what was drawn before it.
-        let input = budget_input(surface.output, scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window);
+        let held = if own { self.buffers.clone() } else { genex_render::budget::BudgetLedger::new() };
+        let input = budget_input(surface.output, scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
         let (class, textures) = self.textures;
         if own && profile.class == class {
             return (input.with_fixed_materials(texture_arrays(class, textures)), Vec::new());
@@ -1222,6 +1227,12 @@ impl RenderControl {
         let surface = self.live_surface();
         let fits = |scale: &f32| ledger(&live.quality, &self.budget_for(&live.profile, *scale, &self.facts, own, surface).0).total() <= live.profile.budget_bytes;
         steps.steps().iter().copied().filter(|scale| *scale > nominal).take_while(fits).last().unwrap_or(nominal)
+    }
+
+    /// The GPU buffers the renderer holds now (LG-13): counted by the device's own budget from its
+    /// next fit (a settings change, a resize, the spot atlas), never refitting on its own.
+    pub fn note_buffers(&mut self, held: genex_render::budget::BudgetLedger) {
+        self.buffers = held;
     }
 
     /// Whether the renderer holds the spot atlas layer (`Renderer::uses_shadowed_spots`, sticky):

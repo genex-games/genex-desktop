@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use genex_render::Gpu;
 use genex_render::budget::{BudgetInput, BudgetKind, ledger};
-use genex_render::cluster::{self, BOUNDS_EMPTY, LightBinFrame, LightBinRead, lights_at};
+use genex_render::cluster::{self, BOUNDS_EMPTY, ClusterInput, ClusterKind, ClusterSphere, LightBinFrame, LightBinRead, clusterables_at, lights_at};
 use genex_render::device_class::DeviceClass;
 use genex_render::layout::{GpuLight, GpuLightExt, GpuLocalLight, LIGHT_KIND_SPOT, MAX_LOCAL_LIGHTS};
 use genex_render::presets::{preset_quality, reference_resolution};
@@ -170,6 +170,95 @@ fn assert_bins(what: &str, got: &LightBinRead, want: &LightBinRead, frame: &Ligh
 }
 
 // --- CPU rows ---
+
+/// `count` decal or probe spheres around the camera's view (radius 0.2 to `max_radius`), a few
+/// hostile ones among them (not a number, a negative radius, an infinite radius).
+fn random_spheres(seed: u32, count: usize, max_radius: f32) -> Vec<ClusterSphere> {
+    let mut stream = Stream(seed);
+    (0..count)
+        .map(|index| {
+            let centre = [stream.range(-30.0, 30.0), stream.range(-1.0, 9.0), stream.range(-60.0, 24.0)];
+            let radius = stream.range(0.2, max_radius);
+            match index % 97 {
+                13 => ClusterSphere { centre: [f32::NAN, 0.0, 0.0], radius },
+                29 => ClusterSphere { centre, radius: -1.0 },
+                61 => ClusterSphere { centre, radius: f32::INFINITY },
+                _ => ClusterSphere { centre, radius },
+            }
+        })
+        .collect()
+}
+
+/// A point inside `sphere`, uniformly.
+fn point_in_sphere(sphere: &ClusterSphere, stream: &mut Stream) -> Option<[f32; 3]> {
+    if !sphere.radius.is_finite() || sphere.radius <= 0.0 || sphere.centre.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let light = light(sphere.centre, sphere.radius, GpuLightExt::POINT);
+    point_in_reach(&light, stream)
+}
+
+/// 200 lights, 300 decals and 40 probes in one binned index space.
+fn mixed_frame(render: (u32, u32), tile_px: u32) -> (Vec<GpuLocalLight>, Vec<ClusterSphere>, Vec<ClusterSphere>, LightBinFrame) {
+    let lights = random_lights(SEED)[..200].to_vec();
+    let decals = random_spheres(SEED ^ 0xDEC0, 300, 2.0);
+    let probes = random_spheres(SEED ^ 0x9B0B, 40, 12.0);
+    let frame = LightBinFrame::prepare_clusterables(&lights, &ClusterInput { decals: &decals, probes: &probes }, &camera(), render, &lights_quality(tile_px));
+    (lights, decals, probes, frame)
+}
+
+#[test]
+fn decals_and_probes_share_the_lights_index_space_and_each_kind_walks_only_its_own_range() {
+    // Renderer pass 2 A.0 (LG-16): lights, decals and probes are binned into one table, each kind
+    // a contiguous index range with its own z-bins, so a kind's walk is the lights' walk over its
+    // own range and adding decals or probes changes no light's walk.
+    let (lights, decals, probes, frame) = mixed_frame(FULL_HD, 16);
+    assert_eq!(frame.params.ranges, [200, 500, 540, 0], "lights, then decals, then probes");
+    assert_eq!((frame.order.len(), frame.decals.len(), frame.probes.len()), (200, 300, 40));
+    assert_eq!(frame.grid.words_per_tile, 540u32.div_ceil(32));
+    let read = reference(&frame);
+    let alone = LightBinFrame::prepare(&lights, &camera(), FULL_HD, &lights_quality(16));
+    let alone_read = reference(&alone);
+    assert_eq!(alone.order, frame.order, "the lights' order is their own");
+    let mut stream = Stream(SEED ^ 0xBEEF);
+    let mut checked = 0;
+    for (kind, rows, spheres) in [(ClusterKind::Decal, &frame.decals, &decals), (ClusterKind::Probe, &frame.probes, &probes)] {
+        let first = frame.first_index(kind);
+        for (at, row) in rows.iter().enumerate() {
+            for _ in 0..SAMPLES_PER_LIGHT {
+                let Some((pixel, depth)) = point_in_sphere(&spheres[*row as usize], &mut stream).and_then(|point| seen_at(&camera(), FULL_HD, point)) else { continue };
+                let found = clusterables_at(kind, &read.masks, &read.zbins, pixel, depth);
+                assert!(found.contains(&(first + at as u32)), "{kind:?} {at} (row {row}) reaches {pixel:?} at {depth} but is not binned there");
+                assert!(found.iter().all(|index| (first..first + rows.len() as u32).contains(index)), "{kind:?}'s walk stays in its range: {found:?}");
+                let lit = lights_at(&read.masks, &read.zbins, pixel, depth);
+                assert!(lit.iter().all(|index| *index < 200), "the light walk never reaches a decal or probe: {lit:?}");
+                assert_eq!(lit, lights_at(&alone_read.masks, &alone_read.zbins, pixel, depth), "sharing the table changes no light's walk");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 2000, "only {checked} sampled points were in view");
+    for (index, sphere) in decals.iter().enumerate() {
+        let at = frame.decals.iter().position(|row| *row as usize == index).expect("every decal row is binned") + frame.first_index(ClusterKind::Decal) as usize;
+        let hostile = sphere.centre.iter().any(|v| v.is_nan()) || sphere.radius.is_nan() || sphere.radius <= 0.0;
+        if hostile {
+            assert_eq!(frame.bounds[at], BOUNDS_EMPTY, "decal row {index} is not a sphere");
+        }
+    }
+    assert_eq!(LightBinFrame::prepare_clusterables(&lights, &ClusterInput { decals: &decals, probes: &probes }, &camera(), FULL_HD, &lights_quality(16)), frame, "the same every run");
+}
+
+#[test]
+fn the_bin_table_holds_the_zbins_then_the_tiles_at_a_storage_binding_offset() {
+    // LG-16: the forward pass binds one table; the v2 map binds its z-bins and tiles as two slices
+    // of it, so the tiles start at an offset every core device can bind storage at.
+    let offset = u64::from(cluster::LIGHT_TILES_OFFSET_WORDS) * 4;
+    assert!(offset >= cluster::zbin_bytes(), "the tiles follow the z-bins");
+    assert_eq!(offset % u64::from(wgpu::Limits::defaults().min_storage_buffer_offset_alignment), 0);
+    assert_eq!(cluster::zbin_bytes(), u64::from(cluster::LIGHT_BIN_HEADER_WORDS + cluster::LIGHT_ZBINS * cluster::CLUSTER_KINDS as u32) * 4);
+    let frame = LightBinFrame::prepare(&random_lights(SEED), &camera(), FULL_HD, &lights_quality(16));
+    assert_eq!(cluster::bins_bytes(&frame.grid), offset + frame.grid.mask_bytes());
+}
 
 #[test]
 fn every_point_a_light_reaches_finds_it_in_its_tile_and_zbin_at_three_tile_sizes() {
@@ -425,6 +514,18 @@ fn metal_gpu_masks_and_zbins_equal_the_cpu_reference_for_1024_random_lights_at_t
             "row": "light-bin-walk", "lights": LIGHTS, "tile_px": 16, "render": [FULL_HD.0, FULL_HD.1],
             "mean_lights_per_tile_mask": per_tile, "mean_lights_per_ground_pixel": per_pixel,
         }));
+    }
+}
+
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_gpu_bins_of_lights_decals_and_probes_equal_the_cpu_reference() {
+    let _gpu_rows = GPU_ROWS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(gpu) = gpu() else { return };
+    let frames: Vec<LightBinFrame> = [(FULL_HD, 16), (ODD, 8), ((320, 200), 32)].into_iter().map(|(render, tile)| mixed_frame(render, tile).3).collect();
+    let reads = cluster::light_bins_gpu(&gpu, &frames).expect("bins");
+    for (frame, read) in frames.iter().zip(&reads) {
+        assert_bins("GPU lights, decals and probes", read, &reference(frame), frame);
     }
 }
 

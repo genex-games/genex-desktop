@@ -59,6 +59,17 @@
       ".with_emissive_texture"
     ]
   },
+  "instanceGroups": {
+    "calls": [
+      "InstanceGroup::cubes",
+      "InstanceGroup::spheres",
+      "InstanceGroup::models",
+      "InstanceGroup::models_with",
+      "group.update",
+      "frame.group"
+    ],
+    "refusals": ["too-many-instances", "range-out-of-group"]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,

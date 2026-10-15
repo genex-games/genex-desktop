@@ -48,6 +48,16 @@
 // The sun's screen-space contact shadows (RQ4; render size, 1 = unshadowed).
 @group(0) @binding(19) var contact_shadow_mask: texture_2d<f32>;
 
+// The light walk's reads (shaders/lighting/local_lights.wgsl): the renderer binds `light_zbins`
+// and `light_tiles` as two slices of its one bin table (pass 2 A.0, LG-16).
+fn gx_light_bin_word(i: u32) -> u32 {
+    return light_zbins[i];
+}
+
+fn gx_light_tile_word(i: u32) -> u32 {
+    return light_tiles[i];
+}
+
 // The surface chunk's larger material size classes (RQ6.4) are the forward pass's: a v2 material
 // binds class 0 only (the twelve sampled textures of plan section 2.9), so this reads the class-0
 // layer of any reference. The built-in surface (`gx_surface`) is never called from here.

@@ -23,11 +23,21 @@ override GX_LOD_FADE: bool = false;
 @group(0) @binding(8) var color_textures: texture_2d_array<f32>;
 @group(0) @binding(9) var data_textures: texture_2d_array<f32>;
 @group(0) @binding(10) var texture_sampler: sampler;
-// The binned local lights (RQ6.2; layout::FRAME_LIGHT_BINDINGS): each light's extension row, the
-// per-tile light masks and the light-bin header with the z-bins.
+// The binned local lights (RQ6.2; layout::FRAME_LIGHT_BINDINGS): each light's extension row, and
+// one bin table (pass 2 A.0, LG-16): the header and every clusterable kind's z-bins, then the
+// per-tile masks at GX_LIGHT_TILES_OFFSET_WORDS. Binding 22 is free.
 @group(0) @binding(20) var<storage, read> light_ext: array<vec4<f32>>;
-@group(0) @binding(21) var<storage, read> light_tiles: array<u32>;
-@group(0) @binding(22) var<storage, read> light_zbins: array<u32>;
+@group(0) @binding(21) var<storage, read> light_bins: array<u32>;
+
+// Word `i` of the bin header and z-bins, and word `i` of the tile masks: the light walk's reads
+// (shaders/lighting/local_lights.wgsl), over the one table here and the v2 map's two slices there.
+fn gx_light_bin_word(i: u32) -> u32 {
+    return light_bins[i];
+}
+
+fn gx_light_tile_word(i: u32) -> u32 {
+    return light_bins[GX_LIGHT_TILES_OFFSET_WORDS + i];
+}
 // Each material row's extension (RQ6.3: its emission), `FRAME_LIGHT_BINDINGS`' `material_ext`.
 @group(0) @binding(23) var<storage, read> material_ext: array<GxMaterialExt>;
 // The material texture arrays of the larger size classes (RQ6.4; layout::FRAME_MATERIAL_CLASS_BINDINGS),

@@ -230,7 +230,7 @@ impl Drop for CompileHold {
 /// wgpu's workgroup zeroing ([`written_first`]); a new kernel with workgroup memory joins only
 /// with its own audit (tests/workgroup_memory.rs holds every registered shader to this list).
 pub const WORKGROUP_AUDIT: &[(&str, &str)] = &[
-    ("cull", "each lane stores scan[lane] before the first barrier of every chunk"),
+    ("cull", "cull_mark, cull_scan and cull_scatter store every lane's scan[lane] before the first barrier; lanes 0-7 store word_counts[lane] before the barrier lane 0 reads them after"),
     ("light-bin", "cs_light_zbins: each lane stores zbin_lowest/zbin_highest[lane] before the reduction's first barrier"),
     ("exposure-histogram", "lanes below the bin count store 0 into every bin before the first barrier"),
     ("exposure-adapt", "each of the 128 lanes stores gx_prefix[bin] and gx_sums[bin] before the barrier that precedes any read"),

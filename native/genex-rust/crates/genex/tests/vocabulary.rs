@@ -129,3 +129,12 @@ fn the_light_and_emission_calls_are_the_fixtures() {
     let pinned = fixture();
     assert_eq!(names(&pinned["lights"]["calls"]), genex::manifest::LIGHT_CALLS);
 }
+
+#[test]
+fn the_instance_group_calls_and_refusals_are_the_fixtures() {
+    use genex::InstanceGroupErrorCode;
+    let pinned = fixture();
+    assert_eq!(names(&pinned["instanceGroups"]["calls"]), genex::manifest::INSTANCE_GROUP_CALLS);
+    let refusals = [InstanceGroupErrorCode::TooManyInstances, InstanceGroupErrorCode::RangeOutOfGroup].map(InstanceGroupErrorCode::wire);
+    assert_eq!(names(&pinned["instanceGroups"]["refusals"]), refusals);
+}

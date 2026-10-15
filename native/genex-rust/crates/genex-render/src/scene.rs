@@ -26,6 +26,7 @@ use crate::mesh::{MeshData, Vertex};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
 use crate::pbr::{MaterialKey, light_table, radiance};
+use crate::retained::{InstanceGroup, RetainedSpan};
 use crate::settings::{Meshlets, ShadowSettings};
 use crate::shadow::{Cascades, camera_forward, fit};
 use crate::skin::{MAX_JOINTS, SkinId, SkinnedMeshData, skinned_bounds};
@@ -399,6 +400,17 @@ pub struct DrawItem {
     pub id: Option<DrawId>,
 }
 
+/// One draw of a retained instance group (renderer pass 2 A.0b).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupDraw {
+    /// The group.
+    pub group: InstanceGroup,
+    /// The material its instances draw with.
+    pub material: Material,
+    /// The draw id current when it was drawn ([`Scene::set_id`]), if any.
+    pub id: Option<DrawId>,
+}
+
 /// One skinned draw: a skinned mesh posed by its joint matrices.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinnedDraw {
@@ -439,6 +451,8 @@ pub struct Scene {
     pub skinned: Vec<SkinnedDraw>,
     /// Line vertices, two per line.
     pub lines: Vec<LineVertex>,
+    /// Retained instance groups drawn, in order (renderer pass 2 A.0b).
+    pub groups: Vec<GroupDraw>,
     logical_draws: u32,
     /// The draw id later draws carry ([`Scene::set_id`]).
     id: Option<DrawId>,
@@ -447,7 +461,17 @@ pub struct Scene {
 impl Scene {
     /// An empty scene.
     pub fn new(camera: CameraDesc, clear: [u8; 4]) -> Scene {
-        Scene { camera, clear, lighting: Lighting::default(), draws: Vec::new(), skinned: Vec::new(), lines: Vec::new(), logical_draws: 0, id: None }
+        Scene {
+            camera,
+            clear,
+            lighting: Lighting::default(),
+            draws: Vec::new(),
+            skinned: Vec::new(),
+            lines: Vec::new(),
+            groups: Vec::new(),
+            logical_draws: 0,
+            id: None,
+        }
     }
 
     /// The draw id the following draws carry (`frame.id(key)` in the facade), `None` for none:
@@ -477,6 +501,26 @@ impl Scene {
         self.draws.extend(models.iter().map(|model| DrawItem { mesh, model: *model, material, id }));
         self.logical_draws += 1;
         self
+    }
+
+    /// Draw a retained instance group (renderer pass 2 A.0b): what [`Scene::draw_instanced`] of
+    /// its mesh, transforms and material draws, one logical draw, with its rows computed once and
+    /// uploaded only when they change ([`InstanceGroup`]).
+    pub fn draw_group(&mut self, group: &InstanceGroup) -> &mut Self {
+        self.draw_group_with(group, group.material())
+    }
+
+    /// [`Scene::draw_group`] with `material` instead of the group's own (the facade resolves its
+    /// textures each frame): its rows are still the group's, only their material row changes.
+    pub fn draw_group_with(&mut self, group: &InstanceGroup, material: Material) -> &mut Self {
+        self.groups.push(GroupDraw { group: group.clone(), material, id: self.id });
+        self.logical_draws += 1;
+        self
+    }
+
+    /// Instances the scene draws through mesh draws and retained groups.
+    pub fn mesh_instances(&self) -> usize {
+        self.draws.len() + self.groups.iter().map(|draw| draw.group.len()).sum::<usize>()
     }
 
     /// Draw a skinned mesh posed by `joints`: one logical draw.
@@ -616,6 +660,9 @@ pub struct FramePlan {
     /// The previous-model table, row for row, once [`crate::motion::MotionHistory::apply`] matched
     /// the rows against last frame's; empty otherwise (nothing is uploaded).
     pub prev_models: Vec<crate::layout::GpuPrevModel>,
+    /// Where each drawn opaque retained group's rows are (renderer pass 2 A.0b): the renderer
+    /// uploads a span again only when it moved or its group changed.
+    pub retained: Vec<RetainedSpan>,
 }
 
 /// How a material's opaque draws are batched and drawn (P2-0.12): plain (back faces culled, drawn
@@ -743,25 +790,42 @@ struct Rows {
     batches: Vec<GpuBatch>,
     slot_base: Vec<u32>,
     slot_count: usize,
+    retained: Vec<RetainedSpan>,
+}
+
+/// One variant's draws of one library mesh: retained groups (indices into `Scene::groups`), then
+/// mesh draws (indices into `Scene::draws`).
+#[derive(Default)]
+struct MeshDraws {
+    groups: Vec<usize>,
+    draws: Vec<usize>,
 }
 
 impl Rows {
     /// One batch per library mesh `variant` draws (ascending mesh id), its slot base in the
-    /// variant's region.
+    /// variant's region: the mesh's retained groups' rows (computed once per group, A.0b), then
+    /// its mesh draws' rows.
+    #[allow(clippy::too_many_arguments, reason = "the plan's row builders share one call shape")]
     fn push_meshes(
         &mut self,
         scene: &Scene,
         library: &MeshLibrary,
-        by_mesh: &BTreeMap<(usize, MeshId), Vec<usize>>,
+        by_mesh: &BTreeMap<(usize, MeshId), MeshDraws>,
         variant: usize,
         key_of: &[Option<MotionRow>],
+        keys: &mut DrawKeys,
         materials: &mut Materials,
     ) -> Result<(), RenderError> {
         let meshes = (variant, MeshId(0))..=(variant, MeshId(u32::MAX));
-        for ((_, mesh), draws) in by_mesh.range(meshes) {
+        for ((_, mesh), drawn) in by_mesh.range(meshes) {
             let entry = mesh_entry(library, *mesh)?;
+            let retained: usize = drawn.groups.iter().map(|at| scene.groups[*at].group.len()).sum();
             self.slot_base[variant * self.slot_count + mesh.raw() as usize] = self.instances.len() as u32;
-            self.batches.push(batch(self.instances.len(), draws.len(), entry.first_index, entry.index_count, entry.base_vertex));
+            self.batches.push(batch(self.instances.len(), retained + drawn.draws.len(), entry.first_index, entry.index_count, entry.base_vertex));
+            for at in &drawn.groups {
+                self.push_group(&scene.groups[*at], entry, keys, materials);
+            }
+            let draws = &drawn.draws;
             for at in draws {
                 let draw = &scene.draws[*at];
                 self.instances.push(instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material)));
@@ -769,6 +833,24 @@ impl Rows {
             }
         }
         Ok(())
+    }
+
+    /// One opaque retained group's rows: its cached rows under this frame's material row, and its
+    /// span (A.0b).
+    fn push_group(&mut self, GroupDraw { group, material, id }: &GroupDraw, entry: &MeshEntry, keys: &mut DrawKeys, materials: &mut Materials) {
+        let material = materials.row(material);
+        let first = self.instances.len();
+        self.instances.extend_from_slice(&group.rows(entry.center, entry.radius));
+        if material != 0 {
+            for row in &mut self.instances[first..] {
+                row.material = material;
+            }
+        }
+        for _ in 0..group.len() {
+            self.motion.extend(keys.row(*id, group.mesh(), RowKind::Opaque, None));
+        }
+        let rows = group.len() as u32;
+        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius) });
     }
 
     /// One opaque skinned draw's batch (one row), its slot base in `variant`'s region.
@@ -864,7 +946,7 @@ impl FramePlan {
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
         // into their keys, made in draw order so an id's ordinals follow the game's order).
-        let mut by_mesh: BTreeMap<(usize, MeshId), Vec<usize>> = BTreeMap::new();
+        let mut by_mesh: BTreeMap<(usize, MeshId), MeshDraws> = BTreeMap::new();
         let mut key_of: Vec<Option<MotionRow>> = if motion { vec![None; scene.draws.len()] } else { Vec::new() };
         let mut glass = Vec::new();
         for (at, draw) in scene.draws.iter().enumerate() {
@@ -877,20 +959,37 @@ impl FramePlan {
                 if let Some(key) = keys.row(draw.id, draw.mesh, RowKind::Opaque, None) {
                     key_of[at] = Some(key);
                 }
-                by_mesh.entry((draw.material.draw_variant().index(), draw.mesh)).or_default().push(at);
+                by_mesh.entry((draw.material.draw_variant().index(), draw.mesh)).or_default().draws.push(at);
+            }
+        }
+        // Retained groups (A.0b): opaque ones batch with their mesh's draws, ahead of them; a
+        // transparent group's rows are sorted with the glass, one by one.
+        for (at, GroupDraw { group, material, id }) in scene.groups.iter().enumerate().filter(|(_, draw)| !draw.group.is_empty()) {
+            let entry = mesh_entry(library, group.mesh())?;
+            let material = *material;
+            if !material.is_transparent() {
+                by_mesh.entry((material.draw_variant().index(), group.mesh())).or_default().groups.push(at);
+                continue;
+            }
+            let source = DrawSource { skinned: false, first_index: entry.first_index, index_count: entry.index_count, base_vertex: entry.base_vertex };
+            for model in group.models() {
+                let motion = keys.row(*id, group.mesh(), RowKind::Transparent, None);
+                glass.push(Glass { row: instance_row(model, entry.center, entry.radius, materials.row(&material)), source, motion });
             }
         }
         let slot_count = library.len() + parts.len();
         let varied_skin = scene.skinned.iter().any(|draw| !draw.material.is_transparent() && draw.material.draw_variant() != DrawVariant::PLAIN);
         let varied = varied_skin || by_mesh.keys().any(|(variant, _)| *variant > 0);
+        let instances = scene.mesh_instances() + parts.len();
         let mut rows = Rows {
-            instances: Vec::with_capacity(scene.draws.len() + parts.len()),
-            motion: Vec::with_capacity(if motion { scene.draws.len() + parts.len() } else { 0 }),
+            instances: Vec::with_capacity(instances),
+            motion: Vec::with_capacity(if motion { instances } else { 0 }),
             batches: Vec::new(),
             slot_base: vec![NO_BATCH; if varied { slot_count * DRAW_VARIANTS } else { slot_count }],
             slot_count,
+            retained: Vec::new(),
         };
-        rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut materials)?;
+        rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut keys, &mut materials)?;
         let static_batches = rows.batches.len() as u32;
         // The skinned draws in the game's order: the transparent ones to the glass, the plain ones
         // batched now, the other variants after the plain batches.
@@ -911,7 +1010,7 @@ impl FramePlan {
         let mut variants = Vec::new();
         for variant in DrawVariant::ALL.into_iter().skip(1) {
             let first = rows.batches.len() as u32;
-            rows.push_meshes(scene, library, &by_mesh, variant.index(), &key_of, &mut materials)?;
+            rows.push_meshes(scene, library, &by_mesh, variant.index(), &key_of, &mut keys, &mut materials)?;
             let skinned_from = rows.batches.len() as u32;
             for (_, at, key) in varied_skinned.iter().filter(|(v, _, _)| *v == variant.index()) {
                 rows.push_skinned(&parts[*at], &scene.skinned[*at], variant.index(), *key, &mut materials);
@@ -921,7 +1020,7 @@ impl FramePlan {
                 variants.push(VariantRun { variant, batches: first..end, skinned_from });
             }
         }
-        let Rows { mut instances, mut motion, batches, slot_base, .. } = rows;
+        let Rows { mut instances, mut motion, batches, slot_base, retained, .. } = rows;
         let opaque_instances = instances.len() as u32;
         let view_proj = scene.camera.projection(aspect, depth_reversed);
         let lit = options.sun.map_or(scene.lighting.sun_intensity > 0.0, |sun| sun.color.iter().any(|c| *c > 0.0));
@@ -980,6 +1079,7 @@ impl FramePlan {
             logical_draws: scene.logical_draws,
             motion,
             prev_models: Vec::new(),
+            retained,
         })
     }
 
