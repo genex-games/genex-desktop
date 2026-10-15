@@ -298,6 +298,10 @@ pub struct Look {
     /// `.cube` LUT on the display colour after it ([`crate::post::grading::Grading`]; neutral, the
     /// default, draws nothing). HDR scene only, as the white balance.
     pub grading: crate::post::grading::Grading,
+    /// Depth of field (A.9): a thin lens focused at a distance, blurring the HDR scene after TAA
+    /// ([`crate::post::dof::DepthOfField`]; off, the default, draws nothing). Settled captures draw
+    /// without it unless the shot asks.
+    pub depth_of_field: crate::post::dof::DepthOfField,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -589,6 +593,7 @@ const DEFAULT_LOOK: Look = Look {
     temperature: 0.0,
     tint: 0.0,
     grading: crate::post::grading::Grading::NEUTRAL,
+    depth_of_field: crate::post::dof::DepthOfField::OFF,
 };
 
 impl Default for Look {
@@ -663,6 +668,12 @@ impl Look {
     /// The look with `grading`, each knob held to its range.
     pub fn with_grading(mut self, grading: crate::post::grading::Grading) -> Look {
         self.grading = grading.held();
+        self
+    }
+
+    /// The look with `depth_of_field`, each knob held to its range.
+    pub fn with_depth_of_field(mut self, depth_of_field: crate::post::dof::DepthOfField) -> Look {
+        self.depth_of_field = depth_of_field.held();
         self
     }
 
@@ -1694,6 +1705,9 @@ pub struct Quality {
     /// The material sampler's anisotropic filtering, 1..=16 (`anisotropy_clamp`; P2-0.12 LG-02):
     /// a resource knob (a new sampler and frame group, no pipeline). 1 is plain trilinear.
     pub anisotropy: u8,
+    /// The depth-of-field gather where the look turns it on (A.9): Filament's ring gather on
+    /// desktop and web `high` and `ultra`, Godot's circular gather elsewhere. A pipeline knob.
+    pub dof: crate::post::dof::DofTier,
 }
 
 impl Quality {
@@ -1745,6 +1759,7 @@ impl Quality {
             occlusion: false,
             specular_aa: false,
             anisotropy: 1,
+            dof: crate::post::dof::DofTier::Circular,
         }
     }
 

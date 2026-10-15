@@ -22,3 +22,6 @@ pub mod taa;
 pub mod fsr;
 /// Colour grading in the tonemap: parametric knobs and a `.cube` LUT (A.2).
 pub mod grading;
+/// Gather depth of field between TAA (node 17) and `post-hdr` (node 18): Filament's ring tier and
+/// Godot's circular tier (A.9).
+pub mod dof;

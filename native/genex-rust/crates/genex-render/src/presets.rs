@@ -13,6 +13,7 @@
 
 use crate::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs};
 use crate::post::bloom::CHAIN_RESOLUTION;
+use crate::post::dof::DofTier;
 use crate::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
@@ -343,6 +344,8 @@ fn high_row(quality: &mut Quality) {
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
     quality.lights = lights(1024, 16, 2);
+    // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
+    quality.dof = DofTier::Ring;
     with_geometry_features(quality);
 }
 
@@ -523,6 +526,12 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.environment.cube_size = quality.environment.cube_size.min(MOBILE_MAX_CUBE_PX);
     quality.environment.hdri_cube_size = quality.environment.hdri_cube_size.min(MOBILE_MAX_CUBE_PX);
     quality.environment.radiance_side_max = MOBILE_MAX_RADIANCE_PX;
+    let tier_probes = MOBILE_PROBES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
+    quality.environment.reflection_probes = quality.environment.reflection_probes.min(tier_probes);
+    quality.environment.probe_side_max = MOBILE_PROBE_SIDE_MAX_PX;
+    quality.environment.continuous_sky = false;
+    // Ten passes of Filament's ring gather are a desktop's: phones take Godot's circular gather.
+    quality.dof = DofTier::Circular;
 }
 
 /// The widest HDR environment map `class` keeps on the GPU (an equirect `width × width / 2`
