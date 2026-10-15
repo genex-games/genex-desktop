@@ -5,7 +5,8 @@
 //! café's door meets no wall, the street is lit by more than 200 binned local lights within the
 //! renderer's light table, the `where` probe follows the camera through the door, every fetched texture and sky map it asks for is a row of its fetch
 //! manifest (and every row is used), and its look is keyed low for dusk with no +EV patch (owner
-//! decision D2).
+//! decision D2). The A.13 detail pass: the furniture, the kerbs and the drains are scanned wood,
+//! marble, metal, granite and grate, and the crossing and the street carry their road markings.
 
 use genex::math::Vec3;
 use genex::render::{Environment, ExposureMode, Tonemap};
@@ -19,6 +20,14 @@ use showcase_game::{HARBOUR_GAME_DIR, harbour_assets, harbour_game};
 const PLANNED_SHOTS: [&str; 5] = ["street-wide", "puddle", "neon-alley", "cafe", "window-shafts"];
 /// The plan's exterior: 200+ binned local lights.
 const STREET_LIGHTS_MIN: usize = 200;
+/// The scans the A.13 detail pass dresses the blockout's furniture, kerbs and drains in.
+const DETAIL_SCANS: [&str; 5] = ["wood", "marble", "metal", "granite", "grate"];
+/// The road markings at least: two zebra crossings of six stripes, their stop lines and the centre
+/// line's dashes.
+const MARKINGS_MIN: usize = 24;
+/// How far a road marking or a drain's top stands proud of the asphalt (metres), at most: paint
+/// and a grate lie on the road, they are not kerbs.
+const ON_THE_ROAD: f32 = 0.01;
 
 fn runtime() -> Runtime<World> {
     let _ = harbour_assets();
@@ -66,6 +75,19 @@ fn textures(frame: &Frame) -> Vec<String> {
     paths.sort();
     paths.dedup();
     paths
+}
+
+/// The cubes of `frame` drawn under `tag`.
+fn tagged_cubes(frame: &Frame, tag: &str) -> Vec<Transform> {
+    frame
+        .draws()
+        .iter()
+        .filter(|draw| draw.tag == tag)
+        .filter_map(|draw| match &draw.shape {
+            Shape::Cube { transform, .. } => Some(*transform),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -238,4 +260,38 @@ fn the_tour_holds_each_shot_and_cuts_to_the_next_and_a_digit_holds_one() {
     assert_eq!(runtime.probes()["view"]["mode"], json!("cafe"));
     runtime.step(f64::from(u32::try_from(SHOT_HOLD_TICKS).expect("small")) * FIXED_STEP_MS);
     assert_eq!(runtime.camera(View::Game).expect("camera").position, SHOTS[3].eye, "a held shot stays");
+}
+
+// A.13 detail pass (renderer pass 2): the blockout drew its furniture, kerbs, lamp posts and frames
+// in flat colours and its streets bare of paint.
+#[test]
+fn the_furniture_kerbs_and_drains_are_scanned_wood_marble_metal_granite_and_grate() {
+    let mut runtime = runtime();
+    run(&mut runtime, 10);
+    let mut asked = Vec::new();
+    for shot in SHOTS {
+        asked.extend(textures(&runtime.frame(View::Named(shot.name)).expect("its frame")));
+    }
+    for scan in DETAIL_SCANS {
+        for map in ["albedo", "normal", "orm"] {
+            let path = format!("fetched/{scan}-{map}.jpg");
+            assert!(asked.contains(&path), "{path}: the detail pass dresses the blockout in it");
+        }
+    }
+}
+
+#[test]
+fn the_crossing_and_the_street_carry_road_markings_and_drains_lying_on_the_asphalt() {
+    let mut runtime = runtime();
+    run(&mut runtime, 10);
+    let frame = runtime.frame(View::Game).expect("a frame");
+    let markings = tagged_cubes(&frame, "markings");
+    assert!(markings.len() >= MARKINGS_MIN, "{} road markings", markings.len());
+    let drains = tagged_cubes(&frame, "drains");
+    assert!(!drains.is_empty(), "drains along the kerbs");
+    for cube in markings.iter().chain(&drains) {
+        let top = cube.translation.y + cube.scale.y * 0.5;
+        assert!((0.0..=ON_THE_ROAD).contains(&top), "{cube:?}: its top {top} lies on the asphalt");
+        assert!(outdoors(cube.translation + Vec3::Y * 0.5), "{cube:?}: in the street");
+    }
 }
