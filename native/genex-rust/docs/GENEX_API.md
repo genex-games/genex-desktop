@@ -474,7 +474,9 @@ highlight against sparkle; wrap it as built-in surfaces are, in uniform control 
 `let n = normalize(in.normal); let s = gx_filter_specular_v2(gx_surface_v2(in.world_position, n,
 albedo, 0.0, 0.2), dpdx(n), dpdy(n));` `gx_draw.prev_model` is the draw's model last frame
 (matched by its id) and `gx_draw.params.z` last frame's simulated seconds (`params.x` this
-frame's), so a vertex animation can place itself at both times. A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
+frame's), so a vertex animation can place itself at both times. The draws of one v2 material
+and one mesh are one instanced call, and `gx_draw` is still the drawing instance's own row (group
+1 holds the frame's read-only `gx_draws` table). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
 environment's SH9) on the display-ready frame after the tonemap, and `gx_depth`, `gx_normals` and
 `gx_motion` (the prepass's motion vectors, written whenever a source declares them; the
 formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; Level-3 passes do not read the sun's shadow maps yet, so grass or water drawn by a pass is not shadowed), and

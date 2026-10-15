@@ -457,7 +457,7 @@ impl GxFrameV2 {
     }
 }
 
-/// One v2 custom draw (`GxDrawV2`, group 1): its matrices this and last frame, its tint and
+/// One v2 custom draw (`GxDrawV2`, a row of group 1's `gx_draws`): its matrices this and last frame, its tint and
 /// per-draw parameters.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
@@ -760,7 +760,9 @@ pub const MATERIAL_V2_BINDINGS: &[V2Binding] = &[
     // The sun's contact-shadow mask (RQ4 review; render size, 1 = unshadowed): appended, so a
     // source that does not declare it builds against the map as before.
     bind(0, 19, "contact_shadow_mask", BindingKind::Texture2d, FRAGMENT, Neutral::One),
-    V2Binding { dynamic: true, ..buffer(1, 0, "gx_draw", BindingKind::Uniform, BOTH, size_of::<GxDrawV2>()) },
+    // The frame's draw rows (renderer pass 2 A.0, LG-20 step 3): the instances of a (material,
+    // mesh) pair are one call, each reading its row; `gx_draw` is the fragment's own row.
+    buffer(1, 0, "gx_draws", BindingKind::Storage, BOTH, size_of::<GxDrawV2>()),
 ];
 
 /// The v2 post-pass map (`gfx.post_pass` at api 2; `shaders/part2/post_v2.wgsl`). Group 1 is

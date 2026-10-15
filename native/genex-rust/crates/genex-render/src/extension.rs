@@ -36,6 +36,13 @@
 //! `gx_expose`); a v2 post pass runs at stage [`PostStage::Hdr`] (after TAA's place, before bloom
 //! and the tonemap) or [`PostStage::Ldr`] (v1's place).
 //!
+//! **Draw rows (renderer pass 2 A.0, LG-20 step 3).** A v2 material's group 1 is the frame's
+//! read-only table of draw rows (`gx_draws`, one [`crate::abi::GxDrawV2`] per draw), and the draws
+//! of one (material, mesh) pair are one instanced call. The geometry stage reads its instance's
+//! row; `gx_draw` is a private copy the fragment reads as before: when a source's fragment reads
+//! it, admission hands `fs_material` the instance's row (`@location(6)`) and opens its body by
+//! copying that row in ([`ValidatedExtension::source`] is the opened text, on the same lines).
+//!
 //! **Declared inputs.** The bindings a v2 source's entry points actually read (naga's usage
 //! analysis, not every prelude declaration) decide the frame inputs it asks the graph to produce
 //! ([`ValidatedExtension::inputs`]: depth, normals, motion, environment, the HDR scene). A binding
@@ -116,6 +123,8 @@ use crate::texture::{TextureData, TextureKind, rect_mip_chain};
 const DIAGNOSTIC_MAX_CHARS: usize = 2048;
 /// Bytes between custom draws' rows in the per-draw uniform: WebGPU core's uniform offset alignment.
 const DRAW_STRIDE: u64 = 256;
+/// Bytes of one v2 draw row in `gx_draws` (packed: the instances of a call are adjacent rows).
+const V2_ROW_BYTES: u64 = size_of::<GxDrawV2>() as u64;
 /// The linear game sampler's anisotropic filtering (WebGPU core allows up to 16): a tiled ground
 /// texture seen at a grazing angle stays sharp along the view instead of blurring to its far mips.
 const GAME_SAMPLER_ANISOTROPY: u16 = 16;
@@ -508,13 +517,125 @@ fn written_for_other_api(kind: ExtensionKind, api: u32, source: &str, context: &
 }
 
 fn admit(kind: ExtensionKind, api: u32, source: &str, context: &ExtensionContext) -> Result<ValidatedExtension, RenderError> {
-    let full = format!("{}\n{source}", kind.prelude(api));
+    let prelude = kind.prelude(api);
+    let full = format!("{prelude}\n{source}");
     let module = naga::front::wgsl::parse_str(&full).map_err(|error| invalid(error.emit_to_string(&full)))?;
     check_entry_points(kind, api, &module)?;
     let game = check_bindings(kind, api, &module)?;
     let (needs, info) = check_capabilities(&module, &full, context)?;
     let inputs = if api == ABI_V1 { RenderInputs::NONE } else { inputs_for(kind.v2_table(), &used_bindings(&module, &info)) };
+    let reads_row = kind == ExtensionKind::Material && api == ABI_V2 && fragment_reads(&module, &info, DRAW_ROW_GLOBAL);
+    let full = if reads_row { opened_draw_row(&full, prelude.len() + 1, context)? } else { full };
     Ok(ValidatedExtension { kind, api, source: full, game, needs, inputs })
+}
+
+/// The v2 material prelude's private copy of the fragment's draw row (`gx_draw`).
+const DRAW_ROW_GLOBAL: &str = "gx_draw";
+/// What [`opened_draw_row`] adds to `fs_material`'s parameters: the drawn instance's row, which
+/// the v2 geometry stage writes at this location (`GxVertexOutV2::gx_row`).
+const DRAW_ROW_PARAMETER: &str = "@location(6) @interpolate(flat) gx_row: u32, ";
+/// What it opens `fs_material`'s body with: the row the instance draws with.
+const DRAW_ROW_STORE: &str = " gx_draw = gx_draws[gx_row];";
+
+/// Whether the fragment entry point (or a function it calls) reads or writes the private global
+/// `name` (naga's usage analysis).
+fn fragment_reads(module: &naga::Module, info: &ModuleInfo, name: &str) -> bool {
+    let Some(entry) = module.entry_points.iter().position(|ep| ep.stage == naga::ShaderStage::Fragment) else { return false };
+    let Some((handle, _)) = module.global_variables.iter().find(|(_, var)| var.name.as_deref() == Some(name)) else { return false };
+    !info.get_entry_point(entry)[handle].is_empty()
+}
+
+/// `full` (the v2 material prelude, then the game's source from byte `game_at`) with the game's
+/// `fs_material` handed its instance's row and opened by copying that row into `gx_draw`
+/// (renderer pass 2 A.0, LG-20 step 3): the draws of one (material, mesh) pair are one instanced
+/// call, and a fragment reading `gx_draw.prev_model` or `gx_draw.params` reads its own draw's.
+/// Both insertions stay on the lines they are made on, so a diagnostic's line is unchanged; the
+/// opened source is admitted again (a refusal here is the renderer's fault, named as one).
+fn opened_draw_row(full: &str, game_at: usize, context: &ExtensionContext) -> Result<String, RenderError> {
+    let not_opened = || layout("the renderer could not hand `fs_material` its draw row");
+    let (parameters, body) = fs_material_openings(&full[game_at..]).ok_or_else(not_opened)?;
+    let mut opened = String::with_capacity(full.len() + DRAW_ROW_PARAMETER.len() + DRAW_ROW_STORE.len());
+    opened.push_str(&full[..game_at + parameters]);
+    opened.push_str(DRAW_ROW_PARAMETER);
+    opened.push_str(&full[game_at + parameters..game_at + body]);
+    opened.push_str(DRAW_ROW_STORE);
+    opened.push_str(&full[game_at + body..]);
+    let module = naga::front::wgsl::parse_str(&opened).map_err(|_| not_opened())?;
+    check_capabilities(&module, &opened, context).map_err(|_| not_opened())?;
+    Ok(opened)
+}
+
+/// One WGSL token of [`wgsl_tokens`]: an identifier or a single punctuation character, and the
+/// byte just after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WgslToken<'a> {
+    Word(&'a str, usize),
+    Mark(char, usize),
+}
+
+/// The identifiers and punctuation of `source` outside comments (`//` lines and nested `/* */`
+/// blocks); numbers read as words. Enough to find a function's parameter list and body: WGSL has
+/// no strings, and neither its attributes nor its types hold braces.
+fn wgsl_tokens(source: &str) -> Vec<WgslToken<'_>> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        if rest.starts_with(b"//") {
+            at += rest.iter().position(|b| *b == b'\n').unwrap_or(rest.len());
+        } else if rest.starts_with(b"/*") {
+            at += block_comment_len(rest);
+        } else if bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_' {
+            let end = at + rest.iter().position(|b| !(b.is_ascii_alphanumeric() || *b == b'_')).unwrap_or(rest.len());
+            tokens.push(WgslToken::Word(&source[at..end], end));
+            at = end;
+        } else {
+            let mark = source[at..].chars().next().unwrap_or(' ');
+            if !mark.is_whitespace() {
+                tokens.push(WgslToken::Mark(mark, at + mark.len_utf8()));
+            }
+            at += mark.len_utf8();
+        }
+    }
+    tokens
+}
+
+/// Bytes of the (nested) block comment `rest` starts with, to its end or the source's.
+fn block_comment_len(rest: &[u8]) -> usize {
+    let (mut depth, mut at) = (0usize, 0);
+    while at < rest.len() {
+        if rest[at..].starts_with(b"/*") {
+            (depth, at) = (depth + 1, at + 2);
+        } else if rest[at..].starts_with(b"*/") {
+            (depth, at) = (depth - 1, at + 2);
+            if depth == 0 {
+                return at;
+            }
+        } else {
+            at += 1;
+        }
+    }
+    rest.len()
+}
+
+/// Where `fn fs_material(` 's parameters start and its body's `{` ends, in `game`.
+fn fs_material_openings(game: &str) -> Option<(usize, usize)> {
+    let tokens = wgsl_tokens(game);
+    let named = tokens.windows(3).position(|t| {
+        matches!(t, [WgslToken::Word("fn", _), WgslToken::Word(name, _), WgslToken::Mark('(', _)] if *name == ExtensionKind::Material.fragment_entry())
+    })?;
+    let WgslToken::Mark('(', parameters) = tokens[named + 2] else { return None };
+    let mut depth = 1usize;
+    for token in &tokens[named + 3..] {
+        match (*token, depth) {
+            (WgslToken::Mark('(', _), _) => depth += 1,
+            (WgslToken::Mark(')', _), _) => depth = depth.checked_sub(1)?,
+            (WgslToken::Mark('{', body), 0) => return Some((parameters, body)),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn check_entry_points(kind: ExtensionKind, api: u32, module: &naga::Module) -> Result<(), RenderError> {
@@ -1342,16 +1463,28 @@ struct DrawRows {
 }
 
 impl DrawRows {
-    /// Grow to `bytes` when smaller; rows of `row_bytes` at [`DRAW_STRIDE`].
+    /// Grow to `bytes` when smaller; rows of `row_bytes` at [`DRAW_STRIDE`], one bound at a time
+    /// by its dynamic offset (v1).
     fn reserve(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64, row_bytes: u64) -> Result<(), RenderError> {
+        self.reserve_as(device, layout, bytes, BufferUsages::UNIFORM, Some(row_bytes))
+    }
+
+    /// Grow to `bytes` when smaller: one storage table of tightly packed rows, bound whole (v2's
+    /// `gx_draws`, LG-20 step 3).
+    fn reserve_table(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64) -> Result<(), RenderError> {
+        self.reserve_as(device, layout, bytes, BufferUsages::STORAGE, None)
+    }
+
+    fn reserve_as(&mut self, device: &Device, layout: &BindGroupLayout, bytes: u64, usage: BufferUsages, row_bytes: Option<u64>) -> Result<(), RenderError> {
         if self.buffer.as_ref().is_some_and(|b| b.size() >= bytes) {
             return Ok(());
         }
-        let grown = buffer(device, "custom draws", bytes.next_power_of_two(), BufferUsages::UNIFORM | BufferUsages::COPY_DST)?;
+        let grown = buffer(device, "custom draws", bytes.next_power_of_two(), usage | BufferUsages::COPY_DST)?;
+        let resource = row_bytes.map_or_else(|| grown.as_entire_binding(), |row| sized(&grown, row));
         self.group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("custom draws"),
             layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: sized(&grown, row_bytes) }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource }],
         }));
         self.buffer = Some(grown);
         Ok(())
@@ -1721,18 +1854,21 @@ impl CustomMaterials {
             return Ok(0);
         }
         let bytes = order.len() as u64 * DRAW_STRIDE;
+        let v2_bytes = order.len() as u64 * V2_ROW_BYTES;
         let mut v1_rows = vec![0u8; bytes as usize];
-        let mut v2_rows = vec![0u8; if v2_drawn { bytes as usize } else { 0 }];
+        let mut v2_rows = vec![0u8; if v2_drawn { v2_bytes as usize } else { 0 }];
         for (slot, i) in order.iter().copied().enumerate() {
             let (draw, prev) = (&draws[i], &prevs[i]);
             let normal = crate::instance::instance_row(&draw.model, [0.0; 3], 0.0, 0).normal;
             let params = [seconds, i as f32, prev_seconds, 0.0];
-            let at = slot * DRAW_STRIDE as usize;
             if self.api_of(draw.material) == ABI_V1 {
+                let at = slot * DRAW_STRIDE as usize;
                 let row = GpuCustomDraw { model: draw.model, normal, tint: draw.tint.map(|c| f32::from(c) / 255.0), params };
                 v1_rows[at..at + size_of::<GpuCustomDraw>()].copy_from_slice(bytemuck::bytes_of(&row));
                 continue;
             }
+            // v2 rows are packed by slot: an instanced call's instances are its run of slots.
+            let at = slot * V2_ROW_BYTES as usize;
             let tint = [0, 1, 2].map(|c| crate::texture::srgb_to_linear(draw.tint[c]));
             let row = GxDrawV2 { model: draw.model, normal, prev_model: prev.model, tint: [tint[0], tint[1], tint[2], f32::from(draw.tint[3]) / 255.0], params };
             v2_rows[at..at + size_of::<GxDrawV2>()].copy_from_slice(bytemuck::bytes_of(&row));
@@ -1740,7 +1876,7 @@ impl CustomMaterials {
         let device = &self.device;
         self.rows_v1.reserve(device, &self.v1.draw, bytes, size_of::<GpuCustomDraw>() as u64)?;
         if v2_drawn {
-            self.rows_v2.reserve(device, &self.v2.draw, bytes, size_of::<GxDrawV2>() as u64)?;
+            self.rows_v2.reserve_table(device, &self.v2.draw, v2_bytes)?;
         }
         if let Some(target) = &self.rows_v1.buffer {
             gpu.queue.write_buffer(target, 0, &v1_rows);
@@ -1766,8 +1902,27 @@ impl CustomMaterials {
         });
         let seen = |at: &usize| planes.as_ref().is_none_or(|planes| crate::cull::in_frustum(planes, rows[*at].bounds));
         let mut order: Vec<usize> = (0..draws.len()).filter(seen).collect();
-        order.sort_by_key(|at| draws[*at].material.0);
+        // LG-20 step 3: by mesh within a material, so each v2 pair's draws are one run (one call).
+        order.sort_by_key(|at| (draws[*at].material.0, draws[*at].mesh.raw()));
         order
+    }
+
+    /// This frame's draw calls ([`CustomMaterials::draw`]) as runs of its draws: a v2 material's
+    /// draws of one mesh are one instanced call (LG-20 step 3); a v1 draw is a call of its own
+    /// (its row is a uniform bound by offset).
+    fn calls(&self) -> Vec<std::ops::Range<usize>> {
+        let mut calls: Vec<std::ops::Range<usize>> = Vec::new();
+        for (at, draw) in self.frame.iter().enumerate() {
+            let joins = |run: &std::ops::Range<usize>| {
+                let first = &self.frame[run.start];
+                first.material == draw.material && first.mesh == draw.mesh && self.api_of(draw.material) != ABI_V1
+            };
+            match calls.last_mut() {
+                Some(run) if joins(run) => run.end = at + 1,
+                _ => calls.push(at..at + 1),
+            }
+        }
+        calls
     }
 
     /// Refresh the v1 frame bytes (and the v2 frame, when due) from the world pass's
@@ -1836,7 +1991,8 @@ impl CustomMaterials {
         pass.set_index_buffer(world.indices.slice(..), wgpu::IndexFormat::Uint32);
         let mut bound_api = None;
         let mut bound_material = None;
-        for (i, draw) in self.frame.iter().enumerate() {
+        for run in self.calls() {
+            let (i, draw) = (run.start, &self.frame[run.start]);
             let (Some(material), Some(mesh)) = (self.materials.get(draw.material.0 as usize), world.library.entry(draw.mesh)) else { continue };
             let api = material.extension.api;
             let v2_group = self.frame_group_v2.as_ref().map(|(_, group)| group);
@@ -1856,14 +2012,27 @@ impl CustomMaterials {
                 }
                 bound_material = Some(draw.material);
             }
-            pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
-            pass.draw_indexed(mesh.first_index..mesh.first_index + mesh.index_count, mesh.base_vertex, 0..1);
+            let indices = mesh.first_index..mesh.first_index + mesh.index_count;
+            if api == ABI_V1 {
+                pass.set_bind_group(1, draw_group, &[(i as u64 * DRAW_STRIDE) as u32]);
+                pass.draw_indexed(indices, mesh.base_vertex, 0..1);
+                continue;
+            }
+            // The run's rows are its slots of `gx_draws` (`instance_index` counts from the first).
+            pass.set_bind_group(1, draw_group, &[]);
+            pass.draw_indexed(indices, mesh.base_vertex, run.start as u32..run.end as u32);
         }
     }
 
     /// Draws this frame issues.
     pub fn frame_draws(&self) -> u32 {
         self.frame.len() as u32
+    }
+
+    /// Draw calls this frame's draws take ([`CustomMaterials::draw`]): one per v2 (material,
+    /// mesh) pair drawn, one per v1 draw (LG-20 step 3).
+    pub fn frame_draw_calls(&self) -> u32 {
+        self.calls().len() as u32
     }
 
     /// Pipeline binds this frame's draws make ([`CustomMaterials::draw`]: one per run of a
@@ -2382,6 +2551,52 @@ const _: () = assert!(size_of::<GxPostV2>() as u64 <= DRAW_STRIDE && size_of::<G
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LG-20 step 3: `fs_material`'s parameter list and body are found past comments that name it,
+    /// attributes on their own lines and nested parentheses, and a source without one (or with a
+    /// broken one) has none; nothing else is read as its openings.
+    #[test]
+    fn the_fragment_entry_is_opened_where_its_parameters_and_body_start() {
+        let cases: &[(&str, Option<(&str, &str)>)] = &[
+            ("@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return in.tint; }", Some(("in: GxMaterialInV2", " return in.tint; }"))),
+            ("// fn fs_material( is not here\n/* nor fn fs_material( /* nested */ here */\n@fragment\nfn fs_material(\n  in: GxMaterialInV2,\n) -> @location(0) vec4<f32>\n{\n  return in.tint;\n}", Some(("\n  in: GxMaterialInV2,", "\n  return in.tint;\n}"))),
+            ("@ fragment fn fs_material(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> { return p; }", Some(("@builtin(position) p", " return p; }"))),
+            ("fn fs_material_helper(x: f32) -> f32 { return x; } @fragment fn fs_material() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }", Some((") ->", " return vec4"))),
+            ("fn fs_material_helper(x: f32) -> f32 { return x; }", None),
+            ("@fragment fn fs_material(in: GxMaterialInV2 -> @location(0) vec4<f32> { return in.tint; }", None),
+            ("@fragment fn fs_material(in: GxMaterialInV2)) -> vec4<f32> { return in.tint; }", None),
+            ("/* fn fs_material(in: X) { */", None),
+            ("", None),
+        ];
+        for (source, wanted) in cases {
+            let found = fs_material_openings(source).map(|(parameters, body)| (&source[parameters..], &source[body..]));
+            match (found, wanted) {
+                (Some((parameters, body)), Some((after_paren, after_brace))) => {
+                    assert!(parameters.starts_with(after_paren), "{source:?}: parameters at {parameters:?}");
+                    assert!(body.starts_with(after_brace), "{source:?}: body at {body:?}");
+                }
+                (found, wanted) => assert_eq!(found.is_some(), wanted.is_some(), "{source:?}: {found:?}"),
+            }
+        }
+    }
+
+    /// A v2 material reading `gx_draw` compiles with its draw row handed in (on the same lines); one
+    /// that does not is compiled as written.
+    #[test]
+    fn a_v2_material_reading_its_draw_row_is_opened_and_one_that_does_not_is_kept() {
+        let context = ExtensionContext::new(Features::empty(), Features::empty());
+        let reads = "@fragment\nfn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> {\n  return vec4<f32>(gx_draw.params.y);\n}";
+        let helper = "fn row_time() -> f32 { return gx_draw.params.x; }\n@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return vec4<f32>(row_time()); }";
+        let ignores = "@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> { return in.tint; }";
+        for source in [reads, helper] {
+            let admitted = validate_api(ExtensionKind::Material, ABI_V2, source, &context).expect("admitted");
+            let game = &admitted.source()[MATERIAL_V2_PRELUDE.len() + 1..];
+            assert!(game.contains(DRAW_ROW_PARAMETER) && game.contains(DRAW_ROW_STORE), "{game}");
+            assert_eq!(game.lines().count(), source.lines().count(), "the opened source keeps its lines");
+        }
+        let kept = validate_api(ExtensionKind::Material, ABI_V2, ignores, &context).expect("admitted");
+        assert_eq!(kept.source(), format!("{MATERIAL_V2_PRELUDE}\n{ignores}"));
+    }
 
     /// Renderer pass 2, P2-0.8b (T-04): a custom draw carries the draw id current when it was
     /// drawn (`frame.id(key)` reaches it through the facade), so its motion follows the id.

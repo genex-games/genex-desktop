@@ -145,8 +145,11 @@ indices and letting the cull write each instance's index range is the follow-up 
 
 Level-2 materials and post passes declare `[[wgsl]] api = 1 | 2`. API 2 reads the v2 group map
 of `src/abi.rs` (`MATERIAL_V2_BINDINGS`, `POST_V2_BINDINGS`): the frame (`GxFrameV2`), depth,
-normals, motion, the environment and the HDR scene; group 2 is the game's. API 1 keeps loading
-unchanged. Level-3 passes register at stage ids (`before-cull`, `after-prepass`, `after-opaque`,
+normals, motion, the environment and the HDR scene; group 2 is the game's. A v2 material's group
+1 is the frame's read-only `gx_draws` table, and the draws of one (material, mesh) pair are one
+instanced call; a fragment reading `gx_draw` is handed its instance's row (`@location(6)`) and
+opens by copying it (`extension::opened_draw_row`), so `gx_draw` reads as before. API 1 keeps
+loading unchanged. Level-3 passes register at stage ids (`before-cull`, `after-prepass`, `after-opaque`,
 `after-transparent`, `post-hdr`, `post`) that never change once shipped.
 
 ## Meshlets and Hi-Z occlusion (R2)

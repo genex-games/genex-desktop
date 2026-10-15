@@ -79,8 +79,14 @@ struct GxDrawV2 {
     params: vec4<f32>,
 }
 
-// Group 1: the draw.
-@group(1) @binding(0) var<uniform> gx_draw: GxDrawV2;
+// Group 1: the frame's draw rows, one per draw (renderer pass 2 A.0, LG-20 step 3). The draws of
+// one (material, mesh) pair are one instanced call, so each vertex reads its instance's row.
+@group(1) @binding(0) var<storage, read> gx_draws: array<GxDrawV2>;
+
+// The fragment's own draw: the renderer opens `fs_material` with `gx_draw = gx_draws[..]` when the
+// source reads it (`extension::open_draw_row`), so `gx_draw.prev_model` and `gx_draw.params` read
+// the drawn instance's row as they read a draw's own uniform before.
+var<private> gx_draw: GxDrawV2;
 
 struct GxMaterialInV2 {
     // `gx_clip_position` of the world position: `@invariant`, as every depth writer's is.
@@ -95,17 +101,32 @@ struct GxMaterialInV2 {
     @location(5) clip_previous: vec4<f32>,
 }
 
+// What the geometry stage writes: `GxMaterialInV2` and the instance's row (`gx_draws`' index),
+// which a `fs_material` reading `gx_draw` is handed at @location(6).
+struct GxVertexOutV2 {
+    @builtin(position) @invariant position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tint: vec4<f32>,
+    @location(4) clip_current: vec4<f32>,
+    @location(5) clip_previous: vec4<f32>,
+    @location(6) @interpolate(flat) gx_row: u32,
+}
+
 @vertex
-fn gx_vs_material_v2(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>) -> GxMaterialInV2 {
-    let world = gx_draw.model * vec4<f32>(position, 1.0);
-    var out: GxMaterialInV2;
+fn gx_vs_material_v2(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>, @builtin(instance_index) instance: u32) -> GxVertexOutV2 {
+    let draw = gx_draws[instance];
+    let world = draw.model * vec4<f32>(position, 1.0);
+    var out: GxVertexOutV2;
     out.position = gx_clip_position(frame.view_proj, world, GX_NO_JITTER);
     out.world_position = world.xyz;
-    out.normal = normalize((gx_draw.normal * vec4<f32>(normal, 0.0)).xyz);
+    out.normal = normalize((draw.normal * vec4<f32>(normal, 0.0)).xyz);
     out.uv = uv;
-    out.tint = gx_draw.tint;
+    out.tint = draw.tint;
     out.clip_current = frame.unjittered_view_proj * world;
-    out.clip_previous = frame.prev_view_proj * (gx_draw.prev_model * vec4<f32>(position, 1.0));
+    out.clip_previous = frame.prev_view_proj * (draw.prev_model * vec4<f32>(position, 1.0));
+    out.gx_row = instance;
     return out;
 }
 

@@ -1082,6 +1082,12 @@ impl FrameRenderer {
         (self.materials.frame_draws(), self.materials.frame_pipeline_binds())
     }
 
+    /// The draw calls the last frame's Level-2 material draws took (renderer pass 2 A.0, LG-20
+    /// step 3: one instanced call per run of a v2 (material, mesh) pair).
+    pub fn custom_material_draw_calls(&self) -> u32 {
+        self.materials.frame_draw_calls()
+    }
+
     /// Bytes the frame holds on the GPU beside the mesh library: the renderer's pooled targets,
     /// the post passes' scratch copies, the meshlet path's tables and working buffers (0 on the
     /// instance path) and the material texture arrays as allocated. What a memory budget is

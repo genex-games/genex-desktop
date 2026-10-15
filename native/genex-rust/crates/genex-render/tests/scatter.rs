@@ -5,8 +5,9 @@
 //!   compaction over (instance, view)), so its time grows sub-linearly with the batch, and its
 //!   visible list and indirect arguments equal the CPU cull's, slot for slot.
 //!
-//! - LG-20: Level-2 material draws outside the camera's view are not drawn, and a frame's draws
-//!   bind each material's pipeline once.
+//! - LG-20: Level-2 material draws outside the camera's view are not drawn, a frame's draws
+//!   bind each material's pipeline once, and the draws of one (material, mesh) pair are one
+//!   instanced call whose instances each read their own `gx_draw` row.
 //! - LG-13: the budget ledger counts the GPU buffers the renderer holds (`BudgetKind::Buffers`):
 //!   its model of a frame's buffers is within 5% of the bytes the renderer really holds, and the
 //!   buffers it names are the live ones.
@@ -196,6 +197,56 @@ fn metal_level_two_draws_off_screen_cost_nothing_and_bind_each_material_once() {
     assert_eq!(alone.digest(), with_hidden.digest(), "draws behind the camera change nothing on screen");
     assert_eq!((drawn_alone, binds_alone), (10, 2), "ten draws, two materials: two pipeline binds");
     assert_eq!((drawn, binds), (10, 2), "the ninety draws behind the camera are culled on the CPU");
+}
+
+/// A v2 material whose fragment reads its draw's own row (`gx_draw`): the model's translation and
+/// the draw's index in the frame, so a row shared by the instances of a call would show.
+const DRAW_ROW_V2: &str = "@fragment fn fs_material(in: GxMaterialInV2) -> @location(0) vec4<f32> {
+    let place = gx_draw.model[3].xyz;
+    let moved = gx_draw.prev_model[3].x - place.x;
+    return vec4<f32>(fract(gx_draw.params.y * 0.13), place.x * 0.05 + 0.5, in.tint.b + moved, 1.0);
+}";
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_repeated_level_two_pairs_draw_as_one_instanced_call_each_reading_its_own_row() {
+    // LG-20 step 3: the draws of one (material, mesh) pair are one instanced call, and a fragment
+    // that reads `gx_draw` (its model, last frame's model, its index in the frame) still reads its
+    // own draw's row. The picture equals the one drawn with a material per draw (no pair repeats,
+    // so nothing is instanced).
+    use genex_render::abi::ABI_V2;
+    use genex_render::immediate::{FrameRenderer, ImmediateFrame};
+    let Some(gpu) = gpu() else { return };
+    let mut frames = FrameRenderer::new(&gpu, WIDTH, HEIGHT, genex_render::RenderOptions::default()).expect("renderer");
+    let sources = [TINT_V2, DRAW_ROW_V2];
+    let shared = sources.map(|source| frames.add_material_api(&gpu, ABI_V2, source, &[], &[]).expect("a v2 material"));
+    let own: Vec<_> = (0..12).map(|i| frames.add_material_api(&gpu, ABI_V2, sources[i % 2], &[], &[]).expect("a v2 material")).collect();
+    let camera = CameraDesc::look_at([0.0, 3.0, 14.0], [0.0, 1.0, 0.0]);
+    let draws = |material: &dyn Fn(usize) -> genex_render::extension::CustomMaterialId| {
+        let mut frame = ImmediateFrame::new(camera, [16, 18, 24, 255]);
+        // Twelve on screen: two rows, cubes and spheres alternating, the two sources alternating.
+        for i in 0..12 {
+            let mesh = if (i / 2) % 2 == 0 { MeshId::CUBE } else { MeshId::SPHERE };
+            let (x, y) = ((i % 6) as f32 * 2.2 - 5.5, if i < 6 { 0.5 } else { 3.0 });
+            frame.custom(mesh, translation(x, y, 0.0), material(i), [200, 120 + 10 * i as u8, 40 + 15 * i as u8, 255]);
+        }
+        frame
+    };
+    frames.render(&gpu, &draws(&|i| own[i]), genex_render::CullPath::Gpu, None).expect("frame");
+    frames.render(&gpu, &draws(&|i| own[i]), genex_render::CullPath::Gpu, None).expect("frame");
+    let reference = frames.capture(&gpu).expect("capture");
+    let calls_alone = frames.custom_material_draw_calls();
+    frames.render(&gpu, &draws(&|i| shared[i % 2]), genex_render::CullPath::Gpu, None).expect("frame");
+    frames.render(&gpu, &draws(&|i| shared[i % 2]), genex_render::CullPath::Gpu, None).expect("frame");
+    let instanced = frames.capture(&gpu).expect("capture");
+    let calls = frames.custom_material_draw_calls();
+    let (drawn, binds) = frames.custom_material_draws();
+    write_evidence("lg20-step3-per-draw", &reference);
+    write_evidence("lg20-step3-instanced", &instanced);
+    assert_eq!(calls_alone, 12, "a material per draw: every draw is its own call");
+    assert_eq!((drawn, binds), (12, 2), "twelve draws over two materials");
+    assert_eq!(calls, 4, "two materials over two meshes: four instanced calls");
+    assert_eq!(reference.digest(), instanced.digest(), "every instance reads its own draw's row");
 }
 
 /// The ledger's model of a frame's buffers may differ from the bytes held by at most this share.
