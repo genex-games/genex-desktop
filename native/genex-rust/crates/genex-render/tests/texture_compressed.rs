@@ -4,6 +4,11 @@
 //! a quarter of RGBA8's bytes. The compression features are renderer-owned: requested whenever
 //! the adapter offers them.
 //!
+//! Wired in (A6.4): a renderer set to a family (`Renderer::set_texture_family`, before its first
+//! texture) stores its larger size classes in it and keeps class 0 (256) RGBA8, so an image
+//! without a family file still loads there; the facade loads `<stem>.<family>.ktx2` beside a
+//! texture when the game ships one.
+//!
 //! The CPU rows run everywhere. The GPU rows are `#[ignore]`d and every name contains `metal`:
 //!
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p genex-render \
@@ -14,7 +19,8 @@ use genex_render::device_class::DeviceClass;
 use genex_render::floor::RENDERER_FEATURES;
 use genex_render::settings::{QualityPreset, TextureClass};
 use genex_render::texture::{
-    ClassArrays, CompressedTexture, TextureData, TextureFamily, TextureKind, material_arrays, mip_level_count, preset_textures, read_ktx2,
+    ClassArrays, CompressedTexture, TextureData, TextureFamily, TextureKind, family_file, material_arrays, mip_level_count, preset_textures,
+    read_ktx2,
 };
 use genex_render::{Gpu, RenderCode};
 use ktx2::{Format, SupercompressionScheme};
@@ -309,7 +315,7 @@ fn metal_a_ktx2_chain_lands_in_its_class_byte_for_byte_for_every_family_the_adap
 
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
-fn metal_a_larger_chain_drops_its_top_levels_into_a_capped_class_and_rgba8_is_refused_by_compressed_arrays() {
+fn metal_a_larger_chain_drops_its_top_levels_into_a_capped_class_and_an_image_lands_in_the_rgba8_class() {
     let Some(gpu) = gpu() else { return };
     if !TextureFamily::Bc7.usable(gpu.device.features()) {
         eprintln!("skipped: no BC on this adapter");
@@ -323,14 +329,154 @@ fn metal_a_larger_chain_drops_its_top_levels_into_a_capped_class_and_rgba8_is_re
     assert_eq!(id.class(), TextureClass::S512, "capped at 512 on mobile-mid: levels from 512 down");
     let texture = arrays.texture(TextureClass::S512, TextureKind::Color);
     assert_eq!(read_level(&gpu, texture, TextureFamily::Bc7, 0, 0), big.levels[2], "the 512 level of the 2048 chain");
-    let rgba = TextureData::rgba8(4, 4, vec![255; 64]).expect("rgba");
-    let refused = arrays.add(&gpu.device, &gpu.queue, &rgba, TextureKind::Color).expect_err("BC7 arrays hold BC7 only");
-    assert_eq!(refused.code(), RenderCode::TextureInvalid);
+    // Pass 2 A6.4 wiring flipped "BC7 arrays hold BC7 only, an image is refused texture-invalid":
+    // class 0 stays RGBA8 under every family, so an image (even a large one) lands there.
+    let rgba = TextureData::rgba8(1024, 1024, vec![255; 1024 * 1024 * 4]).expect("rgba");
+    let image = arrays.add(&gpu.device, &gpu.queue, &rgba, TextureKind::Color).expect("an image lands in the RGBA8 class");
+    assert_eq!(image.class(), TextureClass::S256, "resampled into class 0, the only RGBA8 class");
+    assert_eq!(arrays.texture(TextureClass::S256, TextureKind::Color).format(), wgpu::TextureFormat::Rgba8UnormSrgb);
     let astc = read_ktx2(&Ktx2::chain(Format::ASTC_4x4_SRGB_BLOCK, 256, 1).bytes()).expect("astc");
     let refused = arrays.add_compressed(&gpu.device, &gpu.queue, &astc, TextureKind::Color).expect_err("another family");
     assert_eq!(refused.code(), RenderCode::TextureInvalid);
-    let small: CompressedTexture = read_ktx2(&Ktx2::chain(Format::BC7_SRGB_BLOCK, 64, 1).bytes()).expect("small");
-    let refused = arrays.add_compressed(&gpu.device, &gpu.queue, &small, TextureKind::Color).expect_err("below the 256 class");
+    let small: CompressedTexture = read_ktx2(&Ktx2::chain(Format::BC7_SRGB_BLOCK, 256, 1).bytes()).expect("small");
+    let refused = arrays.add_compressed(&gpu.device, &gpu.queue, &small, TextureKind::Color).expect_err("below the family's 512 class");
+    assert_eq!(refused.code(), RenderCode::TextureInvalid);
+    let linear = read_ktx2(&Ktx2::chain(Format::BC7_UNORM_BLOCK, 512, 1).bytes()).expect("linear");
+    let refused = arrays.add_compressed(&gpu.device, &gpu.queue, &linear, TextureKind::Color).expect_err("a linear chain for a colour slot");
     assert_eq!(refused.code(), RenderCode::TextureInvalid);
     gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("uploads finish");
+}
+
+#[test]
+fn a_family_file_sits_beside_its_source_named_for_its_family() {
+    let cases = [
+        ("textures/rock.png", TextureFamily::Bc7, "textures/rock.bc.ktx2"),
+        ("rock.jpg", TextureFamily::Astc4x4, "rock.astc.ktx2"),
+        ("a.b/rock", TextureFamily::Etc2Rgba8, "a.b/rock.etc2.ktx2"),
+        ("a.b/rock.basis.ktx2", TextureFamily::Bc7, "a.b/rock.basis.bc.ktx2"),
+        (".hidden", TextureFamily::Rgba8, ".rgba8.ktx2"),
+    ];
+    for (path, family, wanted) in cases {
+        assert_eq!(family_file(path, family), wanted, "{path}");
+    }
+    // The family spellings and features are the shared texture table's (the import step and
+    // genex-assets hold to the same fixture).
+    let table: serde_json::Value = serde_json::from_slice(&import_fixture("texture-table.json")).expect("the texture table");
+    let features = table["features"].as_object().expect("features");
+    let mut wires: Vec<&str> = TextureFamily::ALL.iter().map(|family| family.wire()).collect();
+    let mut listed: Vec<&str> = features.keys().map(String::as_str).collect();
+    wires.sort_unstable();
+    listed.sort_unstable();
+    assert_eq!(wires, listed, "one spelling per family");
+    for family in TextureFamily::ALL {
+        let feature = features[family.wire()].as_str();
+        let named = RENDERER_FEATURES.iter().find(|(f, _)| *f == family.feature()).map(|(_, name)| *name);
+        assert_eq!(named, feature, "{family:?}'s feature");
+    }
+}
+
+#[test]
+fn a_device_takes_its_forms_compressed_families_best_first() {
+    let all = Features::TEXTURE_COMPRESSION_BC | Features::TEXTURE_COMPRESSION_ASTC | Features::TEXTURE_COMPRESSION_ETC2;
+    assert_eq!(TextureFamily::usable_compressed(all, false), [TextureFamily::Bc7, TextureFamily::Astc4x4, TextureFamily::Etc2Rgba8]);
+    assert_eq!(TextureFamily::usable_compressed(all, true), [TextureFamily::Astc4x4, TextureFamily::Etc2Rgba8, TextureFamily::Bc7]);
+    assert_eq!(TextureFamily::usable_compressed(Features::TEXTURE_COMPRESSION_ETC2, true), [TextureFamily::Etc2Rgba8]);
+    assert!(TextureFamily::usable_compressed(Features::empty(), false).is_empty());
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_renderer_set_to_a_family_draws_its_compressed_texture_at_a_quarter_of_the_bytes() {
+    use genex_render::Renderer;
+    use genex_render::scene::{CameraDesc, Material, MeshId, Scene, translation};
+    let Some(gpu) = gpu() else { return };
+    let Some(family) = TextureFamily::usable_compressed(gpu.device.features(), false).first().copied() else {
+        eprintln!("skipped: no compressed family on this adapter");
+        return;
+    };
+    let format = match family {
+        TextureFamily::Bc7 => Format::BC7_SRGB_BLOCK,
+        TextureFamily::Astc4x4 => Format::ASTC_4x4_SRGB_BLOCK,
+        _ => Format::ETC2_R8G8B8A8_SRGB_BLOCK,
+    };
+    let chain = read_ktx2(&Ktx2::chain(format, 1024, 7).bytes()).expect("a chain");
+    let image = TextureData::rgba8(1024, 1024, (0..1024 * 1024 * 4).map(|i| (i % 251) as u8).collect()).expect("an image");
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let quality = genex_render::presets::preset_quality(QualityPreset::High, class);
+    let scene = |texture| {
+        let mut scene = Scene::new(CameraDesc::look_at([0.0, 0.5, 3.0], [0.0, 0.0, 0.0]), [10, 10, 10, 255]);
+        scene.draw(MeshId::CUBE, translation(0.0, 0.0, 0.0), Material { base_texture: Some(texture), ..Material::color([255, 255, 255, 255]) });
+        scene
+    };
+    // The same 1024 texture as an image in RGBA8 arrays, and as the family's chain.
+    let mut plain = Renderer::new(&gpu, 320, 180).expect("renderer");
+    plain.set_quality(&quality);
+    let id = plain.add_texture(&gpu, &image, TextureKind::Color).expect("image");
+    plain.render(&gpu, &scene(id), genex_render::CullPath::Gpu).expect("frame");
+    let mut compressed = Renderer::new(&gpu, 320, 180).expect("renderer");
+    compressed.set_quality(&quality);
+    compressed.set_texture_family(&gpu, family).expect("set before any texture");
+    let id = compressed.add_compressed_texture(&gpu, &chain, TextureKind::Color).expect("chain");
+    assert_eq!(id.class(), TextureClass::S1024);
+    compressed.render(&gpu, &scene(id), genex_render::CullPath::Gpu).expect("frame");
+    let drawn = compressed.capture(&gpu).expect("capture");
+    let lit = drawn.bgra().chunks(4).filter(|px| px[0] > 20 || px[1] > 20 || px[2] > 20).count();
+    assert!(lit > 1000, "the cube draws with its compressed texture ({lit} lit pixels)");
+    let ratio = plain.texture_bytes() as f64 / compressed.texture_bytes() as f64;
+    eprintln!("{family:?}: {} RGBA8 bytes against {} compressed ({ratio:.2}x)", plain.texture_bytes(), compressed.texture_bytes());
+    assert!(ratio >= 3.5, "a quarter of the bytes: {ratio:.2}x");
+    // The family is fixed with the first texture: a later change is refused, the arrays kept.
+    let refused = compressed.set_texture_family(&gpu, TextureFamily::Rgba8).expect_err("too late");
+    assert_eq!(refused.code(), RenderCode::TextureInvalid);
+    assert_eq!(compressed.texture_family(), family);
+    // An image still loads, into the RGBA8 class.
+    let small = compressed.add_texture(&gpu, &image, TextureKind::Color).expect("an image beside the chain");
+    assert_eq!(small.class(), TextureClass::S256);
+    // A family the device does not offer is refused before any array is made.
+    let mut other = Renderer::new(&gpu, 64, 64).expect("renderer");
+    let missing = [TextureFamily::Bc7, TextureFamily::Astc4x4, TextureFamily::Etc2Rgba8].into_iter().find(|family| !family.usable(gpu.device.features()));
+    if let Some(missing) = missing {
+        assert_eq!(other.set_texture_family(&gpu, missing).expect_err("not offered").code(), RenderCode::TextureInvalid);
+    }
+    other.set_texture_family(&gpu, family).expect("offered");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_device_loss_replays_the_family_and_its_compressed_textures() {
+    use genex_render::device_loss::Resilient;
+    use genex_render::scene::{CameraDesc, Material, MeshId, translation};
+    use genex_render::{CullPath, ImmediateFrame, RenderOptions};
+    let Some(gpu) = gpu() else { return };
+    let Some(family) = TextureFamily::usable_compressed(gpu.device.features(), false).first().copied() else {
+        eprintln!("skipped: no compressed family on this adapter");
+        return;
+    };
+    let format = match family {
+        TextureFamily::Bc7 => Format::BC7_SRGB_BLOCK,
+        TextureFamily::Astc4x4 => Format::ASTC_4x4_SRGB_BLOCK,
+        _ => Format::ETC2_R8G8B8A8_SRGB_BLOCK,
+    };
+    let bytes = Ktx2::chain(format, 512, 11).bytes();
+    let mut resilient = Resilient::new(gpu, 160, 90, RenderOptions::default(), Gpu::headless).expect("resilient");
+    let class = DeviceClass::from_wire("desktop-high").expect("class");
+    let quality = genex_render::presets::preset_quality(QualityPreset::High, class);
+    resilient.renderer_mut().renderer_mut().set_quality(&quality);
+    assert!(resilient.renderer().renderer().compressed_families().contains(&family), "offered at the high preset");
+    resilient.set_texture_family(family).expect("the family");
+    let kept = resilient.add_compressed_texture(&read_ktx2(&bytes).expect("chain"), TextureKind::Color).expect("kept");
+    let again: genex_render::device_loss::CompressedSource = std::sync::Arc::new(move || read_ktx2(&bytes));
+    let sourced = resilient.add_compressed_texture_from(&again().expect("chain"), TextureKind::Color, again).expect("sourced");
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 1.5, 4.0], [0.0, 0.0, 0.0]), [20, 24, 32, 255]);
+    frame.mesh(MeshId::CUBE, translation(-0.8, 0.0, 0.0), Material::color([255, 255, 255, 255]).with_base_texture(kept));
+    frame.mesh(MeshId::CUBE, translation(0.8, 0.0, 0.0), Material::color([255, 255, 255, 255]).with_base_texture(sourced));
+    resilient.render(&frame, CullPath::Gpu, None).expect("frame");
+    let before = resilient.capture().expect("capture").digest();
+    resilient.force_device_loss();
+    assert!(resilient.recover().expect("recovered"));
+    assert_eq!(resilient.renderer().renderer().texture_family(), family, "the family comes back before the textures");
+    // A recovered renderer starts from the default settings: the caller sets its quality again.
+    resilient.renderer_mut().renderer_mut().set_quality(&quality);
+    resilient.render(&frame, CullPath::Gpu, None).expect("frame after recovery");
+    assert_eq!(resilient.capture().expect("capture").digest(), before, "the compressed textures replay to the same picture");
 }

@@ -26,7 +26,7 @@ use wgpu::{Device, Queue, Texture, TextureView};
 // KTX2 and the compressed families (A6.4) live beside the arrays they fill.
 #[path = "texture_ktx2.rs"]
 mod texture_ktx2;
-pub use texture_ktx2::{CompressedTexture, TextureFamily, read_ktx2};
+pub use texture_ktx2::{CompressedTexture, TextureFamily, family_file, read_ktx2};
 
 use crate::budget::MaterialClass;
 use crate::caps::check_texture;
@@ -570,6 +570,11 @@ impl TextureArray {
         }
     }
 
+    /// The bytes the textures it holds take (their layers' chains, not the array's reservation).
+    fn held_bytes(&self) -> u64 {
+        self.family.chain_bytes(self.side) * u64::from(self.layers)
+    }
+
     /// The refusal of a texture past the cap.
     fn full(&self) -> RenderError {
         RenderError::refused(RenderCode::TextureTooLarge, format!("{} {:?} textures already", self.cap, self.kind))
@@ -641,23 +646,24 @@ impl ClassArrays {
         ClassArrays::with_family(device, class, quality, TextureFamily::Rgba8)
     }
 
-    /// The arrays `class` holds at `quality`, stored in `family` (A6.4): a compressed family's
-    /// arrays take only [`CompressedTexture`]s of that family ([`ClassArrays::add_compressed`]) and
-    /// are always pre-sized; [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
+    /// The arrays `class` holds at `quality`, the larger size classes stored in `family` (A6.4):
+    /// they take only [`CompressedTexture`]s of that family ([`ClassArrays::add_compressed`]) and
+    /// are always pre-sized. Size class 0 (256) stays RGBA8 in every family, so an image without a
+    /// compressed file (a generated texture, a source the import step could not encode) still
+    /// loads, at most 256 texels a side; [`TextureFamily::Rgba8`] is [`ClassArrays::new`].
     pub fn with_family(device: &Device, class: DeviceClass, quality: TextureQuality, family: TextureFamily) -> ClassArrays {
         let caps = class_layer_caps(class, quality);
-        let growing = |texture_class: TextureClass| {
-            family == TextureFamily::Rgba8 && quality == TextureQuality::OFF && texture_class == TextureClass::S256
-        };
+        let growing = quality == TextureQuality::OFF;
         let arrays = TextureClass::ALL
             .into_iter()
             .map(|texture_class| {
                 let (side, cap) = (texture_class.side(), caps[texture_class.index() as usize]);
+                let stored = if texture_class == TextureClass::S256 { TextureFamily::Rgba8 } else { family };
                 [TextureKind::Color, TextureKind::Data].map(|kind| {
-                    if growing(texture_class) {
+                    if growing && texture_class == TextureClass::S256 {
                         TextureArray::new(device, kind)
                     } else {
-                        TextureArray::presized(device, kind, family, side, cap)
+                        TextureArray::presized(device, kind, stored, side, cap)
                     }
                 })
             })
@@ -665,7 +671,7 @@ impl ClassArrays {
         ClassArrays { class, quality, family, arrays }
     }
 
-    /// The family the arrays are stored in.
+    /// The family the larger size classes are stored in (class 0 is always RGBA8).
     pub fn family(&self) -> TextureFamily {
         self.family
     }
@@ -695,7 +701,6 @@ impl ClassArrays {
     /// `texture-too-large` only when every class is full. A [`TextureKind::Normal`] texture goes
     /// through [`ClassArrays::add_normal_map`].
     pub fn add(&mut self, device: &Device, queue: &Queue, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
-        self.check_rgba8()?;
         if kind == TextureKind::Normal {
             return self.add_normal_map(device, queue, data);
         }
@@ -708,7 +713,6 @@ impl ClassArrays {
     /// Add a tangent-space normal map (a [`TextureKind::Normal`] texture in the data arrays) with
     /// Toksvig mips when the quality says so ([`normal_mip_chain`]).
     pub fn add_normal_map(&mut self, device: &Device, queue: &Queue, data: &TextureData) -> Result<TextureId, RenderError> {
-        self.check_rgba8()?;
         let toksvig = self.quality.toksvig;
         self.place(device, queue, data, TextureKind::Normal, |side| normal_mip_chain(data, side, toksvig))
     }
@@ -722,8 +726,11 @@ impl ClassArrays {
         chain: impl FnOnce(u32) -> Vec<TextureData>,
     ) -> Result<TextureId, RenderError> {
         let at = usize::from(kind.is_data());
-        let room = |class: &TextureClass| self.arrays[class.index() as usize][at].has_room();
-        let largest = TextureClass::ALL.into_iter().rev().find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
+        // An image goes only where RGBA8 is stored: every class, or class 0 under a compressed
+        // family (A6.4).
+        let rgba8 = |class: &TextureClass| self.arrays[class.index() as usize][at].family == TextureFamily::Rgba8;
+        let room = |class: &TextureClass| rgba8(class) && self.arrays[class.index() as usize][at].has_room();
+        let largest = TextureClass::ALL.into_iter().rev().filter(rgba8).find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
         let wanted = class_for_source(data.width, data.height, largest.min(self.quality.max_class));
         // The wanted class or a smaller one (resampled down), else a larger one (resampled up:
         // memory the ledger reserved anyway) rather than refusing while any class has room.
@@ -737,29 +744,27 @@ impl ClassArrays {
         array.add_chain(device, queue, chain(side), kind)
     }
 
-    /// Refused `texture-invalid` unless the arrays hold RGBA8 (an RGBA8 image is never encoded here).
-    fn check_rgba8(&self) -> Result<(), RenderError> {
-        if self.family == TextureFamily::Rgba8 {
-            return Ok(());
-        }
-        Err(RenderError::refused(RenderCode::TextureInvalid, format!("the arrays hold {:?}, not RGBA8 images", self.family)))
-    }
-
     /// Add a compressed texture of the arrays' family as `kind` (A6.4): its chain is never
-    /// resampled, so it goes in the largest class with room that its own size, the quality and the
-    /// caps allow, its top levels dropped to that class's side. Refused `texture-invalid` for
-    /// another family or a texture under the smallest class, `texture-too-large` when every class
-    /// it fits is full.
+    /// resampled, so it goes in the largest class of the family with room that its own size, the
+    /// quality and the caps allow, its top levels dropped to that class's side. Refused
+    /// `texture-invalid` for another family, a colour space other than `kind`'s (sRGB colour,
+    /// linear data) or a texture under the family's smallest class (a caller loads its image
+    /// instead), `texture-too-large` when every class it fits is full.
     pub fn add_compressed(&mut self, device: &Device, queue: &Queue, texture: &CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
-        if texture.family() != self.family {
+        let compressed = self.family != TextureFamily::Rgba8;
+        if texture.family() != self.family || !compressed {
             return Err(RenderError::refused(RenderCode::TextureInvalid, format!("a {:?} texture in {:?} arrays", texture.family(), self.family)));
         }
+        if texture.is_srgb() != (kind.array() == TextureKind::Color) {
+            return Err(RenderError::refused(RenderCode::TextureInvalid, format!("an {} texture for a {kind:?} slot", if texture.is_srgb() { "sRGB" } else { "linear" })));
+        }
         let at = usize::from(kind.is_data());
-        let largest = TextureClass::ALL.into_iter().rev().find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
+        let held = |class: &TextureClass| self.arrays[class.index() as usize][at].family == self.family;
+        let largest = TextureClass::ALL.into_iter().rev().filter(held).find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
         let wanted = class_for_source(texture.side(), texture.side(), largest.min(self.quality.max_class));
-        let fits = |class: &TextureClass| *class <= wanted && class.side() <= texture.side();
+        let fits = |class: &TextureClass| held(class) && *class <= wanted && class.side() <= texture.side();
         if !TextureClass::ALL.iter().any(fits) {
-            return Err(RenderError::refused(RenderCode::TextureInvalid, format!("{} texels is under the smallest size class", texture.side())));
+            return Err(RenderError::refused(RenderCode::TextureInvalid, format!("{} texels is under the family's smallest size class", texture.side())));
         }
         let room = |class: &TextureClass| fits(class) && self.arrays[class.index() as usize][at].has_room();
         let Some(chosen) = TextureClass::ALL.into_iter().rev().find(room) else {
@@ -789,6 +794,12 @@ impl ClassArrays {
     /// [`material_arrays`]).
     pub fn allocated_bytes(&self) -> u64 {
         self.arrays.iter().flatten().map(TextureArray::allocated_bytes).sum()
+    }
+
+    /// The bytes the textures held take, each layer's chain in its array's family (A6.4: what a
+    /// game's textures cost, beside [`ClassArrays::allocated_bytes`]' reservation of whole arrays).
+    pub fn held_bytes(&self) -> u64 {
+        self.arrays.iter().flatten().map(TextureArray::held_bytes).sum()
     }
 
     fn array(&self, class: TextureClass, kind: TextureKind) -> &TextureArray {

@@ -116,8 +116,16 @@ arrays made for a family (`ClassArrays::with_family`) take only that family's te
 (`add_compressed`); a chain is never resampled, so a larger texture drops its top levels into a
 smaller class. The three compression features are renderer-owned (`floor::RENDERER_FEATURES`),
 requested whenever the adapter offers them. A compressed layer takes a quarter of RGBA8's bytes.
-The renderer itself still makes RGBA8 arrays: choosing a family per device and loading a game's
-KTX2 files through it is the follow-up that wires them in.
+
+Wired in: `Renderer::set_texture_family` (before the first texture; refused for a family the
+device does not sample) stores the 512, 1024 and 2048 classes in that family, and class 0 (256)
+stays RGBA8, so an image without a family file (a generated texture, a source the import step
+could not encode) still loads there, at most 256 texels a side. `add_compressed_texture` places a
+chain; an sRGB chain goes only to a colour slot and a linear one to a data slot. The facade picks
+the family at the first frame naming a texture: the device's best (`compressed_families`: BC
+first on a desktop, ASTC then ETC2 on a phone) that the game ships a `<stem>.<family>.ktx2` file
+of, and loads that file in place of the image; a refused file falls back to the image. A device
+loss replays the family before the textures. The budget still reserves the arrays as RGBA8.
 
 ### `genex_lods` in glTF
 
@@ -138,8 +146,16 @@ smaller than the one before, at most four levels. `src/mesh_lod.rs` validates th
 (`GlbPart::lods`: level k is every primitive's level k, its error the largest, scaled by each
 node). `select_lod` picks the coarsest level whose error projects to at most a pixel threshold,
 compared as `error * pixels_per_unit <= threshold_px * distance` so `gx_lod_select`
-(`shaders/geometry/lod_select.wgsl`) picks the same level on every GPU. Uploading the levels'
-indices and letting the cull write each instance's index range is the follow-up that draws them.
+(`shaders/geometry/lod_select.wgsl`) picks the same level on every GPU.
+
+Drawn: `MeshLibrary::add_part` keeps each level as a mesh of its own (the vertices it uses), with
+the part's bounding sphere. A frame plans a batch per level of a mesh drawn whole; each holds all
+of the mesh's instance rows (`GpuBatch::first_row`) in slots of its own in the visible list
+(`FramePlan::visible_slots`), and the cull keeps an instance only in the batch of the level picked
+from the camera's distance to its sphere at a 1-pixel threshold of the output height
+(`mesh_lod::lod_keeps`, `gx_cull_lod_keeps`). Every view (cascades and spots too) draws an
+instance at the camera's level; an orthographic camera turns levels off. A clustered mesh (the
+meshlet path) and a transparent draw take the mesh itself. Level changes are not crossfaded yet.
 
 ## Extension layouts
 

@@ -243,7 +243,10 @@ pub struct GpuMaterial {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct GpuBatch {
-    /// First instance-table row of the batch.
+    /// The batch's first slot in each view's region of the visible list: its instances' survivors
+    /// fill the slots from here. The instance-table row of its first instance, unless a mesh with
+    /// levels comes before it (renderer pass 2 A6.9: a level's batch has slots of its own over
+    /// its mesh's rows, `first_row`).
     pub first_instance: u32,
     /// Rows in the batch.
     pub instance_count: u32,
@@ -253,8 +256,12 @@ pub struct GpuBatch {
     pub first_index: u32,
     /// Base vertex of the mesh in its vertex buffer (the library, or the skinned output).
     pub base_vertex: i32,
-    /// Padding to 32 bytes.
-    pub pad: [u32; 3],
+    /// First instance-table row of the batch (A6.9: every level's batch of a mesh holds its rows).
+    pub first_row: u32,
+    /// The batch's level of detail (renderer pass 2 A6.9, [`crate::mesh::batch_lod`]): x the tag
+    /// (0: the mesh has no levels; else the batch's level and the chain's length), y and z the
+    /// chain's errors over the mesh's bounding radius as half-float pairs.
+    pub lod: [u32; 3],
 }
 
 /// The per-pass dynamic uniform (`PassView`). WebGPU core has no `first_instance` in indirect
@@ -283,10 +290,17 @@ pub struct GpuPassView {
 pub struct GpuCullViews {
     /// Inward frustum planes of each view, normalized; views past the active ones are 0.
     pub planes: [[[f32; 4]; 6]; MAX_VIEWS],
-    /// x: visible-list rows per view (the opaque instance count); y: batches; z: active views (the
+    /// x: visible-list slots per view (the opaque instance count, plus the level batches' slots,
+    /// renderer pass 2 A6.9); y: batches; z: active views (the
     /// cull dispatches this many); w: the views the frame holds (bit `v`: a far cascade off its
     /// cadence keeps last frame's map, so the cull and the meshlet cull skip it).
     pub params: [u32; 4],
+    /// The levels of detail's view (renderer pass 2 A6.9, [`crate::mesh::lod_keeps`]): the camera
+    /// position xyz; w the output's pixels a world unit at distance 1 over the error threshold
+    /// (0: levels off, every instance at its mesh itself).
+    pub lod: [f32; 4],
+    /// x: 1 when a batch draws a level (the cull looks each row's batch up only then); y, z, w: 0.
+    pub lod_params: [u32; 4],
 }
 
 /// `draw_indexed_indirect` arguments as the cull pass writes them (`DrawIndexedArgs`), tightly

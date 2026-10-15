@@ -22,7 +22,7 @@ use crate::cull::{active_views, cascade_view, cpu_cull};
 use crate::error::{RenderCode, RenderError};
 use crate::instance::instance_row;
 use crate::layout::{GpuBatch, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
-use crate::mesh::{MeshData, Vertex};
+use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
 use crate::pbr::{MaterialKey, light_table, radiance};
@@ -88,6 +88,46 @@ pub enum MeshletState {
     Refused(RenderCode),
 }
 
+/// One part of a model as the library takes it: its mesh, the meshlets it brought (a GLB's
+/// `genex_meshlets`, R2.3) and its levels of detail (a GLB's `genex_lods`, renderer pass 2 A6.9).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelPart {
+    /// The mesh.
+    pub mesh: MeshData,
+    /// Its imported meshlets, used when it is clustered and they are valid.
+    pub meshlets: Option<MeshletSet>,
+    /// Its import-time levels, coarser and coarser.
+    pub lods: Option<LodChain>,
+}
+
+impl ModelPart {
+    /// A part with neither meshlets nor levels.
+    pub fn whole(mesh: MeshData) -> ModelPart {
+        ModelPart { mesh, meshlets: None, lods: None }
+    }
+}
+
+/// A library mesh's levels of detail (renderer pass 2 A6.9): each level a mesh of its own (the
+/// level's triangles over the vertices they use), with the chain's object-space errors.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshLods {
+    /// Level k's mesh at `levels[k - 1]` (level 0 is the mesh itself).
+    pub levels: Vec<MeshId>,
+    /// Their object-space errors, never decreasing.
+    pub errors: Vec<f32>,
+}
+
+/// How a library entry came in: its role decides whether it is clustered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EntryRole {
+    /// A mesh a game draws.
+    Mesh,
+    /// A skinned mesh's bind pose (never clustered: skinning moves its vertices).
+    Skinned,
+    /// A level of another mesh (never clustered, never drawn by a game: the plan draws it).
+    Level,
+}
+
 /// Every mesh a renderer can draw, packed into one vertex and one index list, with a per-vertex
 /// slot (its mesh id), the skin rows of skinned meshes and the meshlets of the meshes the game's
 /// [`Meshlets`] setting clusters (R2.1).
@@ -102,8 +142,10 @@ pub struct MeshLibrary {
     meshlets: MeshletLibrary,
     /// Per entry: how it draws on the meshlet path.
     meshlet_states: Vec<MeshletState>,
-    /// Per entry: whether it is a skinned mesh's bind pose.
-    skinned: Vec<bool>,
+    /// Per entry: how it came in.
+    roles: Vec<EntryRole>,
+    /// The levels of the meshes that brought them (A6.9), by entry.
+    lods: BTreeMap<u32, MeshLods>,
     /// The valid sets meshes brought with them (R2.3's `genex_meshlets`), by entry, kept for a
     /// re-cluster.
     imported: BTreeMap<u32, MeshletSet>,
@@ -133,11 +175,12 @@ impl MeshLibrary {
             meshlet_setting: setting,
             meshlets: MeshletLibrary::default(),
             meshlet_states: Vec::new(),
-            skinned: Vec::new(),
+            roles: Vec::new(),
+            lods: BTreeMap::new(),
             imported: BTreeMap::new(),
         };
         for mesh in [MeshData::cube(), MeshData::sphere()] {
-            library.push(mesh, false, None);
+            library.push(mesh, EntryRole::Mesh, None);
         }
         library
     }
@@ -179,7 +222,7 @@ impl MeshLibrary {
     /// when that is valid, else [`meshlet::build`]'s.
     fn cluster(&mut self, entry: usize) -> MeshletState {
         let mesh = self.entries[entry];
-        if self.skinned[entry] || !self.meshlet_setting.clusters(mesh.index_count / 3) {
+        if self.roles[entry] != EntryRole::Mesh || !self.meshlet_setting.clusters(mesh.index_count / 3) {
             return MeshletState::Whole;
         }
         let base = mesh.base_vertex as usize;
@@ -199,7 +242,7 @@ impl MeshLibrary {
         }
     }
 
-    fn push(&mut self, mesh: MeshData, skinned: bool, imported: Option<MeshletSet>) -> MeshId {
+    fn push(&mut self, mesh: MeshData, role: EntryRole, imported: Option<MeshletSet>) -> MeshId {
         let (center, radius) = mesh.bounds();
         let id = MeshId(self.entries.len() as u32);
         self.entries.push(MeshEntry {
@@ -213,7 +256,7 @@ impl MeshLibrary {
         self.slots.extend(std::iter::repeat_n(id.0, mesh.vertices.len()));
         self.vertices.extend(mesh.vertices);
         self.indices.extend(mesh.indices);
-        self.skinned.push(skinned);
+        self.roles.push(role);
         if let Some(set) = imported {
             self.imported.insert(id.0, set);
         }
@@ -244,7 +287,42 @@ impl MeshLibrary {
     /// the mesh is clustered at runtime.
     pub fn add_with_meshlets(&mut self, mesh: MeshData, imported: Option<MeshletSet>) -> Result<MeshId, RenderError> {
         self.check_room(&mesh)?;
-        Ok(self.push(mesh, false, imported))
+        Ok(self.push(mesh, EntryRole::Mesh, imported))
+    }
+
+    /// [`MeshLibrary::add_with_meshlets`] for a model part, its levels of detail kept as meshes of
+    /// their own (renderer pass 2 A6.9: each level's triangles over the vertices it uses, its
+    /// bounding sphere the part's, so every level is culled as the part is). A chain whose level
+    /// indexes past the part's vertices is dropped (the part draws whole); a level the library
+    /// has no room for refuses the part with nothing added.
+    pub fn add_part(&mut self, part: ModelPart) -> Result<MeshId, RenderError> {
+        let ModelPart { mesh, meshlets, lods } = part;
+        let vertex_count = mesh.vertices.len() as u32;
+        let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
+        let levels: Vec<MeshData> = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
+        self.check_room(&mesh)?;
+        let extra = levels.iter().fold((mesh.vertices.len(), mesh.indices.len()), |(v, i), level| (v + level.vertices.len(), i + level.indices.len()));
+        if i32::try_from(self.vertices.len() + extra.0).is_err() || u32::try_from(self.indices.len() + extra.1).is_err() {
+            return Err(RenderError::refused(RenderCode::MeshInvalid, "the library is full"));
+        }
+        let (center, radius) = mesh.bounds();
+        let id = self.push(mesh, EntryRole::Mesh, meshlets);
+        let mut ids = Vec::with_capacity(levels.len());
+        for level in levels {
+            let level_id = self.push(level, EntryRole::Level, None);
+            let entry = &mut self.entries[level_id.0 as usize];
+            (entry.center, entry.radius) = (center, radius);
+            ids.push(level_id);
+        }
+        if let Some(chain) = chain.filter(|_| !ids.is_empty()) {
+            self.lods.insert(id.0, MeshLods { levels: ids, errors: chain.errors() });
+        }
+        Ok(id)
+    }
+
+    /// The levels of detail mesh `id` brought ([`MeshLibrary::add_part`]), if any.
+    pub fn lods(&self, id: MeshId) -> Option<&MeshLods> {
+        self.lods.get(&id.0)
     }
 
     /// Add a skinned mesh: its bind pose as a mesh and its skin rows. Refused `mesh-invalid` when
@@ -264,7 +342,7 @@ impl MeshLibrary {
         }
         let skin_base = u32::try_from(self.skin.len()).map_err(|_| RenderError::refused(RenderCode::MeshInvalid, "the library is full"))?;
         self.check_room(&data.mesh)?;
-        let mesh = self.push(data.mesh.clone(), true, None);
+        let mesh = self.push(data.mesh.clone(), EntryRole::Skinned, None);
         self.skin.extend_from_slice(&data.skin);
         Ok(SkinId { mesh, skin_base, joints: joints as u32 })
     }
@@ -601,8 +679,11 @@ pub struct FramePlan {
     pub frame: GpuFrame,
     /// The instance table: opaque rows grouped by batch, then transparent rows.
     pub instances: Vec<GpuInstance>,
-    /// Opaque rows (the batches' rows; the visible list holds this many per view).
+    /// Opaque rows (the batches' rows).
     pub opaque_instances: u32,
+    /// Visible-list slots per view: the opaque rows, and the slots of each level's batch over its
+    /// mesh's rows (renderer pass 2 A6.9); `opaque_instances` without levels.
+    pub visible_slots: u32,
     /// The material table.
     pub materials: Vec<GpuMaterial>,
     /// Each material row's extension (RQ6.3 emission), parallel to `materials`.
@@ -663,6 +744,10 @@ pub struct FramePlan {
     /// Where each drawn opaque retained group's rows are (renderer pass 2 A.0b): the renderer
     /// uploads a span again only when it moved or its group changed.
     pub retained: Vec<RetainedSpan>,
+    /// The camera's pixels a world unit at distance 1 per pixel of output height, over the LOD
+    /// error threshold (A6.9; 0 for an orthographic camera, whose levels are off):
+    /// [`FramePlan::set_lod_height`] scales it into the cull's LOD view.
+    pub lod_per_height: f32,
 }
 
 /// How a material's opaque draws are batched and drawn (P2-0.12): plain (back faces culled, drawn
@@ -791,6 +876,10 @@ struct Rows {
     slot_base: Vec<u32>,
     slot_count: usize,
     retained: Vec<RetainedSpan>,
+    /// Whether a batch draws a level of detail (A6.9).
+    lod_batches: bool,
+    /// Visible-list slots taken so far: a batch's rows, and a level batch's own over its mesh's.
+    slots: u32,
 }
 
 /// One variant's draws of one library mesh: retained groups (indices into `Scene::groups`), then
@@ -819,20 +908,43 @@ impl Rows {
         let meshes = (variant, MeshId(0))..=(variant, MeshId(u32::MAX));
         for ((_, mesh), drawn) in by_mesh.range(meshes) {
             let entry = mesh_entry(library, *mesh)?;
-            let retained: usize = drawn.groups.iter().map(|at| scene.groups[*at].group.len()).sum();
-            self.slot_base[variant * self.slot_count + mesh.raw() as usize] = self.instances.len() as u32;
-            self.batches.push(batch(self.instances.len(), retained + drawn.draws.len(), entry.first_index, entry.index_count, entry.base_vertex));
-            for at in &drawn.groups {
-                self.push_group(&scene.groups[*at], entry, keys, materials);
+            // A6.9: a mesh drawn whole with levels gets a batch per level, each with slots of its
+            // own over the mesh's rows (pushed once); the cull keeps each instance in one of
+            // them (`mesh::lod_keeps`).
+            let lods = library.lods(*mesh).filter(|_| library.meshlet_state(*mesh) == Some(MeshletState::Whole));
+            let first_row = self.instances.len() as u32;
+            let count = self.push_mesh_rows(scene, entry, drawn, key_of, keys, materials);
+            let levels = lods.map_or(0, |lods| lods.levels.len());
+            for level in 0..=levels {
+                let (level_mesh, geometry) = match lods {
+                    Some(lods) if level > 0 => (lods.levels[level - 1], mesh_entry(library, lods.levels[level - 1])?),
+                    _ => (*mesh, entry),
+                };
+                self.slot_base[variant * self.slot_count + level_mesh.raw() as usize] = self.slots;
+                let mut row = batch(self.slots as usize, count, geometry.first_index, geometry.index_count, geometry.base_vertex);
+                row.first_row = first_row;
+                row.lod = lods.map_or([0; 3], |lods| crate::mesh::batch_lod(level as u32, &lods.errors, entry.radius));
+                self.batches.push(row);
+                self.slots += count as u32;
             }
-            let draws = &drawn.draws;
-            for at in draws {
-                let draw = &scene.draws[*at];
-                self.instances.push(instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material)));
-                self.motion.extend(key_of.get(*at).copied().flatten());
-            }
+            self.lod_batches |= levels > 0;
         }
         Ok(())
+    }
+
+    /// The instance rows of `drawn` (a mesh's draws in one variant): its retained groups' rows,
+    /// then its draws' (keyed with `key_of`, made in draw order). Answers how many.
+    fn push_mesh_rows(&mut self, scene: &Scene, entry: &MeshEntry, drawn: &MeshDraws, key_of: &[Option<MotionRow>], keys: &mut DrawKeys, materials: &mut Materials) -> usize {
+        let first = self.instances.len();
+        for at in &drawn.groups {
+            self.push_group(&scene.groups[*at], entry, keys, materials);
+        }
+        for at in &drawn.draws {
+            let draw = &scene.draws[*at];
+            self.instances.push(instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material)));
+            self.motion.extend(key_of.get(*at).copied().flatten());
+        }
+        self.instances.len() - first
     }
 
     /// One opaque retained group's rows: its cached rows under this frame's material row, and its
@@ -856,8 +968,11 @@ impl Rows {
     /// One opaque skinned draw's batch (one row), its slot base in `variant`'s region.
     fn push_skinned(&mut self, part: &SkinnedPart, draw: &SkinnedDraw, variant: usize, key: Option<MotionRow>, materials: &mut Materials) {
         let row = instance_row(&draw.model, part.center, part.radius, materials.row(&draw.material));
-        self.slot_base[variant * self.slot_count + part.job.slot as usize] = self.instances.len() as u32;
-        self.batches.push(batch(self.instances.len(), 1, part.source.first_index, part.source.index_count, part.source.base_vertex));
+        self.slot_base[variant * self.slot_count + part.job.slot as usize] = self.slots;
+        let mut skinned = batch(self.slots as usize, 1, part.source.first_index, part.source.index_count, part.source.base_vertex);
+        skinned.first_row = self.instances.len() as u32;
+        self.batches.push(skinned);
+        self.slots += 1;
         self.instances.push(row);
         self.motion.extend(key);
     }
@@ -869,6 +984,34 @@ struct SkinnedPart {
     source: DrawSource,
     center: [f32; 3],
     radius: f32,
+}
+
+/// The camera's pixels a world unit at distance 1 per pixel of output height, over
+/// [`LOD_THRESHOLD_PX`]: `1 / (2 tan(fovy / 2))` for a perspective camera, 0 (levels off) for an
+/// orthographic one, whose projected error does not shrink with distance.
+fn lod_per_height(camera: &CameraDesc) -> f32 {
+    if camera.ortho_height.is_some() {
+        return 0.0;
+    }
+    let tan = libm::tanf(camera.fovy_degrees.to_radians() * 0.5);
+    if tan > 0.0 && tan.is_finite() { 0.5 / tan / LOD_THRESHOLD_PX } else { 0.0 }
+}
+
+/// A level of `mesh` as a mesh of its own: the vertices `indices` use, in first-use order, and
+/// the triangles over them.
+fn level_mesh(mesh: &MeshData, indices: &[u32]) -> MeshData {
+    let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut vertices = Vec::new();
+    let indices = indices
+        .iter()
+        .map(|index| {
+            *remap.entry(*index).or_insert_with(|| {
+                vertices.push(mesh.vertices[*index as usize]);
+                (vertices.len() - 1) as u32
+            })
+        })
+        .collect();
+    MeshData { vertices, indices }
 }
 
 fn mesh_entry(library: &MeshLibrary, mesh: MeshId) -> Result<&MeshEntry, RenderError> {
@@ -988,6 +1131,8 @@ impl FramePlan {
             slot_base: vec![NO_BATCH; if varied { slot_count * DRAW_VARIANTS } else { slot_count }],
             slot_count,
             retained: Vec::new(),
+            lod_batches: false,
+            slots: 0,
         };
         rows.push_meshes(scene, library, &by_mesh, 0, &key_of, &mut keys, &mut materials)?;
         let static_batches = rows.batches.len() as u32;
@@ -1020,7 +1165,7 @@ impl FramePlan {
                 variants.push(VariantRun { variant, batches: first..end, skinned_from });
             }
         }
-        let Rows { mut instances, mut motion, batches, slot_base, retained, .. } = rows;
+        let Rows { mut instances, mut motion, batches, slot_base, retained, lod_batches, slots: visible_slots, .. } = rows;
         let opaque_instances = instances.len() as u32;
         let view_proj = scene.camera.projection(aspect, depth_reversed);
         let lit = options.sun.map_or(scene.lighting.sun_intensity > 0.0, |sun| sun.color.iter().any(|c| *c > 0.0));
@@ -1041,8 +1186,12 @@ impl FramePlan {
             // here under the forward frame and the Level-2 v2 frame alike (GxFrameV2's meaning).
             frame.sun_dir[3] = settings.sun_angular_radius;
         }
-        frame.counts = [lights.len() as u32, batches.len() as u32, views, opaque_instances];
-        let mut cull_views = GpuCullViews { params: [opaque_instances, batches.len() as u32, views, 0], ..GpuCullViews::default() };
+        frame.counts = [lights.len() as u32, batches.len() as u32, views, visible_slots];
+        let lod_per_height = lod_per_height(&scene.camera);
+        let mut cull_views = GpuCullViews { params: [visible_slots, batches.len() as u32, views, 0], ..GpuCullViews::default() };
+        let eye = scene.camera.eye;
+        cull_views.lod = [eye[0], eye[1], eye[2], lod_per_height * LOD_NOMINAL_HEIGHT as f32];
+        cull_views.lod_params[0] = u32::from(lod_batches);
         cull_views.planes[0] = camera_planes;
         if let Some(set) = &shadows {
             for (c, planes) in set.planes.iter().enumerate().take(drawn_cascades(set)) {
@@ -1055,6 +1204,7 @@ impl FramePlan {
             frame,
             instances,
             opaque_instances,
+            visible_slots,
             materials: materials.rows,
             material_ext: materials.ext,
             legacy_ext: vec![crate::layout::GpuLightExt::POINT; lights.len()],
@@ -1080,7 +1230,15 @@ impl FramePlan {
             motion,
             prev_models: Vec::new(),
             retained,
+            lod_per_height,
         })
+    }
+
+    /// Choose levels of detail for an output `height` pixels tall (renderer pass 2 A6.9): the
+    /// cull's LOD view takes the output's pixels a world unit at distance 1 over the error
+    /// threshold. A plan assumes [`LOD_NOMINAL_HEIGHT`] until this is called.
+    pub fn set_lod_height(&mut self, height: u32) {
+        self.cull_views.lod[3] = self.lod_per_height * height as f32;
     }
 
     /// The reference cull of the camera view: the compute pass's test, on the CPU, in the same order.
@@ -1090,7 +1248,7 @@ impl FramePlan {
 
     /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c).
     pub fn cpu_cull_view(&self, view: usize) -> CpuCull {
-        cpu_cull(&self.cull_views.planes[view], &self.batches, &self.instances, self.opaque_instances as usize)
+        cpu_cull(&self.cull_views.planes[view], self.cull_views.lod, &self.batches, &self.instances, self.visible_slots as usize)
     }
 
     /// The shadow cascades this frame plans (0 without sun shadows): [`ShadowSettings::cascades`].
@@ -1112,7 +1270,7 @@ fn drawn_cascades(set: &Cascades) -> usize {
 }
 
 fn batch(first_instance: usize, instance_count: usize, first_index: u32, index_count: u32, base_vertex: i32) -> GpuBatch {
-    GpuBatch { first_instance: first_instance as u32, instance_count: instance_count as u32, index_count, first_index, base_vertex, pad: [0; 3] }
+    GpuBatch { first_instance: first_instance as u32, instance_count: instance_count as u32, index_count, first_index, base_vertex, first_row: first_instance as u32, lod: [0; 3] }
 }
 
 /// Append the transparent rows that survive the camera cull, back to front, with their motion

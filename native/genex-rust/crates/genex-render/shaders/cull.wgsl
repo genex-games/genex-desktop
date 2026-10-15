@@ -4,8 +4,8 @@
 // instances spread over the GPU and the cull's time follows the instances, not the largest batch.
 // A deterministic ordered compaction without atomics (our meshlet cull's three dispatches): the
 // visible list and the indirect arguments equal the CPU cull's, slot for slot, on every run.
-// - `cull_mark` (blocks x views): each block of 256 opaque rows writes its survivors' bits (eight
-//   words) and its survivor count into the view's scratch.
+// - `cull_mark` (blocks x views): each block of 256 slots writes its survivors' bits (eight words)
+//   and its survivor count into the view's scratch.
 // - `cull_scan` (1 x views): one workgroup turns the view's block counts into exclusive prefixes
 //   (the total after them), then writes every batch's draw_indexed_indirect arguments: its
 //   survivors are the prefix at its end less the prefix at its start.
@@ -13,6 +13,11 @@
 //   the prefix at its batch's first row (a binary search of the batches), in row order.
 // A far cascade the frame holds (its cadence) draws nothing: all three skip it, so its arguments
 // keep what they held.
+// Levels of detail (renderer pass 2 A6.9): a mesh with levels has a batch per level, each with
+// slots of its own over all of the mesh's rows (`Batch::first_row`); `cull_mark` keeps an
+// instance only in the batch of the level the camera's distance picks (`gx_cull_lod_keeps`,
+// mesh_lod.rs `lod_keeps`), in every view. The three dispatches run over slots: without levels
+// a slot is its row.
 
 @group(0) @binding(0) var<uniform> views: CullViews;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
@@ -76,7 +81,7 @@ fn gx_cull_survivors_before(view: u32, row: u32) -> u32 {
     return count;
 }
 
-// The batch holding opaque row `row`: the last batch whose first row is at most it.
+// The batch holding slot `row`: the last batch whose first slot is at most it.
 fn gx_cull_batch_of(row: u32) -> u32 {
     var lo = 0u;
     var hi = views.params.y - 1u;
@@ -89,6 +94,38 @@ fn gx_cull_batch_of(row: u32) -> u32 {
         }
     }
     return lo;
+}
+
+// The LOD tag's bit marking a batch that draws one level of a chain (mesh_lod.rs LOD_TAG).
+const GX_LOD_TAG: u32 = 0x80000000u;
+
+// The value of the non-negative, finite half float `bits` (mesh_lod.rs `f16_value`, exact):
+// decoded by hand, since naga counts `unpack2x16float` outside WebGPU core.
+fn gx_cull_half(bits: u32) -> f32 {
+    let exponent = (bits >> 10u) & 31u;
+    let mantissa = bits & 1023u;
+    if exponent == 0u {
+        return f32(mantissa) * (1.0 / 16777216.0);
+    }
+    return bitcast<f32>(((exponent + 112u) << 23u) | (mantissa << 13u));
+}
+
+// Whether `batch`'s instance of world sphere `bounds` is drawn by it: always for a mesh without
+// levels; for a level's batch only when `gx_lod_select` picks that level for it from the camera
+// (the mesh itself when levels are off). mesh_lod.rs `lod_keeps` is its CPU twin.
+fn gx_cull_lod_keeps(batch: Batch, bounds: vec4<f32>) -> bool {
+    if (batch.lod & GX_LOD_TAG) == 0u {
+        return true;
+    }
+    let level = batch.lod & 15u;
+    if !(views.lod.w > 0.0) {
+        return level == 0u;
+    }
+    let levels = min((batch.lod >> 4u) & 15u, 4u);
+    let halves = vec4<u32>(batch.lod_error01 & 0xFFFFu, batch.lod_error01 >> 16u, batch.lod_error23 & 0xFFFFu, batch.lod_error23 >> 16u);
+    let errors = vec4<f32>(gx_cull_half(halves.x), gx_cull_half(halves.y), gx_cull_half(halves.z), gx_cull_half(halves.w)) * bounds.w;
+    let distance = length(bounds.xyz - views.lod.xyz) - bounds.w;
+    return gx_lod_select(errors, levels, distance, views.lod.w, 1.0) == level;
 }
 
 // Inclusive Hillis-Steele scan of `scan` over the workgroup.
@@ -110,10 +147,20 @@ fn cull_mark(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_
     if gx_cull_held(view) {
         return;
     }
-    let row = group.x * GX_CULL_BLOCK + lane;
+    let slot = group.x * GX_CULL_BLOCK + lane;
     var keep = 0u;
-    if row < views.params.x && in_frustum(view, instances[row].bounds) {
-        keep = 1u;
+    if slot < views.params.x {
+        // Without levels a slot is its row; with them its batch says which row it holds.
+        var row = slot;
+        var lod_keeps = true;
+        if views.lod_params.x != 0u {
+            let batch = batches[gx_cull_batch_of(slot)];
+            row = batch.first_row + slot - batch.first_instance;
+            lod_keeps = gx_cull_lod_keeps(batch, instances[row].bounds);
+        }
+        if lod_keeps && in_frustum(view, instances[row].bounds) {
+            keep = 1u;
+        }
     }
     scan[lane] = keep << (lane % 32u);
     workgroupBarrier();
@@ -181,9 +228,9 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
     if gx_cull_held(view) {
         return;
     }
-    let row = group.x * GX_CULL_BLOCK + lane;
+    let own = group.x * GX_CULL_BLOCK + lane;
     var keep = 0u;
-    if row < views.params.x {
+    if own < views.params.x {
         let word = scratch[gx_cull_base(view) + group.x * GX_CULL_BLOCK_WORDS + lane / 32u];
         keep = (word >> (lane % 32u)) & 1u;
     }
@@ -192,8 +239,9 @@ fn cull_scatter(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocati
     gx_cull_scan_workgroup(lane);
     if keep == 1u {
         let survivor = scratch[gx_cull_prefix_at(view) + group.x] + scan[lane] - 1u;
-        let batch = batches[gx_cull_batch_of(row)];
+        let batch = batches[gx_cull_batch_of(own)];
         let slot = batch.first_instance + survivor - gx_cull_survivors_before(view, batch.first_instance);
-        visible[view * views.params.x + slot] = row;
+        // The survivor's instance row: the row its own slot `own` stands for in its batch.
+        visible[view * views.params.x + slot] = batch.first_row + own - batch.first_instance;
     }
 }

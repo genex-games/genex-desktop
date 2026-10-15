@@ -190,6 +190,13 @@ pub struct GlbPart {
     pub lod_warnings: Vec<LodWarning>,
 }
 
+impl GlbPart {
+    /// The part as the renderer's library takes it: its mesh, meshlets and levels of detail.
+    pub fn into_model_part(self) -> crate::scene::ModelPart {
+        crate::scene::ModelPart { mesh: self.mesh, meshlets: self.meshlets, lods: self.lods }
+    }
+}
+
 /// A GLB as one mesh per material, and the images its materials sample.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlbModel {
@@ -220,9 +227,14 @@ impl GlbModel {
 
     /// The meshes and meshlets of [`GlbModel::from_glb`]'s parts, in its order, with no image
     /// decoded: what a renderer replays a model's upload from (review F6).
-    pub fn parts_from_glb(bytes: &[u8]) -> Result<Vec<(MeshData, Option<MeshletSet>)>, RenderError> {
+    pub fn parts_from_glb(bytes: &[u8]) -> Result<Vec<crate::scene::ModelPart>, RenderError> {
         let gltf = open_glb(bytes)?;
-        Ok(glb_parts(&gltf)?.into_iter().map(|part| (part.mesh, part.meshlets)).collect())
+        Ok(glb_parts(&gltf)?.into_iter().map(GlbPart::into_model_part).collect())
+    }
+
+    /// The parts as the renderer takes them: each mesh with its meshlets and levels of detail.
+    pub fn model_parts(&self) -> Vec<crate::scene::ModelPart> {
+        self.parts.iter().cloned().map(GlbPart::into_model_part).collect()
     }
 
     /// Image `index` of a GLB decoded as [`GlbModel::from_glb`] decodes it (refused

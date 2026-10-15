@@ -8,8 +8,17 @@
 //! one mesh) gets a chain only when every one of its primitives brought valid levels: level k is
 //! every primitive's level k rebased into the part, its error the largest of theirs scaled by
 //! each primitive's node. A set that fails is dropped with a typed [`LodFault`] and the mesh
-//! draws whole. The cull choosing a level per instance and drawing its index range is the
-//! renderer's follow-up; here the chain rides along on [`crate::mesh::GlbPart`].
+//! draws whole.
+//!
+//! **Drawing (A6.9 runtime).** A part's chain rides on [`crate::mesh::GlbPart`] into the mesh
+//! library ([`crate::scene::ModelPart`]), which keeps each level as a mesh of its own (its used
+//! vertices only, so each level has its own vertex slot). A frame plans one batch per level of a
+//! drawn mesh, every batch holding all of the mesh's instances; the batch's LOD row
+//! ([`batch_lod`]: its level, the chain's length and the errors relative to the mesh's bounding
+//! radius) lets the cull keep an instance only in the batch of the level [`select_lod`] picks for
+//! it, seen from the camera ([`lod_keeps`], `gx_cull_lod_keeps` in `shaders/cull.wgsl`). Every
+//! view (the shadow cascades and spots too) draws an instance at the camera's level, so an
+//! object never shadows itself with another shape.
 
 use glam::{Mat3, Mat4};
 
@@ -23,6 +32,17 @@ pub const LOD_MAX_LEVELS: u32 = 4;
 pub const LOD_MIN_TRIANGLES: u32 = 512;
 /// [`select_lod`] in WGSL (`gx_lod_select`), for the cull to include.
 pub const LOD_SELECT_WGSL: &str = include_str!("../shaders/geometry/lod_select.wgsl");
+/// The error a drawn level may show, in output pixels.
+pub const LOD_THRESHOLD_PX: f32 = 1.0;
+/// The output height a plan's LOD view assumes until the renderer gives it its own
+/// ([`crate::scene::FramePlan::set_lod_height`]).
+pub const LOD_NOMINAL_HEIGHT: u32 = 1080;
+/// The bit of a batch's LOD tag marking a batch that draws one level of a chain.
+const LOD_TAG: u32 = 1 << 31;
+/// The tag's bits holding the batch's level (0 the mesh itself).
+const LOD_LEVEL_MASK: u32 = 0xF;
+/// Where the chain's length (levels past the mesh) sits in the tag.
+const LOD_LEVELS_SHIFT: u32 = 4;
 
 /// The members of the `genex_lods` extras object (wire spellings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -156,6 +176,82 @@ pub fn select_lod(errors: &[f32], distance: f32, pixels_per_unit: f32, threshold
         }
     }
     picked
+}
+
+/// The LOD row (`GpuBatch::lod`) of a batch drawing level `level` (0 the mesh itself) of a chain
+/// whose levels have `errors` (object space, at most [`LOD_MAX_LEVELS`]) on a mesh of bounding
+/// radius `radius`: x the tag (the batch's level and the chain's length), y and z the errors
+/// over the radius as two half-float pairs, so the cull scales them by each instance's world
+/// radius. `[0; 3]` is a batch of a mesh without levels.
+pub fn batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
+    let levels = errors.len().min(LOD_MAX_LEVELS as usize);
+    let relative = |at: usize| errors.get(at).filter(|_| at < levels).map_or(0.0, |error| if radius > 0.0 { error / radius } else { 0.0 });
+    let pair = |at: usize| u32::from(f16_bits(relative(at))) | (u32::from(f16_bits(relative(at + 1))) << 16);
+    [LOD_TAG | (levels as u32) << LOD_LEVELS_SHIFT | (level & LOD_LEVEL_MASK), pair(0), pair(2)]
+}
+
+/// Whether the cull keeps an instance of world bounds `bounds` in a batch with LOD row `lod`
+/// under the frame's LOD `view` (camera position xyz; w the output's pixels a world unit at
+/// distance 1 over [`LOD_THRESHOLD_PX`], 0 when levels are off, as under an orthographic camera):
+/// a batch without levels keeps every instance, a level's batch only the instances
+/// [`select_lod`] gives that level, seen from the camera's distance to the bounding sphere. The
+/// cull's `gx_cull_lod_keeps`, expression for expression.
+pub fn lod_keeps(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> bool {
+    if lod[0] & LOD_TAG == 0 {
+        return true;
+    }
+    let level = lod[0] & LOD_LEVEL_MASK;
+    // Not positive (NaN included): levels are off, as `!(lod.w > 0.0)` in the cull.
+    if view[3].partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        return level == 0;
+    }
+    let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
+    let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
+    let errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
+    let offset = [bounds[0] - view[0], bounds[1] - view[1], bounds[2] - view[2]];
+    let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt() - bounds[3];
+    select_lod(&errors[..levels], distance, view[3], 1.0) == level
+}
+
+/// `value` as IEEE half-float bits, rounded to the nearest (ties to even); past the largest
+/// half it is the largest, below the smallest subnormal 0. Only non-negative finite values are
+/// stored (relative errors).
+fn f16_bits(value: f32) -> u16 {
+    if value.is_nan() || value <= 0.0 {
+        return 0;
+    }
+    const MAX_HALF: u16 = 0x7BFF;
+    let bits = value.to_bits();
+    let exponent = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
+    let mantissa = bits & 0x7F_FFFF;
+    if exponent >= 0x1F {
+        return MAX_HALF;
+    }
+    // A normal half keeps 10 of the 23 mantissa bits; a subnormal fewer, the implicit one shifted in.
+    let (base, shift, full) = if exponent > 0 { ((exponent as u32) << 10, 13, mantissa) } else { (0, (14 - exponent) as u32, mantissa | 0x80_0000) };
+    if shift > 24 {
+        return 0;
+    }
+    let kept = full >> shift;
+    let rest = full & ((1 << shift) - 1);
+    let half = 1 << (shift - 1);
+    let round_up = rest > half || (rest == half && kept & 1 == 1);
+    // A carry out of the mantissa moves into the exponent, as the format means it to.
+    (base + kept + u32::from(round_up)).min(u32::from(MAX_HALF)) as u16
+}
+
+/// The value of IEEE half-float `bits` (exact).
+fn f16_value(bits: u16) -> f32 {
+    let exponent = u32::from((bits >> 10) & 0x1F);
+    let mantissa = u32::from(bits & 0x3FF);
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let magnitude = match exponent {
+        0 => mantissa as f32 * (1.0 / (1u32 << 24) as f32),
+        0x1F if mantissa == 0 => f32::INFINITY,
+        0x1F => f32::NAN,
+        _ => f32::from_bits(((exponent + 127 - 15) << 23) | (mantissa << 13)),
+    };
+    sign * magnitude
 }
 
 /// What one primitive's `extras.genex_lods` gave.
@@ -296,5 +392,47 @@ impl LodMerge {
     pub(crate) fn finish(self) -> (Option<LodChain>, Vec<LodWarning>) {
         let usable = self.complete && !self.levels.is_empty();
         (usable.then_some(LodChain { levels: self.levels }), self.warnings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every half-float bit pattern that is a finite non-negative value comes back from its value,
+    /// and values between two halves round to the nearer (ties to the even one).
+    #[test]
+    fn half_floats_round_trip_and_round_to_the_nearest() {
+        for bits in 0..0x7C00u16 {
+            assert_eq!(f16_bits(f16_value(bits)), bits, "{bits:#06x}");
+        }
+        let one = f16_value(0x3C00);
+        let next = f16_value(0x3C01);
+        assert_eq!(f16_bits((one + next) / 2.0), 0x3C00, "a tie goes to the even half");
+        assert_eq!(f16_bits(one + (next - one) * 0.75), 0x3C01);
+        assert_eq!(f16_bits(1.0e9), 0x7BFF, "past the largest half: the largest");
+        assert_eq!(f16_bits(-1.0), 0);
+        assert_eq!(f16_bits(f32::NAN), 0);
+        assert_eq!(f16_bits(1.0e-12), 0);
+    }
+
+    /// A batch without levels keeps everything; a level's batch keeps an instance only at the
+    /// level its distance picks, and every instance is kept by exactly one of its mesh's batches.
+    #[test]
+    fn each_instance_is_kept_by_exactly_one_level_of_its_chain() {
+        let errors = [0.01, 0.04, 0.16];
+        let rows: Vec<[u32; 3]> = (0..=errors.len() as u32).map(|level| batch_lod(level, &errors, 1.0)).collect();
+        let view = [0.0, 0.0, 0.0, 540.0 / libm::tanf(30.0f32.to_radians())];
+        let mut seen = [0usize; 4];
+        for step in 0..400 {
+            let bounds = [0.0, 0.0, -(step as f32) * 0.5 - 0.1, 1.0];
+            assert!(lod_keeps([0; 3], bounds, view), "no levels: always kept");
+            let kept: Vec<usize> = rows.iter().enumerate().filter(|(_, row)| lod_keeps(**row, bounds, view)).map(|(level, _)| level).collect();
+            assert_eq!(kept.len(), 1, "at {:?}: {kept:?}", bounds);
+            seen[kept[0]] += 1;
+        }
+        assert!(seen.iter().all(|count| *count > 0), "every level is drawn somewhere: {seen:?}");
+        let off = [0.0, 0.0, 0.0, 0.0];
+        assert!(lod_keeps(rows[0], [0.0, 0.0, -500.0, 1.0], off) && !lod_keeps(rows[3], [0.0, 0.0, -500.0, 1.0], off), "levels off: the mesh itself");
     }
 }

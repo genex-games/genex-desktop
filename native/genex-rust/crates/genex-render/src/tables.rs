@@ -3,7 +3,8 @@
 //! writes is charged against the per-frame upload budget before the first write, so a refused
 //! frame leaves the GPU untouched (the world target keeps the previous frame).
 //!
-//! Visible list: one region of `opaque_instances` rows per cull view, then one row per transparent
+//! Visible list: one region of `visible_slots` per cull view (the opaque rows, and each level
+//! batch's slots, renderer pass 2 A6.9), then one row per transparent
 //! draw. Indirect arguments: `batches` per view, tightly packed. Pass views: one 256-byte dynamic
 //! uniform per cull view, then one per transparent draw. Previous models (RQ5): one row per
 //! instance row, at the same index, filled only while motion vectors are drawn.
@@ -282,7 +283,7 @@ impl Tables {
 
     /// Make room for `uploads` (and the GPU-written tables of `plan`).
     pub(crate) fn ensure(&mut self, device: &Device, plan: &FramePlan, uploads: &Uploads) -> Result<(), RenderError> {
-        let visible_rows = u64::from(plan.views) * u64::from(plan.opaque_instances) + plan.transparent.len() as u64;
+        let visible_rows = u64::from(plan.views) * u64::from(plan.visible_slots) + plan.transparent.len() as u64;
         let sizes = [
             (&mut self.instances, bytes_of_rows(&plan.instances)),
             (&mut self.materials, bytes_of_rows(&plan.materials)),
@@ -292,7 +293,7 @@ impl Tables {
             (&mut self.slot_base, bytes_of_rows(&plan.slot_base)),
             (&mut self.visible, visible_rows * 4),
             (&mut self.args, u64::from(plan.views) * plan.batches.len() as u64 * ARGS_STRIDE),
-            (&mut self.cull_scratch, crate::cull::scratch_bytes(plan.opaque_instances, plan.views)),
+            (&mut self.cull_scratch, crate::cull::scratch_bytes(plan.visible_slots, plan.views)),
             (&mut self.pass_views, uploads.pass_views.len() as u64),
             (&mut self.lines, bytes_of_rows(&plan.lines)),
             (&mut self.joints, bytes_of_rows(&plan.joints)),
@@ -451,7 +452,7 @@ pub fn variant_pass_entry(plan: &FramePlan, view: u32, variant: usize) -> u64 {
 }
 
 fn pass_views(plan: &FramePlan) -> Vec<u8> {
-    let transparent_base = plan.views * plan.opaque_instances;
+    let transparent_base = plan.views * plan.visible_slots;
     let views = (0..plan.views).map(|view| GpuPassView { view, direct: 0, base: 0, slot_offset: 0 });
     let glass = (0..plan.transparent.len() as u32).map(|k| GpuPassView { view: 0, direct: 1, base: transparent_base + k, slot_offset: 0 });
     // Each non-plain variant's rows read its region of the slot-base table (P2-0.12).
@@ -476,7 +477,7 @@ fn visible_rows(plan: &FramePlan, path: CullPath) -> (Vec<u8>, u64, Vec<CpuCull>
     rows.extend(&plan.transparent);
     let offset = match path {
         CullPath::Cpu => 0,
-        CullPath::Gpu => u64::from(plan.views) * u64::from(plan.opaque_instances) * 4,
+        CullPath::Gpu => u64::from(plan.views) * u64::from(plan.visible_slots) * 4,
     };
     (bytemuck::cast_slice(&rows).to_vec(), offset, cpu_culls)
 }

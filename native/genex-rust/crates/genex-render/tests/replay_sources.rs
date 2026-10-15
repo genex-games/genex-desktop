@@ -29,7 +29,7 @@ fn gpu() -> Option<Gpu> {
 }
 
 fn parts() -> ModelParts {
-    vec![(MeshData::cube(), None)]
+    vec![genex_render::scene::ModelPart::whole(MeshData::cube())]
 }
 
 fn texture() -> TextureData {

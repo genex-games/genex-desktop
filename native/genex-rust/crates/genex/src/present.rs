@@ -97,7 +97,7 @@ use crate::runtime::{FIXED_STEP_MS, Runtime, View};
 use genex_hud::egui::epaint::textures::TexturesDelta;
 use genex_hud::{HudPaint, HudPainter};
 use genex_render::custom_pass::{CUSTOM_TAG, CustomPass, CustomPasses, NoCustom, PassStage, PipelineFacts};
-use genex_render::device_loss::{GpuOpener, ModelParts, PartsSource, Resilient, TextureSource};
+use genex_render::device_loss::{CompressedSource, GpuOpener, ModelParts, PartsSource, Resilient, TextureSource};
 use genex_render::extension::{CustomMaterialId, PostPassId, PostStage};
 use genex_render::hdri::{HdriImage, PreparedMap};
 use genex_render::settings::{Environment, Quality};
@@ -111,7 +111,7 @@ use genex_render::letterbox::{letterbox, output_for_window};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
 use genex_render::scene::{CameraDesc, Lighting, Material, MeshId, PointLight, Scene, scaled};
-use genex_render::texture::{TextureData, TextureId, TextureKind, linear_to_srgb, srgb_to_linear};
+use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
 use genex_render::presets::{on_ldr_scene, with_world_samples};
 use genex_render::renderer::landed_samples;
 use genex_render::timing::{Clock, CpuTimer};
@@ -153,6 +153,11 @@ pub trait ModelSource {
     /// The bytes of `path`, or None when the game has no such asset.
     fn model_bytes(&self, path: &str) -> Option<Vec<u8>>;
 
+    /// Whether the game has an asset at `path` (by default: whether its bytes read).
+    fn has_asset(&self, path: &str) -> bool {
+        self.model_bytes(path).is_some()
+    }
+
     /// The bytes of `path` when the program holds them for its whole life (the table a game
     /// compiled in), so a renderer replays the upload by decoding them again instead of keeping a
     /// decoded copy (review F6). None, the default: the upload's data is kept.
@@ -164,6 +169,10 @@ pub trait ModelSource {
 impl ModelSource for AssetTable {
     fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
         self.static_bytes(path).map(<[u8]>::to_vec)
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.static_bytes(path).is_some()
     }
 
     fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
@@ -208,13 +217,19 @@ pub trait Uploads {
     fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
         self.add_meshes(parts.into_iter().map(|(mesh, _)| mesh).collect())
     }
+    /// Add every part of one model with its meshlets and levels of detail (a GLB part's
+    /// `genex_lods`, renderer pass 2 A6.9): a renderer draws each instance at the level its
+    /// distance picks (the default drops the levels: [`Uploads::add_meshes_with_meshlets`]).
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.add_meshes_with_meshlets(parts.into_iter().map(|part| (part.mesh, part.meshlets)).collect())
+    }
     /// Add a texture as the next layer of its kind's array.
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError>;
     /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
     /// program holds for its whole life: a renderer that replays uploads keeps the source, not the
     /// parts (the default adds them as any other).
     fn add_meshes_from(&mut self, parts: ModelParts, _source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
-        self.add_meshes_with_meshlets(parts)
+        self.add_model_parts(parts)
     }
     /// [`Uploads::add_texture`] for a texture `source` decodes again, as [`Uploads::add_meshes_from`].
     fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, _source: TextureSource) -> Result<TextureId, RenderError> {
@@ -224,6 +239,24 @@ pub trait Uploads {
     /// before it is cached, `genex_render::hdri::prepare_map`); 0, the default, keeps it whole.
     fn environment_map_width(&self) -> u32 {
         0
+    }
+    /// The compressed texture families the device samples, best first (renderer pass 2 A6.4);
+    /// none, the default: every texture loads its image.
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        Vec::new()
+    }
+    /// The family the renderer stores its larger textures in (RGBA8, the default).
+    fn texture_family(&self) -> TextureFamily {
+        TextureFamily::Rgba8
+    }
+    /// Store the larger textures in `family` from the first texture on; refused by default.
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        Err(RenderError::refused(RenderCode::TextureInvalid, format!("{family:?} textures are not taken here")))
+    }
+    /// Add a compressed texture in the renderer's family (`source` reads its file again for a
+    /// replay); refused by default.
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, _kind: TextureKind, _source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        Err(RenderError::refused(RenderCode::TextureInvalid, format!("{:?} textures are not taken here", texture.family())))
     }
 }
 
@@ -238,6 +271,10 @@ impl Uploads for Resilient {
 
     fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
         Resilient::add_meshes_with_meshlets(self, parts)
+    }
+
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        Resilient::add_model_parts(self, parts)
     }
 
     fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
@@ -255,6 +292,25 @@ impl Uploads for Resilient {
     fn environment_map_width(&self) -> u32 {
         self.renderer().renderer().environment_map_width()
     }
+
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        self.renderer().renderer().compressed_families()
+    }
+
+    fn texture_family(&self) -> TextureFamily {
+        self.renderer().renderer().texture_family()
+    }
+
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        Resilient::set_texture_family(self, family)
+    }
+
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind, source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        match source {
+            Some(source) => Resilient::add_compressed_texture_from(self, texture, kind, source),
+            None => Resilient::add_compressed_texture(self, texture, kind),
+        }
+    }
 }
 
 /// The models and textures a renderer holds for a game, by asset path. Each is tried once: a
@@ -269,6 +325,50 @@ pub struct AssetCache {
     /// the device's width, its sun found on the full map. The presenter uploads one when the frame
     /// lights with it (again after the environment left it, or the device was lost).
     environments: Vec<(String, Option<Arc<PreparedMap>>)>,
+    /// Whether the texture family was chosen (renderer pass 2 A6.4): at the first frame naming a
+    /// texture, before any texture loads.
+    family_chosen: bool,
+}
+
+/// Store the renderer's larger textures in the first family (best first for the device) the
+/// game ships a file of for a texture `frame` names (`<stem>.<family>.ktx2`, the Studio's import
+/// step writes them; renderer pass 2 A6.4). A game without one keeps RGBA8, and so does a renderer
+/// that already holds a texture.
+fn choose_texture_family(frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) {
+    let paths: Vec<&str> = texture_paths(frame).map(|(path, _)| path).filter(|path| is_safe_asset_path(path)).collect();
+    let shipped = uploads.compressed_families().into_iter().find(|family| paths.iter().any(|path| source.has_asset(&family_file(path, *family))));
+    let Some(family) = shipped else { return };
+    if let Err(error) = uploads.set_texture_family(family) {
+        log(&format!("{} textures not taken: {error}", family.wire()));
+    }
+}
+
+/// `path`'s compressed file in the renderer's family uploaded as `kind` (renderer pass 2 A6.4),
+/// or `None` when the renderer stores RGBA8, the game ships no such file or it was refused (the
+/// image loads instead; a refusal is logged). A lost device is passed on.
+fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+    let family = uploads.texture_family();
+    if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
+        return Ok(None);
+    }
+    let file = family_file(path, family);
+    let Some(bytes) = source.model_bytes(&file) else { return Ok(None) };
+    let texture = match read_ktx2(&bytes) {
+        Ok(texture) => texture,
+        Err(error) => {
+            log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
+            return Ok(None);
+        }
+    };
+    let again = source.static_bytes(&file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
+    match uploads.add_compressed_texture(&texture, kind, again) {
+        Ok(id) => Ok(Some(id)),
+        Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
+        Err(error) => {
+            log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
+            Ok(None)
+        }
+    }
 }
 
 impl AssetCache {
@@ -318,6 +418,10 @@ impl AssetCache {
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
     pub fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        if !self.family_chosen && texture_paths(frame).next().is_some() {
+            choose_texture_family(frame, source, uploads, log);
+            self.family_chosen = true;
+        }
         for path in model_paths(frame) {
             if self.tried(path) {
                 continue;
@@ -329,6 +433,10 @@ impl AssetCache {
         let mut read: Vec<(&str, Option<TextureData>)> = Vec::new();
         for (path, kind) in texture_paths(frame) {
             if self.textures.iter().any(|(known, k, _)| known == path && *k == kind) {
+                continue;
+            }
+            if let Some(id) = load_compressed(path, kind, source, uploads, log)? {
+                self.textures.push((path.to_owned(), kind, Some(id)));
                 continue;
             }
             let at = match read.iter().position(|(known, _)| *known == path) {
@@ -474,11 +582,12 @@ fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, l
     let mut triangles = 0u32;
     // Every part in one upload: the renderer copies its whole library once, not once a material.
     // Each part brings the clusters the importer wrote (R2.3); a part without them clusters at runtime.
-    let model_parts: ModelParts = glb.parts().iter().map(|part| (part.mesh.clone(), part.meshlets.clone())).collect();
+    // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
+    let model_parts: ModelParts = glb.model_parts();
     let still = source.static_bytes(path);
     let added = match still {
         Some(bytes) => uploads.add_meshes_from(model_parts, Arc::new(move || GlbModel::parts_from_glb(bytes))),
-        None => uploads.add_meshes_with_meshlets(model_parts),
+        None => uploads.add_model_parts(model_parts),
     };
     let meshes = match added {
         Ok(meshes) => meshes,

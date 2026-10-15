@@ -127,14 +127,20 @@ struct Material {
 }
 
 struct Batch {
+    // The batch's first slot in each view's region of the visible list.
     first_instance: u32,
     instance_count: u32,
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // Its first instance-table row (A6.9: every level's batch of a mesh holds its rows).
+    first_row: u32,
+    // The batch's level of detail (A6.9, mesh_lod.rs `batch_lod`): the tag (0: no levels; bit 31,
+    // then the level in bits 0-3 and the chain's length in bits 4-7), then the chain's errors over
+    // the mesh's bounding radius as half-float pairs.
+    lod: u32,
+    lod_error01: u32,
+    lod_error23: u32,
 }
 
 struct PassView {
@@ -152,9 +158,14 @@ struct CullViews {
     // MAX_VIEWS (layout.rs): the camera, four cascades, four shadowed spots; the active views
     // lead and the rest are 0.
     planes: array<array<vec4<f32>, 6>, 9>,
-    // x: visible-list rows per view, y: batches, z: active views, w: the views the frame holds
+    // x: visible-list slots per view, y: batches, z: active views, w: the views the frame holds
     // (bit v: a far cascade off its cadence keeps last frame's map, so its cull is skipped).
     params: vec4<u32>,
+    // The levels of detail's view (A6.9): the camera position xyz, w the output's pixels a world
+    // unit at distance 1 over the error threshold (0: levels off).
+    lod: vec4<f32>,
+    // x: 1 when a batch draws a level.
+    lod_params: vec4<u32>,
 }
 
 struct DrawIndexedArgs {

@@ -455,7 +455,8 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
 pub struct BufferCounts {
     /// Instance-table rows (opaque and transparent).
     pub instances: u64,
-    /// Opaque instance rows (each cull view's visible-list region).
+    /// Each cull view's visible-list region: the plan's visible slots (its opaque rows, and each
+    /// level batch's slots, renderer pass 2 A6.9).
     pub opaque_instances: u64,
     /// Transparent draws.
     pub transparent: u64,

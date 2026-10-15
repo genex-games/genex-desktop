@@ -1030,6 +1030,12 @@ impl FrameRenderer {
         self.renderer.add_meshes_with_meshlets(gpu, parts)
     }
 
+    /// Add every part of one model with its meshlets and levels of detail
+    /// ([`Renderer::add_model_parts`], renderer pass 2 A6.9).
+    pub fn add_model_parts(&mut self, gpu: &Gpu, parts: Vec<crate::scene::ModelPart>) -> Result<Vec<MeshId>, RenderError> {
+        self.renderer.add_model_parts(gpu, parts)
+    }
+
     /// Add a skinned mesh.
     pub fn add_skinned_mesh(&mut self, gpu: &Gpu, data: &SkinnedMeshData) -> Result<SkinId, RenderError> {
         self.renderer.add_skinned_mesh(gpu, data)
@@ -1038,6 +1044,12 @@ impl FrameRenderer {
     /// Add a texture.
     pub fn add_texture(&mut self, gpu: &Gpu, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
         self.renderer.add_texture(gpu, data, kind)
+    }
+
+    /// Add a compressed texture in the renderer's family ([`Renderer::add_compressed_texture`],
+    /// renderer pass 2 A6.4).
+    pub fn add_compressed_texture(&mut self, gpu: &Gpu, texture: &crate::texture::CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.renderer.add_compressed_texture(gpu, texture, kind)
     }
 
     /// Admit a custom material (`Material::custom(wgsl, uniforms)`); `uniforms` are its block's

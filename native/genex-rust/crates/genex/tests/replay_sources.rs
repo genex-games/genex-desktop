@@ -183,9 +183,9 @@ impl Uploads for Recording {
         Ok(MeshId::from_raw(10 + self.next))
     }
 
-    fn add_meshes_with_meshlets(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
         self.sourced.borrow_mut().push(("meshes", false));
-        parts.into_iter().map(|(mesh, _)| self.add_mesh(mesh)).collect()
+        parts.into_iter().map(|part| self.add_mesh(part.mesh)).collect()
     }
 
     fn add_texture(&mut self, _data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
@@ -197,7 +197,7 @@ impl Uploads for Recording {
         let again = source().expect("the source decodes again");
         assert!(again == parts, "the source decodes the parts uploaded");
         self.sourced.borrow_mut().push(("meshes", true));
-        parts.into_iter().map(|(mesh, _)| self.add_mesh(mesh)).collect()
+        parts.into_iter().map(|part| self.add_mesh(part.mesh)).collect()
     }
 
     fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {

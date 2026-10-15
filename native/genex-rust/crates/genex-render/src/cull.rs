@@ -78,7 +78,8 @@ pub const CULL_SCATTER_ENTRY: &str = "cull_scatter";
 /// The CPU cull's result for one view, laid out as the compute pass writes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuCull {
-    /// One slot per opaque instance; each batch's survivors fill the start of its region, in order.
+    /// One slot per opaque instance (and per level batch's instance, A6.9); each batch's survivors
+    /// (their instance rows) fill the start of its region, in order.
     pub visible: Vec<u32>,
     /// Survivors per batch.
     pub counts: Vec<u32>,
@@ -120,14 +121,17 @@ pub fn in_frustum(planes: &[[f32; 4]; 6], bounds: [f32; 4]) -> bool {
     planes.iter().all(|p| p[0] * bounds[0] + p[1] * bounds[1] + p[2] * bounds[2] + p[3] >= -bounds[3])
 }
 
-/// The reference cull of `batches` over `instances` against one view's `planes`.
-pub fn cpu_cull(planes: &[[f32; 4]; 6], batches: &[GpuBatch], instances: &[GpuInstance], rows: usize) -> CpuCull {
-    let mut visible = vec![0; rows];
+/// The reference cull of `batches` over `instances` against one view's `planes`, a level's batch
+/// keeping only the instances the frame's LOD view `lod` gives its level
+/// ([`crate::mesh::lod_keeps`]; renderer pass 2 A6.9).
+pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: [f32; 4], batches: &[GpuBatch], instances: &[GpuInstance], slots: usize) -> CpuCull {
+    let mut visible = vec![0; slots];
     let mut counts = Vec::with_capacity(batches.len());
     for batch in batches {
         let mut written = 0;
-        for i in batch.first_instance..batch.first_instance + batch.instance_count {
-            if in_frustum(planes, instances[i as usize].bounds) {
+        for i in batch.first_row..batch.first_row + batch.instance_count {
+            let bounds = instances[i as usize].bounds;
+            if in_frustum(planes, bounds) && crate::mesh::lod_keeps(batch.lod, bounds, lod) {
                 visible[(batch.first_instance + written) as usize] = i;
                 written += 1;
             }

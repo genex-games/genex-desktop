@@ -25,8 +25,8 @@ pub use glb_material_ext::{DEFAULT_IOR, GlbAnisotropy, GlbClearcoat, GlbMaterial
 #[path = "mesh_lod.rs"]
 mod mesh_lod;
 pub use mesh_lod::{
-    LOD_MAX_LEVELS, LOD_MIN_TRIANGLES, LOD_SCHEMA_VERSION, LOD_SELECT_WGSL, LODS_EXTRAS_KEY, LodChain, LodExtrasKey, LodFault, LodLevel, LodLevelKey,
-    LodWarning, select_lod,
+    LOD_MAX_LEVELS, LOD_MIN_TRIANGLES, LOD_NOMINAL_HEIGHT, LOD_SCHEMA_VERSION, LOD_SELECT_WGSL, LOD_THRESHOLD_PX, LODS_EXTRAS_KEY, LodChain, LodExtrasKey,
+    LodFault, LodLevel, LodLevelKey, LodWarning, batch_lod, lod_keeps, select_lod,
 };
 
 /// One vertex as the vertex buffer holds it (`MeshVertex` in the skinning shader).

@@ -313,21 +313,22 @@ impl MeshletFrame {
         let mut instances = Vec::new();
         let mut instance_triangles = Vec::new();
         let (mut candidates, mut candidate_triangles) = (0u64, 0u64);
-        let mut batch = 0usize;
+        // The plain library batches in row order (a mesh's levels follow it, A6.9): a mesh's batch
+        // is the one starting at its slot base.
+        let library_batches = &plan.batches[..plan.static_batches as usize];
         for (mesh, base) in plan.slot_base.iter().enumerate().take(library.len()) {
             if *base == NO_BATCH {
                 continue;
             }
-            let at = batch;
-            batch += 1;
-            let Some(row) = plan.batches.get(at).filter(|row| row.first_instance == *base) else { continue };
+            let at = library_batches.partition_point(|row| row.first_instance < *base);
+            let Some(row) = library_batches.get(at).filter(|row| row.first_instance == *base) else { continue };
             let Some(MeshletState::Clustered(range)) = library.meshlet_state(MeshId::from_raw(mesh as u32)) else { continue };
             if range.meshlet_count == 0 {
                 continue;
             }
             batches[at] = true;
             let triangles = u64::from(row.index_count / 3);
-            for instance in row.first_instance..row.first_instance + row.instance_count {
+            for instance in row.first_row..row.first_row + row.instance_count {
                 instances.push(GpuMeshletInstance {
                     instance,
                     first_meshlet: range.first_meshlet,

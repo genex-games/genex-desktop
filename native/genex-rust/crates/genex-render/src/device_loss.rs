@@ -47,10 +47,10 @@ use crate::overlay::OverlayPainter;
 use crate::particles::{EmitterDesc, EmitterId};
 use crate::renderer::RenderOptions;
 use crate::settings::Meshlets;
-use crate::scene::MeshId;
+use crate::scene::{MeshId, ModelPart};
 use crate::skin::{SkinId, SkinnedMeshData};
 use crate::tables::CullPath;
-use crate::texture::{TextureData, TextureId, TextureKind};
+use crate::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind};
 
 /// Whether a device has been lost, set from wgpu's device-lost callback.
 #[derive(Clone, Debug)]
@@ -96,9 +96,9 @@ fn device_lost() -> RenderError {
     RenderError::refused(RenderCode::DeviceLost, "the GPU device was lost; it is being re-created")
 }
 
-/// Every part of one model with the meshlets each brought, as [`Resilient::add_meshes_with_meshlets`]
-/// takes them.
-pub type ModelParts = Vec<(MeshData, Option<MeshletSet>)>;
+/// Every part of one model with the meshlets and levels of detail each brought, as
+/// [`Resilient::add_model_parts`] takes them.
+pub type ModelParts = Vec<ModelPart>;
 
 /// Where a model's parts come back from for a replay: decoded again from bytes that live as long
 /// as the program (a game's compiled asset table), so no CPU copy is kept (review F6). A replay may
@@ -106,6 +106,9 @@ pub type ModelParts = Vec<(MeshData, Option<MeshletSet>)>;
 pub type PartsSource = Arc<dyn Fn() -> Result<ModelParts, RenderError> + Send + Sync>;
 /// Where a texture comes back from for a replay, as [`PartsSource`].
 pub type TextureSource = Arc<dyn Fn() -> Result<TextureData, RenderError> + Send + Sync>;
+/// Where a compressed texture comes back from for a replay (renderer pass 2 A6.4), as
+/// [`PartsSource`].
+pub type CompressedSource = Arc<dyn Fn() -> Result<CompressedTexture, RenderError> + Send + Sync>;
 
 /// One upload, kept to replay after a loss.
 #[derive(Clone)]
@@ -119,6 +122,10 @@ enum Upload {
     Texture(TextureData, TextureKind),
     /// [`Upload::Texture`] decoded again from its source at each replay.
     TextureFrom(TextureSource, TextureKind),
+    /// A compressed texture in the renderer's family (A6.4), kept.
+    Compressed(CompressedTexture, TextureKind),
+    /// [`Upload::Compressed`] read again from its source at each replay.
+    CompressedFrom(CompressedSource, TextureKind),
     Material(Extension),
     PostPass(PostStage, Extension),
     Emitter(EmitterDesc),
@@ -154,6 +161,12 @@ fn meshlet_bytes(set: &MeshletSet) -> u64 {
     (std::mem::size_of_val(set.meshlets.as_slice()) + std::mem::size_of_val(set.vertices.as_slice()) + std::mem::size_of_val(set.triangles.as_slice())) as u64
 }
 
+/// The CPU bytes a kept model part holds: its mesh, meshlets and levels' indices.
+fn part_bytes(part: &ModelPart) -> u64 {
+    let levels = part.lods.as_ref().map_or(0, |chain| chain.levels.iter().map(|level| std::mem::size_of_val(level.indices.as_slice()) as u64).sum());
+    mesh_bytes(&part.mesh) + part.meshlets.as_ref().map_or(0, meshlet_bytes) + levels
+}
+
 /// The CPU bytes a kept texture holds.
 fn texture_bytes(data: &TextureData) -> u64 {
     data.rgba().len() as u64
@@ -164,12 +177,13 @@ impl Upload {
     fn kept_bytes(&self) -> u64 {
         match self {
             Upload::Mesh(mesh) => mesh_bytes(mesh),
-            Upload::Meshes(parts) => parts.iter().map(|(mesh, set)| mesh_bytes(mesh) + set.as_ref().map_or(0, meshlet_bytes)).sum(),
+            Upload::Meshes(parts) => parts.iter().map(part_bytes).sum(),
             Upload::Skinned(data) => mesh_bytes(&data.mesh) + std::mem::size_of_val(data.skin.as_slice()) as u64,
             Upload::Texture(data, _) => texture_bytes(data),
             Upload::Material(kept) | Upload::PostPass(_, kept) => kept.bytes(),
             Upload::Emitter(_) => std::mem::size_of::<EmitterDesc>() as u64,
-            Upload::MeshesFrom(_) | Upload::TextureFrom(..) => 0,
+            Upload::Compressed(texture, _) => texture.levels().iter().map(|level| level.len() as u64).sum(),
+            Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) => 0,
         }
     }
 }
@@ -183,6 +197,8 @@ impl std::fmt::Debug for Upload {
             Upload::Skinned(_) => f.write_str("Skinned"),
             Upload::Texture(data, kind) => f.debug_tuple("Texture").field(&(data.width(), data.height())).field(kind).finish(),
             Upload::TextureFrom(_, kind) => f.debug_tuple("TextureFrom").field(kind).finish(),
+            Upload::Compressed(texture, kind) => f.debug_tuple("Compressed").field(&(texture.family(), texture.side())).field(kind).finish(),
+            Upload::CompressedFrom(_, kind) => f.debug_tuple("CompressedFrom").field(kind).finish(),
             Upload::Material(_) => f.write_str("Material"),
             Upload::PostPass(stage, _) => f.debug_tuple("PostPass").field(stage).finish(),
             Upload::Emitter(desc) => f.debug_tuple("Emitter").field(desc).finish(),
@@ -216,6 +232,7 @@ pub struct RendererPlan {
     declared: wgpu::Features,
     meshlets: Meshlets,
     texture_arrays: Option<(DeviceClass, TextureQuality)>,
+    texture_family: TextureFamily,
     uploads: Vec<Arc<Upload>>,
     generation: u32,
 }
@@ -236,6 +253,7 @@ impl RendererPlan {
         let (width, height) = self.size;
         let mut renderer = FrameRenderer::with_native_features(&self.gpu, width, height, self.options, self.declared)?;
         renderer.renderer_mut().set_meshlets(&self.gpu, self.meshlets)?;
+        set_family(&mut renderer, &self.gpu, self.texture_family)?;
         if let Some((class, quality)) = self.texture_arrays {
             renderer.renderer_mut().set_texture_arrays(&self.gpu.device, class, quality);
         }
@@ -401,14 +419,20 @@ impl Resilient {
     /// [`Resilient::add_meshes`] with the meshlets each part brought (a GLB part's
     /// `genex_meshlets`), kept for replay with them.
     pub fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
-        self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_meshes_with_meshlets(gpu, parts))
+        self.add_model_parts(parts.into_iter().map(|(mesh, meshlets)| ModelPart { mesh, meshlets, lods: None }).collect())
+    }
+
+    /// [`Resilient::add_meshes_with_meshlets`] with each part's levels of detail (renderer pass 2
+    /// A6.9), kept for replay with them.
+    pub fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.upload(Upload::Meshes(parts.clone()), |r, gpu| r.add_model_parts(gpu, parts))
     }
 
     /// [`Resilient::add_meshes_with_meshlets`] for parts that `source` decodes again (bytes the
     /// program holds for its whole life, a game's compiled assets): nothing is kept, and a replay
     /// takes the parts from `source`.
     pub fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
-        self.upload(Upload::MeshesFrom(source), |r, gpu| r.add_meshes_with_meshlets(gpu, parts))
+        self.upload(Upload::MeshesFrom(source), |r, gpu| r.add_model_parts(gpu, parts))
     }
 
     /// Cluster the game's meshes by `meshlets` from now on ([`crate::Renderer::set_meshlets`]);
@@ -434,6 +458,23 @@ impl Resilient {
     /// [`Resilient::add_meshes_from`]): nothing is kept.
     pub fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
         self.upload(Upload::TextureFrom(source, kind), |r, gpu| r.add_texture(gpu, data, kind))
+    }
+
+    /// Store the larger size classes in `family` (renderer pass 2 A6.4,
+    /// [`crate::Renderer::set_texture_family`]); a rebuilt renderer takes it before its replay.
+    pub fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        self.healthy()?;
+        self.renderer.renderer_mut().set_texture_family(&self.gpu, family).map_err(|e| self.lost_or(e))
+    }
+
+    /// Add a compressed texture in the renderer's family (A6.4, kept for replay).
+    pub fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.upload(Upload::Compressed(texture.clone(), kind), |r, gpu| r.add_compressed_texture(gpu, texture, kind))
+    }
+
+    /// [`Resilient::add_compressed_texture`] for a file `source` reads again: nothing is kept.
+    pub fn add_compressed_texture_from(&mut self, texture: &CompressedTexture, kind: TextureKind, source: CompressedSource) -> Result<TextureId, RenderError> {
+        self.upload(Upload::CompressedFrom(source, kind), |r, gpu| r.add_compressed_texture(gpu, texture, kind))
     }
 
     /// Admit a custom material (kept for replay).
@@ -596,6 +637,7 @@ impl Resilient {
             declared: self.declared,
             meshlets: self.meshlets,
             texture_arrays: self.renderer.renderer().texture_arrays(),
+            texture_family: self.renderer.renderer().texture_family(),
             uploads: self.uploads.clone(),
             generation: self.generation,
         }
@@ -687,6 +729,7 @@ impl Resilient {
         // The setting first, so every replayed mesh is clustered once, by it.
         renderer.renderer_mut().set_meshlets(&gpu, self.meshlets)?;
         // The lost device's texture arrays, so every replayed texture keeps its class and layer.
+        set_family(&mut renderer, &gpu, self.renderer.renderer().texture_family())?;
         if let Some((class, quality)) = self.renderer.renderer().texture_arrays() {
             renderer.renderer_mut().set_texture_arrays(&gpu.device, class, quality);
         }
@@ -707,14 +750,25 @@ impl Resilient {
     }
 }
 
+/// A rebuilt renderer takes the family its compressed textures were stored in (A6.4) before any
+/// upload is replayed; RGBA8, the default, needs nothing.
+fn set_family(renderer: &mut FrameRenderer, gpu: &Gpu, family: TextureFamily) -> Result<(), RenderError> {
+    if family == TextureFamily::Rgba8 {
+        return Ok(());
+    }
+    renderer.renderer_mut().set_texture_family(gpu, family)
+}
+
 fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<(), RenderError> {
     match upload {
         Upload::Mesh(mesh) => renderer.add_mesh(gpu, mesh.clone()).map(drop),
-        Upload::Meshes(parts) => renderer.add_meshes_with_meshlets(gpu, parts.clone()).map(drop),
-        Upload::MeshesFrom(source) => renderer.add_meshes_with_meshlets(gpu, source()?).map(drop),
+        Upload::Meshes(parts) => renderer.add_model_parts(gpu, parts.clone()).map(drop),
+        Upload::MeshesFrom(source) => renderer.add_model_parts(gpu, source()?).map(drop),
         Upload::Skinned(data) => renderer.add_skinned_mesh(gpu, data).map(drop),
         Upload::Texture(data, kind) => renderer.add_texture(gpu, data, *kind).map(drop),
         Upload::TextureFrom(source, kind) => renderer.add_texture(gpu, &source()?, *kind).map(drop),
+        Upload::Compressed(texture, kind) => renderer.add_compressed_texture(gpu, texture, *kind).map(drop),
+        Upload::CompressedFrom(source, kind) => renderer.add_compressed_texture(gpu, &source()?, *kind).map(drop),
         Upload::Material(kept) => renderer.add_material_api(gpu, kept.api, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::PostPass(stage, kept) => renderer.add_post_pass_api(gpu, kept.api, *stage, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::Emitter(desc) => renderer.add_emitter(gpu, *desc).map(drop),

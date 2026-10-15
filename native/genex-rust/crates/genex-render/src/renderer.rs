@@ -147,7 +147,7 @@ use crate::post::taa::{GpuReactiveJitter, GpuTaaParams, ReactiveEntry, ReactiveN
 use crate::post::tonemap::{MsaaResolve, ResolveNode, TonemapNode, TonemapPass, TonemapSource, f16_to_f32};
 use crate::prepass::{ExtensionDemand, GpuPrepassDraw, PrepassConsumers, PrepassDraw, PrepassInfo};
 use crate::readback::{map_read, map_read_blocking, stage_buffer};
-use crate::scene::{FramePlan, LineVertex, MeshId, MeshLibrary, PlanOptions, Scene, SunLight};
+use crate::scene::{FramePlan, LineVertex, MeshId, MeshLibrary, ModelPart, PlanOptions, Scene, SunLight};
 use crate::shadow::{CascadeDraws, CascadeHistory, CasterDepth, CasterSpec, ShadowMapDesc, ShadowMaps, caster_pipeline};
 use crate::settings::{
     AntiAliasing, Environment, ExposureMode, FrameConfig, LdrReason, Look, Meshlets, Quality, RenderFeature, RenderSettings, SceneFormat, ShadowFilter,
@@ -710,7 +710,7 @@ struct LastFrame {
     batches: u32,
     views: u32,
     skinned_vertices: u32,
-    /// The opaque instance-table rows (each view's visible-list region).
+    /// Each view's visible-list region: the plan's visible slots (its opaque rows without levels).
     opaque_instances: u32,
 }
 
@@ -836,6 +836,9 @@ pub struct Renderer {
     /// Whether the texture arrays are fixed: a texture was added, or a device-loss replay set
     /// them ([`Renderer::set_texture_arrays`]).
     textures_fixed: bool,
+    /// The family the larger size classes are stored in (renderer pass 2 A6.4; RGBA8 until a
+    /// game's compressed files choose one, [`Renderer::set_texture_family`]).
+    texture_family: crate::texture::TextureFamily,
     /// The game's environment (the flat colour until set).
     environment_choice: Environment,
     /// The environment the frame binds (graph node 11's IBL output; neutral until baked).
@@ -2522,6 +2525,7 @@ impl Renderer {
             texture_anisotropy: 1,
             textures: ClassArrays::new(&device, TEXTURE_DEFAULT_CLASS, crate::settings::TextureQuality::OFF),
             textures_fixed: false,
+            texture_family: crate::texture::TextureFamily::Rgba8,
             environment_choice: Environment::Color,
             environment: std::cell::RefCell::new(EnvironmentMaps::new(&device, &gpu.queue)),
             sky: std::cell::RefCell::new(SkyState::new()),
@@ -3123,8 +3127,15 @@ impl Renderer {
     /// it passes [`crate::meshlet::validate`], else the runtime clusterizer's
     /// ([`MeshLibrary::add_with_meshlets`]).
     pub fn add_meshes_with_meshlets(&mut self, gpu: &Gpu, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
+        self.add_model_parts(gpu, parts.into_iter().map(|(mesh, meshlets)| ModelPart { mesh, meshlets, lods: None }).collect())
+    }
+
+    /// [`Renderer::add_meshes_with_meshlets`] with each part's levels of detail (a GLB part's
+    /// `genex_lods`, renderer pass 2 A6.9; [`MeshLibrary::add_part`]): the plan draws each
+    /// instance at the level its distance from the camera picks.
+    pub fn add_model_parts(&mut self, gpu: &Gpu, parts: Vec<ModelPart>) -> Result<Vec<MeshId>, RenderError> {
         let mut library = self.library.clone();
-        let ids = parts.into_iter().map(|(mesh, set)| library.add_with_meshlets(mesh, set)).collect::<Result<Vec<MeshId>, RenderError>>()?;
+        let ids = parts.into_iter().map(|part| library.add_part(part)).collect::<Result<Vec<MeshId>, RenderError>>()?;
         self.meshes = mesh_buffers(&gpu.device, &gpu.queue, &library)?;
         self.meshlet_upload_pending = false;
         self.mesh_uploads += 1;
@@ -3156,11 +3167,60 @@ impl Renderer {
     /// ([`ClassArrays::add`]; a [`TextureKind::Normal`] map with Toksvig mips when the quality
     /// says so). The first texture fixes the arrays to the quality and device class in effect.
     pub fn add_texture(&mut self, gpu: &Gpu, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.fix_texture_arrays(&gpu.device);
+        self.textures.add(&gpu.device, &gpu.queue, data, kind)
+    }
+
+    /// Fix the arrays to the quality and device class in effect, on the first texture.
+    fn fix_texture_arrays(&mut self, device: &Device) {
         if !self.textures_fixed {
             let class = self.class.unwrap_or(TEXTURE_DEFAULT_CLASS);
-            self.set_texture_arrays(&gpu.device, class, self.quality.textures);
+            self.set_texture_arrays(device, class, self.quality.textures);
         }
-        self.textures.add(&gpu.device, &gpu.queue, data, kind)
+    }
+
+    /// Store the larger size classes in `family` from the first texture on (renderer pass 2
+    /// A6.4): its compressed files load there ([`Renderer::add_compressed_texture`]) at a quarter
+    /// of RGBA8's bytes, and class 0 (256) stays RGBA8 for images. Refused `texture-invalid` once
+    /// a texture is held (the arrays are kept) or when the device does not sample the family.
+    pub fn set_texture_family(&mut self, gpu: &Gpu, family: crate::texture::TextureFamily) -> Result<(), RenderError> {
+        if !family.usable(gpu.device.features()) {
+            return Err(RenderError::refused(crate::error::RenderCode::TextureInvalid, format!("this device does not sample {family:?} textures")));
+        }
+        if !self.textures.is_empty() {
+            return Err(RenderError::refused(crate::error::RenderCode::TextureInvalid, "the texture family is fixed with the first texture"));
+        }
+        self.texture_family = family;
+        if self.textures_fixed && self.textures.family() != family {
+            self.textures = ClassArrays::with_family(&gpu.device, self.textures.device_class(), self.textures.quality(), family);
+        }
+        Ok(())
+    }
+
+    /// The family the larger size classes are stored in ([`Renderer::set_texture_family`]).
+    pub fn texture_family(&self) -> crate::texture::TextureFamily {
+        self.texture_family
+    }
+
+    /// The compressed families this device samples, best first for its form (renderer pass 2
+    /// A6.4): the families a game's files are looked for in. None while the texture quality in
+    /// effect is off: its one 256 class holds images only.
+    pub fn compressed_families(&self) -> Vec<crate::texture::TextureFamily> {
+        let quality = if self.textures_fixed { self.textures.quality() } else { self.quality.textures };
+        if quality == crate::settings::TextureQuality::OFF {
+            return Vec::new();
+        }
+        let mobile = self.class.is_some_and(|class| class.form == crate::device_class::FormFactor::Mobile);
+        crate::texture::TextureFamily::usable_compressed(self.device.features(), mobile)
+    }
+
+    /// Add a compressed texture in the renderer's family as the next layer of its kind's arrays
+    /// (renderer pass 2 A6.4; [`ClassArrays::add_compressed`]): its stored chain as it is, its top
+    /// levels dropped to the size class it fits. Refused `texture-invalid` for another family,
+    /// another colour space than `kind`'s or a chain under the family's smallest class.
+    pub fn add_compressed_texture(&mut self, gpu: &Gpu, texture: &crate::texture::CompressedTexture, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.fix_texture_arrays(&gpu.device);
+        self.textures.add_compressed(&gpu.device, &gpu.queue, texture, kind)
     }
 
     /// The device class and texture quality the material arrays are fixed to (None until the
@@ -3176,8 +3236,9 @@ impl Renderer {
         if !self.textures.is_empty() {
             return;
         }
-        if (self.textures.device_class(), self.textures.quality()) != (class, quality) {
-            self.textures = ClassArrays::new(device, class, quality);
+        let held = (self.textures.device_class(), self.textures.quality(), self.textures.family());
+        if held != (class, quality, self.texture_family) {
+            self.textures = ClassArrays::with_family(device, class, quality, self.texture_family);
         }
         self.textures_fixed = true;
     }
@@ -3191,6 +3252,12 @@ impl Renderer {
     /// The bytes the material texture arrays hold.
     pub fn texture_bytes(&self) -> u64 {
         self.textures.allocated_bytes()
+    }
+
+    /// The bytes the textures in the material arrays take, each in its array's family
+    /// ([`ClassArrays::held_bytes`], renderer pass 2 A6.4).
+    pub fn texture_held_bytes(&self) -> u64 {
+        self.textures.held_bytes()
     }
 
     /// The surface pipelines' key for `hdr` or the legacy scene: the quality's, with the texture
@@ -3239,6 +3306,9 @@ impl Renderer {
         let options = PlanOptions { shadows, depth_reversed: scene_path.depth_reversed, sun };
         // Rows' identities across frames only for a frame that writes motion vectors.
         let mut plan = FramePlan::build_with_motion(scene, &self.library, aspect, &options, temporal.motion)?;
+        // Levels of detail by the output's height, not the render size (A6.9): a DRS step moves
+        // no instance to another level.
+        plan.set_lod_height(self.height);
         // The sun's angular radius whatever the shadows (GxFrameV2's `sun_dir.w`): a v2 shader
         // sizing a sun disk or glare from it sees the same sun on every preset and device class.
         plan.frame.sun_dir[3] = sun_radius;
@@ -3288,7 +3358,7 @@ impl Renderer {
         let uploads = Uploads::new(&mut plan, path, instance_rows)?;
         self.tables.ensure(&self.device, &plan, &uploads)?;
         self.keep_previous_skinned(previous_skinned)?;
-        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.opaque_instances };
+        self.last = LastFrame { batches: plan.batches.len() as u32, views: plan.views, skinned_vertices: plan.skinned_vertices, opaque_instances: plan.visible_slots };
         Ok((plan, uploads, environment_sun))
     }
 
@@ -4063,7 +4133,7 @@ impl Renderer {
             args: self.tables.args.get(),
             scratch: self.tables.cull_scratch.get(),
         };
-        self.cull.encode(&self.device, encoder, &buffers, plan.opaque_instances, plan.views, timestamps);
+        self.cull.encode(&self.device, encoder, &buffers, plan.visible_slots, plan.views, timestamps);
     }
 
     /// The frame's meshlet candidates (R2), before occlusion is decided: None when the game's
@@ -4401,7 +4471,7 @@ impl Renderer {
         });
         let counts = crate::budget::BufferCounts {
             instances: plan.instances.len() as u64,
-            opaque_instances: u64::from(plan.opaque_instances),
+            opaque_instances: u64::from(plan.visible_slots),
             transparent: plan.transparent.len() as u64,
             views: u64::from(plan.views),
             batches: plan.batches.len() as u64,

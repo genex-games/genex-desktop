@@ -50,7 +50,7 @@ pub const SHADOW: &str = concat!(
     include_str!("../shaders/shadow.wgsl")
 );
 /// The compute frustum cull writing indirect draw arguments for every view.
-pub const CULL: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/cull.wgsl"));
+pub const CULL: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/geometry/lod_select.wgsl"), include_str!("../shaders/cull.wgsl"));
 /// Compute skinning into the storage vertex buffer.
 pub const SKIN: &str = concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/skin.wgsl"));
 /// Immediate lines.

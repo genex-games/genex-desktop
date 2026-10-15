@@ -97,6 +97,38 @@ impl TextureFamily {
     pub fn chain_bytes(self, side: u32) -> u64 {
         (0..mip_level_count(side)).map(|level| (side >> level).max(1)).map(|px| self.level_bytes(px, px)).sum()
     }
+
+    /// The wire spelling the Studio names a family file with (`<stem>.<wire>.ktx2`), shared with
+    /// the import receipt and `genex-assets`' `TextureCompression`.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            TextureFamily::Bc7 => "bc",
+            TextureFamily::Astc4x4 => "astc",
+            TextureFamily::Etc2Rgba8 => "etc2",
+            TextureFamily::Rgba8 => "rgba8",
+        }
+    }
+
+    /// The compressed families a device opened with `features` samples, best first for its form
+    /// (a phone `mobile`): BC first on a desktop (Mesa only emulates ASTC and ETC2), ASTC first on
+    /// a phone, as the destination table orders them.
+    pub fn usable_compressed(features: Features, mobile: bool) -> Vec<TextureFamily> {
+        let order = if mobile { MOBILE_ORDER } else { DESKTOP_ORDER };
+        order.into_iter().filter(|family| family.usable(features)).collect()
+    }
+}
+
+/// The compressed families a desktop takes, best first.
+const DESKTOP_ORDER: [TextureFamily; 3] = [TextureFamily::Bc7, TextureFamily::Astc4x4, TextureFamily::Etc2Rgba8];
+/// The compressed families a phone takes, best first.
+const MOBILE_ORDER: [TextureFamily; 3] = [TextureFamily::Astc4x4, TextureFamily::Etc2Rgba8, TextureFamily::Bc7];
+
+/// Where the Studio writes `path`'s file in `family` (renderer pass 2 A6.4/A6.5): beside it, its
+/// extension replaced by `.<family>.ktx2` (`textures/rock.png` -> `textures/rock.bc.ktx2`).
+pub fn family_file(path: &str, family: TextureFamily) -> String {
+    let name_at = path.rfind('/').map_or(0, |at| at + 1);
+    let stem = path[name_at..].rfind('.').map_or(path, |dot| &path[..name_at + dot]);
+    format!("{stem}.{}.ktx2", family.wire())
 }
 
 /// The family and colour space of a KTX2 `vkFormat` a material array takes.
