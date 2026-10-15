@@ -78,6 +78,7 @@ use genex_render::immediate::Rect2d;
 use genex_render::lights::{PointLight, SpotLight};
 use genex_render::texture::{TextureData, TextureKind};
 use genex_render::device_class::DeviceClass;
+use genex_render::post::grading::{Grading, GradingLut, GradingLutError};
 use genex_render::presets::preset_quality;
 use genex_render::settings::{
     AntiAliasing, Environment, ExposureMode, Fog, Look, Quality, QualityPreset, RenderFeature, SceneFormat, ShadowFilter, ShadowFormat, TextureClass,
@@ -595,7 +596,26 @@ const CHECK_EFFECT_PRESETS: [(QualityPreset, &str); 4] =
 /// screen-effect constants, and a v2 material binding the effects (AO, contact mask, aerial
 /// volume). The second frame takes AO's history path.
 fn effects_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, 1.0)
+    effects_at(gpu, preset, class, 1.0, None)
+}
+
+/// The graded variants (renderer pass 2 A.2): desktop-high's medium and the low phone's own preset
+/// with the look's parametric grading and an identity 17³ LUT, so the tonemap's `GX_GRADING`
+/// pipelines and their 3D LUT binding are created on the browser's device (the phone's LUT side is
+/// capped at 16).
+const CHECK_GRADING_PRESETS: [(QualityPreset, &str, &str); 2] =
+    [(QualityPreset::Medium, "desktop-high", "grading-desktop"), (QualityPreset::Low, "mobile-low", "grading-mobile-low-class")];
+
+/// The identity LUT's side the graded variants draw.
+const CHECK_GRADING_LUT_SIDE: u32 = 17;
+/// The graded variants' contrast (the showcase grade's).
+const CHECK_GRADING_CONTRAST: f32 = 1.15;
+
+/// [`effects_variant`] under the check's grading.
+fn grading_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass) -> Result<(), RenderError> {
+    let refused = |error: GradingLutError| RenderError::refused(RenderCode::DeviceFailed, error.to_string());
+    let lut = GradingLut::identity(CHECK_GRADING_LUT_SIDE).and_then(GradingLut::intern).map_err(refused)?;
+    effects_at(gpu, preset, class, 1.0, Some(Grading::NEUTRAL.with_contrast(CHECK_GRADING_CONTRAST).with_lut(lut, 1.0)))
 }
 
 /// The presets the check draws below scale 1 (RQ5 review): the high phone's medium at its nominal
@@ -606,10 +626,10 @@ const CHECK_UPSCALE_PRESETS: [(QualityPreset, &str, f32); 2] = [(QualityPreset::
 
 /// [`effects_variant`] at render `scale`; an error when FSR1's upscale did not run below 1.
 fn upscale_variant(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) -> Result<(), RenderError> {
-    effects_at(gpu, preset, class, scale)
+    effects_at(gpu, preset, class, scale, None)
 }
 
-fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) -> Result<(), RenderError> {
+fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32, grading: Option<Grading>) -> Result<(), RenderError> {
     let quality = preset_quality(preset, class);
     let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
     let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
@@ -618,7 +638,8 @@ fn effects_at(gpu: &Gpu, preset: QualityPreset, class: DeviceClass, scale: f32) 
     part1.set_device_class(class);
     part1.set_quality(&quality);
     part1.set_render_scale(scale);
-    part1.set_look(part1.look().with_fog(Fog::default().with_density(0.02).with_height(0.3, 0.0)));
+    let fogged = part1.look().with_fog(Fog::default().with_density(0.02).with_height(0.3, 0.0));
+    part1.set_look(grading.map_or(fogged, |grading| fogged.with_grading(grading)));
     part1.set_environment(&Environment::sky());
     let material = renderer.add_material_api(gpu, ABI_V2, SHADED_V2_CHECK, &[], &[])?;
     let mut frame = ImmediateFrame::new(CameraDesc::look_at([0.0, 2.0, 6.0], [0.0, 0.0, 0.0]), [0, 0, 0, 255]);
@@ -795,6 +816,10 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
         let Some(class) = DeviceClass::from_wire(wire) else { continue };
         let name = format!("effects-{}-{wire}", preset.wire());
         variants.push(variant(gpu, name, |gpu| effects_variant(gpu, preset, class)));
+    }
+    for (preset, wire, name) in CHECK_GRADING_PRESETS {
+        let Some(class) = DeviceClass::from_wire(wire) else { continue };
+        variants.push(variant(gpu, name.to_owned(), |gpu| grading_variant(gpu, preset, class)));
     }
     for (preset, wire, scale) in CHECK_UPSCALE_PRESETS {
         let Some(class) = DeviceClass::from_wire(wire) else { continue };

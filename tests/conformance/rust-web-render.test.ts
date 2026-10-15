@@ -75,6 +75,10 @@ const MESHLET_VARIANTS: readonly string[] = [
   // lowest step after TAA) and the RQ5 shader modules.
   "upscale-medium-mobile-high",
   "upscale-high-desktop-high",
+  // Renderer pass 2 A.2: the tonemap's graded pipelines and 3D LUT binding on desktop and on the
+  // low phone (its LUT side capped at 16).
+  "grading-desktop",
+  "grading-mobile-low-class",
   "shader-taa",
   "shader-taa-reactive",
   "shader-easu",

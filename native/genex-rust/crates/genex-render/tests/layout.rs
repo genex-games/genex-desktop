@@ -178,7 +178,16 @@ const OVERRIDE_VARIANTS: &[(&str, &[Variant])] = &[
     (
         "tonemap",
         // `GX_TONEMAPPER` is `Tonemapper::shader_id`: khronos-neutral 0, agx 1, aces 2, none 3, agx-punchy 4.
-        &[&[("GX_TONEMAPPER", 1.0)], &[("GX_TONEMAPPER", 2.0)], &[("GX_TONEMAPPER", 3.0)], &[("GX_TONEMAPPER", 4.0)]],
+        // `GX_GRADING` is `ShaderGrading::shader_id` (A.2): 1 parametric, 2 the LUT, 3 both.
+        &[
+            &[("GX_TONEMAPPER", 1.0)],
+            &[("GX_TONEMAPPER", 2.0)],
+            &[("GX_TONEMAPPER", 3.0)],
+            &[("GX_TONEMAPPER", 4.0)],
+            &[("GX_GRADING", 1.0)],
+            &[("GX_GRADING", 2.0)],
+            &[("GX_GRADING", 3.0), ("GX_TONEMAPPER", 4.0)],
+        ],
     ),
     // The HDR scene's pipelines (`GX_SCENE_HDR`): the legacy scene's are the default. The sun
     // chunk's filters (`GX_SHADOW_FILTER`, `ShadowFilter::shader_id`): 3x3 PCF is the default.

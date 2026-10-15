@@ -2748,17 +2748,22 @@ impl Renderer {
         crate::post::bloom::BloomSettings::new(&self.look, &self.quality.bloom).filter(|_| drawn)
     }
 
-    /// Hand the frame's bloom to the tonemap (its chain's pipelines are made here, never mid-pass).
+    /// Hand the frame's bloom and the look's grading to the tonemap (the bloom chain's pipelines
+    /// and the graded tonemap pipelines are made here, never mid-pass; A.2).
     fn prepare_bloom(&mut self) -> Result<(), RenderError> {
         let bloom = self.frame_bloom();
+        let class = self.class.unwrap_or(DeviceClass::new(self.form, crate::device_class::PerformanceTier::High));
         match self.post.get_mut() {
-            Some((tonemap, _)) => tonemap.set_bloom(&self.device, bloom),
+            Some((tonemap, _)) => {
+                tonemap.set_grading(&self.device, &self.queue, &self.look.grading, class);
+                tonemap.set_bloom(&self.device, bloom)
+            }
             None => Ok(()),
         }
     }
 
     /// What graph nodes 10 and 10a read about the frame `prep` draws over the prepass's `views`.
-    fn effect_frame<'v>(&self, prep: &FramePrep, views: &'v PrepassViews, motion: Option<&'v TextureView>) -> effects::EffectFrame<'v> {
+    fn effect_frame<'v>(&'v self, prep: &FramePrep, views: &'v PrepassViews, motion: Option<&'v TextureView>) -> effects::EffectFrame<'v> {
         let camera = &prep.camera;
         let (eye, target, up) = (glam::Vec3::from(camera.eye), glam::Vec3::from(camera.target), glam::Vec3::from(camera.up));
         let view = glam::camera::rh::view::look_at_mat4(eye, target, up);

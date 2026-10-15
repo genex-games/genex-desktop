@@ -294,6 +294,10 @@ pub struct Look {
     /// The chromatic adaptation's tint, `-1..=1`: positive turns magenta, negative green (0, the
     /// default, changes nothing).
     pub tint: f32,
+    /// Colour grading (A.2): parametric knobs on the white-balanced scene before the curve and a
+    /// `.cube` LUT on the display colour after it ([`crate::post::grading::Grading`]; neutral, the
+    /// default, draws nothing). HDR scene only, as the white balance.
+    pub grading: crate::post::grading::Grading,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -584,6 +588,7 @@ const DEFAULT_LOOK: Look = Look {
     white_balance: [1.0; 3],
     temperature: 0.0,
     tint: 0.0,
+    grading: crate::post::grading::Grading::NEUTRAL,
 };
 
 impl Default for Look {
@@ -652,6 +657,12 @@ impl Look {
     pub fn with_temperature(mut self, temperature: f32, tint: f32) -> Look {
         self.temperature = held(temperature, 0.0, -1.0, 1.0);
         self.tint = held(tint, 0.0, -1.0, 1.0);
+        self
+    }
+
+    /// The look with `grading`, each knob held to its range.
+    pub fn with_grading(mut self, grading: crate::post::grading::Grading) -> Look {
+        self.grading = grading.held();
         self
     }
 

@@ -287,9 +287,9 @@ for a sunlit scene; keep `manual` for flat, stylized colour. Keep dusk dark with
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
 `fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. Keep `fog_color`
 white and warm the whole frame in code with `.temperature(0.3, 0.0)` (a blue sky stays blue) or
-`.white_balance([1.0, 0.85, 0.65])`. The presets choose how an effect is drawn, never how it looks. In code:
-`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).fog(Fog::default().with_density(0.02))`
-(`genex::render`).
+`.white_balance([1.0, 0.85, 0.65])`. In code:
+`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).grading(Grading::NEUTRAL.with_contrast(1.15))`
+(`genex::render`; contrast turns about middle grey; `.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8)` adds a `.cube` LUT).
 
 Each feature has a switch; off is its cheaper variant, never a refusal:
 
@@ -355,7 +355,7 @@ a v2 source reads the frame's `depth`, `normals`, `motion`, `environment` and `h
 (`RenderInputs::DEPTH`, `NORMALS`, `MOTION`, `ENVIRONMENT`, `HDR_SCENE`) and the look's exposure;
 v1 keeps working but holds the whole frame on the LDR scene. Level-3 passes register at
 `PassStage::BeforeCull`, `AfterPrepass`, `AfterOpaque`, `AfterTransparent`, `PostHdr` (before the
-tonemap, where a grade of your own goes) or `Post`. Bloom, fog, lights, shadows and the environment
+tonemap) or `Post`. Bloom, fog, lights, shadows and the environment
 reach a v2 material as they reach a built-in surface, so prefer the built-ins and the look to a
 custom pass.
 

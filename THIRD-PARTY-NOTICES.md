@@ -256,9 +256,11 @@ credits its source in a comment.
 | `shaders/post/tonemap.wgsl` (`gx_tm_awp`, `gx_tm_agx_punchy`), `src/post/tonemap.rs` (`AgxCurve`, its CPU reference) | AgX punchy: the allenwp tonemapping curve with its CPU-computed toe, slope and shoulder, between the combined Rec. 709 -> Rec. 2020 -> AgX inset and outset matrices; Genex generalises the crossover's output | Godot Engine 4.7.2-stable (https://github.com/godotengine/godot), `servers/rendering/renderer_rd/shaders/effects/tonemap.glsl` (`allenwp_curve`, `tonemap_agx`) and `servers/rendering/storage/environment_storage.cpp` (`environment_get_tonemap_parameters`) | Godot Engine contributors; the curve by Allen Pestaluky (allenwp); the matrices after EaryChow's Blender AgX | MIT (see [Godot Engine](#godot-engine)) |
 | `shaders/post/exposure_adapt.wgsl` (`gx_adapt_tick`, `gx_compensation`), `src/post/exposure.rs` (`adapt_tick`, `curve_compensation`), `src/settings.rs` (`CompensationCurve`) | Hybrid auto exposure adaptation (linear far from the target, exponential within a transition distance) and the exposure compensation curve over the metered EV | Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_post_process/src/auto_exposure/auto_exposure.wesl` and `compensation_curve.rs` | Bevy contributors | MIT OR Apache-2.0, used under Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `src/settings.rs` (`chromatic_adaptation` and its colour matrices) | White balance as a von Kries chromatic adaptation in CIECAT16 cone space from a temperature and tint, the white point moved along the daylight locus | Filament v1.78.0 (https://github.com/google/filament), `filament/src/details/ColorGrading.cpp` (`adaptationTransform`) and `filament/src/ColorSpaceUtils.h` | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
+| `shaders/post/tonemap.wgsl` (`gx_grade`, `gx_grade_weights`, `gx_grade_lut`), `src/post/grading.rs` (`Grading::grade`, `tetrahedral`, their CPU twins) | Colour grading: per-section (shadows, midtones, highlights) saturation, contrast, gamma, gain and lift blended across the sections' margins; contrast in log space about middle grey and vibrance; a 3D LUT read with tetrahedral interpolation from four texel loads (Genex stores each texel's change from the identity and blends shadows into midtones where Bevy blends them into highlights) | Bevy 0.16.0 (https://github.com/bevyengine/bevy), `crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl` (`sectional_color_grading`); Filament v1.78.0 (https://github.com/google/filament), `filament/src/details/ColorGrading.cpp` (`contrast`, `vibrance`); pmndrs/postprocessing (https://github.com/pmndrs/postprocessing), `src/effects/glsl/lut-3d.frag` (`applyLUT`, tetrahedral) | Bevy contributors; The Android Open Source Project; Raoul van Rüschen | MIT OR Apache-2.0, used under Apache 2.0 (Bevy); Apache 2.0 (Filament) (see [Apache License 2.0](#apache-license-20)); Zlib (pmndrs/postprocessing, see [pmndrs/postprocessing](#pmndrspostprocessing)) |
 | `shaders/ibl/sh9.wgsl` (`ibl_sh9_window`, the bisection after the reduction), `src/ibl.rs` (`sh9_window`, `sh9_dering_window`, their CPU twin) | Spherical-harmonic deringing: the sinc^4 window of bands 1 and 2 and the bisection for the weakest cutoff that keeps the reconstruction non-negative (Genex windows only an SH that rings) | Filament v1.78.0 (https://github.com/google/filament), `libs/ibl/src/CubemapSH.cpp` (`sincWindow`, `windowSH`) | The Android Open Source Project; the method by Peter-Pike Sloan ("Deringing Spherical Harmonics", 2017) | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/pbr.wgsl` (`gx_specular_energy`), `shaders/lighting/ambient.wgsl` (`gx_diffuse_normal`) | Multiple-scattering energy compensation of direct specular, `1 + f0 (1 / E - 1)` from the split-sum LUT; the diffuse environment light looked up along the bent normal | Filament v1.78.0 (https://github.com/google/filament), `shaders/src/surface_shading_lit.fs` (`energyCompensation`), `shaders/src/surface_light_indirect.fs` (`diffuseNormal`) | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/alpha_mask.wgsl` (`gx_alpha_hash2`, `gx_alpha_hash3`, `gx_alpha_hash_threshold`) | Hashed alpha testing: the hash and the two-scale, CDF-remapped alpha threshold (Genex turns it by the frame for TAA and compares the edge's sharpened coverage with it) | three.js 0.185.1, `src/renderers/shaders/ShaderChunk/alphahash_pars_fragment.glsl.js` (`hash2D`, `hash3D`, `getAlphaHashThreshold`) | three.js authors, after Wyman and McGuire 2017, "Hashed Alpha Testing" | MIT (three.js, see [Vendored three.js](#vendored-threejs)) |
+| `shaders/post/sun_mask_denoise.wgsl` (`fs_sun_mask_temporal`, `gx_mask_history`, `gx_mask_depth_tolerance`, `gx_mask_alpha`, `gx_mask_input`, `gx_mask_atrous`), `src/post/sun_mask.rs` (the constants) | The sun-shadow screen mask's denoise: temporal reprojection with the view-alignment-scaled disocclusion test, the neighbourhood clamp, the sample-count damper, the variance boost of a young history and the accumulation schedule; the 3x3 a-trous kernel with the shadow edge-stopping weight (Genex ports it to fragment passes without wave intrinsics or tile bitmasks, for a continuous PCSS visibility: one filter step instead of three, a depth weight instead of the normal's, and the shadow weight over the variance of the accumulated estimate) | AMD FidelityFX Denoiser (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser), `ffx-shadows-dnsr/ffx_denoiser_shadows_tileclassification.h` and `ffx_denoiser_shadows_filter.h` | Advanced Micro Devices, Inc. | MIT (see [FidelityFX Denoiser](#fidelityfx-denoiser)) |
 | `shaders/pbr.wgsl` (`gx_sun_area_direction`) | The sun as a disc for specular: the direction inside the sun's disc closest to the mirror direction | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_light_directional.fs` (`sampleSunAreaLight`) | The Android Open Source Project | Apache 2.0 (see [Apache License 2.0](#apache-license-20)) |
 | `shaders/post/contact_shadow.wgsl` (`gx_contact_edge_fade`, `gx_contact_soft_hit`, the screen-space step count and the per-step tolerance) | Contact shadows: the occlusion faded out across the screen's outer twelfth, the thickness at least the ray's change in view distance per step; the steps set by the depth texels the ray spans on the screen and the soft hit over the back half of the thickness | Filament v1.77.3 (https://github.com/google/filament), `shaders/src/surface_shadowing.fs` (`screenSpaceContactShadow`); Bevy 0.20.0 (https://github.com/bevyengine/bevy), `crates/bevy_pbr/src/ssr/raymarch.wesl` (`depth_ray_march_march`) and `crates/bevy_pbr/src/render/pbr_functions.wesl` (`calculate_contact_shadow`) | The Android Open Source Project; Tomasz Stachowiak and Bevy contributors | Apache 2.0 (Filament); MIT OR Apache-2.0, used under Apache 2.0 (Bevy) (see [Apache License 2.0](#apache-license-20)) |
 
@@ -361,6 +363,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+### pmndrs/postprocessing
+
+The licence of the pmndrs/postprocessing code the grading LUT's tetrahedral interpolation ports
+(table above). The WGSL port is an altered version: it reads changes from the identity and is
+marked as a port in `tonemap.wgsl`.
+
+```
+Copyright © 2015 Raoul van Rüschen
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use of
+this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject to
+the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+   that you wrote the original software. If you use this software in a product,
+   an acknowledgment in the product documentation would be appreciated but is
+   not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
 ```
 
 ## Rust showcase environment map

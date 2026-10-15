@@ -32,6 +32,11 @@
 //! with scene 0.18 kept at the display grey plain AgX draws it at ([`AGX_GREY_OUT`]), then
 //! saturation [`AGX_PUNCHY_SATURATION`]. [`tonemap_cpu`] is the CPU reference the shader is held to.
 //!
+//! Grading (A.2, [`crate::post::grading`]) runs in the same pass: once [`TonemapNode::set_grading`]
+//! hands the node the look's [`Grading`], the pipelines take its `GX_GRADING` bits (the graded
+//! variants of every pipeline made so far are made there, never mid-pass), the uniform its rows
+//! and binding [`GRADING_LUT_BINDING`] its LUT (a neutral 1x1x1 texel without one).
+//!
 //! Shaders: [`crate::shaders::TONEMAP`], [`crate::shaders::RESOLVE_HDR`].
 
 use crate::compile::Compiled;
@@ -42,6 +47,7 @@ use crate::capture::Capture;
 use crate::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use crate::error::RenderError;
 use crate::gpu::Gpu;
+use crate::post::grading::{GRADING_LUT_BINDING, Grading, GradingLut, LUT_FORMAT, ShaderGrading, lut_side_max};
 use crate::post::bloom::{BloomInput, BloomNode, BloomOutput, BloomSettings, BloomSource, TONEMAP_BLOOM_BINDING, TONEMAP_SAMPLER_BINDING};
 use crate::readback::map_read_blocking;
 use crate::settings::Tonemapper;
@@ -166,6 +172,20 @@ pub struct GpuTonemapParams {
     pub balance: [[f32; 4]; 3],
     /// AgX punchy's curve ([`AgxCurve::row`]): contrast, the toe's a, the shoulder's slope and w.
     pub curve: [f32; 4],
+    /// Grading ([`Grading`]'s rows): x contrast, y saturation, z vibrance, w the LUT's intensity.
+    pub grade: [f32; 4],
+    /// xy: the midtones' level range; z: the LUT's side; w reserved.
+    pub grade_range: [f32; 4],
+    /// Each section's saturation: x shadows, y midtones, z highlights; w reserved.
+    pub section_saturation: [f32; 4],
+    /// Each section's contrast.
+    pub section_contrast: [f32; 4],
+    /// Each section's gamma.
+    pub section_gamma: [f32; 4],
+    /// Each section's gain.
+    pub section_gain: [f32; 4],
+    /// Each section's lift.
+    pub section_lift: [f32; 4],
 }
 
 /// The scene value where the allenwp curve's toe and shoulder meet (Godot's `awp_crossover_point`).
@@ -434,6 +454,35 @@ struct PipelineKey {
     tonemapper: u32,
     source: TonemapSource,
     format: TextureFormat,
+    grading: ShaderGrading,
+}
+
+/// The look's LUT on the GPU: the texture's view, keyed by the interned LUT and the class's side.
+struct NodeLut {
+    key: (usize, u32),
+    view: TextureView,
+    side: u32,
+}
+
+impl NodeLut {
+    fn new(device: &Device, queue: &Queue, lut: &'static GradingLut, side_max: u32) -> NodeLut {
+        let upload = lut.upload(side_max);
+        let side = upload.side();
+        let size = wgpu::Extent3d { width: side, height: side, depth_or_array_layers: side };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("grading lut"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: LUT_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(side * 8), rows_per_image: Some(side) };
+        queue.write_texture(texture.as_image_copy(), bytemuck::cast_slice(&upload.texels()), layout, size);
+        NodeLut { key: (std::ptr::from_ref(lut) as usize, side_max), view: texture.create_view(&Default::default()), side }
+    }
 }
 
 /// The tonemap node: one module, a pipeline per (curve, source, target format) made on first use,
@@ -447,13 +496,21 @@ pub(crate) struct TonemapNode {
     sampler: Sampler,
     params: Buffer,
     pipelines: Vec<(PipelineKey, Compiled<RenderPipeline>)>,
-    group: Option<((u64, bool, u64), BindGroup)>,
+    group: Option<((u64, bool, u64, u64), BindGroup)>,
     /// The 1x1 black texture bound for bloom until the chain runs (WebGPU zero-initializes it).
     neutral_bloom: TextureView,
     /// The bloom the next passes draw (None: the neutral input).
     bloom: Option<BloomSettings>,
     /// The bloom chain's node, made when a frame first asks for bloom.
     bloom_node: Option<BloomNode>,
+    /// The look's grading (held), from [`TonemapNode::set_grading`].
+    grading: Grading,
+    /// The look's LUT on the GPU (None: the neutral texel).
+    lut: Option<NodeLut>,
+    /// The 1x1x1 neutral LUT texel (no change; WebGPU zero-initializes it).
+    neutral_lut: TextureView,
+    /// Bumped whenever the bound LUT changes (the bind group is rebuilt).
+    lut_generation: u64,
 }
 
 /// A filterable 2D float texture binding of the fragment stage (the scene, the bloom chain).
@@ -464,6 +521,31 @@ fn filterable_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         multisampled: false,
     };
     layout_entry(binding, ty)
+}
+
+/// The grading LUT's binding: a 3D float texture read with `textureLoad`.
+fn lut_entry() -> wgpu::BindGroupLayoutEntry {
+    let ty = wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension: wgpu::TextureViewDimension::D3,
+        multisampled: false,
+    };
+    layout_entry(GRADING_LUT_BINDING, ty)
+}
+
+/// The neutral LUT: one zero `rgba16float` texel.
+fn neutral_lut(device: &Device) -> TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("grading lut neutral"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: LUT_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    texture.create_view(&Default::default())
 }
 
 fn sampler_entry() -> wgpu::BindGroupLayoutEntry {
@@ -528,11 +610,11 @@ impl TonemapNode {
         let module = crate::shaders::module(device, "tonemap", crate::shaders::TONEMAP)?;
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap"),
-            entries: &[filterable_entry(0), sampler_entry(), uniform_entry(), filterable_entry(TONEMAP_BLOOM_BINDING)],
+            entries: &[filterable_entry(0), sampler_entry(), uniform_entry(), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry()],
         });
         let msaa_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap msaa"),
-            entries: &[sampler_entry(), uniform_entry(), multisampled_entry(3), filterable_entry(TONEMAP_BLOOM_BINDING)],
+            entries: &[sampler_entry(), uniform_entry(), multisampled_entry(3), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry()],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("tonemap"),
@@ -554,7 +636,47 @@ impl TonemapNode {
             neutral_bloom: neutral_bloom(device),
             bloom: None,
             bloom_node: None,
+            grading: Grading::NEUTRAL,
+            lut: None,
+            neutral_lut: neutral_lut(device),
+            lut_generation: 0,
         })
+    }
+
+    /// The bytes of the 3D grading LUT this node holds (`side³` rgba16f texels; 0: none), the
+    /// budget ledger's [`crate::budget::GRADING_LUT_LABEL`] entry (`Renderer::buffer_ledger`).
+    pub(crate) fn grading_lut_bytes(&self) -> u64 {
+        self.lut.as_ref().map_or(0, |lut| u64::from(lut.side).pow(3) * 8)
+    }
+
+    /// Draw `grading` from the next pass on, its LUT sized for `class` ([`lut_side_max`]). The LUT
+    /// is uploaded when it or the class's side changed; when what the shader draws changed, the
+    /// graded variant of every pipeline made so far is made here, never mid-pass.
+    pub(crate) fn set_grading(&mut self, device: &Device, queue: &Queue, grading: &Grading, class: DeviceClass) {
+        let before = self.shader_grading();
+        let grading = grading.held();
+        let side_max = lut_side_max(class);
+        let lut = grading.lut.filter(|_| grading.shader().lut());
+        let wanted = lut.map(|lut| (std::ptr::from_ref(lut) as usize, side_max));
+        if wanted != self.lut.as_ref().map(|held| held.key) {
+            self.lut = lut.map(|lut| NodeLut::new(device, queue, lut, side_max));
+            self.lut_generation += 1;
+        }
+        self.grading = grading;
+        let after = self.shader_grading();
+        if after == before {
+            return;
+        }
+        let made: Vec<PipelineKey> = self.pipelines.iter().map(|(key, _)| *key).filter(|key| key.grading == before).collect();
+        for key in made {
+            self.pipeline_of(device, PipelineKey { grading: after, ..key });
+        }
+    }
+
+    /// What the passes draw of the look's grading: its LUT only once uploaded.
+    fn shader_grading(&self) -> ShaderGrading {
+        let shader = self.grading.shader();
+        if self.lut.is_some() { shader } else { shader.without_lut() }
     }
 
     /// Draw `bloom` from the next pass on (each pass records the chain, then composites it), or
@@ -571,13 +693,17 @@ impl TonemapNode {
     /// The pipeline of `tonemapper` reading `source` into `format`, made once (a pipeline-shaping
     /// change prewarms it at the frame that asks).
     pub(crate) fn pipeline(&mut self, device: &Device, tonemapper: Tonemapper, source: TonemapSource, format: TextureFormat) -> Compiled<RenderPipeline> {
-        let key = PipelineKey { tonemapper: tonemapper.shader_id(), source, format };
+        let key = PipelineKey { tonemapper: tonemapper.shader_id(), source, format, grading: self.shader_grading() };
+        self.pipeline_of(device, key)
+    }
+
+    fn pipeline_of(&mut self, device: &Device, key: PipelineKey) -> Compiled<RenderPipeline> {
         if let Some((_, pipeline)) = self.pipelines.iter().find(|(held, _)| *held == key) {
             return pipeline.clone();
         }
-        let layout = if source.multisampled() { &self.msaa_pipeline_layout } else { &self.scene_pipeline_layout };
-        let constants = [("GX_TONEMAPPER", f64::from(key.tonemapper))];
-        let pipeline = fullscreen(device, "tonemap", layout, &self.module, ("vs_tonemap", source.entry()), format, &constants);
+        let layout = if key.source.multisampled() { &self.msaa_pipeline_layout } else { &self.scene_pipeline_layout };
+        let constants = [("GX_TONEMAPPER", f64::from(key.tonemapper)), ("GX_GRADING", f64::from(key.grading.shader_id()))];
+        let pipeline = fullscreen(device, "tonemap", layout, &self.module, ("vs_tonemap", key.source.entry()), key.format, &constants);
         self.pipelines.push((key, pipeline.clone()));
         pipeline
     }
@@ -588,7 +714,7 @@ impl TonemapNode {
     }
 
     fn bind_group(&mut self, device: &Device, input: &TextureView, multisampled: bool, generation: u64, bloom: Option<&BloomOutput>) -> BindGroup {
-        let key = (generation, multisampled, bloom.map_or(0, |output| output.chain));
+        let key = (generation, multisampled, bloom.map_or(0, |output| output.chain), self.lut_generation);
         if let Some((held, group)) = &self.group
             && *held == key
         {
@@ -598,17 +724,19 @@ impl TonemapNode {
         let sampler = wgpu::BindGroupEntry { binding: TONEMAP_SAMPLER_BINDING, resource: wgpu::BindingResource::Sampler(&self.sampler) };
         let chain = bloom.map_or(&self.neutral_bloom, |output| &output.view);
         let bloom = wgpu::BindGroupEntry { binding: TONEMAP_BLOOM_BINDING, resource: wgpu::BindingResource::TextureView(chain) };
+        let lut_view = self.lut.as_ref().map_or(&self.neutral_lut, |lut| &lut.view);
+        let lut = wgpu::BindGroupEntry { binding: GRADING_LUT_BINDING, resource: wgpu::BindingResource::TextureView(lut_view) };
         let group = if multisampled {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("tonemap msaa"),
                 layout: &self.msaa_layout,
-                entries: &[sampler, params, wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(input) }, bloom],
+                entries: &[sampler, params, wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(input) }, bloom, lut],
             })
         } else {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("tonemap"),
                 layout: &self.scene_layout,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(input) }, sampler, params, bloom],
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(input) }, sampler, params, bloom, lut],
             })
         };
         self.group = Some((key, group.clone()));
@@ -627,9 +755,23 @@ impl TonemapNode {
     /// Record one tonemap pass (after the bloom chain, when the node draws bloom): a full-screen
     /// triangle over `pass.target`. Answers the render passes it opened, the chain's included.
     pub(crate) fn encode(&mut self, device: &Device, queue: &Queue, encoder: &mut wgpu::CommandEncoder, pass: &TonemapPass<'_>) -> u32 {
+        self.encode_timed(device, queue, encoder, pass, None)
+    }
+
+    /// [`TonemapNode::encode`] with the tonemap pass's own `timestamps` (the grading cost row).
+    fn encode_timed(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pass: &TonemapPass<'_>,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) -> u32 {
         let bloom = self.encode_bloom(device, queue, encoder, pass);
         let passes = 1 + bloom.as_ref().map_or(0, |output| output.passes);
         let (intensity, scale, threshold) = bloom.as_ref().map_or((0.0, 0.0, 0.0), |output| (output.intensity, output.scale, output.threshold));
+        let [grade, grade_range, section_saturation, section_contrast, section_gamma, section_gain, section_lift] =
+            self.grading.rows(self.lut.as_ref().map_or(1, |lut| lut.side));
         let params = GpuTonemapParams {
             source: size_row(pass.source_size),
             output: size_row(pass.target_size),
@@ -638,6 +780,13 @@ impl TonemapNode {
             bloom: [threshold, crate::post::bloom::THRESHOLD_KNEE, 0.0, 0.0],
             balance: balance_columns(&pass.balance),
             curve: AgxCurve::punchy().row(),
+            grade,
+            grade_range,
+            section_saturation,
+            section_contrast,
+            section_gamma,
+            section_gain,
+            section_lift,
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
         let pipeline = self.pipeline(device, pass.tonemapper, pass.source, pass.format);
@@ -651,6 +800,7 @@ impl TonemapNode {
                 // The triangle covers every pixel: nothing to load.
                 ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
             })],
+            timestamp_writes: timestamps,
             ..Default::default()
         });
         render.set_pipeline(&pipeline);
@@ -747,6 +897,22 @@ pub fn upscale_image(
     tonemap_through(gpu, tonemapper, source, (size, texels), target, dither, None)
 }
 
+/// [`upscale_image`] with the look's `grading` (its LUT sized for `class`): the tonemap pass a
+/// graded frame draws, over a `size` image of pre-exposed radiance (`texels`) onto a `target`.
+#[allow(clippy::too_many_arguments, reason = "the pass's own inputs: upscale_image's plus the grading and the class")]
+pub fn grade_image(
+    gpu: &Gpu,
+    tonemapper: Tonemapper,
+    source: TonemapSource,
+    image: ((u32, u32), &[[f32; 4]]),
+    target: (u32, u32),
+    grading: &Grading,
+    class: DeviceClass,
+    dither: bool,
+) -> Result<Capture, RenderError> {
+    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, None), Some((grading, class)))
+}
+
 /// [`tonemap_image`] with `bloom` composited (None: no bloom, the bloom-free picture): the chain
 /// and the tonemap the renderer records, over a `size` image of pre-exposed radiance onto a target
 /// of the same size, dithered at frame 0 when `dither`.
@@ -758,10 +924,21 @@ fn tonemap_through(
     gpu: &Gpu,
     tonemapper: Tonemapper,
     source: TonemapSource,
-    (size, texels): ((u32, u32), &[[f32; 4]]),
+    image: ((u32, u32), &[[f32; 4]]),
     target: (u32, u32),
     dither: bool,
     bloom: Option<BloomSettings>,
+) -> Result<Capture, RenderError> {
+    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, bloom), None)
+}
+
+fn draw_tonemap_image(
+    gpu: &Gpu,
+    (tonemapper, source): (Tonemapper, TonemapSource),
+    (size, texels): ((u32, u32), &[[f32; 4]]),
+    target: (u32, u32),
+    (dither, bloom): (bool, Option<BloomSettings>),
+    grading: Option<(&Grading, DeviceClass)>,
 ) -> Result<Capture, RenderError> {
     let (width, height) = size;
     crate::capture::check_capture_size(width, height)?;
@@ -795,6 +972,9 @@ fn tonemap_through(
     let (input, output) = (scene.create_view(&Default::default()), output_texture.create_view(&Default::default()));
     let mut node = TonemapNode::new(device)?;
     node.set_bloom(device, bloom)?;
+    if let Some((grading, class)) = grading {
+        node.set_grading(device, &gpu.queue, grading, class);
+    }
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("tonemap image") });
     let pass = TonemapPass {
         source,
@@ -825,6 +1005,119 @@ fn tonemap_through(
     gpu.queue.submit([encoder.finish()]);
     let data = map_read_blocking(gpu, &staging, u64::from(padded) * u64::from(height))?;
     Capture::from_padded_rows(width, height, padded, &data)
+}
+
+/// Resolves of a timed batch's stamps before the grading timing gives up on stale ones.
+const TIMING_RESOLVE_ATTEMPTS: u32 = 8;
+
+/// Times a batch of tonemap passes from its first pass's start to its last pass's end
+/// ([`grading_pass_ms`]).
+struct BatchTimer {
+    queries: wgpu::QuerySet,
+    resolve: Buffer,
+    staging: Buffer,
+    period_ms: f64,
+    /// The last pair of stamps read (a stale resolve reads it again).
+    last: Option<(u64, u64)>,
+}
+
+impl BatchTimer {
+    fn new(gpu: &Gpu) -> Result<BatchTimer, RenderError> {
+        let device = &gpu.device;
+        Ok(BatchTimer {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("grading timing"), ty: wgpu::QueryType::Timestamp, count: 2 }),
+            resolve: buffer(device, "grading timing resolve", 16, BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC)?,
+            staging: buffer(device, "grading timing readback", 16, BufferUsages::MAP_READ | BufferUsages::COPY_DST)?,
+            period_ms: f64::from(gpu.queue.get_timestamp_period()) / 1.0e6,
+            last: None,
+        })
+    }
+
+    /// `passes` passes of `node` drawing `pass` in one command buffer: the GPU time a pass.
+    fn pass_ms(&mut self, gpu: &Gpu, node: &mut TonemapNode, pass: &TonemapPass<'_>, passes: u32) -> Result<f32, RenderError> {
+        let device = &gpu.device;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grading timing") });
+        for k in 0..passes {
+            let (begin, end) = ((k == 0).then_some(0), (k + 1 == passes).then_some(1));
+            let timestamps = (begin.is_some() || end.is_some())
+                .then_some(wgpu::RenderPassTimestampWrites { query_set: &self.queries, beginning_of_pass_write_index: begin, end_of_pass_write_index: end });
+            node.encode_timed(device, &gpu.queue, &mut encoder, pass, timestamps);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        // Metal writes stage-boundary samples after its command buffer: resolve in a submission of
+        // its own, and again while the pair is stale (the last batch's) or inverted
+        // (`device_class`'s calibration does the same).
+        for _ in 0..TIMING_RESOLVE_ATTEMPTS {
+            let mut resolving = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grading timing resolve") });
+            resolving.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+            resolving.copy_buffer_to_buffer(&self.resolve, 0, &self.staging, 0, 16);
+            gpu.queue.submit([resolving.finish()]);
+            let data = map_read_blocking(gpu, &self.staging, 16)?;
+            let [begin, end] = [0, 8].map(|at| data.get(at..at + 8).and_then(|b| b.try_into().ok()).map_or(0, u64::from_le_bytes));
+            if end > begin && Some((begin, end)) != self.last {
+                self.last = Some((begin, end));
+                return Ok(((end - begin) as f64 * self.period_ms / f64::from(passes)) as f32);
+            }
+        }
+        Err(crate::readback::capture_failed("the grading timing's stamps stayed stale"))
+    }
+}
+
+/// The GPU time of one tonemap pass over a `size` image of `texels` onto a target of the same
+/// size, without grading and with `grading` (its LUT sized for `class`), in milliseconds a pass:
+/// `batches` pairs of batches, one of each, each batch `passes` passes in its own command buffer
+/// timed from its first pass's start to its last pass's end and waited for before the next (the
+/// order alternates each pair). A pass's own timestamps on a tile-based GPU overlap its
+/// neighbours' (Apple M4 Max: single passes read 0 to 2.2 ms), a batch's span does not. None
+/// without timestamp queries (the grading cost row).
+pub fn grading_pass_ms(gpu: &Gpu, (size, texels): ((u32, u32), &[[f32; 4]]), (grading, class): (&Grading, DeviceClass), (passes, batches): (u32, u32)) -> Result<Option<Vec<[f32; 2]>>, RenderError> {
+    let device = &gpu.device;
+    if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) || passes == 0 || batches == 0 {
+        return Ok(None);
+    }
+    let (width, height) = size;
+    crate::capture::check_capture_size(width, height)?;
+    if texels.len() != (width * height) as usize {
+        return Err(crate::readback::capture_failed(format!("{} texels for a {width}x{height} image", texels.len())));
+    }
+    let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let texture = |label, format, usage| {
+        device.create_texture(&wgpu::TextureDescriptor { label: Some(label), size: extent, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] })
+    };
+    let scene = texture("grading timing scene", TextureFormat::Rgba16Float, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+    let halves: Vec<u16> = texels.iter().flat_map(|texel| texel.map(f32_to_f16)).collect();
+    let layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 8), rows_per_image: Some(height) };
+    gpu.queue.write_texture(scene.as_image_copy(), bytemuck::cast_slice(&halves), layout, extent);
+    let world_format = crate::renderer::WORLD_FORMAT;
+    let target = texture("grading timing target", world_format, wgpu::TextureUsages::RENDER_ATTACHMENT);
+    let (input, output) = (scene.create_view(&Default::default()), target.create_view(&Default::default()));
+    let mut nodes = [TonemapNode::new(device)?, TonemapNode::new(device)?];
+    nodes[1].set_grading(device, &gpu.queue, grading, class);
+    let pass = TonemapPass {
+        source: TonemapSource::Scene,
+        input: &input,
+        target: &output,
+        format: world_format,
+        tonemapper: Tonemapper::AgxPunchy,
+        source_size: size,
+        target_size: size,
+        output_size: size,
+        dither: true,
+        frame_index: 0,
+        generation: 0,
+        balance: COLOR_MATRIX_IDENTITY,
+    };
+    let mut timer = BatchTimer::new(gpu)?;
+    let mut spans = Vec::with_capacity(batches as usize);
+    for batch in 0..batches {
+        let order = if batch % 2 == 0 { [0usize, 1] } else { [1, 0] };
+        let mut pair = [0.0f32; 2];
+        for k in order {
+            pair[k] = timer.pass_ms(gpu, &mut nodes[k], &pass, passes)?;
+        }
+        spans.push(pair);
+    }
+    Ok(Some(spans))
 }
 
 #[cfg(test)]

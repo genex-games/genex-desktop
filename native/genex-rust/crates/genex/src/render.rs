@@ -83,6 +83,10 @@ pub use genex_render::settings::{
 /// TAA's resource knobs in a [`Quality`] (`quality.taa`: the jitter cycle, the accumulation floor
 /// and the texture LOD bias; RQ5). Whether TAA runs is [`AntiAliasing`] and the `taa` switch.
 pub use genex_render::settings::{JitterCycle, TaaQuality};
+/// The look's colour grading (A.2, [`RenderConfig::grading`]): contrast about middle grey,
+/// saturation, vibrance, per-section lift, gamma and gain, and a display LUT read from a `.cube`
+/// ([`GradingLut::parse_cube`], then [`GradingLut::intern`]).
+pub use genex_render::post::grading::{Grading, GradingLut, GradingLutError, GradingSection};
 /// The key [`crate::Frame::id`] names a moving draw with across frames (a string or an integer),
 /// so its motion vectors find where it was last frame under TAA.
 pub use genex_render::motion::DrawId;
@@ -504,6 +508,16 @@ impl RenderConfig {
     /// [`RenderConfig::white_balance`].
     pub fn temperature(mut self, temperature: f32, tint: f32) -> RenderConfig {
         self.look = self.look.with_temperature(temperature, tint);
+        self
+    }
+
+    /// The config with its look's colour grading, each knob held to its range (the neutral
+    /// default changes nothing). The knobs grade the HDR scene before the tonemapper (contrast
+    /// turns about middle grey, so it never shifts the exposure); a LUT grades the display colour
+    /// after it: `RenderConfig::new().grading(Grading::NEUTRAL.with_contrast(1.15).with_lut(lut, 0.8))`
+    /// with `let lut = GradingLut::parse_cube(include_str!("../assets/looks/warm.cube"))?.intern()?;`.
+    pub fn grading(mut self, grading: Grading) -> RenderConfig {
+        self.look = self.look.with_grading(grading);
         self
     }
 

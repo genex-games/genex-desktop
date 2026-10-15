@@ -14,7 +14,11 @@ pub mod ao;
 pub mod contact_shadow;
 /// The joint-bilateral upsample of half-resolution AO and contact shadows (RQ4 review).
 pub mod upsample;
+/// The sun-shadow screen mask with its own temporal and spatial filter (renderer pass 2, B.7).
+pub mod sun_mask;
 /// TAA and its reactive coverage (graph nodes 17 and 15a): RQ5.0 contract, RQ5.2.
 pub mod taa;
 /// The FSR1 upscaler, EASU + RCAS (graph node 22): RQ5.0 contract, RQ5.3.
 pub mod fsr;
+/// Colour grading in the tonemap: parametric knobs and a `.cube` LUT (A.2).
+pub mod grading;

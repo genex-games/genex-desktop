@@ -235,6 +235,20 @@ fn a_look_takes_a_temperature_and_an_exposure_curve_that_an_exposure_keeps() {
 }
 
 #[test]
+fn a_look_takes_a_grading_held_to_its_ranges_and_a_cube_lut() {
+    use genex::render::{Grading, GradingLut, GradingSection, Look};
+    let cube = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    let lut = GradingLut::parse_cube(cube).expect("a .cube").intern().expect("interned");
+    let warm = Grading { shadows: GradingSection { gain: 1.1, ..GradingSection::NEUTRAL }, ..Grading::NEUTRAL };
+    let look = RenderConfig::new().grading(warm.with_contrast(1.2).with_lut(lut, 0.5)).look;
+    assert_eq!((look.grading.contrast, look.grading.shadows.gain, look.grading.lut_intensity), (1.2, 1.1, 0.5));
+    assert!(look.grading.lut.is_some_and(|held| std::ptr::eq(held, lut)), "the look holds the interned LUT");
+    let wild = RenderConfig::new().grading(Grading { contrast: f32::NAN, saturation: 9.0, ..Grading::NEUTRAL }).look.grading;
+    assert_eq!((wild.contrast, wild.saturation), (1.0, 2.0), "held to 0..=2; not a number is neutral");
+    assert_eq!(RenderConfig::new().look.grading, Look::default().grading, "the default config grades nothing");
+}
+
+#[test]
 fn the_facade_default_is_hdr_with_the_legacy_preserving_look() {
     use genex::render::{ExposureMode, Look, Tonemap};
     let control = control(RenderConfig::new());
