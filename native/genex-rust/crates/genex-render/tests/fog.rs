@@ -1405,27 +1405,6 @@ fn luminance(c: [f32; 3]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
-#[test]
-#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
-fn metal_the_aerial_volume_s_transmittance_is_the_atmosphere_s_beer_lambert_integral() {
-    let Some(gpu) = gpu() else { return };
-    let fixture = sky_fixture(&gpu, sun_behind(40.0), 0.002);
-    let volume = aerial_volume(&gpu, &fixture);
-    for (x, y) in [(16, 16), (16, 8), (4, 12), (27, 10), (16, 24), (16, 30), (2, 29)] {
-        let dir = aerial_ray(x, y);
-        for slice in [0, 3, 8, 15, 23, 31] {
-            let distance_km = f64::from(aerial_slice_distance((slice as f32 + 0.5) / AERIAL_SIDE as f32)) / 1000.0;
-            let want = numeric_transmittance(&fixture.atmosphere_row, 0.002, dir, distance_km);
-            // The back half's alpha: the mean of its per-channel transmittance (SI-04).
-            let got = f64::from(aerial_texel(&volume, x, y, AERIAL_SIDE + slice)[3]);
-            assert!((got - want).abs() <= 3e-3, "column ({x}, {y}) slice {slice} at {distance_km:.3} km: volume {got:.5}, integral {want:.5}");
-        }
-    }
-    // Near the camera the air is clear, and far along a horizontal ray it is not.
-    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE)[3] > 0.999);
-    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE + 31)[3] < aerial_texel(&volume, 16, 16, AERIAL_SIDE + 16)[3]);
-}
-
 /// The per-channel transmittance from the camera to `distance_km` along `dir` (the same midpoint
 /// integral as [`numeric_transmittance`], channel by channel).
 fn numeric_transmittance_rgb(atmosphere: &GpuSkyAtmosphere, camera_km: f64, dir: [f32; 3], distance_km: f64) -> [f64; 3] {
@@ -1478,6 +1457,27 @@ fn metal_the_aerial_volume_s_transmittance_is_per_channel() {
     // Far along a horizontal ray blue is dimmed more than red.
     let far = aerial_transmittance(&volume, 16, 16, AERIAL_SIDE - 1);
     assert!(far[0] > far[2] * 1.2, "chromatic: {far:?}");
+}
+
+#[test]
+#[ignore = "needs a WebGPU-core adapter; run with --ignored metal"]
+fn metal_the_aerial_volume_s_transmittance_is_the_atmosphere_s_beer_lambert_integral() {
+    let Some(gpu) = gpu() else { return };
+    let fixture = sky_fixture(&gpu, sun_behind(40.0), 0.002);
+    let volume = aerial_volume(&gpu, &fixture);
+    for (x, y) in [(16, 16), (16, 8), (4, 12), (27, 10), (16, 24), (16, 30), (2, 29)] {
+        let dir = aerial_ray(x, y);
+        for slice in [0, 3, 8, 15, 23, 31] {
+            let distance_km = f64::from(aerial_slice_distance((slice as f32 + 0.5) / AERIAL_SIDE as f32)) / 1000.0;
+            let want = numeric_transmittance(&fixture.atmosphere_row, 0.002, dir, distance_km);
+            // The back half's alpha: the mean of its per-channel transmittance (SI-04).
+            let got = f64::from(aerial_texel(&volume, x, y, AERIAL_SIDE + slice)[3]);
+            assert!((got - want).abs() <= 3e-3, "column ({x}, {y}) slice {slice} at {distance_km:.3} km: volume {got:.5}, integral {want:.5}");
+        }
+    }
+    // Near the camera the air is clear, and far along a horizontal ray it is not.
+    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE)[3] > 0.999);
+    assert!(aerial_texel(&volume, 16, 16, AERIAL_SIDE + 31)[3] < aerial_texel(&volume, 16, 16, AERIAL_SIDE + 16)[3]);
 }
 
 #[test]
