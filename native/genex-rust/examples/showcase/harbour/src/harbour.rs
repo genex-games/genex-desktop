@@ -193,6 +193,8 @@ pub struct World {
     pub cut_at: Option<u64>,
     /// The surfaces the draw hook uses.
     pub surfaces: Surfaces,
+    /// The steam and the drizzle (the same emitters every seed).
+    pub weather: street::Weather,
 }
 
 impl World {

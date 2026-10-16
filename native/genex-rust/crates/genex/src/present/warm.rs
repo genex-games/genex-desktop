@@ -108,7 +108,7 @@ pub(super) fn start(purpose: WarmFor, source: WarmSource, gpu: Gpu, choice: Fram
         };
         let renderer = prepared.renderer_mut();
         light.apply(renderer.renderer_mut(), &gpu);
-        set_choice(renderer.renderer_mut(), &choice, class);
+        set_choice(renderer, &choice, class);
         if purpose == WarmFor::Spare {
             // Drawn as a capture is: settled on the capture's history, then read back.
             let frames = renderer.settle_frames_graded(false);

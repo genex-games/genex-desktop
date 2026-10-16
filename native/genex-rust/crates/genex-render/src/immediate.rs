@@ -61,7 +61,7 @@ use crate::layout::{GpuStructLayout, NO_TEXTURE};
 use crate::limits::{IMMEDIATE_QUADS_MAX, check_count};
 use crate::overlay::{OverlayPainter, paint_overlay};
 use crate::pacing::{FrameAction, FrameGate, FrameTally};
-use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, ParticlePass};
+use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, GpuParticleShape, GpuSortStep, ParticleAtlas, ParticleAtlasId, ParticlePass};
 use crate::post::exposure::{ExposureHistory, ExposureInput, ExposurePass, ExposureSource, exposure_source};
 use crate::prepass::ExtensionDemand;
 use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, ScenePath, StagePrepass, WORLD_FORMAT, WorldNodes, WorldPass, WorldStage, shader};
@@ -178,6 +178,8 @@ pub const PART2_GPU_STRUCTS: &[GpuStructLayout] = &[
     GpuStructLayout { wgsl: "GxPost", rust_size: size_of::<GpuPost>(), rust_align: align_of::<GpuPost>() },
     GpuStructLayout { wgsl: "Emitter", rust_size: size_of::<GpuEmitter>(), rust_align: align_of::<GpuEmitter>() },
     GpuStructLayout { wgsl: "Particle", rust_size: size_of::<GpuParticle>(), rust_align: align_of::<GpuParticle>() },
+    GpuStructLayout { wgsl: "ParticleShape", rust_size: size_of::<GpuParticleShape>(), rust_align: align_of::<GpuParticleShape>() },
+    GpuStructLayout { wgsl: "SortStep", rust_size: size_of::<GpuSortStep>(), rust_align: align_of::<GpuSortStep>() },
 ];
 
 /// Vertices of one quad: two triangles.
@@ -724,6 +726,8 @@ impl FrameNodesOf<'_> {
             self.stage.custom.prepass_motion(motion);
         }
         self.stage.custom.after_prepass(&views);
+        // Soft and colliding particles read the opaque scene's depth (renderer pass 2 A.11).
+        self.stage.particles.set_scene_depth(Some(views.depth.clone()));
         self.prepass = Some(views);
     }
 
@@ -1003,7 +1007,7 @@ impl FrameRenderer {
             quads: QuadPass::new(device)?,
             materials: CustomMaterials::new(device, context, samples),
             posts: PostPasses::new(device, context)?,
-            particles: ParticlePass::new(device, samples)?,
+            particles: ParticlePass::new(gpu, samples)?,
             context,
             renderer,
             gate: FrameGate::default(),
@@ -1164,6 +1168,17 @@ impl FrameRenderer {
         self.particles.add(gpu, desc)
     }
 
+    /// Add a flipbook atlas emitters can name ([`crate::particles::Flipbook`]).
+    pub fn add_particle_atlas(&mut self, gpu: &Gpu, atlas: &ParticleAtlas) -> Result<ParticleAtlasId, RenderError> {
+        self.particles.add_atlas(gpu, atlas)
+    }
+
+    /// Draw at most `cap` particles a frame ([`crate::particles::particle_cap`] of the device's
+    /// class; every n-th slot past it). Desktop's cap until set.
+    pub fn set_particle_cap(&mut self, cap: u32) {
+        self.particles.set_cap(cap);
+    }
+
     /// The emitter's description.
     pub fn emitter(&self, id: EmitterId) -> Option<EmitterDesc> {
         self.particles.desc(id)
@@ -1244,9 +1259,14 @@ impl FrameRenderer {
         self.follow_scene(gpu, self.pipeline_facts(stage_reason))?;
         // Inputs drive producers: what the frame's Level-3 passes and the Level-2 v2 sources it
         // draws read decides whether the prepass runs, whatever the preset's own consumers say.
-        let extension_inputs = self.materials.inputs_of(&frame.custom) | self.posts.inputs_of(&frame.post);
+        // Soft and colliding particles read the scene's depth where the quality lets the prepass run
+        // (renderer pass 2 A.11).
+        let particle_inputs = self.particles.inputs_of(&frame.particles, self.renderer.quality().prepass);
+        let extension_inputs = self.materials.inputs_of(&frame.custom) | self.posts.inputs_of(&frame.post) | particle_inputs;
         let demand = ExtensionDemand { extension_inputs, ..custom.prepass_demand() };
         let stage_prepass = StagePrepass { demand, draws: self.materials.prepass_draws() };
+        // The terrain's grass sways in the shared wind at the tick's simulated seconds (A.8).
+        self.renderer.set_foliage_seconds(frame.seconds);
         let prep = self.renderer.begin_frame_prepass(frame.scene(), path, stage_reason, stage_prepass)?;
         // TAA's reactive coverage marks the billboards too (graph node 15a).
         if let Some((node, reversed)) = self.renderer.reactive_node() {

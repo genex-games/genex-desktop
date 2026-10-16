@@ -780,6 +780,8 @@ pub struct Presenter {
     /// logged once per device).
     /// The terrain version the renderer refused (logged once; not tried again until it changes).
     terrain_refused: Option<u64>,
+    /// The game's particle emitters and flipbook atlases on the renderer (renderer pass 2 A.11).
+    particles: ParticlesHeld,
     environment_map: Option<(u32, String, bool)>,
     /// The samples per pixel Live's world pass is fixed to and the settings generation that fixed
     /// them (`RenderControl::pipeline_generation`); None before the first Live frame.
@@ -923,6 +925,7 @@ impl Presenter {
             level2: Level2::default(),
             environment_map: None,
             terrain_refused: None,
+            particles: ParticlesHeld::default(),
             live_samples: None,
             refused_rebuild: None,
             off_thread: false,
@@ -1074,9 +1077,9 @@ impl Presenter {
         // for Live and captures whichever draws first.
         let (texture_class, textures) = handle.borrow().texture_arrays();
         let device = self.resilient.gpu().device.clone();
-        let renderer = self.resilient.renderer_mut().renderer_mut();
-        renderer.set_texture_arrays(&device, texture_class, textures);
-        set_choice(renderer, &choice, class);
+        let frame_renderer = self.resilient.renderer_mut();
+        frame_renderer.renderer_mut().set_texture_arrays(&device, texture_class, textures);
+        set_choice(frame_renderer, &choice, class);
         // The game's meshlet setting (R2): which meshes cluster and whether occlusion may cull
         // them; a change re-clusters the library once. A refusal keeps the last setting.
         if let Err(error) = self.resilient.set_meshlets(choice.meshlets) {
@@ -1208,11 +1211,18 @@ impl Presenter {
         self.admit(frame)?;
         self.light(frame)?;
         self.terrain(frame)?;
+        self.hold_particles(frame)?;
         let (mut immediate, mut drawn) = self.immediate(frame, camera);
         // The tick's simulated seconds (`gx_draw.params.x`, `gx_post.params.x`), never wall time.
         immediate.set_seconds((tick as f64 * FIXED_STEP_MS / 1000.0) as f32);
         self.sync_passes(passes);
         immediate.set_tick(tick);
+        // Each emitter as it is at the frame's tick (a refused one is skipped).
+        for particles in frame.drawn_particles() {
+            if let Some(id) = self.particles.emitter(particles.version()) {
+                immediate.particles(id, tick);
+            }
+        }
         if std::mem::take(&mut self.keep_warm_frame) {
             self.warm_frame = Some(immediate.clone());
         }
@@ -1614,6 +1624,57 @@ impl Presenter {
         }
     }
 
+    /// Hand the renderer every particle emitter `frame` draws that it does not hold yet (renderer
+    /// pass 2 A.11), with its flipbook's atlas read from the game's assets once per path and grid.
+    /// Uploads go through the resilient renderer, so a device loss or a rebuild replays them under
+    /// the same ids. A refused emitter or atlas is logged once (the emitter is not drawn; one whose
+    /// atlas was refused draws round dots); a lost device stops the frame (`device-lost`).
+    fn hold_particles(&mut self, frame: &Frame) -> Result<(), RenderError> {
+        for particles in frame.drawn_particles() {
+            if self.particles.tried(particles.version()) {
+                continue;
+            }
+            let mut desc = particles.desc();
+            if let Some(book) = particles.flipbook() {
+                let atlas = self.particle_atlas(book)?;
+                desc.flipbook = atlas.map(|atlas| genex_render::particles::Flipbook { atlas, frames: book.frames, cycles: book.cycles, blend: book.blend });
+            }
+            let id = match self.resilient.add_emitter(desc) {
+                Ok(id) => Some(id),
+                Err(error) if error.code() == RenderCode::DeviceLost => return Err(error),
+                Err(error) => {
+                    (self.log)(&format!("particles refused: {error}: drawing the frame without them"));
+                    None
+                }
+            };
+            self.particles.emitters.push((particles.version(), id));
+        }
+        Ok(())
+    }
+
+    /// The renderer's atlas for `book`, uploaded on first use; None (logged) when its image is
+    /// missing or refused.
+    fn particle_atlas(&mut self, book: &crate::ParticleFlipbook) -> Result<Option<genex_render::particles::ParticleAtlasId>, RenderError> {
+        let key = (book.atlas().to_owned(), book.grid());
+        if let Some((_, id)) = self.particles.atlases.iter().find(|(held, _)| *held == key) {
+            return Ok(*id);
+        }
+        let log = self.log;
+        let image = read_texture(book.atlas(), &*self.source, &mut |line| log(line));
+        let (columns, rows) = book.grid();
+        let id = match image.map(|image| self.resilient.add_particle_atlas(genex_render::particles::ParticleAtlas { image, columns, rows })) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(error)) if error.code() == RenderCode::DeviceLost => return Err(error),
+            Some(Err(error)) => {
+                log(&format!("particle atlas {:?} refused: {error}: drawing round particles", book.atlas()));
+                None
+            }
+            None => None,
+        };
+        self.particles.atlases.push((key, id));
+        Ok(id)
+    }
+
     fn material_id(&self, key: Option<GpuKey>) -> Option<CustomMaterialId> {
         self.level2.materials[held_at(&self.level2.materials, &key?)?].id
     }
@@ -1680,12 +1741,38 @@ impl Drop for Presenter {
 
 /// What the presenter hands the renderer for one frame's `choice` drawn as `class`: the same on the
 /// frame thread and a warm-up thread.
-fn set_choice(renderer: &mut genex_render::Renderer, choice: &FrameChoice, class: DeviceClass) {
+fn set_choice(frame_renderer: &mut genex_render::FrameRenderer, choice: &FrameChoice, class: DeviceClass) {
+    // The particles a frame of the class draws at most (renderer pass 2 A.11).
+    frame_renderer.set_particle_cap(genex_render::particles::particle_cap(class));
+    let renderer = frame_renderer.renderer_mut();
     renderer.set_quality(&choice.quality);
     renderer.set_render_scale(choice.scale);
     renderer.set_scene_format(choice.scene_format);
     renderer.set_look(choice.look);
     renderer.set_device_class(class);
+}
+
+/// The particle emitters (by [`crate::Particles::version`]) and flipbook atlases (by asset path and
+/// grid) the presenter handed the renderer, each with its id or None where it was refused.
+#[derive(Debug, Default)]
+struct ParticlesHeld {
+    emitters: Vec<(u64, Option<genex_render::particles::EmitterId>)>,
+    atlases: Vec<(AtlasKey, Option<genex_render::particles::ParticleAtlasId>)>,
+}
+
+/// A flipbook atlas's key: its asset path and its grid (columns, rows).
+type AtlasKey = (String, (u32, u32));
+
+impl ParticlesHeld {
+    /// Whether emitter `version` was handed over (held or refused).
+    fn tried(&self, version: u64) -> bool {
+        self.emitters.iter().any(|(held, _)| *held == version)
+    }
+
+    /// The renderer's id of emitter `version`, if it holds it.
+    fn emitter(&self, version: u64) -> Option<genex_render::particles::EmitterId> {
+        self.emitters.iter().find(|(held, _)| *held == version).and_then(|(_, id)| *id)
+    }
 }
 
 /// The display intervals noted since the last Live frame: what dynamic resolution reads as the

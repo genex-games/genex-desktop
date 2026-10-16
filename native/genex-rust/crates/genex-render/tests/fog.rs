@@ -839,16 +839,38 @@ fn draw_fogged_particle(gpu: &Gpu, draw: &ParticleDraw<'_>, frame: &GpuFrame, fo
         gpu.queue.write_texture(texture.as_image_copy(), &[0, 0, 0, 0, 0, 0, one[0], one[1]], wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(1) }, size);
         texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D3), ..Default::default() })
     };
+    // The particles' own inputs (renderer pass 2 A.11), neutral: no surface behind (no soft
+    // fade), a hard round dot of no rotation, a white flipbook.
+    let texel = |label: &str, format: wgpu::TextureFormat, bytes: &[u8]| {
+        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(texture.as_image_copy(), bytes, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bytes.len() as u32), rows_per_image: Some(1) }, size);
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    // The derived layout asks a filterable texture: half floats' largest (65504 m) is no surface
+    // here (the renderer binds its r32float view depth through its own layout).
+    let no_surface = texel("particle no surface", wgpu::TextureFormat::R16Float, &0x7bffu16.to_le_bytes());
+    let white = texel("particle white", wgpu::TextureFormat::Rgba8UnormSrgb, &[255; 4]);
+    let emitter = buffer_with(gpu, "particle emitter", uniform, bytemuck::bytes_of(&genex_render::particles::GpuEmitter::default()));
+    let shapes = buffer_with(gpu, "particle shapes", wgpu::BufferUsages::STORAGE, bytemuck::bytes_of(&genex_render::particles::GpuParticleShape::default()));
     let mut entries = vec![
         wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
         wgpu::BindGroupEntry { binding: 1, resource: fog.as_entire_binding() },
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&cube.view) },
         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
+        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&no_surface) },
     ];
-    // Only the HDR entry reads the aerial perspective (the layout is the entry points' own).
-    if fragment == "fs_particle_hdr_fogged" {
-        entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&no_air) });
-    }
+    // The vertex stage reads the aerial perspective for both entries (renderer pass 2 A.11).
+    entries.push(wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&no_air) });
     let group0 = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("particle frame"),
         layout: &pipeline.get_bind_group_layout(0),
@@ -857,7 +879,13 @@ fn draw_fogged_particle(gpu: &Gpu, draw: &ParticleDraw<'_>, frame: &GpuFrame, fo
     let group1 = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("particle rows"),
         layout: &pipeline.get_bind_group_layout(1),
-        entries: &[wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() }],
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: emitter.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: shapes.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&white) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&cube.sampler) },
+        ],
     });
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("particle target"),

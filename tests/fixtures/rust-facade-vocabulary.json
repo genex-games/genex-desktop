@@ -88,6 +88,20 @@
     ],
     "refusals": ["terrain-heights-invalid", "terrain-layers-invalid", "terrain-control-invalid"]
   },
+  "particles": {
+    "calls": [
+      "Particles::steam",
+      "Particles::rain",
+      "Particles::fountain",
+      ".with_rate",
+      ".with_soft",
+      ".with_sorted",
+      ".with_collision",
+      ".with_flipbook",
+      "frame.particles"
+    ],
+    "refusals": ["particles-count-invalid", "particles-flipbook-invalid"]
+  },
   "meshlets": {
     "extrasKey": "genex_meshlets",
     "schemaVersion": 1,

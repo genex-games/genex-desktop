@@ -140,6 +140,15 @@ fn the_instance_group_calls_and_refusals_are_the_fixtures() {
 }
 
 #[test]
+fn the_particle_calls_and_refusals_are_the_fixtures() {
+    use genex::ParticlesErrorCode;
+    let pinned = fixture();
+    assert_eq!(names(&pinned["particles"]["calls"]), genex::manifest::PARTICLE_CALLS);
+    let refusals = ParticlesErrorCode::ALL.map(ParticlesErrorCode::wire);
+    assert_eq!(names(&pinned["particles"]["refusals"]), refusals);
+}
+
+#[test]
 fn the_terrain_calls_and_refusals_are_the_fixtures() {
     use genex::TerrainErrorCode;
     let pinned = fixture();

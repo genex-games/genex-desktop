@@ -844,6 +844,22 @@ impl Frame {
         self.terrain.as_ref()
     }
 
+    /// Draw `particles` ([`crate::Particles`]) as they are at the tick this frame is drawn at:
+    /// one logical draw. An emitter is drawn once a frame (a second call is ignored); emitters
+    /// draw in call order after the transparent draws.
+    pub fn particles(&mut self, particles: &crate::particles::Particles) -> &mut Self {
+        if !self.particles.contains(particles) {
+            self.count();
+            self.particles.push(particles.clone());
+        }
+        self
+    }
+
+    /// The emitters this frame draws ([`Frame::particles`]), in call order.
+    pub fn drawn_particles(&self) -> &[crate::particles::Particles] {
+        &self.particles
+    }
+
     /// Draw a line segment.
     pub fn line(&mut self, from: Vec3, to: Vec3, color: Color) -> &mut Self {
         self.push(Shape::Line { from, to, color })

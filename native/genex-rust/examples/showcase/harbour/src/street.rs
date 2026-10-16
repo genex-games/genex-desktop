@@ -10,6 +10,8 @@
 //! detail pass dresses the blockout: scanned wood, marble, metal, granite and iron on the furniture,
 //! the kerbs and the drains, road markings at the crossing, awnings over the lit shops, panelled
 //! counter and bottled shelves in the café, slatted chairs and bench, and the café's menu board.
+//! Steam rises from the manholes and a drizzle falls over the street and the alley ([`Weather`],
+//! GPU particles).
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
@@ -417,6 +419,7 @@ pub fn draw(world: &World, frame: &mut Frame) {
     drains(frame, s);
     awnings(frame, s);
     alley(frame, s);
+    weather(frame, &world.weather);
 }
 
 fn ground(frame: &mut Frame, s: &Surfaces) {

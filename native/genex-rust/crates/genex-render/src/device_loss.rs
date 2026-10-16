@@ -44,7 +44,7 @@ use crate::letterbox::present::{PresentInto, WindowPresent};
 use crate::mesh::MeshData;
 use crate::meshlet::MeshletSet;
 use crate::overlay::OverlayPainter;
-use crate::particles::{EmitterDesc, EmitterId};
+use crate::particles::{EmitterDesc, EmitterId, ParticleAtlas, ParticleAtlasId};
 use crate::renderer::RenderOptions;
 use crate::settings::Meshlets;
 use crate::scene::{MeshId, ModelPart};
@@ -129,6 +129,8 @@ enum Upload {
     Material(Extension),
     PostPass(PostStage, Extension),
     Emitter(EmitterDesc),
+    /// A flipbook atlas (renderer pass 2 A.11), kept.
+    ParticleAtlas(ParticleAtlas),
 }
 
 /// A Level-2 source as it was admitted: its API, WGSL, uniform bytes and game textures.
@@ -182,6 +184,7 @@ impl Upload {
             Upload::Texture(data, _) => texture_bytes(data),
             Upload::Material(kept) | Upload::PostPass(_, kept) => kept.bytes(),
             Upload::Emitter(_) => std::mem::size_of::<EmitterDesc>() as u64,
+            Upload::ParticleAtlas(atlas) => texture_bytes(&atlas.image),
             Upload::Compressed(texture, _) => texture.levels().iter().map(|level| level.len() as u64).sum(),
             Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) => 0,
         }
@@ -202,6 +205,7 @@ impl std::fmt::Debug for Upload {
             Upload::Material(_) => f.write_str("Material"),
             Upload::PostPass(stage, _) => f.debug_tuple("PostPass").field(stage).finish(),
             Upload::Emitter(desc) => f.debug_tuple("Emitter").field(desc).finish(),
+            Upload::ParticleAtlas(atlas) => f.debug_tuple("ParticleAtlas").field(&(atlas.image.width(), atlas.image.height(), atlas.columns, atlas.rows)).finish(),
         }
     }
 }
@@ -504,6 +508,12 @@ impl Resilient {
         self.upload(Upload::Emitter(desc), |r, gpu| r.add_emitter(gpu, desc))
     }
 
+    /// Add a flipbook atlas (kept for replay).
+    pub fn add_particle_atlas(&mut self, atlas: ParticleAtlas) -> Result<ParticleAtlasId, RenderError> {
+        let kept = atlas.clone();
+        self.upload(Upload::ParticleAtlas(kept), |r, gpu| r.add_particle_atlas(gpu, &atlas))
+    }
+
     /// Draw `frame`; `device-lost` while the device is lost.
     pub fn render(&mut self, frame: &ImmediateFrame, path: CullPath, overlay: Option<&mut dyn OverlayPainter>) -> Result<FrameReport, RenderError> {
         self.render_with(frame, path, overlay, &mut NoCustom)
@@ -772,5 +782,6 @@ fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<()
         Upload::Material(kept) => renderer.add_material_api(gpu, kept.api, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::PostPass(stage, kept) => renderer.add_post_pass_api(gpu, kept.api, *stage, &kept.wgsl, &kept.uniforms, &kept.textures).map(drop),
         Upload::Emitter(desc) => renderer.add_emitter(gpu, *desc).map(drop),
+        Upload::ParticleAtlas(atlas) => renderer.add_particle_atlas(gpu, atlas).map(drop),
     }
 }

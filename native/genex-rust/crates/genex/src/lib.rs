@@ -47,6 +47,7 @@ pub mod render;
 mod rng;
 mod runtime;
 mod sim;
+mod particles;
 mod terrain;
 #[cfg(all(feature = "studio", not(target_arch = "wasm32")))]
 mod studio;

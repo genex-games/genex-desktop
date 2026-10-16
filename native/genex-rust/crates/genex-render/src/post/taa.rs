@@ -246,12 +246,13 @@ struct PrevModel {
 ",
     include_str!("../../shaders/post/reactive.wgsl")
 ));
-/// The particles' reactive coverage: their billboards (`particles_draw.wgsl`'s shape, its
-/// `particles_drawn` binding unchanged) as soft coverage into the same mask, jittered like the
-/// mesh entry ([`REACTIVE`]).
+/// The particles' reactive coverage: their billboards (`particle_billboard.wgsl`, the draw's own
+/// quads: turned, or stretched along the motion as rain is; renderer pass 2 A.11) as soft coverage
+/// into the same mask, jittered like the mesh entry ([`REACTIVE`]).
 pub const REACTIVE_PARTICLES: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/part2/particle.wgsl"),
+    include_str!("../../shaders/part2/particle_billboard.wgsl"),
     include_str!("../../shaders/clip_position.wgsl"),
     "
 // The particles' reactive coverage (graph node 15a; RQ5.2): each billboard's soft dot as coverage,
@@ -276,16 +277,9 @@ struct ReactiveParticleOut {
 
 @vertex
 fn vs_reactive_particle(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> ReactiveParticleOut {
-    let corners = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
-    );
     let p = particles_drawn[instance];
-    let corner = corners[vertex];
-    let forward = normalize(frame.camera_forward.xyz);
-    let right = normalize(cross(forward, vec3<f32>(0.0, 1.0, 0.0)));
-    let up = cross(right, forward);
-    let world = p.position_size.xyz + (right * corner.x + up * corner.y) * (p.position_size.w * 0.5);
+    let corner = particle_quad_corner(vertex);
+    let world = particle_corner_world(p, particle_shapes_drawn[instance], corner);
     let clip = gx_clip_position(frame.view_proj, vec4<f32>(world, 1.0), gx_reactive_jitter.ndc.xy);
     return ReactiveParticleOut(clip, corner, p.color.a);
 }

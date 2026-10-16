@@ -126,6 +126,12 @@ pub const LIGHT_CALLS: [&str; 7] =
 /// (`frame.group(..)`).
 pub const INSTANCE_GROUP_CALLS: [&str; 6] =
     ["InstanceGroup::cubes", "InstanceGroup::spheres", "InstanceGroup::models", "InstanceGroup::models_with", "group.update", "frame.group"];
+/// The particle calls of the facade (renderer pass 2 A.11), as agents call them: an emitter made
+/// once from a kind (`Particles::steam(..)`, `Particles::rain(..)`, `Particles::fountain(..)`),
+/// changed (`.with_rate(..)`, `.with_soft(..)`, `.with_sorted(..)`, `.with_collision(..)`,
+/// `.with_flipbook(..)`) and drawn each frame (`frame.particles(..)`).
+pub const PARTICLE_CALLS: [&str; 9] =
+    ["Particles::steam", "Particles::rain", "Particles::fountain", ".with_rate", ".with_soft", ".with_sorted", ".with_collision", ".with_flipbook", "frame.particles"];
 /// The terrain calls of the facade (renderer pass 2 A.7), as agents call them: a height field made
 /// once (`Terrain::from_fn(..)`, `Terrain::from_heights(..)`), its layers (`TerrainLayer::textured(..)`,
 /// `TerrainLayer::flat(..)`, `.with_layers(..)`) and control map (`TerrainTexel::blend(..)`,

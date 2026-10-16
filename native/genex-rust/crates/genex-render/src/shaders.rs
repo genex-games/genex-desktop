@@ -73,12 +73,18 @@ pub const UPSCALE_BILINEAR: &str = shipped_wgsl!(include_str!("../shaders/upscal
 // --- Part 2 (M2.6) ---
 /// Immediate 2D quads (rects, sprites, 2D lines) through the 2D camera.
 pub const IMMEDIATE_2D: &str = shipped_wgsl!(include_str!("../shaders/part2/immediate2d.wgsl"));
-/// The particle emitter's compute pass.
-pub const PARTICLES_COMPUTE: &str = shipped_wgsl!(concat!(include_str!("../shaders/part2/particle.wgsl"), include_str!("../shaders/part2/particles_compute.wgsl")));
+/// The particle emitter's compute passes: the rows, shapes and sort keys of a tick (reading the
+/// frame's camera and the scene's view depth), and a sorted emitter's gather.
+pub const PARTICLES_COMPUTE: &str = shipped_wgsl!(concat!(
+    include_str!("../shaders/common.wgsl"),
+    include_str!("../shaders/part2/particle.wgsl"),
+    include_str!("../shaders/part2/particles_compute.wgsl")
+));
 /// The particles' billboards, drawn inside the world pass.
 pub const PARTICLES_DRAW: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
     include_str!("../shaders/part2/particle.wgsl"),
+    include_str!("../shaders/part2/particle_billboard.wgsl"),
     include_str!("../shaders/part2/particles_draw.wgsl")
 ));
 /// The prelude of `Material::custom` (extension API v1), prepended to the game's source.
@@ -237,6 +243,9 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("immediate-2d", IMMEDIATE_2D),
     ("particles-compute", PARTICLES_COMPUTE),
     ("particles-draw", PARTICLES_DRAW),
+    // Renderer pass 2 A.11: a sorted emitter's bitonic sort and the scene's view depth.
+    ("particles-sort", crate::particles::PARTICLES_SORT),
+    ("particles-depth", crate::particles::PARTICLES_DEPTH),
     ("material-sample", MATERIAL_SAMPLE),
     ("post-sample", POST_SAMPLE),
     ("downsample", DOWNSAMPLE),

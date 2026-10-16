@@ -801,26 +801,74 @@ fn uniform() -> wgpu::BindingType {
     wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }
 }
 
+/// One particle the coverage pipeline draws: the camera (column-major view-projection, forward),
+/// where it is, its size and its row's motion, and the emitter's stretch (renderer pass 2 A.11).
+#[derive(Clone, Copy)]
+struct CoverageParticle {
+    view_proj: [f32; 16],
+    forward: [f32; 4],
+    position: [f32; 3],
+    size: f32,
+    motion: [f32; 4],
+    stretch: f32,
+}
+
+/// The identity camera looking down -Z at a particle of size 1 at the NDC centre.
+const IDENTITY_PARTICLE: CoverageParticle = CoverageParticle {
+    view_proj: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    forward: [0.0, 0.0, -1.0, 0.0],
+    position: [0.0, 0.0, 0.5],
+    size: 1.0,
+    motion: [0.0; 4],
+    stretch: 0.0,
+};
+
 /// The mask a 32x32 frame gets from one particle (identity camera, NDC centre, size 1, alpha
 /// 0.8) drawn by the particle coverage pipeline over a depth cleared to `scene_depth`
 /// (reverse-Z), read back as bytes.
 fn particle_mask(gpu: &Gpu, scene_depth: f32) -> Vec<u8> {
+    particle_mask_of(gpu, scene_depth, IDENTITY_PARTICLE)
+}
+
+/// [`particle_mask`] of `particle` (alpha 0.8).
+fn particle_mask_of(gpu: &Gpu, scene_depth: f32, particle: CoverageParticle) -> Vec<u8> {
     use genex_render::post::taa::{GpuReactiveJitter, REACTIVE_FORMAT, ReactiveEntry, ReactiveNode};
     let device = &gpu.device;
     let size = 32u32;
     let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("frame"), entries: &[layout_entry(0, uniform())] });
-    let particle_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("particles"), entries: &[layout_entry(0, storage())] });
+    // The rows, the emitter's row and the shapes (renderer pass 2 A.11: the coverage is the draw's
+    // own billboard; the default emitter and shape draw the unturned round dot).
+    let particle_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("particles"), entries: &[layout_entry(0, storage()), layout_entry(1, uniform()), layout_entry(2, storage())] });
     let node = ReactiveNode::new(device).expect("reactive node");
     let pipeline = node.pipeline(device, ReactiveEntry::Particles, [&frame_layout, &particle_layout], &[], true).expect("particle coverage pipeline");
     let mut frame = vec![0u8; size_of::<genex_render::layout::GpuFrame>()];
-    let identity: [f32; 16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
-    frame[..64].copy_from_slice(bytemuck::cast_slice(&identity));
-    frame[80..96].copy_from_slice(bytemuck::cast_slice(&[0.0f32, 0.0, -1.0, 0.0]));
+    frame[..64].copy_from_slice(bytemuck::cast_slice(&particle.view_proj));
+    frame[80..96].copy_from_slice(bytemuck::cast_slice(&particle.forward));
     let frame_buffer = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some("frame"), contents: &frame, usage: wgpu::BufferUsages::UNIFORM });
-    let particle: [f32; 8] = [0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 0.8];
-    let particles = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some("particle"), contents: bytemuck::cast_slice(&particle), usage: wgpu::BufferUsages::STORAGE });
+    let [x, y, z] = particle.position;
+    let row: [f32; 8] = [x, y, z, particle.size, 1.0, 1.0, 1.0, 0.8];
+    let particles = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some("particle"), contents: bytemuck::cast_slice(&row), usage: wgpu::BufferUsages::STORAGE });
     let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &frame_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() }] });
-    let particle_group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &particle_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() }] });
+    let emitter = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
+        label: Some("emitter"),
+        contents: bytemuck::bytes_of(&genex_render::particles::GpuEmitter { shape: [1.0, 0.0, 0.0, particle.stretch], ..Default::default() }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let shapes = wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
+        label: Some("shapes"),
+        contents: bytemuck::bytes_of(&genex_render::particles::GpuParticleShape { motion: particle.motion, ..Default::default() }),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let particle_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &particle_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: emitter.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: shapes.as_entire_binding() },
+        ],
+    });
     node.write(&gpu.queue, GpuReactiveJitter::new([0.0, 0.0], (size, size)));
     let target = |format, usage| {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -884,6 +932,33 @@ fn metal_a_particle_marks_its_soft_dot_in_the_reactive_mask_unless_hidden() {
     assert_eq!(at(9, 9), 0, "the billboard's corner fades out (a round dot)");
     let hidden = particle_mask(&gpu, 1.0);
     assert!(hidden.iter().all(|&v| v == 0), "a particle behind the scene's depth marks nothing");
+}
+
+/// Renderer pass 2 A.11: the coverage is the drawn billboard. A rain streak (stretched along its
+/// motion) marks its whole length, not a dot at its centre, and a camera looking straight down
+/// marks its particles (the basis crossed with +Y was NaN there, so nothing was marked).
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_streak_and_a_particle_seen_from_straight_above_mark_what_is_drawn() {
+    let Some((_rows, gpu)) = gpu() else { return };
+    // A quarter-size particle moving up 0.1 a tick, trailing 4 ticks of it: a streak 2 px wide
+    // reaching 6 px below its centre in a 32 px frame.
+    let streak = CoverageParticle { size: 0.25, motion: [0.0, 0.1, 0.0, 0.0], stretch: 4.0, ..IDENTITY_PARTICLE };
+    let dot = particle_mask_of(&gpu, 0.0, CoverageParticle { stretch: 0.0, ..streak });
+    let mask = particle_mask_of(&gpu, 0.0, streak);
+    let at = |mask: &[u8], x: usize, y: usize| mask[y * 32 + x];
+    assert_eq!(at(&dot, 16, 21), 0, "the unstretched dot does not reach 5 px below its centre");
+    assert!(at(&mask, 16, 21) >= 150, "the streak marks its trail 5 px below its centre: {}", at(&mask, 16, 21));
+    assert_eq!((at(&mask, 20, 21), at(&mask, 16, 10)), (0, 0), "the streak is narrow and trails behind its motion");
+    // Looking straight down -Y (up on the screen is -Z): a particle half a unit below the camera.
+    let down = CoverageParticle {
+        view_proj: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        forward: [0.0, -1.0, 0.0, 0.0],
+        position: [0.0, -0.5, 0.0],
+        ..IDENTITY_PARTICLE
+    };
+    let below = particle_mask_of(&gpu, 0.0, down);
+    assert!((200..=206).contains(&at(&below, 16, 16)), "a particle seen from straight above marks its alpha: {}", at(&below, 16, 16));
 }
 
 #[test]
