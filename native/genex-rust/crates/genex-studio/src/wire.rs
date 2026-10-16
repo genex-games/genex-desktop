@@ -1088,6 +1088,14 @@ mod tests {
         assert_eq!(wire["events"]["starting"], Value::from(genex_core::protocol::Event::STARTING));
     }
 
+    /// Owner decision D11: the stages a `starting` event names, in boot order, are the host's.
+    #[test]
+    fn the_boot_stages_are_the_fixtures() {
+        let wire = fixture();
+        let stages: Vec<String> = genex_core::protocol::BootStage::ALL.iter().map(|stage| stage.wire().to_owned()).collect();
+        assert_eq!(names(&wire["bootStages"]), stages);
+    }
+
     #[test]
     fn the_vocabularies_are_the_fixtures() {
         let wire = fixture();

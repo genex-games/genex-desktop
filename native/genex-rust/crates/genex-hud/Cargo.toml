@@ -16,6 +16,8 @@ workspace = true
 [dependencies]
 genex-core = { workspace = true }
 egui = { workspace = true }
+# The HUD's text fonts (Ubuntu Light, Hack) without egui's emoji fonts (`fonts.rs`).
+epaint_default_fonts = { workspace = true }
 egui-wgpu = { workspace = true }
 # The painter names wgpu itself (the version egui-wgpu draws with); the workspace's backend
 # features (Metal, Vulkan, D3D12, browser WebGPU) come with it, never a GL one.

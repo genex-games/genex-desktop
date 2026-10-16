@@ -56,6 +56,8 @@ import {
   parseNativeEmbedSize,
   parseDestinationCheck,
   parseNativeCapabilityReceipt,
+  BootStage,
+  NATIVE_BOOT_COUNT_MAX,
   parseNativeEvent,
   parseNativeInput,
   nativeCustomPasses,
@@ -269,6 +271,36 @@ describe("events are checked and copied", () => {
       { ...ready, event: "Ready" },
     ])
       assert.equal(parseNativeEvent(bad), null, JSON.stringify(bad));
+  });
+
+  // Renderer pass 2 (owner decision D11): a boot step names where the boot is, so Live shows real
+  // progress; a progress it cannot read is dropped, never the event (its deadline still counts).
+  it("a starting event carries where the boot is, and a malformed progress is dropped, never the event", () => {
+    const starting = { event: NativeEvent.Starting };
+    assert.deepEqual(parseNativeEvent(starting), starting);
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: BootStage.Pipelines, done: 12, total: 40 }), {
+      ...starting,
+      progress: { stage: BootStage.Pipelines, done: 12, total: 40 },
+    });
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: BootStage.Device }), {
+      ...starting,
+      progress: { stage: BootStage.Device, done: null, total: null },
+    });
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: "warp-drive", done: 1, total: 2 }), starting);
+    assert.deepEqual(parseNativeEvent({ ...starting, stage: 7 }), starting);
+    for (const [done, total] of [
+      [-1, 40],
+      [41, 40],
+      [1.5, 40],
+      ["12", 40],
+      [1, NATIVE_BOOT_COUNT_MAX + 1],
+    ]) {
+      assert.deepEqual(
+        parseNativeEvent({ ...starting, stage: BootStage.Pipelines, done, total }),
+        { ...starting, progress: { stage: BootStage.Pipelines, done: null, total: null } },
+        `${done} of ${total}`,
+      );
+    }
   });
 
   it("a focus event is forwarded, and a malformed one is refused", () => {
@@ -680,6 +712,7 @@ describe("the frames addon's refusals", () => {
 const WIRE = JSON.parse(readFileSync(new URL("../fixtures/native-wire-v2.json", import.meta.url), "utf8")) as {
   protocol: { v1: number; current: number };
   inputKind: { touch: string };
+  bootStages: string[];
   touchPhases: string[];
   lifecycle: string[];
   wgpuBackends: string[];
@@ -1009,5 +1042,11 @@ describe("contract v2: ready carries the capability receipt", () => {
     const parsed = parseNativeEvent(v3);
     assert.ok(parsed && parsed.event === NativeEvent.Ready);
     assert.equal(isNativeProtocolVersion(parsed.protocol), false);
+  });
+});
+
+describe("the boot's stages are the wire's", () => {
+  it("names every stage genex-studio's `starting` and the web shell's progress carry, in boot order", () => {
+    assert.deepEqual(Object.values(BootStage), WIRE.bootStages);
   });
 });

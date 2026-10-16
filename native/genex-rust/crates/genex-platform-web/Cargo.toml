@@ -17,6 +17,12 @@ workspace = true
 
 # The frame bridge and the self-test record are plain Rust and build (and are tested) on every
 # target; only the `web` module, the wasm-bindgen exports the shell calls, is wasm32-only.
+# A web game links Rapier unless its genex.toml turns physics off (the host writes the facade line
+# without default features then).
+[features]
+default = ["physics"]
+physics = ["genex/physics"]
+
 [dependencies]
 genex = { workspace = true }
 genex-core = { workspace = true }

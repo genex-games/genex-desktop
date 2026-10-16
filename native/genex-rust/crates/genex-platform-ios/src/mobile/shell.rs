@@ -60,9 +60,10 @@ use crate::mobile::thermal::{Pacer, Thermal, ThermalWatch};
 use crate::mobile::touch::{TouchEvent, TouchTracker};
 use genex::present::Presenter;
 use genex::{Input, json};
-use genex_hud::{ImeBridge, KeyboardCall, TextAction};
+use genex_hud::{ImeBridge, KeyboardCall, LoadingLook, LoadingScreen, TextAction};
 use genex_platform_web::selftest::SelfTestPlan;
 use genex_platform_web::{AssetTable, GameHandle, MeshCache};
+use genex_render::compile::{CompileTally, compile_tally};
 use genex_render::gpu::core_instance;
 use genex_render::pacing::{FrameAction, FrameGate, MOBILE_PREFERRED_HZ};
 use genex_render::{Gpu, RenderCode, RenderError, UnsupportedReason};
@@ -211,7 +212,16 @@ struct App {
     presented: bool,
     /// When a lost device is re-created (review F4).
     recovery: Recovery,
+    /// The loading screen while the boot's warm-up compiles the first frame's pipelines (D11).
+    loading: Option<Loading>,
     outcome: ShellOutcome,
+}
+
+/// The loading screen a phone shows, its look, and the compile pool's counts when the boot began.
+struct Loading {
+    screen: LoadingScreen,
+    look: LoadingLook,
+    base: CompileTally,
 }
 
 /// A surface format the world target can be blitted to without a second gamma curve.
@@ -384,6 +394,48 @@ impl App {
         self.game.seed(self.config.plan.seed);
         self.game.start();
         self.gate.reset_history();
+        self.begin_loading();
+    }
+
+    /// Warm the first frame's pipelines off the frame thread and show the loading screen until
+    /// they are compiled, instead of a frozen first frame (renderer pass 2, owner decision D11).
+    fn begin_loading(&mut self) {
+        let Some(device) = self.device.as_mut() else { return };
+        let base = compile_tally();
+        device.presenter.set_off_thread_changes(true);
+        self.game.warm_boot(&mut device.presenter);
+        if device.presenter.boot_warming() {
+            let look = genex::loading::look_from_build(&self.game.title());
+            self.loading = Some(Loading { screen: LoadingScreen::new(), look, base });
+            self.log(json!({ "event": "loading" }));
+        }
+    }
+
+    /// Whether the loading screen is still up: painted and presented this frame when it is.
+    fn loading_frame(&mut self, frame_ms: f64) -> bool {
+        let warming = self.device.as_ref().is_some_and(|device| device.presenter.boot_warming());
+        if !warming {
+            if self.loading.take().is_some() {
+                self.log(json!({ "event": "loaded" }));
+            }
+            return false;
+        }
+        let (Some(device), Some(live), Some(loading)) = (self.device.as_mut(), self.live.as_ref(), self.loading.as_mut()) else {
+            return self.loading.is_some();
+        };
+        let texture = match live.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            _ => return true,
+        };
+        loading.screen.advance((frame_ms / 1000.0) as f32);
+        let progress = genex::loading::compiling(compile_tally().since(loading.base));
+        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let size = [live.config.width, live.config.height];
+        let ratio = self.window.as_ref().map_or(1.0, |window| window.scale_factor());
+        let gpu = device.gpu();
+        loading.screen.paint(&gpu.device, &gpu.queue, &view, live.config.format, size, genex_hud::pixels_per_point(ratio), &loading.look, &progress);
+        gpu.queue.present(texture);
+        true
     }
 
     /// Ask the display for [`MOBILE_PREFERRED_HZ`] (once per surface on Android, once per run on
@@ -579,6 +631,11 @@ impl App {
         let now = Instant::now();
         self.read_refresh(now);
         let frame = self.frame_times.frame(now);
+        // Until the warm-up compiled the first frame's pipelines the phone shows the loading
+        // screen: the game neither ticks nor draws, so nothing of it runs unseen.
+        if self.loading.is_some() && self.loading_frame(frame.display_ms) {
+            return;
+        }
         // Dynamic resolution reads display intervals, drawn or not (tickless frames are re-presented).
         if let Some(device) = self.device.as_mut() {
             device.presenter.note_display_frame(frame.display_ms);
@@ -777,6 +834,7 @@ pub fn run_on(event_loop: EventLoop<()>, game: Box<dyn GameHandle>, config: Shel
         rate_vote: None,
         presented: false,
         recovery: Recovery::default(),
+        loading: None,
         outcome: ShellOutcome::Ran,
     };
     if let Err(error) = event_loop.run_app(&mut app) {

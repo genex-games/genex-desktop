@@ -26,9 +26,8 @@ const FLOOR_ROUGHNESS: f32 = 0.9;
 const FLOOR_SIDE: f32 = 1800.0;
 const BLOCK_COLOR: Color = Color::rgb(224, 168, 72);
 const BLOCK_ROUGHNESS: f32 = 0.3;
-/// The gear button's label (checks find it in `state().hud.items`) and its size: a large tap target.
-pub const SETTINGS_BUTTON: &str = "⚙ Settings";
-const BUTTON_SIZE: [f32; 2] = [120.0, 44.0];
+/// The gear button's label (checks find it in `state().hud.items`; `settings_button` draws the gear).
+pub const SETTINGS_BUTTON: &str = "Settings";
 /// Clear of the screen edges (a phone's rounded corners and notch).
 const EDGE_MARGIN: i8 = 16;
 /// The settings panel's width, in world pixels.
@@ -68,8 +67,7 @@ fn draw(world: &World, frame: &mut Frame) {
 fn settings(world: &mut World, ui: &mut egui::Ui) {
     let margin = egui::Frame::new().inner_margin(egui::Margin::same(EDGE_MARGIN));
     ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| margin.show(ui, |ui| {
-        let gear = egui::Button::new(SETTINGS_BUTTON).min_size(egui::vec2(BUTTON_SIZE[0], BUTTON_SIZE[1]));
-        if ui.add(gear).clicked() {
+        if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
             world.settings_open = !world.settings_open;
         }
         if world.settings_open {

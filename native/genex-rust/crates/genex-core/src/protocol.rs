@@ -38,8 +38,82 @@ impl Event {
     /// on the old one; the host announces a new ring generation (`{}`).
     pub const DEVICE_RESTORED: &'static str = "device-restored";
     /// Contract v2, before `ready` only: a boot step finished and the game is still starting
-    /// (`{}`); the host gives its ready deadline again from each, up to a cap.
+    /// (`{}`, or `{stage, done?, total?}`: a [`BootProgress`]); the host gives its ready deadline
+    /// again from each, up to a cap.
     pub const STARTING: &'static str = "starting";
+}
+
+/// Where a game's boot is (renderer pass 2, owner decision D11: real progress on every
+/// destination), in the order a boot passes them: the host's `BootStage`
+/// (`src/shared/native-contract.ts`), and the words the web shell's progress events carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BootStage {
+    /// The browser downloads the game's module (web only): bytes of bytes.
+    Wasm,
+    /// The game's models and textures load: files of files where counted.
+    Assets,
+    /// The GPU device opens.
+    Device,
+    /// The renderer's pipelines compile: pipelines of pipelines.
+    Pipelines,
+    /// The first frame is drawn.
+    Frame,
+    /// The first lit frame is on screen.
+    Ready,
+}
+
+impl BootStage {
+    /// Every stage, in boot order.
+    pub const ALL: [BootStage; 6] =
+        [BootStage::Wasm, BootStage::Assets, BootStage::Device, BootStage::Pipelines, BootStage::Frame, BootStage::Ready];
+
+    /// The wire spelling. Never rename one.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            BootStage::Wasm => "wasm",
+            BootStage::Assets => "assets",
+            BootStage::Device => "device",
+            BootStage::Pipelines => "pipelines",
+            BootStage::Frame => "frame",
+            BootStage::Ready => "ready",
+        }
+    }
+}
+
+/// One step of a boot: its stage and, where it is counted, how much of how much is done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BootProgress {
+    /// Where the boot is.
+    pub stage: BootStage,
+    /// Done so far (pipelines compiled, files loaded); None where the stage is not counted.
+    pub done: Option<u64>,
+    /// Of how many; None while unknown.
+    pub total: Option<u64>,
+}
+
+impl BootProgress {
+    /// A stage that is not counted.
+    pub const fn at(stage: BootStage) -> BootProgress {
+        BootProgress { stage, done: None, total: None }
+    }
+
+    /// A counted stage: `done` of `total`.
+    pub const fn counted(stage: BootStage, done: u64, total: u64) -> BootProgress {
+        BootProgress { stage, done: Some(done), total: Some(total) }
+    }
+
+    /// The `starting` event's fields: `{stage, done?, total?}`.
+    pub fn fields(&self) -> Value {
+        let mut fields = Value::object();
+        fields.set("stage", Value::from(self.stage.wire()));
+        if let Some(done) = self.done {
+            fields.set("done", Value::from(done));
+        }
+        if let Some(total) = self.total {
+            fields.set("total", Value::from(total));
+        }
+        fields
+    }
 }
 
 /// Why a line was refused. Wire values: the host reads them, so never rename one.

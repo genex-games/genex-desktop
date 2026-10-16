@@ -61,7 +61,7 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true }
+genex = { workspace = true, features = ["physics"] }
 # The bench scenes (src/bench) draw through the renderer's own scene: per-draw materials, point
 # lights and skinning the facade does not offer yet.
 genex-render = { workspace = true }

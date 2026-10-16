@@ -350,6 +350,7 @@ mod tests {
     #[test]
     fn the_keyboard_is_wanted_only_while_a_text_field_has_focus() {
         let ctx = egui::Context::default();
+        crate::fonts::install_fonts(&ctx);
         let mut text = String::new();
         let mut field = None;
         let pass = |ctx: &egui::Context, text: &mut String, field: &mut Option<egui::Response>| {

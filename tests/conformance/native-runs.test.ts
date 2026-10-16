@@ -17,6 +17,7 @@ import { type CppBuildInput, CppBuildPurpose, CppBuilds, refusalProblem } from "
 import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
 import type { BuildIdentity } from "../../src/shared/build-preview.ts";
 import {
+  BootStage,
   GameBoxProblem,
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_GAME_MEMORY_MAX_BYTES,
@@ -98,6 +99,8 @@ interface Behaviour {
   exitBeforeReady?: { code: number | null; signal: NodeJS.Signals | null };
   /** Fields its `ready` states over the protocol 1 defaults (a Rust game's protocol 2 and receipt). */
   ready?: Record<string, unknown>;
+  /** Events it sends before its `ready` (a Rust game's `starting` steps). */
+  beforeReady?: ReadonlyArray<Record<string, unknown>>;
   /** What its `state` answers in place of `{tick: 1}` (a protocol 2 game's lifecycle and safe area). */
   state?: Record<string, unknown>;
   /**
@@ -208,7 +211,8 @@ function scriptedGame(request: GameSpawnRequest, pid: number, behaviour: Behavio
   const early = behaviour.exitBeforeReady;
   if (early) setImmediate(() => reap(early));
   else
-    setImmediate(() =>
+    setImmediate(() => {
+      for (const event of behaviour.beforeReady ?? []) send(event);
       send({
         event: NativeEvent.Ready,
         nonce: request.nonce,
@@ -219,8 +223,8 @@ function scriptedGame(request: GameSpawnRequest, pid: number, behaviour: Behavio
         size: { width: 320, height: 180 },
         seed: 0,
         ...behaviour.ready,
-      }),
-    );
+      });
+    });
   return { child, signals, ops, send, stderr, reap, finishStep };
 }
 
@@ -970,6 +974,23 @@ describe("what a run reports", () => {
     r.games[0]?.send({ event: "focus", focused: true });
     await r.clock.settle();
     assert.deepEqual(heard, [[NativeRunMode.Window, true]]);
+  });
+
+  // Owner decision D11: Live's card shows where a starting game's boot is; the ready clears it.
+  it("a starting game's progress is on its status until its ready", async () => {
+    const steps = [
+      { event: NativeEvent.Starting, stage: BootStage.Device },
+      { event: NativeEvent.Starting, stage: BootStage.Pipelines, done: 12, total: 40 },
+    ];
+    const r = await registry({}, { beforeReady: steps });
+    await started(r, request("pond", NativeRunMode.Headless));
+    const progress = r.statuses.map((status) => status.progress ?? null).filter((seen) => seen !== null);
+    assert.deepEqual(progress, [
+      { stage: BootStage.Device, done: null, total: null },
+      { stage: BootStage.Pipelines, done: 12, total: 40 },
+    ]);
+    const ready = r.statuses.find((status) => status.state === NativeRunState.Ready);
+    assert.equal(ready?.progress ?? null, null, "the ready clears it");
   });
 
   it("onStatus hears every change native.status announces; a listener that throws stops nothing", async () => {

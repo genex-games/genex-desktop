@@ -2019,6 +2019,17 @@ export interface NativeCapabilityReceipt {
 export type GameBoxProblem = 'launcher-missing' | 'bubblewrap-missing' | 'userns-restricted' | 'x11-only' | 'no-wayland' | 'wayland-unrestricted' | 'no-headless-build' | 'box-refused' | 'wayland-helper-missing';
 // ↑ src/shared/native-contract.ts
 
+export type BootStage = 'ready' | 'wasm' | 'assets' | 'device' | 'pipelines' | 'frame';
+// ↑ src/shared/native-contract.ts
+
+/** Where a starting game's boot is: its stage and, where counted, `done` of `total` (null when not counted). */
+export interface NativeBootProgress {
+  stage: BootStage;
+  done: number | null;
+  total: number | null;
+}
+// ↑ src/shared/native-contract.ts
+
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
   project: string;
@@ -2039,6 +2050,8 @@ export interface NativeRunStatus {
   exit: { code: number | null; signal: string | null } | null;
   /** The harness lease that started it; null for the person's window. */
   owner: string | null;
+  /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
+  progress?: NativeBootProgress | null;
   startedAt: string;
   endedAt: string | null;
 }

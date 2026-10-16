@@ -55,6 +55,23 @@
       game's page has neither. window.GenexShell.status = {state: "starting" | "running" |
       "unsupported" | "failed", code, reason, limit, receipt}.
 
+      Loading (renderer pass 2, owner decision D11): from the first paint until the game's first
+      lit frame the page shows its loading screen (#loading: the game's title and logo, a spinner and
+      a bar the compositor animates, the stage in words), styled by the game's [render.loading]
+      table (the build writes its title, colours and logo into the page). Each step reports progress as a "genex:progress" event on window and in
+      GenexShell.progress = {stage, done, total}, stages in this order: wasm (bytes of bytes),
+      assets (files of files), device, pipelines (n of m), frame, ready (the loading screen leaves).
+      A boot whose progress stops for BOOT_STALL_MS shows the "taking too long" card with the typed
+      code boot-timeout, its reason the stage it stopped at (state() answers the code as for
+      boot-failed). Pipelines: Chrome compiles a synchronous createRenderPipeline on its GPU thread,
+      which also composites the page, so a cold start's compiles froze every frame for seconds. The
+      shell therefore boots the game once more first in a worker (the dry boot: shader modules are
+      stand-ins, pipelines are recorded and answered with a placeholder, textures are 1x1 and
+      nothing is uploaded or submitted), then asks the real device for each recorded pipeline with
+      create*PipelineAsync (compiled off that thread, counted n of m) before the game's own boot
+      runs, whose synchronous calls then find them compiled. A dry boot that fails or takes longer
+      than RECORD_TIMEOUT_MS is skipped: the boot then counts the pipelines it creates.
+
       Frames: the canvas follows its displayed size from the moment it is shown (a resize, or the
       Live view getting its size while studio_boot still runs). Each animation frame feeds the game
       whole refreshes of the display (its rate measured from the frame intervals), not the frame's
@@ -198,6 +215,98 @@
       #save-notice[hidden] {
         display: none;
       }
+      /* The loading screen: lit from the first paint, every motion a transform the compositor runs. */
+      #loading {
+        --loading-bg: __LOADING_BACKGROUND__;
+        --loading-accent: __LOADING_ACCENT__;
+        --loading-text: __LOADING_TEXT__;
+        position: fixed;
+        inset: 0;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        box-sizing: border-box;
+        padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+        background-color: var(--loading-bg);
+        background-image: radial-gradient(
+          120% 85% at 50% 38%,
+          color-mix(in srgb, var(--loading-accent) 24%, var(--loading-bg)) 0%,
+          var(--loading-bg) 72%
+        );
+        color: var(--loading-text);
+        transition: opacity 280ms ease;
+        /* It only shows: a press goes to the game beneath once the game listens. */
+        pointer-events: none;
+      }
+      #loading.leaving {
+        opacity: 0;
+      }
+      #loading[hidden] {
+        display: none;
+      }
+      .loading-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        max-width: min(32rem, 100%);
+        text-align: center;
+      }
+      #loading-logo {
+        max-width: min(240px, 60vw);
+        max-height: 120px;
+        object-fit: contain;
+      }
+      #loading-title {
+        margin: 0;
+        font-size: clamp(1.25rem, 4vw, 1.9rem);
+        font-weight: 650;
+        line-height: 1.2;
+        text-wrap: balance;
+        overflow-wrap: anywhere;
+      }
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        box-sizing: border-box;
+        border-radius: 50%;
+        border: 3px solid color-mix(in srgb, var(--loading-text) 16%, transparent);
+        border-top-color: var(--loading-accent);
+        animation: genex-spin 0.9s linear infinite;
+        will-change: transform;
+      }
+      .loading-bar {
+        width: min(280px, 70vw);
+        height: 4px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--loading-text) 14%, transparent);
+      }
+      .loading-bar [data-genex-bar] {
+        height: 100%;
+        background-color: var(--loading-accent);
+        transform: scaleX(0);
+        transform-origin: left center;
+        transition: transform 240ms ease-out;
+        will-change: transform;
+      }
+      #loading-stage {
+        margin: 0;
+        min-height: 1.5em;
+        font-size: 0.9rem;
+        color: color-mix(in srgb, var(--loading-text) 72%, transparent);
+        font-variant-numeric: tabular-nums;
+      }
+      @keyframes genex-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .loading-spinner {
+          animation-duration: 2.4s;
+        }
+      }
     </style>
   </head>
   <body>
@@ -206,6 +315,15 @@
       <section class="card" role="alert" aria-labelledby="unsupported-title"></section>
     </main>
     <div id="save-notice" role="status" aria-live="polite" hidden></div>
+    <div id="loading" role="status" aria-live="polite" aria-busy="true">
+      <div class="loading-card">
+        <!--__LOADING_LOGO__-->
+        <h1 id="loading-title">__LOADING_TITLE__</h1>
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <div class="loading-bar" aria-hidden="true"><div data-genex-bar></div></div>
+        <p id="loading-stage">Loading</p>
+      </div>
+    </div>
     <script type="module">
       /** Every word the shell shows. */
       const MESSAGE = {
@@ -228,6 +346,21 @@
           title: "This game couldn’t start",
           body: "Something went wrong while the game was loading, so it isn’t running. Reload to try again; if it keeps happening, the game’s build needs a fix.",
           codeLabel: "Code",
+        },
+        timeout: {
+          title: "This game is taking too long to start",
+          body: "Loading stopped making progress, so it was stopped. Reload to try again; on a slow connection or an older device it can take a few tries.",
+          codeLabel: "Code",
+        },
+        loading: {
+          wasm: "Downloading the game",
+          assets: "Loading assets",
+          device: "Starting the graphics",
+          pipelines: "Preparing shaders",
+          frame: "Drawing the first frame",
+          ready: "Ready",
+          count: (done, total) => `${done} of ${total}`,
+          megabytes: (done, total) => `${(done / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB`,
         },
         deviceLost: {
           title: "The game stopped drawing",
@@ -319,11 +452,51 @@
         Outside: "asset-outside",
       };
 
+      /**
+       * Where the boot is (src/shared/native-contract.ts BootStage, the same words a native game's
+       * `starting` events carry), in the order a boot passes them. Wire values.
+       */
+      const LoadStage = {
+        Wasm: "wasm",
+        Assets: "assets",
+        Device: "device",
+        Pipelines: "pipelines",
+        Frame: "frame",
+        Ready: "ready",
+      };
+      const BOOT_TIMEOUT = "boot-timeout";
+      /** The game's module, which the shell fetches itself to count its bytes. */
+      const WASM_FILE = "game_bg.wasm";
+      /** A boot whose progress stops this long ends with boot-timeout (`GenexShellConfig.stallMs` sets it, for tests). */
+      const BOOT_STALL_MS = 120000;
+      /** The dry boot may take this long to list the pipelines; past it the boot goes on without them. */
+      const RECORD_TIMEOUT_MS = 30000;
+      /**
+       * Pipelines asked for at once while pre-warming: enough to keep the browser's compile threads
+       * busy, few enough that their set-up on its GPU thread never holds a frame for long (all 62
+       * of Lakeside's at once held one for half a second; 12 at a time hold none past 0.1 s).
+       */
+      const PREWARM_COMPILES = 12;
+      /** The loading screen's fade before it leaves. */
+      const LOADER_FADE_MS = 280;
+      /** The share of the bar each stage fills, [from, to] (wasm is most of a first load's wait). */
+      const STAGE_SPAN = {
+        wasm: [0, 0.3],
+        assets: [0.3, 0.45],
+        device: [0.45, 0.5],
+        pipelines: [0.5, 0.95],
+        frame: [0.95, 1],
+        ready: [1, 1],
+      };
+
       const canvas = document.getElementById("game");
       const notice = document.getElementById("save-notice");
+      const loader = document.getElementById("loading");
+      /** The loading state: its stall watch, the bar's fill so far, and what the boot staged for the dry boot. */
+      const loading = { watchdog: null, fill: 0, staged: { saves: [], map: null, assets: [] } };
       const status = { state: State.Starting, code: null, reason: null, limit: null, receipt: null };
       const saves = { db: null, flushing: Promise.resolve(), scheduled: false, retryAt: 0 };
-      const shell = { status, module: null, world: null, flushSaves: async () => {} };
+      const shell = { status, module: null, world: null, progress: null, flushSaves: async () => {} };
       window.GenexShell = shell;
 
       function firstLimitBelowCore(limits) {
@@ -372,6 +545,7 @@
 
       /** Shows the card page in place of the canvas, marked with which card it is. */
       function showCard(kind, children) {
+        stopLoading();
         canvas.hidden = true;
         document.body.classList.add("unsupported");
         const card = document.querySelector("#unsupported .card");
@@ -451,6 +625,331 @@
           codeFooter(words.codeLabel),
         ]);
         console.error(error);
+      }
+
+      // ── loading: the screen from the first paint to the first lit frame, and its progress ──
+
+      /** The stall watch's length: the page's `GenexShellConfig.stallMs` (tests), else BOOT_STALL_MS. */
+      function stallMs() {
+        const set = Number(window.GenexShellConfig?.stallMs);
+        return set > 0 ? set : BOOT_STALL_MS;
+      }
+
+      /** Whether the boot is still on its way (no card took the page). */
+      const booting = () => status.state === State.Starting || status.state === State.Running;
+
+      /** The stage in words, with its count when it has one. */
+      function stageWords(stage, done, total) {
+        const words = MESSAGE.loading;
+        if (total === null || done === null || stage === LoadStage.Ready) return words[stage];
+        const count = stage === LoadStage.Wasm ? words.megabytes(done, total) : words.count(done, total);
+        return `${words[stage]} · ${count}`;
+      }
+
+      /**
+       * One step of the boot: the event and GenexShell.progress, the words and the bar (it only
+       * fills), and the stall watch started again. Nothing once a card took the page.
+       */
+      function progress(stage, done = null, total = null) {
+        if (!booting()) return;
+        const detail = { stage, done, total };
+        shell.progress = detail;
+        window.dispatchEvent(new CustomEvent("genex:progress", { detail }));
+        const [from, to] = STAGE_SPAN[stage];
+        const share = total > 0 && done !== null ? Math.min(1, done / total) : 0;
+        loading.fill = Math.max(loading.fill, from + (to - from) * share);
+        loader.querySelector("[data-genex-bar]").style.transform = `scaleX(${loading.fill})`;
+        document.getElementById("loading-stage").textContent = stageWords(stage, done, total);
+        clearTimeout(loading.watchdog);
+        loading.watchdog = stage === LoadStage.Ready ? null : setTimeout(() => showTimeout(detail), stallMs());
+      }
+
+      /** The loading screen gone at once (a card takes the page) and its stall watch stopped. */
+      function stopLoading() {
+        clearTimeout(loading.watchdog);
+        loader.hidden = true;
+        loader.setAttribute("aria-busy", "false");
+      }
+
+      /** The first lit frame is on screen: the loading screen fades out and leaves. */
+      function finishLoading() {
+        progress(LoadStage.Ready);
+        loader.setAttribute("aria-busy", "false");
+        loader.classList.add("leaving");
+        setTimeout(() => {
+          loader.hidden = true;
+        }, LOADER_FADE_MS);
+        gpuHooks.held = [];
+      }
+
+      /** A boot that stopped progressing: the "taking too long" card with boot-timeout and the stage it stopped at. */
+      function showTimeout({ stage, done, total }) {
+        if (!booting() || status.state === State.Running) return;
+        const count = done !== null && total !== null ? `: ${done} of ${total}` : "";
+        Object.assign(status, { state: State.Failed, code: BOOT_TIMEOUT, reason: `${stage}${count}` });
+        const words = MESSAGE.timeout;
+        showCard(State.Failed, [
+          element("h1", words.title, { id: "unsupported-title" }),
+          element("p", words.body),
+          codeFooter(words.codeLabel),
+        ]);
+        window.__studio ??= {
+          version: 1,
+          state: () => ({ version: 1, error: status.code, volatile: { boot: { reason: status.reason } } }),
+        };
+        console.error(`genex: ${BOOT_TIMEOUT} (${status.reason})`);
+      }
+
+      /**
+       * The game's module, fetched here so its bytes are counted, then compiled once (the dry boot
+       * instantiates the same compiled module). Null when the file did not answer: the module's
+       * own init then fetches it, and fails as it always did.
+       */
+      async function fetchWasm() {
+        const response = await fetch(WASM_FILE).catch(() => null);
+        if (!response?.ok || !response.body) {
+          progress(LoadStage.Wasm);
+          return null;
+        }
+        const announced = Number(response.headers.get("content-length")) || null;
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          // A compressed response announces fewer bytes than it delivers: then the total is unknown.
+          progress(LoadStage.Wasm, received, announced !== null && received <= announced ? announced : null);
+        }
+        const bytes = new Uint8Array(received);
+        let at = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, at);
+          at += chunk.length;
+        }
+        progress(LoadStage.Wasm, received, received);
+        return WebAssembly.compile(bytes);
+      }
+
+      // ── pipelines: the dry boot that lists them, and their asynchronous compiles ──
+
+      /** The page's real device (the game's), the dry boot's list, and what keeps its compiles alive until the first frame. */
+      const gpuHooks = { device: null, plan: null, created: 0, held: [] };
+
+      /** The dry boot's references (`{$ref: index}`) as the objects made from them. */
+      function revive(made, value) {
+        if (Array.isArray(value)) return value.map((entry) => revive(made, entry));
+        if (value && typeof value === "object") {
+          if ("$ref" in value) return made[value.$ref];
+          return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, revive(made, entry)]));
+        }
+        return value;
+      }
+
+      /**
+       * Before the game's boot gets its device: every module and layout the dry boot listed, then
+       * each pipeline asked for with create*PipelineAsync and counted as it compiles. All are kept
+       * until the first frame, so the boot's synchronous calls find them compiled. The browser
+       * parses a shader module on the thread that also composites the page, so the modules go one
+       * at a time, each awaited (an error scope's answer comes back once it is parsed): a burst of
+       * them held every frame for most of a second.
+       */
+      async function prewarm(device, plan) {
+        const create = { module: "createShaderModule", bgl: "createBindGroupLayout", layout: "createPipelineLayout" };
+        const made = [];
+        gpuHooks.held = made;
+        for (const object of plan.objects) {
+          const parsed = object.kind === "module";
+          if (parsed) device.pushErrorScope("validation");
+          made.push(device[create[object.kind]](revive(made, object.desc)));
+          if (parsed) await device.popErrorScope().catch(() => null);
+        }
+        const total = plan.pipelines.length;
+        const queued = [...plan.pipelines];
+        let done = 0;
+        progress(LoadStage.Pipelines, done, total);
+        const compileNext = async () => {
+          for (let pipeline = queued.shift(); pipeline; pipeline = queued.shift()) {
+            const call = pipeline.kind === "render" ? "createRenderPipelineAsync" : "createComputePipelineAsync";
+            try {
+              gpuHooks.held.push(await device[call](revive(made, pipeline.desc)));
+            } catch {
+              // A pipeline this device refuses is refused again where the boot asks for it.
+            }
+            done += 1;
+            progress(LoadStage.Pipelines, done, total);
+          }
+        };
+        await Promise.all(Array.from({ length: PREWARM_COMPILES }, compileNext));
+      }
+
+      /**
+       * The page's WebGPU, watched: the first device opened is the game's (pre-warmed from the dry
+       * boot's list before the game gets it), and without a list each synchronous pipeline it
+       * creates is counted instead.
+       */
+      function watchPageGpu() {
+        const adapter = globalThis.GPUAdapter?.prototype;
+        const device = globalThis.GPUDevice?.prototype;
+        if (!adapter || !device) return;
+        const requestDevice = adapter.requestDevice;
+        adapter.requestDevice = async function (...args) {
+          const opened = await requestDevice.apply(this, args);
+          if (gpuHooks.device === null) {
+            gpuHooks.device = opened;
+            if (gpuHooks.plan) await prewarm(opened, gpuHooks.plan).catch((error) => console.warn(error));
+          }
+          return opened;
+        };
+        for (const name of ["createRenderPipeline", "createComputePipeline"]) {
+          const original = device[name];
+          device[name] = function (...args) {
+            if (this === gpuHooks.device && gpuHooks.plan === null && loader.hidden === false) {
+              gpuHooks.created += 1;
+              progress(LoadStage.Pipelines, gpuHooks.created, null);
+            }
+            return original.apply(this, args);
+          };
+        }
+      }
+
+      /**
+       * The dry boot, run in a worker (stringified): it boots the game's module once with WebGPU's
+       * pipeline calls recorded, never compiled. Shader modules are stand-ins, each pipeline is
+       * written down (its modules and layouts as references) and answered with a placeholder,
+       * textures are 1x1, nothing is uploaded or submitted, and the device's errors (a placeholder
+       * fits nothing) and the console are silenced. Posts {plan} or {error}.
+       */
+      function dryBoot() {
+        const quiet = () => {};
+        for (const name of ["log", "info", "warn", "error", "debug"]) console[name] = quiet;
+        const plan = { objects: [], pipelines: [] };
+        const ids = new WeakMap();
+        const refOf = (value) => {
+          if (value && typeof value === "object" && ids.has(value)) return { $ref: ids.get(value) };
+          if (Array.isArray(value)) return value.map(refOf);
+          if (value && typeof value === "object") {
+            const out = {};
+            for (const key in value) out[key] = refOf(value[key]);
+            return out;
+          }
+          return value;
+        };
+        const remember = (made, kind, desc) => {
+          ids.set(made, plan.objects.length);
+          plan.objects.push({ kind, desc: refOf(desc) });
+          return made;
+        };
+        const device = GPUDevice.prototype;
+        const real = {
+          module: device.createShaderModule,
+          render: device.createRenderPipeline,
+          compute: device.createComputePipeline,
+          bgl: device.createBindGroupLayout,
+          layout: device.createPipelineLayout,
+          texture: device.createTexture,
+        };
+        const placeholders = new WeakMap();
+        const placeholder = (gpu, kind) => {
+          if (!placeholders.has(gpu)) {
+            const vertex = real.module.call(gpu, { code: "@vertex fn main() -> @builtin(position) vec4f { return vec4f(0.0); }" });
+            const compute = real.module.call(gpu, { code: "@compute @workgroup_size(1) fn main() {}" });
+            placeholders.set(gpu, {
+              render: real.render.call(gpu, { layout: "auto", vertex: { module: vertex, entryPoint: "main" } }),
+              compute: real.compute.call(gpu, { layout: "auto", compute: { module: compute, entryPoint: "main" } }),
+            });
+          }
+          return placeholders.get(gpu)[kind];
+        };
+        const recordPipeline = (kind) =>
+          function (desc) {
+            plan.pipelines.push({ kind, desc: refOf(desc) });
+            return placeholder(this, kind);
+          };
+        device.createShaderModule = (desc) =>
+          remember({ label: desc?.label ?? "", getCompilationInfo: async () => ({ messages: [] }) }, "module", desc);
+        device.createBindGroupLayout = function (desc) {
+          return remember(real.bgl.call(this, desc), "bgl", desc);
+        };
+        device.createPipelineLayout = function (desc) {
+          return remember(real.layout.call(this, desc), "layout", desc);
+        };
+        device.createRenderPipeline = recordPipeline("render");
+        device.createComputePipeline = recordPipeline("compute");
+        device.createRenderPipelineAsync = async function (desc) {
+          return device.createRenderPipeline.call(this, desc);
+        };
+        device.createComputePipelineAsync = async function (desc) {
+          return device.createComputePipeline.call(this, desc);
+        };
+        device.createTexture = function (desc) {
+          return real.texture.call(this, { ...desc, size: [1, 1, 1], mipLevelCount: 1 });
+        };
+        for (const name of ["writeBuffer", "writeTexture", "copyExternalImageToTexture", "submit"]) {
+          GPUQueue.prototype[name] = quiet;
+        }
+        Object.defineProperty(device, "onuncapturederror", { configurable: true, get: () => null, set: quiet });
+        const requestDevice = GPUAdapter.prototype.requestDevice;
+        GPUAdapter.prototype.requestDevice = async function (...args) {
+          const opened = await requestDevice.apply(this, args);
+          opened.addEventListener("uncapturederror", (event) => event.preventDefault());
+          return opened;
+        };
+        self.onmessage = async ({ data }) => {
+          try {
+            const source = URL.createObjectURL(new Blob([data.source], { type: "text/javascript" }));
+            const game = await import(source);
+            await game.default({ module_or_path: data.module });
+            if (typeof game.studio_saves_preload === "function") game.studio_saves_preload(data.saves);
+            if (data.map !== null && typeof game.studio_assets_plan === "function") {
+              game.studio_assets_plan(data.map);
+              for (const [name, bytes] of data.assets) game.studio_assets_preload(name, bytes);
+            }
+            const board = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(data.size[0], data.size[1]) : null;
+            await game.studio_boot(board, data.hints);
+            self.postMessage({ plan });
+          } catch (error) {
+            self.postMessage({ error: String(error?.message ?? error) });
+          }
+        };
+      }
+
+      /**
+       * The pipelines the game's boot creates, listed by the dry boot in a worker; null when this
+       * browser cannot run it (no module worker, no WebGPU there, no compiled module) or it failed
+       * or took past RECORD_TIMEOUT_MS. The staged assets move to the worker.
+       */
+      async function listPipelines(module) {
+        if (!module || typeof Worker !== "function" || !globalThis.GPUDevice) return null;
+        const source = await fetch("./game.js").then((response) => (response.ok ? response.text() : null));
+        if (source === null) return null;
+        const code = `(${dryBoot.toString()})();`;
+        const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+        const worker = new Worker(url, { type: "module" });
+        const { saves, map, assets } = loading.staged;
+        const answer = new Promise((resolve) => {
+          worker.onmessage = ({ data }) => resolve(data);
+          worker.onerror = (event) => resolve({ error: String(event.message ?? "worker error") });
+          setTimeout(() => resolve({ error: "the dry boot took too long" }), RECORD_TIMEOUT_MS);
+        });
+        const transfer = assets.map(([, bytes]) => bytes.buffer);
+        const message = { source, module, saves, map, assets, hints: deviceHints(), size: [canvas.width, canvas.height] };
+        worker.postMessage(message, [...new Set(transfer)]);
+        loading.staged = { saves: [], map: null, assets: [] };
+        const result = await answer;
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        if (result.error) console.warn(`genex: pipelines compile as the boot asks (${result.error})`);
+        return result.plan?.pipelines.length ? result.plan : null;
+      }
+
+      /** After the first frame the game drew: its GPU work done, then one display frame, then the loading screen leaves. */
+      async function awaitFirstLitFrame() {
+        await gpuHooks.device?.queue.onSubmittedWorkDone().catch(() => {});
+        await new Promise((shown) => requestAnimationFrame(shown));
+        finishLoading();
       }
 
       /** The device hints studio_boot classifies the browser by, as JSON (a member the browser hides is left out). */
@@ -546,7 +1045,10 @@
       async function preloadSaves(game) {
         try {
           saves.db = await openSavesDb(game.studio_saves_database());
-          game.studio_saves_preload(saves.db ? await readAllSaves(saves.db) : []);
+          const entries = saves.db ? await readAllSaves(saves.db) : [];
+          // The dry boot's first reset reads the same files (it gets copies; the mirror keeps its own).
+          loading.staged.saves = entries.map(([name, bytes]) => [name, bytes.slice()]);
+          game.studio_saves_preload(entries);
           if (!saves.db) game.studio_saves_unavailable();
         } catch (error) {
           console.warn(`genex: saves: ${error?.name ?? error}`);
@@ -661,18 +1163,32 @@
         }
         const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${name} answered ${response.status}`);
-        game.studio_assets_preload(name, await boundedBytes(response, name, size));
+        const bytes = await boundedBytes(response, name, size);
+        game.studio_assets_preload(name, bytes);
+        // The module copied them; the dry boot gets these (moved to its worker, never copied again).
+        loading.staged.assets.push([name, bytes]);
       }
 
       /** The staged assets in the module before studio_boot: the map planned, then each file fetched and admitted. */
       async function preloadAssets(game) {
-        if (typeof game.studio_assets_plan !== "function") return;
+        if (typeof game.studio_assets_plan !== "function") {
+          progress(LoadStage.Assets, 0, 0);
+          return;
+        }
         const response = await fetch(ASSET_MAP, { cache: "no-store" });
         if (!response.ok) throw new Error(`${AssetFailure.FetchFailed}: ${ASSET_MAP} answered ${response.status}`);
-        const planned = Array.from(game.studio_assets_plan(await response.text()));
+        loading.staged.map = await response.text();
+        const planned = Array.from(game.studio_assets_plan(loading.staged.map));
+        const total = planned.length;
+        let done = 0;
+        progress(LoadStage.Assets, done, total);
         const base = new URL(ASSETS_DIR, location.href);
         const fetchNext = async () => {
-          for (let next = planned.shift(); next; next = planned.shift()) await fetchAsset(game, base, next);
+          for (let next = planned.shift(); next; next = planned.shift()) {
+            await fetchAsset(game, base, next);
+            done += 1;
+            progress(LoadStage.Assets, done, total);
+          }
         };
         await Promise.all(Array.from({ length: ASSET_FETCHES }, fetchNext));
       }
@@ -840,6 +1356,7 @@
 
       function run(game, input) {
         let last = performance.now();
+        let first = true;
         const pacer = { samples: [], refresh: null, owed: 0, phase: 0 };
         const frame = (now) => {
           const ms = pacedFrameMs(pacer, Math.min(MAX_FRAME_MS, Math.max(0, now - last)));
@@ -847,6 +1364,9 @@
           try {
             pollGamepads(game, input);
             if (game.studio_frame(ms) > 0) input.ticked = true;
+            // The first animation frame always draws and presents (the presenter's frame gate).
+            if (first) awaitFirstLitFrame();
+            first = false;
             scheduleIdleFlush(game);
           } catch (error) {
             if (error?.code === FrameFailure.DeviceLost) {
@@ -980,22 +1500,30 @@
       }
 
       async function boot() {
+        progress(LoadStage.Wasm);
         const refusal = await preflight();
         if (refusal) return showUnsupported(refusal);
         const params = new URLSearchParams(location.search);
         const game = await import("./game.js");
-        await game.default();
+        const module = await fetchWasm();
+        await game.default(module ? { module_or_path: module } : undefined);
         shell.module = game;
         // The saves and the assets first: studio_boot starts the game, and its first reset reads them.
         await preloadSaves(game);
         await preloadAssets(game);
         canvas.hidden = false;
         followCanvasSize();
+        progress(LoadStage.Device);
+        progress(LoadStage.Pipelines);
+        gpuHooks.plan = await listPipelines(module).catch(() => null);
+        if (status.state !== State.Starting) return;
         const answer = JSON.parse(await game.studio_boot(canvas, deviceHints()));
+        if (status.state !== State.Starting) return;
         if (!answer.ok) {
           canvas.hidden = true;
           return showUnsupported(answer);
         }
+        progress(LoadStage.Frame);
         Object.assign(status, { state: State.Running, receipt: answer.receipt });
         const [worldWidth, worldHeight] = Array.isArray(answer.world) ? answer.world : [];
         if (worldWidth > 0 && worldHeight > 0) shell.world = [worldWidth, worldHeight];
@@ -1006,7 +1534,10 @@
         run(game, input);
       }
 
-      boot().catch(showFailed);
+      watchPageGpu();
+      boot().catch((error) => {
+        if (status.state === State.Starting) showFailed(error);
+      });
     </script>
   </body>
 </html>

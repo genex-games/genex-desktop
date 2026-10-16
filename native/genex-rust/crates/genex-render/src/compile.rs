@@ -75,8 +75,11 @@ impl<T: Send + Sync + 'static> Compiled<T> {
         let slot = Arc::new(OnceLock::new());
         let filled = Arc::clone(&slot);
         PENDING_JOBS.fetch_add(1, Ordering::AcqRel);
+        SUBMITTED_JOBS.fetch_add(1, Ordering::AcqRel);
         let run = move || {
             let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| panic_message(panic.as_ref()));
+            // Counted before the value is out, so a reader that has the value sees it counted.
+            FINISHED_JOBS.fetch_add(1, Ordering::AcqRel);
             let _ = filled.set(made);
             // The last job of a burst (a launch's, a preset change's): keep what it compiled.
             if PENDING_JOBS.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -250,6 +253,35 @@ pub fn written_first<'a>() -> wgpu::PipelineCompilationOptions<'a> {
 
 /// Jobs handed to the compile pool and not finished yet.
 static PENDING_JOBS: AtomicUsize = AtomicUsize::new(0);
+/// Jobs ever handed to the compile pool, and ever finished: a boot's progress (owner decision D11).
+static SUBMITTED_JOBS: AtomicUsize = AtomicUsize::new(0);
+static FINISHED_JOBS: AtomicUsize = AtomicUsize::new(0);
+
+/// The compile pool's counts since the process started: pipelines (and other jobs) handed to it
+/// and finished. A boot reads them twice and reports the difference as pipelines n of m.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompileTally {
+    /// Jobs handed to the pool.
+    pub submitted: usize,
+    /// Jobs it finished (a job that panicked counts as finished).
+    pub finished: usize,
+}
+
+impl CompileTally {
+    /// The pool's work since `base` was read: the jobs still pending then plus those handed over
+    /// since, and how many of them finished. A job pending at the base (the presenter's own, handed
+    /// over before a boot's warm-up) is in both, so `finished` never passes `submitted`.
+    pub fn since(self, base: CompileTally) -> CompileTally {
+        CompileTally { submitted: self.submitted.saturating_sub(base.finished), finished: self.finished.saturating_sub(base.finished) }
+    }
+}
+
+/// The compile pool's counts now.
+pub fn compile_tally() -> CompileTally {
+    // Finished first: a job that finishes between the two reads is never counted done before it was handed over.
+    let finished = FINISHED_JOBS.load(Ordering::Acquire);
+    CompileTally { submitted: SUBMITTED_JOBS.load(Ordering::Acquire).max(finished), finished }
+}
 
 /// The save folder a game's pipeline caches are kept in, one file per adapter key.
 pub const PIPELINE_CACHE_FOLDER: &str = "genex-pipeline-cache";
@@ -519,6 +551,34 @@ impl OwnedCompute {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Owner decision D11: a boot counts its pipelines n of m from the pool's tally (other tests'
+    /// jobs run alongside, so the counts are at least this row's own).
+    #[test]
+    fn the_tally_counts_every_job_handed_over_and_finished() {
+        let base = compile_tally();
+        let made: Vec<Compiled<u32>> = (0..5).map(|n| Compiled::spawn(move || n)).collect();
+        assert!(compile_tally().since(base).submitted >= 5, "every job is counted as handed over at once");
+        assert_eq!(made.iter().map(|value| *value.get()).sum::<u32>(), 10);
+        let now = compile_tally().since(base);
+        assert!(now.finished >= 5, "every job is counted finished once made: {now:?}");
+        assert!(now.finished <= now.submitted, "never more finished than handed over: {now:?}");
+    }
+
+    /// A job still compiling when a boot reads its base (the presenter's own, handed over before
+    /// the warm-up) finishes inside the boot's count: its n never passes its m.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn a_job_pending_when_the_base_was_read_counts_inside_its_n_of_m() {
+        let held = hold();
+        let pending = Compiled::spawn(|| 7_u32);
+        let base = compile_tally();
+        drop(held);
+        assert_eq!(*pending.get(), 7);
+        let now = compile_tally().since(base);
+        assert!(now.finished >= 1, "the pending job finished since the base: {now:?}");
+        assert!(now.finished <= now.submitted, "never more finished than handed over: {now:?}");
+    }
 
     #[test]
     fn a_spawned_value_is_the_jobs_and_a_ready_one_is_itself() {

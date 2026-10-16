@@ -276,7 +276,7 @@ pub fn update(world: &mut World, ctx: &Ctx<'_>) {
 }
 
 /// The settings button's label (checks find it in `state().hud.items`).
-pub const SETTINGS_BUTTON: &str = "⚙ Settings";
+pub const SETTINGS_BUTTON: &str = "Settings";
 /// The HUD card's background (the dusk's blue, mostly see-through) and its text colours.
 const CARD: egui::Color32 = egui::Color32::from_rgba_premultiplied(14, 18, 30, 150);
 const TITLE: egui::Color32 = egui::Color32::from_rgb(255, 196, 150);
@@ -321,7 +321,7 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     };
     ui.label(egui::RichText::new(hint).color(HINT).size(12.0));
     ui.add_space(4.0);
-    if ui.button(SETTINGS_BUTTON).clicked() {
+    if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
         world.settings_open = !world.settings_open;
     }
 }

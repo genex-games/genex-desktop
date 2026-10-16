@@ -46,6 +46,7 @@
  * dev flavour (the `studio` feature, so the game serves fd 3); an export and every web build
  * never link genex-studio (`RustFlavour`, `rust-manifest.ts`).
  */
+import type { LoadingStyle } from "../shared/loading-style.ts";
 import { createHash } from "node:crypto";
 import { constants as FS_CONSTANTS } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
@@ -286,6 +287,8 @@ export type RustStaged =
       wgslToml?: string;
       /** `[web] wasm_budget_mb`, the web export's code budget in MB of gzip; null or absent: the default. */
       wasmBudgetMb?: number | null;
+      /** `[render.loading]`, checked: the web page's loading screen; null or absent: the defaults. */
+      loading?: LoadingStyle | null;
     }
   | { ok: false; code: string; detail: string };
 
@@ -582,6 +585,8 @@ interface Plan extends Pending {
   wgslToml: string | null;
   /** The game's web budget in MB of gzip, as staged; null: the default. */
   wasmBudgetMb: number | null;
+  /** The game's `[render.loading]`, as staged; null: the defaults. */
+  loading: LoadingStyle | null;
   /** What the game may use of its profile's crate overlay. */
   grant: Extract<RustCrateGrant, { ok: true }>;
   /** The store's own vendored crates (the toolchain's `vendor` is the merged source when the game has a grant). */
@@ -804,6 +809,7 @@ export class RustBuilds implements GameBuildLane {
         renderToml: null,
         wgslToml: null,
         wasmBudgetMb: null,
+        loading: null,
         grant,
         storeVendor: located.toolchain.vendor,
         trust,
@@ -854,6 +860,7 @@ export class RustBuilds implements GameBuildLane {
     plan.renderToml = staged.renderToml ?? null;
     plan.wgslToml = staged.wgslToml ?? null;
     plan.wasmBudgetMb = staged.wasmBudgetMb ?? null;
+    plan.loading = staged.loading ?? null;
     const outside = staged.dependencies.filter(
       (name) => name !== FACADE_CRATE && !Object.hasOwn(RUST_CRATE_ALLOWLIST, name) && !plan.grant.names.includes(name),
     );
@@ -1016,6 +1023,7 @@ export class RustBuilds implements GameBuildLane {
       out: path.join(plan.bin, WEB_DIR),
       shell,
       title: plan.title,
+      ...(plan.loading === null ? {} : { loading: plan.loading }),
       optimize: plan.purpose === CppBuildPurpose.Export,
       ...(plan.wasmBudgetMb === null ? {} : { budgetMb: plan.wasmBudgetMb }),
       tools,

@@ -140,6 +140,7 @@ mod tests {
 
     fn run(panel: &SettingsPanel<'_>, input: egui::RawInput) -> (Vec<PanelChange>, egui::FullOutput) {
         let ctx = egui::Context::default();
+        crate::fonts::install_fonts(&ctx);
         let mut changes = Vec::new();
         let mut output = ctx.run_ui(input, |ui| {
             changes = settings_panel(ui, panel);
@@ -190,6 +191,7 @@ mod tests {
     fn a_quality_preset_is_chosen_from_the_keyboard_with_tab_and_space() {
         let presets = presets();
         let ctx = egui::Context::default();
+        crate::fonts::install_fonts(&ctx);
         let mut chosen = Vec::new();
         // Tab to the first focusable widget, Tab again to the next, then Space on it.
         for pressed in [&[egui::Key::Tab][..], &[egui::Key::Tab], &[egui::Key::Space], &[]] {
@@ -205,6 +207,7 @@ mod tests {
     fn the_panel_never_grows_past_the_height_it_is_given() {
         let presets = presets();
         let ctx = egui::Context::default();
+        crate::fonts::install_fonts(&ctx);
         let mut bottom = 0.0;
         let mut output = ctx.run_ui(keys([640.0, 120.0], &[]), |ui| {
             settings_panel(ui, &panel(&presets));

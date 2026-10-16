@@ -17,6 +17,8 @@
  * here and in those copies together; a value is never renamed.
  */
 
+import type { LoadingStyle } from "./loading-style.ts";
+
 /** A quality preset: what a device class defaults to, or what the person or a game picks. Wire values. */
 export const QualityPreset = {
   /** The device class's own default (the probe decides). Never an effective preset. */
@@ -197,6 +199,8 @@ export const RenderTomlKey = {
   Look: "look",
   Class: "class",
   Shadows: "shadows",
+  /** The loading screen (`shared/loading-style.ts`). */
+  Loading: "loading",
 } as const;
 export type RenderTomlKey = (typeof RenderTomlKey)[keyof typeof RenderTomlKey];
 
@@ -457,6 +461,8 @@ export interface RenderToml {
   classes: Partial<Record<DeviceClass, RenderClassOverride>>;
   /** `[render.shadows]`: the sun's shadows on every preset (a key left out keeps each preset's own). */
   shadows?: RenderShadows;
+  /** `[render.loading]`: the loading screen every destination shows (a key left out takes the default). */
+  loading?: LoadingStyle;
 }
 
 /** `genex.toml`'s `[render.shadows]`, held to each device class's caps (a phone reaches 40 units at most). */

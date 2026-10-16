@@ -780,6 +780,12 @@ impl Studio {
         !self.ready && link.send(&protocol::event(Event::STARTING, &Value::object()))
     }
 
+    /// [`Studio::still_starting`] naming where the boot is (`{stage, done?, total?}`), which Live
+    /// shows while it waits (owner decision D11). Nothing once ready: answers whether it was sent.
+    pub fn starting_at(&self, link: &Transport, progress: protocol::BootProgress) -> bool {
+        !self.ready && link.send(&protocol::event(Event::STARTING, &progress.fields()))
+    }
+
     /// Tell the studio the game is about to exit abnormally.
     pub fn send_fatal(link: &Transport, reason: &str) -> bool {
         link.send(&protocol::event(Event::FATAL, &object([("reason", Value::from(reason))])))

@@ -3,6 +3,7 @@
   "protocol": { "v1": 1, "current": 2 },
   "inputKind": { "touch": "touch" },
   "events": { "deviceRestored": "device-restored", "starting": "starting" },
+  "bootStages": ["wasm", "assets", "device", "pipelines", "frame", "ready"],
   "touchPhases": ["start", "move", "end"],
   "lifecycle": ["launched", "resumed", "suspended"],
   "wgpuBackends": ["metal", "vulkan", "d3d12", "webgpu"],
@@ -164,7 +165,7 @@
       "contact_shadow_length"
     ],
     "qualityKeys": ["preset", "render_scale", "fps"],
-    "renderKeys": ["form_factors", "preset", "look", "class", "shadows"],
+    "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],
     "shadowKeys": ["distance", "blend_band"],
     "shadowDistance": { "min": 10, "max": 400 },
     "shadowBlendBandMax": 0.5,

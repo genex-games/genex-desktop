@@ -19,6 +19,7 @@ import { captureSurface } from "../../src/main/core/capture.ts";
 import { GameStack } from "../../src/shared/game-project.ts";
 import { CaptureSurface } from "../../src/shared/preview-contract.ts";
 import {
+  BootStage,
   NATIVE_CALL_TIMEOUT_MS,
   NATIVE_CAPTURE_MAX_BYTES,
   NATIVE_CAPTURE_MAX_PX,
@@ -304,6 +305,19 @@ describe("a start that says it is still starting", () => {
     assert.equal(r.game.killed(), false);
     await r.clock.advance(1);
     assert.equal(await ready, NativeRefusal.ReadyTimeout);
+  });
+
+  // Owner decision D11: Live shows where the boot is (pipelines n of m) while it waits.
+  it("a `starting` that names its stage reaches the run's listeners with its progress", async () => {
+    const r = await rig({ ready: false });
+    const heard: unknown[] = [];
+    r.port.onEvent((event) => heard.push(event));
+    r.game.send({ event: NativeEvent.Starting, stage: BootStage.Pipelines, done: 3, total: 9 });
+    await r.clock.settle();
+    assert.deepEqual(heard, [
+      { event: NativeEvent.Starting, progress: { stage: BootStage.Pipelines, done: 3, total: 9 } },
+    ]);
+    assert.equal(r.game.killed(), false);
   });
 
   it("a ready after `starting` is the handshake as ever, and `starting` after it is reply-invalid", async () => {

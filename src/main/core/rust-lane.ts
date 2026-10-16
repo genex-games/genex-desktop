@@ -207,7 +207,17 @@ export function shippedRustStage(payload: string): RustStage {
     const { title, nativeFeatures, render, wgsl, wasmBudgetMb } = staged.manifest;
     const renderToml = render ? renderTomlFragment(render) : null;
     const wgslToml = wgslTomlFragment(wgsl);
-    return { ok: true, dependencies, title, nativeFeatures, renderToml, wgslToml, wasmBudgetMb: wasmBudgetMb ?? null };
+    const loading = render?.loading ?? null;
+    return {
+      ok: true,
+      dependencies,
+      title,
+      nativeFeatures,
+      renderToml,
+      wgslToml,
+      wasmBudgetMb: wasmBudgetMb ?? null,
+      loading,
+    };
   };
 }
 

@@ -36,6 +36,8 @@ mod group;
 mod gfx;
 pub mod gpu;
 mod input;
+#[doc(hidden)]
+pub mod loading;
 pub mod manifest;
 mod map;
 pub mod math;
@@ -84,14 +86,24 @@ pub use desktop::{DesktopShot, DesktopShotError, desktop_shot};
 /// Pinned re-exports, so games never name a crate version themselves.
 pub use egui;
 pub use glam;
+#[cfg(feature = "physics")]
 pub use rapier3d;
 pub use serde_json::{Value, json};
 
 /// The physics world every [`Sim`] carries: Rapier 3D with `enhanced-determinism`, stepped by the
 /// runtime once per tick after the update hooks.
+#[cfg(feature = "physics")]
 pub type PhysicsWorld = rapier3d::prelude::PhysicsWorld;
 
+/// A game built without physics (`[physics] enabled = false` in its genex.toml, renderer pass 2
+/// D11) carries this empty world instead, never stepped; Rapier is not in its build. Turn physics
+/// back on to use `sim.physics` or `genex::physics`.
+#[cfg(not(feature = "physics"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PhysicsWorld;
+
 /// Rapier's prelude (bodies, colliders, joints, queries) for game code.
+#[cfg(feature = "physics")]
 pub mod physics {
     pub use rapier3d::prelude::*;
 }

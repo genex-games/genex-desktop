@@ -1718,6 +1718,24 @@ fn person_after(control: &RenderControl, change: genex_hud::PanelChange, shown: 
     person
 }
 
+/// The button that opens a game's settings: a drawn gear and `label` (checks find the button by
+/// it), a large tap target (the HUD's fonts have no emoji, so a gear glyph would draw a box).
+/// `clicked()` toggles the panel.
+///
+/// ```
+/// # use genex::prelude::*;
+/// # #[derive(Default)] struct World { menu: bool }
+/// # let mut game = Game::new(World::default());
+/// game.on_ui(|sim, ui, _| {
+///     if genex::render::settings_button(ui, "Settings").clicked() {
+///         sim.world.menu = !sim.world.menu;
+///     }
+/// });
+/// ```
+pub fn settings_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    genex_hud::settings_button(ui, label)
+}
+
 /// The in-game graphics settings panel, for a game's `on_ui` hook: the quality preset, the render
 /// scale, a switch per feature and the device class detected. A change is the person's choice on
 /// this device: saved in the game's saves, never in the simulation, so it never moves the state

@@ -978,6 +978,16 @@ impl Presenter {
         let _ = runtime;
     }
 
+    /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live
+    /// frame's pipelines: a shell shows its loading screen meanwhile instead of waiting on that
+    /// frame (owner decision D11). Never on the web, which warms nothing off its one thread.
+    pub fn boot_warming(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// The game's render settings, once attached by a draw.
     pub fn render_settings(&self) -> Option<&RenderHandle> {
         self.render.as_ref()

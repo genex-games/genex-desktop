@@ -30,11 +30,13 @@ import {
   releaseActions,
   releasesCapture,
   resizeDue,
+  startingProgress,
   textAction,
 } from "../../src/renderer/panels/stage/native-live.ts";
 import { NATIVE_WORDS } from "../../src/renderer/words.ts";
 import { BuildTarget } from "../../src/shared/game-project.ts";
 import {
+  BootStage,
   NATIVE_FRAME_SIDE_MAX,
   NATIVE_GAMEPAD_AXES_MAX,
   NATIVE_GAMEPAD_BUTTONS_MAX,
@@ -322,6 +324,29 @@ function embedded(state: NativeRunState, extra: Partial<NativeRunStatus> = {}): 
 }
 
 describe("what Live's canvas says about the embedded run", () => {
+  // Owner decision D11: while the game starts, the card says where its boot is (the pipelines n
+  // of m) and the bar fills with it; a stage with no count shows its words alone.
+  it("says where a starting game's boot is and fills the bar as its pipelines compile", () => {
+    const at = (progress: NativeRunStatus["progress"]) =>
+      startingProgress(embedded(NativeRunState.Starting, { progress }));
+    assert.equal(startingProgress(null), null, "nothing before the host answered");
+    assert.equal(at(null), null, "a game that names no stage");
+    const device = at({ stage: BootStage.Device, done: null, total: null });
+    assert.equal(device?.words, NATIVE_WORDS.boot.stage[BootStage.Device]);
+    const some = at({ stage: BootStage.Pipelines, done: 12, total: 40 });
+    assert.equal(some?.words, NATIVE_WORDS.boot.counted(BootStage.Pipelines, 12, 40));
+    const all = at({ stage: BootStage.Pipelines, done: 40, total: 40 });
+    assert.ok((device?.fill ?? 1) < (some?.fill ?? 0) && (some?.fill ?? 1) < (all?.fill ?? 0), "the bar only fills");
+    assert.equal(
+      canvasWords(
+        CanvasPhase.Starting,
+        embedded(NativeRunState.Starting, { progress: { stage: BootStage.Pipelines, done: 12, total: 40 } }),
+      ).detail,
+      NATIVE_WORDS.boot.counted(BootStage.Pipelines, 12, 40),
+      "the card's detail is the boot's words",
+    );
+  });
+
   it("waits while the run is on its way, plays once it is ready, and says how it ended or why it was refused", () => {
     assert.equal(canvasPhase(null, false, true), CanvasPhase.Starting);
     for (const state of [NativeRunState.Building, NativeRunState.Admitting, NativeRunState.Starting])

@@ -380,6 +380,7 @@ interface Ending {
 const copyStatus = (status: NativeRunStatus): NativeRunStatus => ({
   ...status,
   exit: status.exit ? { ...status.exit } : null,
+  ...(status.progress ? { progress: { ...status.progress } } : {}),
 });
 
 /** How a game that ran ended: a stop the host asked for, a refusal it killed for, or the game's own exit. */
@@ -865,7 +866,12 @@ export class NativeRuns implements NativeRunsHost {
     port.onEvent((event) => this.#event(entry, event));
     port.onStderr((line, cut) => this.#stderr(entry, line, cut));
     const ready = await port.ready();
-    this.#set(entry, { state: NativeRunState.Ready, backend: ready.backend.api, receipt: ready.receipt ?? null });
+    this.#set(entry, {
+      state: NativeRunState.Ready,
+      backend: ready.backend.api,
+      receipt: ready.receipt ?? null,
+      progress: null,
+    });
     this.#heartbeat(entry);
     this.#sampleMemory(entry);
     return this.#handle(entry, port);
@@ -972,10 +978,18 @@ export class NativeRuns implements NativeRunsHost {
     entry.timers.memory = timers.setTimeout(() => void sample(), MEMORY_SAMPLE_MS);
   }
 
-  /** A restored device owes Live a new ring; a window run's focus is the person's; any other event is ignored. */
+  /**
+   * A restored device owes Live a new ring; a starting game's progress goes on its status; a window
+   * run's focus is the person's; any other event is ignored.
+   */
   #event(entry: RunEntry, event: NativeEventMessage): void {
     if (event.event === NativeEvent.DeviceRestored) {
       this.#ringAfterLoss(entry);
+      return;
+    }
+    if (event.event === NativeEvent.Starting) {
+      if (event.progress && entry.status.state === NativeRunState.Starting)
+        this.#set(entry, { progress: event.progress });
       return;
     }
     if (event.event !== NativeEvent.Focus || entry.status.mode !== NativeRunMode.Window) return;

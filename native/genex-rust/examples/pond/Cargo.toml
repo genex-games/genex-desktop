@@ -33,7 +33,7 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true }
+genex = { workspace = true, features = ["physics"] }
 genex-audio = { workspace = true }
 genex-platform-web = { workspace = true }
 

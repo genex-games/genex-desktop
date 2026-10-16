@@ -27,6 +27,9 @@
 //! [web]                     # optional: the browser build's code budget, in MB of gzip
 //! wasm_budget_mb = 8        # 1..=32 (default 4): past it the host's export warns, past 32 refuses
 //!
+//! [physics]                 # optional: a game without physics is built without Rapier
+//! enabled = false           # default true
+//!
 //! [render]                  # optional: the renderer's quality and the game's look
 //! form_factors = ["desktop", "mobile"]
 //! preset = "auto"           # auto | low | medium | high | ultra
@@ -57,6 +60,13 @@
 //! [render.shadows]          # the sun's shadows on every preset (held to each class's caps)
 //! distance = 80             # world units, 10..=400 (default: each preset's own, 30..80)
 //! blend_band = 0.1          # share of each cascade blended into the next, 0..=0.5
+//!
+//! [render.loading]          # the loading screen until the first lit frame (every key optional)
+//! title = "Harbour Nights"  # default: [game] title; 1..=60 characters
+//! background = "#1b2233"    # sRGB #rrggbb
+//! accent = "#7fb2ec"        # the spinner and the progress bar
+//! text = "#eceae4"          # the title and the stage
+//! logo = "ui/logo.png"      # a PNG, JPEG or WebP under assets/
 //!
 //! [render.class.mobile-mid] # quality on one device class
 //! preset = "low"
@@ -400,6 +410,9 @@ pub struct GenexToml {
     /// The browser build's code budget.
     #[serde(default)]
     pub web: WebSection,
+    /// Whether the game is built with physics.
+    #[serde(default)]
+    pub physics: PhysicsSection,
 }
 
 impl GenexToml {
@@ -513,6 +526,55 @@ pub struct RenderSection {
     /// The sun's shadows on every preset.
     #[serde(default)]
     pub shadows: ShadowsSection,
+    /// The loading screen every destination shows until the first lit frame.
+    #[serde(default)]
+    pub loading: LoadingSection,
+}
+
+/// `[render.loading]`: how the game's loading screen looks (owner decision D11), the same keys and
+/// checks as the host's `src/shared/loading-style.ts`. A key left out takes the default (the title
+/// the game's own).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LoadingSection {
+    /// What the screen names, 1..=[`LOADING_TITLE_MAX_CHARS`] characters, no control character.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The screen's colour, sRGB `#rrggbb`.
+    #[serde(default)]
+    pub background: Option<String>,
+    /// The spinner's and the progress bar's colour, `#rrggbb`.
+    #[serde(default)]
+    pub accent: Option<String>,
+    /// The title's and the stage's colour, `#rrggbb`.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// A PNG, JPEG or WebP under the game's `assets/`, shown above the title.
+    #[serde(default)]
+    pub logo: Option<String>,
+}
+
+/// The longest loading title, in characters.
+pub const LOADING_TITLE_MAX_CHARS: usize = 60;
+
+/// Whether `value` is a loading colour: `#` and six hex digits.
+pub fn is_loading_color(value: &str) -> bool {
+    value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Whether `value` is a loading title: not blank, at most [`LOADING_TITLE_MAX_CHARS`], no control character.
+pub fn is_loading_title(value: &str) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= LOADING_TITLE_MAX_CHARS && !value.chars().any(char::is_control)
+}
+
+/// Whether `value` is a logo path under `assets/`: `/`-separated segments of letters, digits,
+/// `_`, `-` and `.`, none empty, `.` or `..`, ending in `.png`, `.jpg`, `.jpeg` or `.webp`.
+pub fn is_loading_logo(value: &str) -> bool {
+    let chars = value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/'));
+    let segments = value.split('/').all(|segment| !matches!(segment, "" | "." | ".."));
+    let lower = value.to_ascii_lowercase();
+    let image = [".png", ".jpg", ".jpeg", ".webp"].iter().any(|extension| lower.ends_with(extension));
+    chars && segments && image
 }
 
 /// `[render.shadows]`: the sun's shadows a game asks for on every preset, held to each device
@@ -696,6 +758,23 @@ pub struct WebSection {
     pub wasm_budget_mb: Option<i64>,
 }
 
+/// `[physics]`: a game that uses no physics turns it off and is built without Rapier (the facade's
+/// `physics` feature; the host writes the facade line without default features). Renderer pass 2, D11.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PhysicsSection {
+    /// False builds the game without physics; none or true keeps it.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+impl PhysicsSection {
+    /// Whether the game is built with physics (the default).
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+}
+
 /// `[gpu]`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -795,6 +874,8 @@ pub enum ManifestErrorCode {
     InvalidRenderLook,
     /// A `[render.shadows]` value outside its range.
     InvalidRenderShadows,
+    /// A `[render.loading]` value that breaks its rule (a colour not `#rrggbb`, a logo outside `assets/`).
+    InvalidRenderLoading,
     /// A `[web] wasm_budget_mb` outside [`WEB_WASM_BUDGET_MIN_MB`]..=[`WEB_WASM_CEILING_MB`].
     InvalidWebBudget,
 }
@@ -823,6 +904,7 @@ impl ManifestErrorCode {
             ManifestErrorCode::UnknownRenderFeature => "unknown-render-feature",
             ManifestErrorCode::InvalidRenderLook => "invalid-render-look",
             ManifestErrorCode::InvalidRenderShadows => "invalid-render-shadows",
+            ManifestErrorCode::InvalidRenderLoading => "invalid-render-loading",
             ManifestErrorCode::InvalidWebBudget => "invalid-web-budget",
         }
     }
@@ -1024,7 +1106,25 @@ fn check_render(render: &RenderSection) -> Result<(), ManifestError> {
         }
         check_class(name, class)?;
     }
-    check_shadows(&render.shadows)
+    check_shadows(&render.shadows)?;
+    check_loading(&render.loading)
+}
+
+/// `[render.loading]`'s title, colours and logo each within its rule (`shared/loading-style.ts`).
+fn check_loading(loading: &LoadingSection) -> Result<(), ManifestError> {
+    let bad = |key: &str, value: &str| Err(ManifestError::new(ManifestErrorCode::InvalidRenderLoading, format!("{key} {value:?}")));
+    if let Some(title) = loading.title.as_deref().filter(|title| !is_loading_title(title)) {
+        return bad("title", title);
+    }
+    for (key, color) in [("background", &loading.background), ("accent", &loading.accent), ("text", &loading.text)] {
+        if let Some(color) = color.as_deref().filter(|color| !is_loading_color(color)) {
+            return bad(key, color);
+        }
+    }
+    match loading.logo.as_deref().filter(|logo| !is_loading_logo(logo)) {
+        Some(logo) => bad("logo", logo),
+        None => Ok(()),
+    }
 }
 
 /// `[render.shadows]`'s distance and blend band within their ranges (a NaN band refused too).

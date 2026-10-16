@@ -115,6 +115,43 @@ export const NativeEvent = {
 } as const;
 export type NativeEvent = (typeof NativeEvent)[keyof typeof NativeEvent];
 
+/**
+ * Where a game's boot is (owner decision D11: real progress on every destination), in the order a
+ * boot passes them. A native game's `starting` event names one with its `done` of `total` (genex
+ * `protocol::BootStage`); the web shell's `genex:progress` events and `GenexShell.progress` carry
+ * the same words (its own copy, `LoadStage` in `src/game-template-rust/web/shell.html`). Wire
+ * values: never rename one.
+ */
+export const BootStage = {
+  /** The browser downloads the game's module: bytes of bytes. */
+  Wasm: "wasm",
+  /** The game's staged files are fetched (web) or its models and textures uploaded (native): files of files. */
+  Assets: "assets",
+  /** The GPU device opens. */
+  Device: "device",
+  /** The renderer's pipelines compile: pipelines of pipelines (total unknown until the boot listed them). */
+  Pipelines: "pipelines",
+  /** The first frame is drawn. */
+  Frame: "frame",
+  /** The first lit frame is on screen: the loading state leaves. */
+  Ready: "ready",
+} as const;
+export type BootStage = (typeof BootStage)[keyof typeof BootStage];
+
+/** The largest count a boot's progress names (pipelines, files); a larger one is not a count. */
+export const NATIVE_BOOT_COUNT_MAX = 1_000_000;
+
+/** Where a starting game's boot is: its stage and, where counted, `done` of `total` (null when not counted). */
+export interface NativeBootProgress {
+  stage: BootStage;
+  done: number | null;
+  total: number | null;
+}
+
+const BOOT_STAGES: ReadonlySet<string> = new Set(Object.values(BootStage));
+/** Whether `value` names a boot stage. */
+export const isBootStage = (value: unknown): value is BootStage => typeof value === "string" && BOOT_STAGES.has(value);
+
 /** How a run is shown. Sent to the renderer: never rename a value. */
 export const NativeRunMode = {
   /** The person's Play window. */
@@ -1056,9 +1093,10 @@ export interface NativeDeviceRestoredEvent {
   event: typeof NativeEvent.DeviceRestored;
 }
 
-/** A v2 game is still starting: a boot step finished before its `ready`. */
+/** A v2 game is still starting: a boot step finished before its `ready`, and where its boot is when it says. */
 export interface NativeStartingEvent {
   event: typeof NativeEvent.Starting;
+  progress?: NativeBootProgress;
 }
 
 /** Every event a game may send. */
@@ -1184,6 +1222,24 @@ type UncheckedOp = Exclude<NativeOp, keyof NativeOpResults>;
 const everyOpHasAResult: [UncheckedOp] extends [never] ? true : { unchecked: UncheckedOp } = true;
 void everyOpHasAResult;
 
+/**
+ * A `starting` event, with the boot's progress when it names a known stage (counts out of shape,
+ * negative, fractional, past {@link NATIVE_BOOT_COUNT_MAX} or done past total read as uncounted). A
+ * progress it cannot read is dropped, never the event: its deadline still counts.
+ */
+function startingEvent(value: Record<string, unknown>): NativeStartingEvent {
+  if (!isBootStage(value.stage)) return { event: NativeEvent.Starting };
+  const count = (raw: unknown) =>
+    Number.isSafeInteger(raw) && Number(raw) >= 0 && Number(raw) <= NATIVE_BOOT_COUNT_MAX ? Number(raw) : null;
+  const done = count(value.done);
+  const total = count(value.total);
+  const counted = done !== null && total !== null && done <= total;
+  return {
+    event: NativeEvent.Starting,
+    progress: { stage: value.stage, done: counted ? done : null, total: counted ? total : null },
+  };
+}
+
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
   project: string;
@@ -1204,6 +1260,8 @@ export interface NativeRunStatus {
   exit: { code: number | null; signal: string | null } | null;
   /** The harness lease that started it; null for the person's window. */
   owner: string | null;
+  /** Where a starting game's boot is (its last `starting` that named a stage); absent or null otherwise. */
+  progress?: NativeBootProgress | null;
   startedAt: string;
   endedAt: string | null;
 }
@@ -1647,7 +1705,7 @@ export function parseNativeEvent(value: unknown): NativeEventMessage | null {
     case NativeEvent.DeviceRestored:
       return { event: NativeEvent.DeviceRestored };
     case NativeEvent.Starting:
-      return { event: NativeEvent.Starting };
+      return startingEvent(value);
     default:
       return null;
   }

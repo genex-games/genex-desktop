@@ -39,7 +39,11 @@ feature in `genex.toml` has no web build, so add one only when the brief needs i
 over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
 32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
 Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
-`invalid-web-budget`.
+`invalid-web-budget`. A game that uses no physics sets `[physics] enabled = false`, which leaves
+Rapier (a fifth of the web build) out.
+Every destination shows a loading screen until the first lit frame; never draw your own. Give it
+the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
+logo under `assets/`), as `docs/GENEX_API.md` (Loading screen) shows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
 

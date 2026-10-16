@@ -778,6 +778,8 @@ export class NativeGamePort implements PreviewPort {
     }
     if (event.event === NativeEvent.Starting) {
       this.#stillStarting();
+      // Where the boot is goes on to the run (Live's card shows it); a bare `starting` says nothing new.
+      if (event.progress) for (const listener of this.#listeners) listener(event);
       return;
     }
     if (event.event === NativeEvent.Fatal) this.#note(ConsoleLevel.Error, event.reason);

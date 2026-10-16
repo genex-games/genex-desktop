@@ -7,6 +7,7 @@
  * conformance tests hold them without one.
  */
 import {
+  BootStage,
   NATIVE_FRAME_SIDE_MAX,
   NATIVE_GAMEPAD_AXES_MAX,
   NATIVE_GAMEPAD_BUTTONS_MAX,
@@ -411,6 +412,28 @@ function endedWords(status: NativeRunStatus | null): { title: string; detail: st
   return { title: NATIVE_WORDS.state[state], detail: state === NativeRunState.Killed ? killedWords(status) : null };
 }
 
+/** Where each counted stage's share of the bar starts and ends (the web shell's spans, from the device on). */
+const BOOT_SPAN: Partial<Record<BootStage, readonly [number, number]>> = {
+  [BootStage.Assets]: [0.05, 0.15],
+  [BootStage.Device]: [0.15, 0.2],
+  [BootStage.Pipelines]: [0.2, 0.95],
+  [BootStage.Frame]: [0.95, 1],
+};
+
+/**
+ * Where a starting game's boot is, as the card shows it: the stage in words (with its count) and
+ * the bar's fill; null when the game named no stage (an older game, or not started yet).
+ */
+export function startingProgress(status: NativeRunStatus | null): { words: string; fill: number } | null {
+  const progress = status?.progress;
+  if (!progress) return null;
+  const { stage, done, total } = progress;
+  const counted = done !== null && total !== null && total > 0;
+  const words = counted ? NATIVE_WORDS.boot.counted(stage, done, total) : NATIVE_WORDS.boot.stage[stage];
+  const [from, to] = BOOT_SPAN[stage] ?? [0, 0];
+  return { words, fill: from + (to - from) * (counted ? done / total : 0) };
+}
+
 /** What the canvas says over the game for `phase`: nothing extra while it plays. */
 export function canvasWords(
   phase: CanvasPhase,
@@ -428,6 +451,9 @@ export function canvasWords(
     case CanvasPhase.Playing:
       return { title: NATIVE_WORDS.title, detail: null };
     default:
-      return { title: NATIVE_WORDS.state[status?.state ?? NativeRunState.Starting], detail: null };
+      return {
+        title: NATIVE_WORDS.state[status?.state ?? NativeRunState.Starting],
+        detail: startingProgress(status)?.words ?? null,
+      };
   }
 }

@@ -329,3 +329,21 @@ fn still_starting_goes_out_before_ready_only() {
     assert_eq!(read_line(&mut reader)["event"], Value::from("ready"));
     assert!(!studio.still_starting(&link), "nothing once ready");
 }
+
+// Renderer pass 2 (owner decision D11): a boot step names its stage and, where counted, how far it
+// is, so Live shows real progress (pipelines n of m) while it waits; nothing once ready.
+#[test]
+fn starting_names_the_stage_and_its_count_before_ready_only() {
+    use genex_core::protocol::{BootProgress, BootStage};
+    let (link, host) = linked("n0nce");
+    let mut reader = BufReader::new(host);
+    let mut studio = Studio::native("");
+    assert!(studio.starting_at(&link, BootProgress::at(BootStage::Device)));
+    assert_eq!(read_line(&mut reader).dump(), br#"{"event":"starting","stage":"device"}"#.to_vec());
+    assert!(studio.starting_at(&link, BootProgress::counted(BootStage::Pipelines, 12, 40)));
+    assert_eq!(read_line(&mut reader).dump(), br#"{"event":"starting","stage":"pipelines","done":12,"total":40}"#.to_vec());
+    let info = ReadyInfo { build: "spike".into(), backend_api: "metal".into(), device: None, size: [2, 2], seed: 1, receipt: None };
+    assert!(studio.announce_ready(&link, &info));
+    assert_eq!(read_line(&mut reader)["event"], Value::from("ready"));
+    assert!(!studio.starting_at(&link, BootProgress::at(BootStage::Frame)), "nothing once ready");
+}

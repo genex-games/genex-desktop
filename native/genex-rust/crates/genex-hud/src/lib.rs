@@ -16,6 +16,8 @@
 //! - The graphics settings panel ([`settings_panel`], RQ0.7): a renderer-agnostic egui widget
 //!   (preset, render scale, feature switches, the detected device class) answering
 //!   [`PanelChange`]s; `genex::render::settings_panel` fills it and applies them outside the Sim.
+//! - The loading screen ([`LoadingScreen`], renderer pass 2 D11): what a native window shows
+//!   from its first frame until the game's first lit frame, in the game's `[render.loading]` look.
 //! - The soft-keyboard bridge ([`ImeBridge`], M5.3): a phone keyboard's typing becomes the
 //!   tick's committed text and editing keys, bounded by [`NATIVE_TEXT_MAX_UNITS`], and the
 //!   keyboard is up while a text field has egui's focus ([`keyboard_wanted`]).
@@ -23,18 +25,22 @@
 //! TODO(M2.4/M2.6): the facade owns one [`Hud`] (egui `max_passes` = 1) and one [`HudPainter`]
 //! and paints into the world target before every capture and present.
 
+mod fonts;
 mod hud;
 mod ime;
 mod input;
 mod legacy;
+mod loading;
 mod paint;
 mod record;
 mod settings_panel;
 
+pub use fonts::{fonts, gear_shapes, install_fonts, settings_button};
 pub use hud::{Hud, HudPaint, HudSummary, MAX_HUD_ITEMS, MAX_ITEM_NAME};
 pub use ime::{EditKey, ImeBatch, ImeBridge, KeyboardCall, MAX_EDIT_KEYS, NATIVE_TEXT_MAX_UNITS, TextAction, keyboard_wanted, keys_taken};
 pub use input::{HudInput, raw_input};
 pub use legacy::Color;
+pub use loading::{LoadingLook, LoadingProgress, LoadingScreen, parse_hex_color};
 pub use paint::{HudPainter, pixels_per_point};
 pub use record::{HudWidget, WidgetRole};
 pub use settings_panel::{PanelChange, SettingsPanel, settings_panel};

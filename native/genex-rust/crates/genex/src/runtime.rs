@@ -686,9 +686,21 @@ fn saves_of(save_name: Option<&str>) -> Saves {
 }
 
 fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
+    Sim { world, physics: fresh_physics(), facets: FacetState::fresh(&game.facets) }
+}
+
+/// An empty physics world stepping at the fixed tick.
+#[cfg(feature = "physics")]
+fn fresh_physics() -> crate::PhysicsWorld {
     let mut physics = crate::PhysicsWorld::default();
     physics.integration_parameters.dt = FIXED_STEP_SECONDS;
-    Sim { world, physics, facets: FacetState::fresh(&game.facets) }
+    physics
+}
+
+/// A game built without physics: its empty stand-in.
+#[cfg(not(feature = "physics"))]
+fn fresh_physics() -> crate::PhysicsWorld {
+    crate::PhysicsWorld
 }
 
 fn simulated_ms(tick: u64) -> f64 {
@@ -743,6 +755,7 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>) {
         // The person's panel choice is kept per device, outside the simulation.
         core.render.borrow_mut().save(core.gfx.saves());
     }
+    #[cfg(feature = "physics")]
     core.sim.physics.step();
     core.tick += 1;
 }

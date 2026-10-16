@@ -11,7 +11,7 @@ const TITLE: egui::Color32 = egui::Color32::from_rgb(255, 214, 160);
 const BODY: egui::Color32 = egui::Color32::from_rgb(232, 224, 214);
 const HINT: egui::Color32 = egui::Color32::from_rgb(190, 180, 196);
 /// The settings button's label (checks find it in `state().hud.items`).
-pub const SETTINGS_BUTTON: &str = "⚙ Settings";
+pub const SETTINGS_BUTTON: &str = "Settings";
 /// The graphics panel's width, in world pixels.
 const PANEL_WIDTH: f32 = 300.0;
 /// Clear of the screen edges.
@@ -55,7 +55,7 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     };
     ui.label(egui::RichText::new(hint).color(HINT).size(12.0));
     ui.add_space(4.0);
-    if ui.button(SETTINGS_BUTTON).clicked() {
+    if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
         world.settings_open = !world.settings_open;
     }
 }

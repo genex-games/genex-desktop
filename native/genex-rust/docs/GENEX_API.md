@@ -131,7 +131,9 @@ state in the world and let `on_ui` read it. Give a widget its visible label: che
 by it (`state().hud.items`). While a widget holds the keyboard's focus (Tab to it, or a tapped
 text field), keys are the widget's and the update hooks see none until Escape or a click
 elsewhere; mouse buttons and touches stay the game's. On a phone keep tap targets large and clear
-of the screen edges.
+of the screen edges. The HUD's fonts are text fonts only (letters, digits, punctuation): an emoji
+or icon glyph draws as a box, so draw icons with shapes (`ui.painter()`), and open the settings
+panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside its label.
 
 ## Drawing
 
@@ -359,6 +361,8 @@ ev_compensation = 0.5       # EV, within ±10
 distance = 60               # world units, 10..=400
 blend_band = 0.1            # of each cascade, 0..=0.5
 
+[render.loading]            # see Loading screen
+
 [render.class.mobile-mid]   # what this game wants on older phones
 render_scale = 0.67         # 0.5..=1
 fps = 30                    # 30 | 60
@@ -414,6 +418,28 @@ Rules for agents:
   must read as the same game; `{set: {features: {hdr: false}}}` compares the look against the
   old LDR scene. `{set: {preset: null, features: null, deviceClass: null,
   renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back.
+
+## Loading screen
+
+From the first paint until the game's first lit frame every destination shows the game's loading
+screen: its title, a spinner that keeps turning while shaders compile, a bar and the stage in words
+(downloading the game, loading assets, starting the graphics, preparing shaders n of m, drawing the
+first frame). The web page, Live, a desktop window and a phone all draw it; a game never draws its own. Style
+it in `genex.toml`, never in code:
+
+```toml
+[render.loading]            # every key optional
+title = "Harbour Nights"    # default: [game] title; 1..=60 characters
+background = "#1b2233"      # sRGB #rrggbb (the default)
+accent = "#7fb2ec"          # the spinner and the bar
+text = "#eceae4"            # the title and the stage
+logo = "ui/logo.png"        # a PNG, JPEG or WebP under assets/ (shown on the web page)
+```
+
+Pick colours from the game's palette with the text readable on the background. A value outside these
+rules is refused `invalid-render-loading`. A first-ever web start compiles every shader (a few
+seconds); later starts take the browser's cache. A start that stops progressing for two minutes
+shows a card with the typed code `boot-timeout` naming the stage it stopped at.
 
 ## Big meshes (meshlets)
 
@@ -718,6 +744,9 @@ native_features = ["subgroup"]
 
 [web]                     # optional: the browser build's code budget, in MB of gzip
 wasm_budget_mb = 8        # 1..=32, default 4
+
+[physics]                 # optional: a game with no physics builds without Rapier
+enabled = false           # default true
 ```
 
 Unknown keys are refused. A `[[crate_request]]` row is a request, never an approval: keep it
@@ -738,6 +767,11 @@ A web export is built for size. Past its budget (`[web] wasm_budget_mb`, default
 still exports, with a warning that it loads slower on phones and weak devices; raise the budget
 only when the brief targets strong desktops. Past 32 MB it is refused `wasm-over-budget`, and a
 budget outside 1..=32 is refused `invalid-web-budget`. Live builds have no budget.
+
+Rapier is about a fifth of a web build's code. A game that never touches `sim.physics` or
+`genex::physics` sets `[physics] enabled = false`: it builds without Rapier, `sim.physics` is an
+empty stand-in that is never stepped, and code that reaches for Rapier does not compile until
+physics is turned back on.
 
 ## Extension ladder
 

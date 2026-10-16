@@ -17,8 +17,14 @@ repository.workspace = true
 name = "template-web"
 path = "../../../../src/game-template-rust/src/main.rs"
 
+# As a game's genex.toml `[physics] enabled` does: `--no-default-features` builds it without Rapier
+# (the size rows of renderer pass 2, D11).
+[features]
+default = ["physics"]
+physics = ["genex/physics"]
+
 [dependencies]
-genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web" }
+genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web", default-features = false }
 
 # tests/template.rs writes the starter's per-preset captures as PNG evidence on the host GPU.
 [dev-dependencies]

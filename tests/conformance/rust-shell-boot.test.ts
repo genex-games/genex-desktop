@@ -232,9 +232,9 @@ async function bootServed(browser: Browser, row: AssetRow) {
   }
 }
 
-/** The paths a page may ask for: the page, its module, the asset map and files under `assets/`. */
+/** The paths a page may ask for: the page, its module and wasm, the asset map and files under `assets/`. */
 const insideTheGame = (request: string) =>
-  ["/index.html", "/game.js", "/assets.json"].includes(request) || request.startsWith("/assets/");
+  ["/index.html", "/game.js", "/game_bg.wasm", "/assets.json"].includes(request) || request.startsWith("/assets/");
 
 describe("the Rust web shell loads the game's staged assets before the first frame", { skip: browserSkip() }, () => {
   let browser: Browser;

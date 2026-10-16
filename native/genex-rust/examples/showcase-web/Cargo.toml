@@ -18,5 +18,11 @@ repository.workspace = true
 name = "showcase-web"
 path = "../showcase/game/src/main.rs"
 
+# As a game's genex.toml `[physics] enabled` does: `--no-default-features` builds it without Rapier
+# (the size rows of renderer pass 2, D11).
+[features]
+default = ["physics"]
+physics = ["genex/physics"]
+
 [dependencies]
-genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web" }
+genex = { package = "genex-platform-web", path = "../../crates/genex-platform-web", default-features = false }

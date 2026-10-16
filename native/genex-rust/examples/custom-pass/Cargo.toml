@@ -28,7 +28,7 @@ default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-genex = { workspace = true }
+genex = { workspace = true, features = ["physics"] }
 
 # The golden rows render headless on the host GPU (Metal on the Mac) through genex-render, with
 # the web shell's frame-to-scene bridge.

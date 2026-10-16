@@ -13,7 +13,8 @@
  *    written through one);
  * 3. `wasm-opt -Oz` (binaryen {@link BINARYEN_VERSION}) for an optimized build;
  * 4. a check that the folder holds only regular files the tools wrote (a link they left is refused);
- * 5. `index.html` from the shell with the game's title HTML-escaped, and `size.json`;
+ * 5. `index.html` from the shell with the game's title HTML-escaped and its loading screen styled
+ *    by `[render.loading]` (`shared/loading-style.ts`), and `size.json`;
  * 6. the receipt: tool versions, the module's bytes, their `gzip -9` size against the game's own
  *    budget (`genex.toml` `[web] wasm_budget_mb`, default {@link WEB_WASM_BUDGET_DEFAULT_MB} MB) and
  *    the {@link WEB_WASM_CEILING_MB} MB ceiling, and every served file's sha256. An optimized module
@@ -52,6 +53,7 @@ import {
   WEB_WASM_CEILING_BYTES,
   WEB_WASM_CEILING_MB,
 } from "../shared/game-export-contract.ts";
+import { LOADING_DEFAULTS, type LoadingStyle, loadingStyleProblem } from "../shared/loading-style.ts";
 import { isSafeAssetPath } from "../substrate/asset-import/safe-asset.ts";
 import { atomicWriteText, readRegularFile } from "../substrate/fsx.ts";
 import { fnv1a64Hex } from "../substrate/native-game-port.ts";
@@ -85,6 +87,16 @@ const DETAIL_LINES = 6;
 const WEB_TRIPLE = "wasm32-unknown-unknown";
 /** The placeholder the template shell carries for the game's title. */
 const TITLE_PLACEHOLDER = "__GAME_TITLE__";
+/** The loading screen's placeholders in the template shell (`[render.loading]`, `shared/loading-style.ts`). */
+const LoadingPlaceholder = {
+  Title: "__LOADING_TITLE__",
+  Background: "__LOADING_BACKGROUND__",
+  Accent: "__LOADING_ACCENT__",
+  Text: "__LOADING_TEXT__",
+  Logo: "<!--__LOADING_LOGO__-->",
+} as const;
+/** The folder a logo path is under, beside the page. */
+const LOGO_FOLDER = "assets/";
 /** The wasm features the pinned Rust emits for wasm32; wasm-opt must accept and keep them. */
 const WASM_OPT_FEATURES = [
   "--enable-bulk-memory",
@@ -205,6 +217,8 @@ export interface WebPackageInput {
   shell: string;
   /** The game's title (`genex.toml`), escaped into the page. */
   title: string;
+  /** The game's `[render.loading]`, checked; absent: the defaults. */
+  loading?: LoadingStyle;
   /** Run wasm-opt (an export or any release build). */
   optimize: boolean;
   /** The game's own budget in MB of gzip (`[web] wasm_budget_mb`); absent: {@link WEB_WASM_BUDGET_DEFAULT_MB}. */
@@ -250,10 +264,27 @@ export function webExportWarnings(receipt: WebReceipt | null | undefined): Expor
   return [{ code: receipt.warning, gzipBytes: receipt.gzipBytes, budgetBytes: receipt.gzipBudgetBytes }];
 }
 
-/** The shell with the game's title in place of every placeholder, HTML-escaped. */
-export function webShellPage(shell: string, title: string): string {
-  const escaped = title.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
-  return shell.replaceAll(TITLE_PLACEHOLDER, escaped);
+const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char);
+
+/**
+ * The shell with the game's title in place of every placeholder, HTML-escaped, and its loading
+ * screen styled by `loading` (`[render.loading]`; a key left out takes the default, the title the
+ * game's). Throws `loading-style: <key>` for a value the manifest's check would have refused, so
+ * nothing of it reaches the page.
+ */
+export function webShellPage(shell: string, title: string, loading: LoadingStyle = {}): string {
+  const problem = loadingStyleProblem(loading);
+  if (problem !== null) throw new Error(`loading-style: ${problem}`);
+  const logo = loading.logo
+    ? `<img id="loading-logo" alt="" src="${LOGO_FOLDER}${loading.logo.split("/").map(encodeURIComponent).join("/")}" />`
+    : "";
+  return shell
+    .replaceAll(TITLE_PLACEHOLDER, escapeHtml(title))
+    .replaceAll(LoadingPlaceholder.Title, escapeHtml(loading.title ?? title))
+    .replaceAll(LoadingPlaceholder.Background, loading.background ?? LOADING_DEFAULTS.background)
+    .replaceAll(LoadingPlaceholder.Accent, loading.accent ?? LOADING_DEFAULTS.accent)
+    .replaceAll(LoadingPlaceholder.Text, loading.text ?? LOADING_DEFAULTS.text)
+    .replaceAll(LoadingPlaceholder.Logo, logo);
 }
 
 /** `wasm-bindgen --target web` of `wasm` into `out` as `game.js` + `game_bg.wasm`. */
@@ -364,7 +395,7 @@ export async function packageWeb(input: WebPackageInput): Promise<WebPackageResu
   if (optimizeRefusal) return optimizeRefusal;
   const odd = await outputRefusal(input.out);
   if (odd) return refused(RustWebRefusal.OutputRefused, odd);
-  await atomicWriteText(path.join(input.out, WEB_FILES.page), webShellPage(input.shell, input.title));
+  await atomicWriteText(path.join(input.out, WEB_FILES.page), webShellPage(input.shell, input.title, input.loading));
   const receipt = await receiptOf(input, wasmOpt !== null);
   const size = {
     optimized: receipt.optimized,

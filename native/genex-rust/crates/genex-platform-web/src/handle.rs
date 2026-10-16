@@ -65,6 +65,11 @@ pub trait GameHandle {
     /// replayed and the game's custom passes rebuilt on it; answers whether a new device is in use
     /// (false while the device is not lost).
     fn recover(&mut self, presenter: &mut Presenter) -> Result<bool, RenderError>;
+    /// Start compiling the first Live frame's pipelines off the frame thread
+    /// ([`Presenter::warm_boot`]): a phone shows its loading screen meanwhile (owner decision D11).
+    fn warm_boot(&mut self, presenter: &mut Presenter);
+    /// The game's title (`genex.toml`), which its loading screen names.
+    fn title(&self) -> String;
 }
 
 /// The facade view a studio camera name resolves to: the game's own for None, a named camera, or
@@ -178,5 +183,13 @@ impl<W: Default + 'static> GameHandle for Runtime<W> {
 
     fn recover(&mut self, presenter: &mut Presenter) -> Result<bool, RenderError> {
         presenter.recover_for(self)
+    }
+
+    fn warm_boot(&mut self, presenter: &mut Presenter) {
+        presenter.warm_boot(self);
+    }
+
+    fn title(&self) -> String {
+        Runtime::title(self).to_owned()
     }
 }
