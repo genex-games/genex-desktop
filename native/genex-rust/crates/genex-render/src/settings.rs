@@ -1739,6 +1739,15 @@ pub struct Quality {
     /// and web `high` and `ultra`, Bevy's direct blur on `low`, `medium` and phones, none on the
     /// low-tier phone or the legacy renderer. A pipeline knob.
     pub motion_blur: crate::post::motion_blur::MotionBlurTier,
+    /// The screen inputs Stage B's water and screen-space reflections may ask for (A.6): the
+    /// opaque copy, the previous frame's colour pyramid and the prepass's normal and roughness on
+    /// desktop and web `high` and `ultra`, none elsewhere. A resource knob (targets and passes run
+    /// only for a consumer that asks; the prepass's second target is its consumer's pipeline).
+    pub screen_inputs: crate::screen_inputs::ScreenInputs,
+    /// The terrain's grass (A.8): its density, reach, blade segments and casting. A resource knob
+    /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
+    /// renderer.
+    pub grass: crate::foliage::GrassQuality,
 }
 
 impl Quality {
@@ -1797,6 +1806,8 @@ impl Quality {
             anisotropy: 1,
             dof: crate::post::dof::DofTier::Circular,
             motion_blur: crate::post::motion_blur::MotionBlurTier::Off,
+            screen_inputs: crate::screen_inputs::ScreenInputs::NONE,
+            grass: crate::foliage::GrassQuality::OFF,
         }
     }
 

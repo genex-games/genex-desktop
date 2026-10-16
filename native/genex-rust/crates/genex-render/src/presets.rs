@@ -14,7 +14,9 @@
 use crate::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs};
 use crate::post::bloom::CHAIN_RESOLUTION;
 use crate::post::dof::DofTier;
+use crate::foliage::GrassQuality;
 use crate::post::motion_blur::MotionBlurTier;
+use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, JitterCycle, LightQuality, PresetChoice, Quality, QualityPreset,
     MAX_CASCADES, RENDER_SCALE_MIN, RenderFeature, RenderSettings, SHADOW_BLEND_BAND_MAX, SHADOW_DISTANCE_MAX_M, SHADOW_DISTANCE_MIN_M,
@@ -382,6 +384,8 @@ fn high_row(quality: &mut Quality) {
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
     quality.motion_blur = MotionBlurTier::Reconstruction;
+    // A.6: the screen inputs Stage B's water and screen-space reflections read (ultra inherits them).
+    quality.screen_inputs = ScreenInputs::ALL;
     with_geometry_features(quality);
 }
 
@@ -576,6 +580,12 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     quality.dof = DofTier::Circular;
     // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").
     quality.motion_blur = if class.tier == PerformanceTier::Low { MotionBlurTier::Off } else { MotionBlurTier::Direct };
+    // No screen inputs on phones (B.3's water reflects the probes or the sky there).
+    quality.screen_inputs = ScreenInputs::NONE;
+    // A.8: grass on the high phones at `high` and `ultra` only, at a capped density (overdraw is a
+    // tile GPU's cost); none elsewhere on phones.
+    let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
+    quality.grass = if phone_grass { GrassQuality::MOBILE } else { GrassQuality::OFF };
 }
 
 /// The widest HDR environment map `class` keeps on the GPU (an equirect `width × width / 2`

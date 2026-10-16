@@ -272,8 +272,15 @@ pub const SHADERS: &[(&str, &str)] = &[
     // Renderer pass 2 A.7: the terrain's world pass, prepass and motion prepass, and its casters.
     ("terrain", crate::terrain::gpu::TERRAIN),
     ("terrain-shadow", crate::terrain::gpu::TERRAIN_SHADOW),
+    // Renderer pass 2 A.8: the grass's generation, its world pass, prepass and motion prepass,
+    // and its casters.
+    ("grass-gen", crate::foliage::gpu::GRASS_GEN),
+    ("grass", crate::foliage::gpu::GRASS),
+    ("grass-shadow", crate::foliage::gpu::GRASS_SHADOW),
     // Renderer pass 2 A.4: the irradiance volumes' bake reduce.
     ("irradiance-passes", crate::irradiance::IRRADIANCE_PASSES),
+    // Renderer pass 2 A.6: the previous frame's colour pyramid.
+    ("history-pyramid", crate::screen_inputs::HISTORY_PYRAMID),
 ];
 
 /// A shader module from WGSL checked against [`crate::WGSL_MAX_BYTES`].

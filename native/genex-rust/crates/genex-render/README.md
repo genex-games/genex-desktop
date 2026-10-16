@@ -121,6 +121,113 @@ against the point's distance), so a cell behind a wall lends no light. Level-2 v
 the sky's SH9. The ledger's `irradiance-volumes` row counts the atlas, the staging block and the
 bake's targets.
 
+## Fog, aerial perspective and froxel fog
+
+`Look::fog` (`settings::Fog`) is a height and distance fog lit by the environment: the sky's
+horizon radiance plus the sun's forward lobe, tinted by the fog's colour (`fog.rs`, the lighting
+chunk `shaders/lighting/fog.wgsl` and its CPU twin). The golden hour's warm veil is held down
+(owner decision D13): the lobe takes a third of the sun's radiance in a colour a third of the way
+to the sun's luminance, and half of the sun's aureole the horizon read sees beyond the ray's own
+angle to the sun is taken out (`fog::sun_side_cut`), so sunlit ground seen from above towards a
+low sun keeps its colour and texture while a ray along the horizon keeps its light. The sky
+background, the map backdrop, particles and the froxel fog repeat the same in-scatter. On medium and above node 11 also writes the
+sky's own scattering as an air volume (`fog::AerialPerspective`, 32 x 32 froxels by 32 slices):
+its in-scatter in front and its transmittance per channel behind (`fog::AIR_HALVES`, renderer pass
+2 SI-04), the slices even to 4 m and logarithmic out to 32 km (`fog::aerial_slice_distance`).
+On desktop and web `high` and `ultra` (`EnvironmentQuality::froxel_fog`: 112 x 63 x 64 and
+160 x 90 x 64; phones keep the analytic fog until measured) the fog is a lit volume (`froxel.rs`,
+`shaders/sky/froxel_fog.wgsl`, a port of Godot's volumetric fog): one compute pass after the
+aerial volume injects each froxel's extinction (the closed form across its slice) and light (the
+sun's lobe through one shadow tap of its cascades, the sky, the binned local lights), blended with
+last frame's volume at a Halton jitter, then scans each column front to back with the aerial
+volume folded in behind the fog. The result has the aerial volume's layout and slice mapping and is
+bound in its place at forward binding 17, so the forward pass, transparents, Level-2 v2 materials
+and particles read it through the same lookup (`gx_air_sample`, no new binding); its in-scatter's
+alpha 1 tells them the height fog is already in it. Unshadowed, it is the analytic fog exactly,
+so the sky background (still analytic) meets it at the horizon. A history follows Live frames
+only: a reset, a settled capture's frame 0 and a history-set switch start it over, unjittered.
+`Fog::volumetric` off keeps the analytic fog on every preset. Level-3 passes still apply the
+analytic fog from their tables (`fog_color`, `fog_params`): no shafts there.
+
+## Decals
+
+`Lighting::decals` (`decals::Decal`; the facade's `frame.decal`) are boxes of the world that lay a
+texture onto every surface inside them before lighting: a model matrix over the unit cube (it
+projects along its local -y; local x is the textures' u, local -z their image's up), up to three
+layers of the material size-class arrays (an sRGB base colour whose alpha is the shape, a normal
+map, an ORM map), a tint and opacity, how much of the colour it replaces, the roughness and
+metallic it gives, how far it flattens the surface's own bumps (a puddle's film), and its fades
+(towards the box's top and bottom, on surfaces turned 60 to 80 degrees from its face). The nearest
+`LightQuality::decals` of them are drawn (64 on desktops, 16 on phones, none on `off`), the last
+tenth fading towards the first dropped one. They are the second clusterable kind of the bins
+(`ClusterKind::Decal`; their tile rectangles are their box corners' screen rectangle, tighter than
+the sphere's), and their rows (`decals::GpuDecal`, seven `vec4`s) follow the light rows and every
+shadowed spot's matrix slot in the `light_ext` table, so decals take no binding of their own: the
+forward stage stays at 6 storage buffers and 15 sampled textures. The surface chunk's companion
+`shaders/lighting/decals.wgsl` (`gx_decals`, after Godot 4.7.2's clustered decal loop) walks the
+decals binned at the fragment, samples each one's maps at one mip from the gradients of the
+fragment's position in the box, and blends overlapping decals order-independently (each channel's
+weighted mean, covering 1 - prod(1 - alpha)), so the picture never depends on the camera's binned
+order. Level-2 v2 materials take decals through `gx_shade_pbr` (an isotropic pixel footprint for
+the mip; maps of size class 0 only, a decal with a larger map is left out there). A probe's or a
+volume's capture draws none. Decals are not geometry: they cannot z-fight and follow the surface
+through every level of detail.
+
+## Particles
+
+`particles.rs` holds GPU emitters (`EmitterDesc`; the facade's `Particles` and `frame.particles`).
+A particle is a pure function of its emitter and the tick, so Live and a capture agree and nothing
+is read back. A compute pass ahead of the world pass writes every row; graph node 15 draws them as
+billboards after the transparent draws, through the air and the fog at their centres (the froxel
+fog where it runs). Each feature is per emitter:
+
+- **Soft** (`soft_distance`, after three.js's `SoftParticles.js`): a billboard fades as it nears
+  the opaque scene behind it. It reads the prepass depth as view depth at half the render size
+  (`particles_depth.wgsl`: the nearest of each 2 x 2, filtered by hand in the fragment), a copy of
+  the particles' own because the world pass may hold the prepass depth as its attachment. A soft
+  or colliding emitter asks for the prepass through the extension inputs; without it, it draws
+  hard.
+- **Flipbooks** (`Flipbook` over a `ParticleAtlas`, up to 16 x 16 cells, 16 atlases): frames
+  played over a life, cross-faded on request.
+- **Sorted** (`sorted`): back to front by a bitonic sort of (view depth, slot) pairs (AMD
+  GPUParticles11 as Godot carries it), 2048 pairs a workgroup in 16 KiB, every sorted emitter of a
+  frame in the same dispatches: the same order every run.
+- **Depth collision** (`collision`): a particle's closed-form path is marched against the view
+  depth; one that went behind what the camera sees rests there, fading, then is gone. Only a
+  colliding frame's emit pass waits for the prepass.
+- Rotation, growth, spawn boxes and streaks stretched along the motion (rain). TAA's reactive mask
+  covers the billboard as drawn (`particle_billboard.wgsl`).
+
+A class draws at most `particle_cap` particles a frame (every slot on desktops, 32,768 on high
+phones, 8,192 on the rest; past it every n-th slot). The budget row (`tests/particles.rs`): 64k
+sorted, soft, colliding rain streaks at 2560 x 1440 `high` add at most 0.5 ms on the M4 Max.
+
+## Screen inputs and the SSR helper
+
+`src/screen_inputs.rs` holds what lake water (Stage B's B.3) and screen-space reflections (B.9)
+read from the screen, and the ray march they share. `Quality::screen_inputs` allows them on desktop
+and web `high` and `ultra` (none on phones or below `high`); `frame_inputs` gives a frame only what
+a consumer asks for, none on the legacy LDR scene, no colour pyramid without TAA and no opaque
+copy of a multisampled world pass. No consumer asks in this build, so no frame records them yet;
+every target is pooled under its own ledger row.
+
+- `shaders/screen/ssr_march.wgsl` is a chunk, not a pass: `gx_ssr_march_world` (or
+  `gx_ssr_march_new` with `gx_ssr_march_to` / `gx_ssr_march_toward`) sets up a ray clipped to the
+  frustum and `gx_ssr_march_run(depth, march)` finds the first surface it passes behind. It is
+  Bevy 0.20's `ssr/raymarch.wesl` (Stachowiak): a linear march over the pixels the ray crosses,
+  bisection and a secant step, bilinear and nearest `textureLoad` depth taps. Distances come from
+  `gx_view_distance`, so every projection and depth convention marches alike. `march` in the
+  module is its CPU twin (`tests/screen_inputs.rs` holds the two equal on 4,096 rays).
+- `encode_opaque_copy` copies the HDR scene after graph node 14 into the `opaque copy` target (the
+  scene's format, render size) before the transparent draws.
+- `PyramidNode` halves TAA's output (`history pyramid`, `rgba16float`, up to 6 mips) with a
+  five-tap tent in one compute pass: the previous frame's colour for rough reflections.
+- `shaders/screen/normal_roughness.wgsl` packs a normal-mapped normal (two 12-bit octahedral
+  coordinates in rgb, within 0.06 degrees) and the perceptual roughness into one `rgba8unorm`
+  texel (`prepass normal roughness`), for the prepass to write on SSR presets.
+- Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) is reserved for the screen
+  reflections (rgb, a confidence): the stage's 16th sampled texture of 16 once B.9 binds it.
+
 ## Terrain
 
 `Renderer::set_terrain` (`terrain::TerrainDesc`; the facade's `Terrain` and `frame.terrain`) holds

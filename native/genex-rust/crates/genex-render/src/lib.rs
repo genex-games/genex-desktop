@@ -131,6 +131,12 @@ pub mod irradiance;
 /// Heightmap terrain (renderer pass 2 A.7): CDLOD selection and morph over a quantized height
 /// field, its own pipelines, and splat materials from a control map.
 pub mod terrain;
+/// Screen inputs (renderer pass 2 A.6): the opaque copy, the previous frame's colour pyramid, the
+/// prepass's normal and roughness, the screen reflections' slot and the shared SSR march helper.
+pub mod screen_inputs;
+/// Foliage (renderer pass 2 A.8): GPU-generated grass on the terrain's grassy layers, in the
+/// shared wind, lit through the forward chunks with diffuse transmission.
+pub mod foliage;
 
 // --- RQ4: the depth/normal prepass, bloom, GTAO, fog, contact shadows (RQ4.0 registers every RQ4
 // module; bloom, AO and contact shadows are `post` nodes) ---
