@@ -3,8 +3,12 @@ import { resolveElectron, fixtureElectronArgs, fixtureElectronEnv } from "../../
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { startFakeOllama } from "../helpers/fake-ollama.ts";
-/** The run controls the build smoke must always exercise: the composer Stop and the keep-awake hold. */
+/** Startup, reload recovery and run controls must remain covered by every build smoke report. */
 const REQUIRED_CHECKS = [
+  "games can load while the chat is still pending",
+  "thread read failure offers Retry instead of an empty conversation",
+  "Bonsai selection restores on reload",
+  "returning to Codex preserves the project",
   "running build shows only Stop in an empty composer",
   "Escape closes the menu and leaves the run running",
   "Wrap up asks the run to finish instead of stopping it",
