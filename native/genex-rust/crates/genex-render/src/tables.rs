@@ -490,7 +490,11 @@ impl Uploads {
             cull_views: bytemuck::bytes_of::<GpuCullViews>(&plan.cull_views).to_vec(),
             pass_views: pass_views(plan),
             prev_models: std::mem::take(&mut plan.prev_models),
-            light_ext: plan.binned.as_ref().map_or_else(|| bytemuck::cast_slice(&plan.legacy_ext).to_vec(), |b| crate::spot_shadow::light_ext_bytes(&b.ext, &plan.spot_shadows)),
+            // The binned path's decal rows (renderer pass 2 A.10) follow the lights' and the spots'.
+            light_ext: plan.binned.as_ref().map_or_else(
+                || bytemuck::cast_slice(&plan.legacy_ext).to_vec(),
+                |b| crate::decals::append_rows(crate::spot_shadow::light_ext_bytes(&b.ext, &plan.spot_shadows), b.ext.len(), &b.decals),
+            ),
             light_tiles: cpu_light_tiles(plan),
             light_zbins: cpu_light_zbins(plan),
             visible,

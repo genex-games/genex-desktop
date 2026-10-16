@@ -13,7 +13,8 @@
 
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
-use genex::render::{IrradianceVolume, ReflectionProbe, SpotLight};
+use genex::Particles;
+use genex::render::{Decal, IrradianceVolume, ReflectionProbe, SpotLight};
 
 use crate::harbour::World;
 
@@ -239,7 +240,6 @@ pub struct Surfaces {
     rug: Material,
     leaves: Material,
     terracotta: Material,
-    puddle: Material,
     glass: Material,
     cars: [Material; 2],
     tyre: Material,
@@ -279,7 +279,6 @@ impl Surfaces {
             rug: Material::color(RUG).with_roughness(0.95),
             leaves: Material::color(LEAVES).with_roughness(0.8),
             terracotta: Material::color(TERRACOTTA).with_roughness(0.85),
-            puddle: Material::color(PUDDLE).with_roughness(0.04),
             glass: Material::color(GLASS).with_roughness(0.04),
             cars: CAR_PAINT.map(|paint| Material::color(paint).with_metallic(0.6).with_roughness(0.3)),
             tyre: Material::color(TYRE).with_roughness(0.9),
@@ -360,6 +359,11 @@ impl Face {
         if self.along_x { self.out } else { -self.out }
     }
 
+    /// The unit normal it faces out along.
+    fn normal(&self) -> Vec3 {
+        if self.along_x { vec3(0.0, 0.0, self.out) } else { vec3(self.out, 0.0, 0.0) }
+    }
+
     /// A turn that lays a box made facing ±z to face this face's way.
     fn turn(&self) -> Quat {
         if self.along_x { Quat::IDENTITY } else { Quat::from_rotation_y(FRAC_PI_2) }
@@ -408,6 +412,7 @@ pub fn draw(world: &World, frame: &mut Frame) {
     neon(frame, s, t);
     festoons(frame, t);
     street_things(frame, s);
+    decals(frame);
     markings(frame, s);
     drains(frame, s);
     awnings(frame, s);
@@ -757,27 +762,9 @@ fn festoons(frame: &mut Frame, t: f32) {
     }
 }
 
-/// What stands in the street: puddles on the asphalt, two parked cars, bollards, a bench and the
-/// café's menu board.
+/// What stands in the street: two parked cars, bollards, a bench and the café's menu board.
 fn street_things(frame: &mut Frame, s: &Surfaces) {
     frame.tag("street");
-    // Puddles: dark mirror-smooth patches a few millimetres proud of the asphalt, each a blob of
-    // three overlapping turned boxes about its centre (x, z, width, depth, turn).
-    let puddles = [
-        (0.2, -0.6, 2.4, 1.3, 0.3),
-        (1.6, 0.6, 1.4, 0.9, -0.5),
-        (-0.9, -1.6, 1.2, 0.8, 0.9),
-        (-12.0, 2.4, 2.8, 1.1, 0.1),
-        (9.5, -2.6, 2.2, 1.2, -0.2),
-        (-2.0, -14.0, 1.8, 1.0, 0.4),
-        (22.0, 1.5, 2.6, 1.0, 0.25),
-    ];
-    for (x, z, w, d, turn) in puddles {
-        for (scale_w, scale_d, twist) in [(1.0, 1.0, 0.0), (0.8, 1.3, 0.5), (0.62, 1.5, -0.45)] {
-            let transform = Transform { translation: vec3(x, 0.0, z), rotation: Quat::from_rotation_y(turn + twist), scale: vec3(w * scale_w, 0.01, d * scale_d) };
-            frame.cube_with(transform, &s.puddle);
-        }
-    }
     for ((x, z, heading), paint) in [(-14.0, -3.2, 0.0), (20.0, 3.2, math::PI)].into_iter().zip(&s.cars) {
         car(frame, s, vec3(x, 0.0, z), heading, paint);
     }
@@ -843,7 +830,7 @@ fn car(frame: &mut Frame, s: &Surfaces, at: Vec3, heading: f32, paint: &Material
     }
 }
 
-/// Road paint's thickness: it lies on the asphalt (whose top is y = 0), under the puddles' film.
+/// Road paint's thickness: it lies on the asphalt (whose top is y = 0); the puddles' decals cover it.
 const PAINT: f32 = 0.004;
 /// The zebra crossings: stripes across a street, each this wide and long, this far from the main
 /// street's kerb line, and the stop line this far before them.
@@ -997,4 +984,186 @@ pub fn scene_probe() -> Value {
 /// in the café (the door transition's exposure rows read where the camera crossed).
 pub fn where_probe(eye: Vec3) -> Value {
     json!({ "outdoors": outdoors(eye), "inDoorway": CAFE_DOOR.contains(eye), "inCafe": CAFE_INSIDE.contains(eye) })
+}
+
+// --- Decals (renderer pass 2 A.10) ---
+
+/// The scene's own decal textures (`harbour/assets/decals/`, authored for it): three posters, grime
+/// streaks, a puddle's outline and an oil stain, each shaped by its alpha.
+const POSTERS: [&str; 3] = ["decals/poster-sun.png", "decals/poster-bands.png", "decals/poster-dots.png"];
+const GRIME: &str = "decals/grime-streaks.png";
+const PUDDLE_MASK: &str = "decals/puddle.png";
+const OIL_STAIN: &str = "decals/oil-stain.png";
+/// How far a wall decal's box is centred in front of its wall's plane: the brick skin's face.
+const WALL_DECAL_LIFT: f32 = SKIN_OUT + 0.5 * SKIN;
+/// A poster's size (width, height) and how its paper sheens.
+const POSTER_SIZE: (f32, f32) = (0.72, 0.9);
+const POSTER_ROUGHNESS: f32 = 0.75;
+/// How dark the grime is (its texture's alpha times this).
+const GRIME_OPACITY: f32 = 0.7;
+
+/// Where the posters are pasted, avoiding the shutters, shop windows and the café: (the face, how
+/// far along it, how high its centre, which poster, its tilt in radians).
+fn poster_spots() -> [(Face, f32, f32, usize, f32); 13] {
+    let f = FACADE;
+    let north = Face::x(f, -1.0, (-EXTENT, EXTENT), (0.0, NORTH_HEIGHT));
+    let south_west = Face::x(-f, 1.0, (-EXTENT, -f), (0.0, SOUTH_WEST_HEIGHT));
+    let south_east = Face::x(-f, 1.0, (f, EXTENT), (0.0, SOUTH_EAST_HEIGHT));
+    let side_west = Face::z(-f, 1.0, (-EXTENT, -f), (0.0, SOUTH_WEST_HEIGHT));
+    let side_east = Face::z(f, -1.0, (-EXTENT, -f), (0.0, SOUTH_EAST_HEIGHT));
+    [
+        (north, -9.2, 1.75, 0, 0.03),
+        (north, -8.45, 1.62, 1, -0.02),
+        (north, -7.7, 1.8, 2, 0.015),
+        (north, -18.4, 1.7, 1, -0.03),
+        (north, -17.6, 1.78, 0, 0.02),
+        (south_west, -20.8, 1.7, 2, 0.02),
+        (south_west, -20.0, 1.84, 0, -0.025),
+        (south_west, -19.2, 1.66, 1, 0.01),
+        (south_west, -10.6, 1.72, 2, -0.015),
+        (south_east, 17.4, 1.7, 0, 0.02),
+        (south_east, 18.2, 1.76, 2, -0.02),
+        (side_west, -10.8, 1.7, 1, 0.025),
+        (side_east, -12.0, 1.74, 0, -0.02),
+    ]
+}
+
+/// One grime streak: the face, how far along it, its bottom and top, its width, and whether it is
+/// upside down (rising from the ground instead of falling from a ledge).
+type GrimeSpot = (Face, f32, (f32, f32), f32, bool);
+
+/// Grime on the walls: streaks of rain off the café's sills and the shop displays' ledges, and
+/// damp rising up the walls' feet.
+fn grime_spots() -> [GrimeSpot; 14] {
+    let f = FACADE;
+    let north = Face::x(f, -1.0, (-EXTENT, EXTENT), (0.0, NORTH_HEIGHT));
+    let south_west = Face::x(-f, 1.0, (-EXTENT, -f), (0.0, SOUTH_WEST_HEIGHT));
+    let south_east = Face::x(-f, 1.0, (f, EXTENT), (0.0, SOUTH_EAST_HEIGHT));
+    let alley_west = Face::z(ALLEY_WEST, 1.0, (f, ALLEY_END), (0.0, NORTH_HEIGHT));
+    let alley_east = Face::z(ALLEY_EAST, -1.0, (f, ALLEY_END), (0.0, NORTH_HEIGHT));
+    let [(a0, a1), (b0, b1)] = WINDOWS;
+    [
+        (north, 0.5 * (a0 + a1), (KERB, SILL), a1 - a0, false),
+        (north, 0.5 * (b0 + b1), (KERB, SILL), b1 - b0, false),
+        (north, -23.0, (KERB, 0.6), 6.0, false),
+        (north, -28.5, (KERB, 1.1), 3.5, true),
+        (north, -13.0, (3.2, 4.6), 6.0, false),
+        (north, 20.0, (KERB, 1.0), 4.0, true),
+        (south_west, -15.0, (KERB, 0.6), 6.0, false),
+        (south_west, -30.0, (KERB, 1.2), 3.0, true),
+        (south_east, 13.0, (KERB, 0.6), 6.0, false),
+        (south_east, 29.0, (KERB, 1.0), 4.0, true),
+        (alley_west, 12.0, (KERB, 1.3), 5.0, true),
+        (alley_west, 24.0, (3.0, 6.0), 2.5, false),
+        (alley_east, 18.0, (KERB, 1.1), 6.0, true),
+        (alley_east, 27.0, (4.0, 7.5), 2.0, false),
+    ]
+}
+
+/// Puddles on the asphalt after the rain (x, z, width, depth, turn): projected decals, so their
+/// film lies on the road wherever it is, with no box to fight the asphalt for its depth.
+const PUDDLES: [(f32, f32, f32, f32, f32); 7] =
+    [(0.2, -0.6, 2.6, 1.6, 0.3), (1.6, 0.6, 1.6, 1.2, -0.5), (-0.9, -1.6, 1.4, 1.0, 0.9), (-12.0, 2.4, 3.0, 1.4, 0.1), (9.5, -2.6, 2.4, 1.5, -0.2), (-2.0, -14.0, 2.0, 1.3, 0.4), (22.0, 1.5, 2.8, 1.3, 0.25)];
+/// Oil stains under the parked cars and at the crossing's stop lines (x, z, size, turn).
+const OIL_STAINS: [(f32, f32, f32, f32); 4] = [(-14.3, -3.0, 1.6, 0.4), (19.6, 3.1, 1.4, -0.7), (-2.6, 2.4, 1.0, 1.1), (2.2, -2.8, 1.2, 2.0)];
+
+/// The street's decals (renderer pass 2 A.10): posters pasted on the walls, grime on the walls,
+/// puddles and oil on the asphalt. They are not draws: each lays its texture onto whatever surface
+/// its box holds, before lighting (`frame.decal`).
+fn decals(frame: &mut Frame) {
+    for (face, along, y, poster, tilt) in poster_spots() {
+        let at = face.point(along, y, WALL_DECAL_LIFT);
+        let decal = Decal::on_wall(at, face.normal(), POSTER_SIZE.0, POSTER_SIZE.1).rotated(tilt).with_base_texture(POSTERS[poster]).with_roughness(POSTER_ROUGHNESS);
+        frame.decal(&decal);
+    }
+    for (face, along, (bottom, top), width, rising) in grime_spots() {
+        let at = face.point(along, 0.5 * (bottom + top), WALL_DECAL_LIFT);
+        let turn = if rising { math::PI } else { 0.0 };
+        let decal = Decal::on_wall(at, face.normal(), width, top - bottom).rotated(turn).with_base_texture(GRIME).with_opacity(GRIME_OPACITY);
+        frame.decal(&decal);
+    }
+    for (x, z, w, d, turn) in PUDDLES {
+        let puddle = Decal::on_ground(vec3(x, 0.0, z), w, d)
+            .rotated(turn)
+            .with_base_texture(PUDDLE_MASK)
+            .with_color(PUDDLE)
+            .with_albedo_mix(0.85)
+            .with_roughness(0.04)
+            .with_metallic(0.0)
+            .with_flatten(1.0);
+        frame.decal(&puddle);
+    }
+    for (x, z, size, turn) in OIL_STAINS {
+        let stain = Decal::on_ground(vec3(x, 0.0, z), size, size).rotated(turn).with_base_texture(OIL_STAIN).with_opacity(0.8).with_roughness(0.3).with_metallic(0.0);
+        frame.decal(&stain);
+    }
+}
+
+/// The drizzle: streaks falling from this high over each half of the main street (and its
+/// pavements), with these many spawned a tick and the ticks each lives (60 a second: long enough to
+/// reach the street), soft over a few centimetres where they near what is behind them.
+const RAIN_TOP: f32 = 10.0;
+const RAIN_PER_TICK: u32 = 130;
+/// The alley's share of the drizzle (spawned a tick over its narrower sky).
+const ALLEY_RAIN_PER_TICK: u32 = 30;
+const RAIN_LIFE_TICKS: u32 = 76;
+/// A streak's width (metres).
+const RAIN_WIDTH: f32 = 0.008;
+/// A streak's colour: the damp air's blue grey, faint, so the neon and the lamps carry the scene.
+const RAIN_COLOR: Color = Color::rgba(84, 92, 108, 46);
+/// The steam from the manholes: puffs spawned a tick and the ticks each lives, its size at birth,
+/// its growth over a life, and its colour from birth to death (the dusk's grey, faint, fading out
+/// as it thins).
+const STEAM_PER_TICK: u32 = 1;
+const STEAM_LIFE_TICKS: u32 = 220;
+const STEAM_SIZE: f32 = 0.45;
+const STEAM_GROWTH: f32 = 3.2;
+const STEAM_START: Color = Color::rgba(62, 64, 70, 30);
+const STEAM_END: Color = Color::rgba(56, 58, 64, 0);
+
+/// Harbour Street's particles (renderer pass 2 A.11): steam rising from the manholes (soft where
+/// it meets the road and the walls, drawn back to front), and a drizzle over the main street whose
+/// streaks stop where they meet what the camera sees (the awnings, the cars, the road).
+#[derive(Clone, Debug)]
+pub struct Weather {
+    /// One plume a manhole.
+    pub steam: Vec<Particles>,
+    /// The drizzle over the west and the east half of the street, and over the alley.
+    pub rain: Vec<Particles>,
+}
+
+impl Default for Weather {
+    fn default() -> Weather {
+        let steam = MANHOLES
+            .iter()
+            .zip(1u32..)
+            .map(|(&(x, z), seed)| {
+                let plume = Particles::steam(vec3(x, 0.02, z)).with_look(STEAM_SIZE, STEAM_GROWTH, STEAM_START, STEAM_END).with_seed(seed);
+                plume.with_rate(STEAM_PER_TICK, STEAM_LIFE_TICKS).unwrap_or(plume)
+            })
+            .collect();
+        let half = EXTENT * 0.5;
+        let alley_half = (ALLEY_END - FACADE) * 0.5;
+        let skies = [
+            (vec3(-half, RAIN_TOP, 0.0), vec3(half, 0.0, FACADE), RAIN_PER_TICK),
+            (vec3(half, RAIN_TOP, 0.0), vec3(half, 0.0, FACADE), RAIN_PER_TICK),
+            (vec3((ALLEY_WEST + ALLEY_EAST) * 0.5, RAIN_TOP, FACADE + alley_half), vec3((ALLEY_EAST - ALLEY_WEST) * 0.5, 0.0, alley_half), ALLEY_RAIN_PER_TICK),
+        ];
+        let rain = skies
+            .into_iter()
+            .zip(11u32..)
+            .map(|((top, extent, per_tick), seed)| {
+                let over = Particles::rain(top, extent).with_look(RAIN_WIDTH, 1.0, RAIN_COLOR, RAIN_COLOR).with_seed(seed);
+                over.with_rate(per_tick, RAIN_LIFE_TICKS).unwrap_or(over)
+            })
+            .collect();
+        Weather { steam, rain }
+    }
+}
+
+/// Draw the steam and the drizzle.
+fn weather(frame: &mut Frame, weather: &Weather) {
+    for particles in weather.steam.iter().chain(&weather.rain) {
+        frame.particles(particles);
+    }
 }

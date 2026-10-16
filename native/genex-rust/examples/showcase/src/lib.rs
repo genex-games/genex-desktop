@@ -86,7 +86,7 @@ fn read_folder(dir: &str, prefix: &str, extensions: &[&str], files: &mut Vec<(&'
 /// Harbour Street's game folder (renderer pass 2, A.13): its `genex.toml` declares no WGSL.
 pub const HARBOUR_GAME_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/harbour");
 
-/// Harbour Street's assets (`harbour/assets/`; its blockout ships none of its own yet).
+/// Harbour Street's assets (`harbour/assets/`: its own decal textures under `decals/`).
 pub const HARBOUR_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/harbour/assets");
 
 /// Harbour Street's fetched assets' processed folder (`scripts/showcase-assets.ts fetch --scene
@@ -107,6 +107,8 @@ pub fn harbour_assets() -> AssetTable {
     static TABLE: OnceLock<AssetTable> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut files: Vec<(&'static str, &'static [u8])> = Vec::new();
+        // Its own decal textures (renderer pass 2 A.10: posters, grime, puddles), always read.
+        read_folder(&format!("{HARBOUR_ASSETS_DIR}/decals"), "decals/", &[".png"], &mut files);
         if reads_fetched() {
             let fetched = [".jpg", ".png", ".hdr"];
             read_folder(&format!("{HARBOUR_ASSETS_DIR}/fetched"), "fetched/", &fetched, &mut files);

@@ -216,6 +216,23 @@ quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and
 on phones, none on `low` and the low phones); the rest take the sky's light. Give a volume to each
 room or courtyard whose bounced colour matters, alongside its reflection probe.
 
+Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
+depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
+height).with_base_texture("decals/poster.png"))` (`use genex::render::Decal;`) lays the texture
+onto every surface in a box `width` by `height` centred on the wall, looking out along `facing`
+and reaching 0.2 into and out of the wall (`.with_depth(d)`); `Decal::on_ground(center, width,
+length)` lays one on the ground. The base texture's alpha is its shape (until it loads, the decal
+is not drawn); `.with_color(c)` tints it, `.with_opacity(a)`, `.rotated(radians)` turns it on its
+surface, `.with_normal_texture(path, strength)` and `.with_orm_texture(path)` add its bumps and
+its occlusion-roughness-metallic, `.with_roughness(r)` and `.with_metallic(m)` give the surface
+its sheen, `.with_albedo_mix(0.0)` keeps the surface's colour and `.with_flatten(1.0)` smooths its
+bumps away: a puddle is `Decal::on_ground(..).with_base_texture("decals/puddle.png")
+.with_color(dark).with_roughness(0.04).with_flatten(1.0)`. A decal fades on surfaces turned away
+from it (no streaks down a wall from a floor decal) and towards the box's front and back.
+Overlapping decals blend evenly whatever the order. The device draws the nearest 64 (16 on
+phones), fading the farthest out. Decals reach Level-2 v2 materials too, through `gx_shade_pbr`
+(textures of up to 256 texels there).
+
 Give a frame an environment with `frame.environment(..)` (`use genex::render::Environment;`): it
 lights the scene beyond its lights and is drawn behind it, the same on every device.
 `Environment::sky()` is the physical sky, coloured by the frame's own sun, tuned with

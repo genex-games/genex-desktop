@@ -531,7 +531,12 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
         let slots = [(layer.albedo(), TextureKind::Color), (layer.data(), TextureKind::Data)];
         slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
     });
-    drawn.chain(terrain)
+    // The decals' maps (renderer pass 2 A.10): base colour, normal map, ORM.
+    let decals = frame.decals().iter().flat_map(|decal| {
+        let slots = [(decal.base_texture(), TextureKind::Color), (decal.normal_texture(), TextureKind::Normal), (decal.orm_texture(), TextureKind::Data)];
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+    });
+    drawn.chain(terrain).chain(decals)
 }
 
 /// The terrain `frame` draws as the renderer takes it (renderer pass 2 A.7), its layers' textures
@@ -1843,6 +1848,36 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     surface
 }
 
+/// The renderer's decal for a facade decal (renderer pass 2 A.10), its maps as `assets` loaded
+/// them: `None` while a base-colour texture it names is not loaded (missing, refused or still
+/// loading), since that texture is its shape; a missing normal or ORM texture leaves that map out.
+/// The renderer holds or drops hostile values (`decals::Decal::held`).
+fn decal_of(decal: &crate::Decal, assets: &AssetCache) -> Option<genex_render::decals::Decal> {
+    let texture = |path: Option<&str>, kind: TextureKind| path.and_then(|path| assets.texture(path, kind));
+    let albedo = texture(decal.base_texture(), TextureKind::Color);
+    if decal.base_texture().is_some() && albedo.is_none() {
+        return None;
+    }
+    let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+    let color = decal.color;
+    Some(genex_render::decals::Decal {
+        model: decal.transform.to_cols_array(),
+        albedo,
+        normal: texture(decal.normal_texture(), TextureKind::Normal),
+        orm: texture(decal.orm_texture(), TextureKind::Data),
+        color: [linear(color.r), linear(color.g), linear(color.b)],
+        opacity: decal.opacity * f32::from(color.a) / 255.0,
+        albedo_mix: decal.albedo_mix,
+        normal_strength: decal.normal_strength,
+        flatten: decal.flatten,
+        roughness: decal.roughness,
+        metallic: decal.metallic,
+        occlusion: decal.occlusion,
+        depth_fade: decal.depth_fade,
+        angle_fade: decal.angle_fade,
+    })
+}
+
 /// Whether a local light at `position` reaching `range` can light anything: a finite position and
 /// a positive finite range.
 fn usable_light(position: glam::Vec3, range: f32) -> bool {
@@ -1992,6 +2027,7 @@ impl WorldSink for ImmediateFrame {
 /// not loaded yet) draw the missing-asset checker cube under their transform.
 fn write_world(sink: &mut impl WorldSink, frame: &Frame, assets: &AssetCache, drawn: &mut Drawn) {
     *sink.lighting() = lighting(frame.lights());
+    sink.lighting().decals = frame.decals().iter().filter_map(|decal| decal_of(decal, assets)).collect();
     for draw in frame.draws() {
         sink.tag(&draw.tag);
         sink.id(draw.id);

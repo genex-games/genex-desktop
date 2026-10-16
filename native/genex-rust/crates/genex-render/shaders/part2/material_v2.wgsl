@@ -90,6 +90,40 @@ fn gx_class_texel(color: bool, reference: u32, uv: vec2<f32>, uv_dx: vec2<f32>, 
     return textureSampleGrad(data_textures, texture_sampler, uv, layer(reference), uv_dx, uv_dy);
 }
 
+// Whether a v2 material binds the size class of material texture `reference` (the decal chunk
+// asks; renderer pass 2 A.10): class 0 only, so a decal with a map of a larger class reaches the
+// forward pass's surfaces, not a v2 material's.
+fn gx_decal_texture_bound(reference: u32) -> bool {
+    return reference == NO_TEXTURE || (reference >> GX_TEXTURE_CLASS_SHIFT) == 0u;
+}
+
+// The texel of decal texture `reference` (class 0) at `uv` and mip `lod`.
+fn gx_decal_class_texel(color: bool, reference: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    if color {
+        return textureSampleLevel(color_textures, texture_sampler, uv, layer(reference), lod);
+    }
+    return textureSampleLevel(data_textures, texture_sampler, uv, layer(reference), lod);
+}
+
+// The world-position gradients the decal chunk samples a v2 surface's decals with: `gx_shade_pbr`
+// takes no derivatives (it may be called in non-uniform control flow), so the footprint of one
+// render pixel at `world_pos` is laid isotropically along two axes of the surface's plane (normal
+// `n`): a decal seen at a grazing angle samples a finer mip than the forward pass would.
+struct GxDecalFootprint {
+    dx: vec3<f32>,
+    dy: vec3<f32>,
+}
+
+fn gx_decal_footprint_v2(world_pos: vec3<f32>, n: vec3<f32>) -> GxDecalFootprint {
+    let m = frame.unjittered_view_proj;
+    let clip = m * vec4<f32>(world_pos, 1.0);
+    let focal = length(vec3<f32>(m[0].y, m[1].y, m[2].y));
+    let pixel = 2.0 * max(clip.w, 1e-6) / max(focal * frame.render_size.y, 1e-6);
+    let axis = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let t = normalize(cross(n, axis));
+    return GxDecalFootprint(t * pixel, cross(n, t) * pixel);
+}
+
 // One custom draw: its model and normal matrices, last frame's model matrix (matched by draw id,
 // else mesh and ordinal; this frame's without history), its linear tint and x: the simulated time
 // in seconds, y: the draw's index in the frame, z: last frame's simulated time (x on the first).
@@ -209,9 +243,12 @@ fn gx_scene_pixel(world_pos: vec3<f32>) -> vec2<f32> {
 // the local lights, fog), exposed for the scene target: what a built-in surface writes, the sun's
 // shadows filtered, blended across cascades and faded out as the preset draws them, and on the HDR
 // scene the sun a disc for the highlight (`gx_sun_area_direction`, renderer pass 2 P2-0.12).
-fn gx_shade_pbr(s: GxSurface) -> vec3<f32> {
-    gx_sun_shadow_context(gx_scene_pixel(s.world_pos), frame.frame_index, GX_SUN_BLEND_BAND);
+fn gx_shade_pbr(surface: GxSurface) -> vec3<f32> {
+    gx_sun_shadow_context(gx_scene_pixel(surface.world_pos), frame.frame_index, GX_SUN_BLEND_BAND);
     gx_sun_shadow_end_fade(GX_SUN_END_FADE);
+    // The decals binned at this fragment, before any light (renderer pass 2 A.10).
+    let footprint = gx_decal_footprint_v2(surface.world_pos, surface.geometric);
+    let s = gx_decals(surface, footprint.dx, footprint.dy);
     var sun = normalize(frame.sun_dir.xyz);
     if gx_scene_shades_hdr() {
         sun = gx_sun_area_direction(sun, frame.sun_dir.w, s.n, s.v);

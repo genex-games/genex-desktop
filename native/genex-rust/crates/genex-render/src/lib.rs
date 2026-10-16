@@ -172,6 +172,8 @@ pub mod lights;
 pub mod cluster;
 /// Shadowed spot lights: tiles of one atlas layer of the shared shadow array (RQ6.5).
 pub mod spot_shadow;
+/// Clustered decals (renderer pass 2 A.10): projected boxes binned with the lights.
+pub mod decals;
 
 pub use caps::{BUFFER_MAX_BYTES, CAPTURE_MAX_BYTES, TEXTURE_MAX_BYTES, UPLOAD_MAX_BYTES_PER_FRAME, WGSL_MAX_BYTES};
 pub use error::{ExtensionFault, RenderCode, RenderError, UnsupportedReason};

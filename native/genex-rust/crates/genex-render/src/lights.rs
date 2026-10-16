@@ -123,6 +123,9 @@ pub struct Lighting {
     /// The irradiance volumes (renderer pass 2 A.4, [`crate::irradiance`]): binned with the lights
     /// after the reflection probes, the first the quality's `irradiance_volumes` of them baked.
     pub irradiance_volumes: Vec<crate::irradiance::IrradianceVolume>,
+    /// The projected decals (renderer pass 2 A.10, [`crate::decals`]): binned with the lights on
+    /// the binned path, the nearest the quality's `decals` of them drawn.
+    pub decals: Vec<crate::decals::Decal>,
     /// How far from the camera, in view depth, shadows reach; 0 (the default) takes the quality's
     /// distance (`ShadowQuality::distance`: 40 on the legacy renderer, longer on higher presets).
     pub shadow_distance: f32,
@@ -142,6 +145,7 @@ impl Default for Lighting {
             shadow_distance: QUALITY_SHADOW_DISTANCE,
             reflection_probes: Vec::new(),
             irradiance_volumes: Vec::new(),
+            decals: Vec::new(),
         }
     }
 }
@@ -261,6 +265,9 @@ pub struct BinnedFrame {
     /// of the scene's, in declaration order: a `bins.probes` index past the probes is
     /// `reflection_probes.len()` plus the volume's).
     pub irradiance_volumes: Vec<crate::irradiance::IrradianceVolume>,
+    /// The decals' rows in binned order (A.10; `bins.decals` indexes `decals::held_decals` of the
+    /// scene's): the `light_ext` table holds them from `decals::rows_base`.
+    pub decals: Vec<crate::decals::GpuDecal>,
 }
 
 /// `lighting`'s local lights for `camera` drawing a `render`-sized frame under `quality`: the rows of
@@ -281,10 +288,16 @@ pub fn binned_frame(lighting: &Lighting, quality: &LightQuality, camera: &Camera
     let irradiance_volumes = crate::irradiance::held_volumes(&lighting.irradiance_volumes);
     let probe_spheres = reflection_probes.iter().map(ReflectionProbe::sphere);
     let spheres: Vec<crate::cluster::ClusterSphere> = probe_spheres.chain(irradiance_volumes.iter().map(crate::irradiance::IrradianceVolume::sphere)).collect();
-    let others = ClusterInput { decals: &[], probes: &spheres };
-    let bins = LightBinFrame::prepare_clusterables(&rows, &others, camera, render, quality);
+    // The decals the quality draws (A.10), nearest first with the last ones faded, are the second
+    // kind of the same index space: a frame without decals bins exactly as before.
+    let decals = crate::decals::held_decals(&lighting.decals, usize::try_from(quality.decals).unwrap_or(usize::MAX), camera.eye);
+    let decal_spheres: Vec<crate::cluster::ClusterSphere> = decals.iter().map(|(decal, _)| decal.sphere()).collect();
+    let others = ClusterInput { decals: &decal_spheres, probes: &spheres };
+    let mut bins = LightBinFrame::prepare_clusterables(&rows, &others, camera, render, quality);
+    crate::decals::tighten_bounds(&mut bins, &decals, camera, render);
     let (lights, ext) = split_rows(&bins.sorted(&rows));
-    BinnedFrame { lights, ext, bins, reflection_probes, irradiance_volumes }
+    let decals = bins.decals.iter().map(|row| decals[*row as usize].0.to_gpu(decals[*row as usize].1)).collect();
+    BinnedFrame { lights, ext, bins, reflection_probes, irradiance_volumes, decals }
 }
 
 /// Scale the radiance of the rows the cap is about to drop ([`crate::cluster::cap_fade`]), so a
@@ -381,7 +394,7 @@ mod tests {
     #[test]
     fn the_legacy_loop_keeps_the_light_table_under_the_cap_and_adds_the_spots_after_it() {
         let lighting = scene(3, &[false, true]);
-        let (lights, ext) = legacy_lights(&lighting, &LightQuality { cap: 64, clustered: false, tile_px: 0, shadowed_spots: 2 }, &camera_at([0.0; 3]));
+        let (lights, ext) = legacy_lights(&lighting, &LightQuality { cap: 64, clustered: false, tile_px: 0, shadowed_spots: 2, decals: 0 }, &camera_at([0.0; 3]));
         assert_eq!(&lights[..3], light_table(&lighting).as_slice(), "point rows are the legacy table's");
         assert_eq!(lights.len(), 5, "spots are shaded on the legacy loop too");
         assert_eq!(ext.iter().map(kind_of).collect::<Vec<_>>(), [LightKind::Point, LightKind::Point, LightKind::Point, LightKind::Spot, LightKind::Spot]);
@@ -394,7 +407,7 @@ mod tests {
         for light in &mut lighting.points {
             light.range = 0.4;
         }
-        let quality = LightQuality { cap: 4, clustered: false, tile_px: 0, shadowed_spots: 0 };
+        let quality = LightQuality { cap: 4, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 };
         // Lights at x = 0..9 with range 0.4: from x = 9.5 the nearest are 9, 8, 7, 6.
         let (lights, _) = legacy_lights(&lighting, &quality, &camera_at([9.5, 1.0, 0.0]));
         let xs: Vec<f32> = lights.iter().map(|light| light.position_range[0]).collect();

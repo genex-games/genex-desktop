@@ -101,6 +101,9 @@ fn gx_scene_shades_hdr() -> bool {
 // The HDR scene's sun is a disc for its specular highlight (P2-0.12 LG-04, `gx_sun_area_direction`);
 // the legacy scene keeps the point sun its goldens were drawn with.
 fn surface(in: VsOut, front: bool) -> vec4<f32> {
+    // The decals' texture gradients (renderer pass 2 A.10), taken here in uniform control flow.
+    let world_dx = dpdx(in.world_pos);
+    let world_dy = dpdy(in.world_pos);
     gx_sun_shadow_context(in.clip.xy, frame.shadow_counts.z, frame.shadow_soft.y);
     gx_sun_shadow_end_fade(frame.shadow_soft.z);
     let facing = select(-1.0, 1.0, front);
@@ -114,6 +117,11 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     // cutout's, not a blend's, so it takes the opaque surfaces' AO and contact shadows.
     if ext.params.w > 0.0 {
         s.alpha = 1.0;
+    }
+    // The decals binned at this fragment, before any light (renderer pass 2 A.10); a probe's or
+    // a volume's capture (GX_PROBES off) draws none: the frame's bins are the camera's tiles.
+    if GX_PROBES {
+        s = gx_decals(s, world_dx, world_dy);
     }
     var sun = normalize(frame.sun_dir.xyz);
     if GX_SCENE_HDR {
@@ -149,6 +157,50 @@ fn fs_mask_depth(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     return vec4<f32>(0.0, 0.0, 0.0, kept);
+}
+
+// Whether the forward pass binds the size class of material texture `reference` (the decal chunk
+// asks): it binds every class.
+fn gx_decal_texture_bound(reference: u32) -> bool {
+    return true;
+}
+
+// The texel of decal texture `reference` (size class and layer) at `uv` and mip `lod`, from the
+// colour (`color`) or data arrays of its class (the decal chunk samples at an explicit level: one
+// level a decal for its maps, cheaper than a gradient fetch a map).
+fn gx_decal_class_texel(color: bool, reference: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    let at = i32(reference & GX_TEXTURE_LAYER_MASK);
+    let size_class = reference >> GX_TEXTURE_CLASS_SHIFT;
+    if color {
+        switch size_class {
+            case 0u: {
+                return textureSampleLevel(color_textures, texture_sampler, uv, at, lod);
+            }
+            case 1u: {
+                return textureSampleLevel(color_textures_512, texture_sampler, uv, at, lod);
+            }
+            case 2u: {
+                return textureSampleLevel(color_textures_1024, texture_sampler, uv, at, lod);
+            }
+            default: {
+                return textureSampleLevel(color_textures_2048, texture_sampler, uv, at, lod);
+            }
+        }
+    }
+    switch size_class {
+        case 0u: {
+            return textureSampleLevel(data_textures, texture_sampler, uv, at, lod);
+        }
+        case 1u: {
+            return textureSampleLevel(data_textures_512, texture_sampler, uv, at, lod);
+        }
+        case 2u: {
+            return textureSampleLevel(data_textures_1024, texture_sampler, uv, at, lod);
+        }
+        default: {
+            return textureSampleLevel(data_textures_2048, texture_sampler, uv, at, lod);
+        }
+    }
 }
 
 // The texel of material texture `reference` (`layout::texture_ref`: size class and layer) at `uv`

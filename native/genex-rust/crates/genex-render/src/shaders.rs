@@ -15,11 +15,13 @@ use crate::error::RenderError;
 pub mod minify;
 use minify::shipped_wgsl;
 
-/// The lighting chunks (plan §2.3), in the order a forward fragment applies them: each is one
+/// The lighting chunks (plan §2.3), in the order a forward fragment applies them (the decals,
+/// renderer pass 2 A.10, blend into the surface before any light): each is one
 /// function with its own file under `shaders/lighting/`. Later tiers own one chunk each; the
 /// Level-2 v2 prelude is built from the same chunks, so shading reaches custom materials too.
 pub const LIGHTING_CHUNKS: &[(&str, &str)] = &[
     ("surface", include_str!("../shaders/lighting/surface.wgsl")),
+    ("decals", include_str!("../shaders/lighting/decals.wgsl")),
     ("ambient", include_str!("../shaders/lighting/ambient.wgsl")),
     ("sun", include_str!("../shaders/lighting/sun.wgsl")),
     ("local-lights", include_str!("../shaders/lighting/local_lights.wgsl")),
@@ -38,6 +40,7 @@ pub const FORWARD: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/forward_env.wgsl"),
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
+    include_str!("../shaders/lighting/decals.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/local_lights.wgsl"),
@@ -100,6 +103,7 @@ pub const MATERIAL_V2_PRELUDE: &str = concat!(
     include_str!("../shaders/effects.wgsl"),
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
+    include_str!("../shaders/lighting/decals.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/local_lights.wgsl"),
@@ -117,6 +121,7 @@ pub const MATERIAL_V2_SAMPLE: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/effects.wgsl"),
     include_str!("../shaders/pbr.wgsl"),
     include_str!("../shaders/lighting/surface.wgsl"),
+    include_str!("../shaders/lighting/decals.wgsl"),
     include_str!("../shaders/lighting/ambient.wgsl"),
     include_str!("../shaders/lighting/sun.wgsl"),
     include_str!("../shaders/lighting/local_lights.wgsl"),

@@ -1601,6 +1601,10 @@ pub struct LightQuality {
     pub tile_px: u32,
     /// Spot lights with shadow maps.
     pub shadowed_spots: u8,
+    /// Most projected decals drawn (renderer pass 2 A.10, `decals::held_decals`: nearest first,
+    /// the last ones faded towards the cut); 0 draws none. Decals are binned with the lights, so
+    /// only a `clustered` quality draws them.
+    pub decals: u32,
 }
 
 /// A material texture size class (RQ6): the side of the texture arrays a texture is stored in.
@@ -1796,8 +1800,9 @@ impl Quality {
                 continuous_sky: false,
                 irradiance_volumes: 0,
                 irradiance_leak_control: false,
+                froxel_fog: None,
             },
-            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0 },
+            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
             textures: TextureQuality::OFF,
             prepass: false,
             meshlets: false,

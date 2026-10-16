@@ -4522,8 +4522,18 @@ impl Renderer {
         let plan = FramePlan::build_with(scene, &self.library, aspect, &PlanOptions { shadows, depth_reversed: false, sun: None })?;
         let binned = (crate::lights::BINNED_SHADING_LANDED && self.quality.lights.clustered)
             .then(|| crate::lights::binned_frame(&scene.lighting, &self.quality.lights, &scene.camera, self.render_size()));
+        // The decals (A.10) ride in the `light_ext` table after the lights' rows and every shadowed
+        // spot's matrix slot: the table holds `decals::append_rows` of the lights' bytes.
+        let ext_bytes = |binned: &crate::lights::BinnedFrame| {
+            let lights_bytes = std::mem::size_of_val(binned.ext.as_slice());
+            if binned.decals.is_empty() {
+                return lights_bytes as u64;
+            }
+            let rows_bytes = crate::decals::rows_base(binned.ext.len()) * size_of::<glam::Vec4>();
+            (rows_bytes.max(lights_bytes) + std::mem::size_of_val(binned.decals.as_slice())) as u64
+        };
         let (lights, light_ext_bytes, light_bin_bytes) = binned.as_ref().map_or((plan.lights.len(), 0, 0), |binned| {
-            (binned.lights.len(), std::mem::size_of_val(binned.ext.as_slice()) as u64, crate::cluster::bins_bytes(&binned.bins.grid))
+            (binned.lights.len(), ext_bytes(binned), crate::cluster::bins_bytes(&binned.bins.grid))
         });
         let counts = crate::budget::BufferCounts {
             instances: plan.instances.len() as u64,

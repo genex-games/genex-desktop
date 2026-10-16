@@ -29,6 +29,7 @@
 
 mod camera;
 mod ctx;
+mod decal;
 mod extend;
 mod frame;
 mod game;
@@ -60,6 +61,7 @@ mod desktop;
 
 pub use camera::{Camera, Projection};
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
+pub use decal::Decal;
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
 pub use frame::{
     Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, IrradianceVolume, Lights, Material, PointLight,

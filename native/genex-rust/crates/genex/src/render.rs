@@ -104,6 +104,8 @@ pub use genex_render::settings::Fog;
 /// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
 /// ([`crate::Frame::irradiance_volume`], A.4).
 pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
+/// A projected decal ([`crate::Frame::decal`], renderer pass 2 A.10) and its boxes' default depths.
+pub use crate::decal::{DEFAULT_GROUND_DEPTH, DEFAULT_WALL_DEPTH, Decal};
 
 /// The tonemapper of a game's look: how the HDR scene becomes display colour.
 /// [`Tonemap::KhronosNeutral`] (the default) keeps authored colours as they are up to the

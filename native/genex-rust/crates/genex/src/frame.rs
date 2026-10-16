@@ -629,6 +629,8 @@ pub struct Frame {
     lights: Lights,
     environment: Option<Environment>,
     terrain: Option<crate::terrain::Terrain>,
+    decals: Vec<crate::decal::Decal>,
+    particles: Vec<crate::particles::Particles>,
 }
 
 impl Default for Frame {
@@ -645,6 +647,8 @@ impl Default for Frame {
             lights: Lights::default(),
             environment: None,
             terrain: None,
+            decals: Vec::new(),
+            particles: Vec::new(),
         }
     }
 }
@@ -768,6 +772,19 @@ impl Frame {
     pub fn irradiance_volume(&mut self, volume: &IrradianceVolume) -> &mut Self {
         self.lights.irradiance_volumes.push(*volume);
         self
+    }
+
+    /// Add a projected decal (renderer pass 2 A.10, [`crate::Decal`]): every surface inside its box
+    /// takes its texture before lighting. Not a draw; the device's quality draws the nearest 64
+    /// (16 on phones), fading the farthest kept ones out.
+    pub fn decal(&mut self, decal: &crate::decal::Decal) -> &mut Self {
+        self.decals.push(decal.clone());
+        self
+    }
+
+    /// The decals declared so far, in call order ([`Frame::decal`]).
+    pub fn decals(&self) -> &[crate::decal::Decal] {
+        &self.decals
     }
 
     /// Add `light`, a [`SpotLight`] with its own cone or a shadow map. Not a draw.

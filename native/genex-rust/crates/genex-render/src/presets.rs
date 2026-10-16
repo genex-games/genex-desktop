@@ -309,7 +309,7 @@ fn shadows(cascades: u8, map_size: u32, filter: ShadowFilter, format: ShadowForm
 }
 
 fn lights(cap: u32, tile_px: u32, shadowed_spots: u8) -> LightQuality {
-    LightQuality { cap, clustered: true, tile_px, shadowed_spots }
+    LightQuality { cap, clustered: true, tile_px, shadowed_spots, decals: crate::decals::DESKTOP_DECALS }
 }
 
 /// The material sampler's anisotropy per preset and class (P2-0.12 LG-02): desktop high and ultra
@@ -518,8 +518,9 @@ pub fn cap_shadows(shadows: &mut ShadowQuality, class: DeviceClass) {
 /// The local-light caps of `class` (plan §2.4, RQ6 review), for any preset and any request: with
 /// the `clustered` switch off the per-pixel loop shades at most [`UNCLUSTERED_MAX_LIGHTS`] lights
 /// ([`MOBILE_UNCLUSTERED_MAX_LIGHTS`] on a phone); phones bin at most [`MOBILE_MAX_LIGHTS`] lights
-/// in tiles of at least [`MOBILE_MIN_LIGHT_TILE_PX`], and shade one shadowed spot on the high and
-/// ultra phone classes, none below. Desktops keep the preset's binned caps. The legacy renderer's
+/// in tiles of at least [`MOBILE_MIN_LIGHT_TILE_PX`], shade one shadowed spot on the high and
+/// ultra phone classes, none below, and draw at most `decals::MOBILE_DECALS` decals (renderer
+/// pass 2 A.10). Desktops keep the preset's binned caps. The legacy renderer's
 /// `Quality::off` is never capped here.
 pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     let mobile = class.form == FormFactor::Mobile;
@@ -536,6 +537,7 @@ pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     }
     let spots = if class.tier >= PerformanceTier::High { 1 } else { 0 };
     lights.shadowed_spots = lights.shadowed_spots.min(spots);
+    lights.decals = lights.decals.min(crate::decals::MOBILE_DECALS);
 }
 
 /// Mobile and tile caps (plan §2.4), for any preset on a mobile class.
