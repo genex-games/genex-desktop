@@ -9,10 +9,15 @@
 //!
 //! - The determinism row captures the Lakeside's wide shot and Harbour Street's street-wide shot
 //!   at both presets and sizes in four child processes each, and requires one digest.
-//! - The stills row writes every shot of both scenes at both presets and sizes as
-//!   `<scene>/<shot>-<preset>-<W>x<H>.png` with `digests.json` into `GENEX_SECTION7_OUT` (default
-//!   `pass2/captures/latest` in the evidence folder), each taken twice in one process and required
-//!   to draw one picture. Crops and A/B sheets are cut from these PNGs (ffmpeg).
+//! - The stills row writes every shot of both scenes (the Lakeside's pass-1 five and its v2 four)
+//!   at both presets and sizes as `<scene>/<shot>-<preset>-<W>x<H>.png` with `digests.json` into
+//!   `GENEX_SECTION7_OUT` (default `pass2/captures/latest` in the evidence folder), each taken
+//!   twice in one process and required to draw one picture; a pair that differs is written beside
+//!   it (`-again.png`) and named when the row fails, after every still is written.
+//!   `GENEX_SECTION7_SIZES` (`2560x1440`) and `GENEX_SECTION7_SHOTS` (`cabin-interior,cafe`) narrow
+//!   it. Crops and A/B sheets are cut from these PNGs (ffmpeg).
+//! - Every capture here hides the scene's HUD (H) before its first tick: a still is the picture,
+//!   never the card over it (GA1 look review).
 
 mod support;
 
@@ -21,10 +26,10 @@ use std::process::Command;
 
 use genex::present::Presenter;
 use genex::render::{PresetChoice, RenderChange};
-use genex::{FIXED_STEP_MS, Runtime, View};
+use genex::{FIXED_STEP_MS, Input, Key, Runtime, View};
 use genex_render::capture::Capture;
 use genex_render::settings::QualityPreset;
-use support::{SHOT_TICK, gpu, lakeside_at_shot_tick, write_png};
+use support::{SHOT_TICK, gpu, write_png};
 
 /// The plan's output sizes.
 const SIZES: [(u32, u32); 2] = [(2560, 1440), (3840, 2160)];
@@ -69,28 +74,41 @@ impl Scene {
 
     fn shots(self) -> Vec<&'static str> {
         match self {
-            Scene::Lakeside => showcase_game::world::SHOTS.iter().map(|shot| shot.name).collect(),
+            Scene::Lakeside => showcase_game::world::named_shots().map(|shot| shot.name).collect(),
             Scene::Harbour => showcase_game::harbour::SHOTS.iter().map(|shot| shot.name).collect(),
         }
     }
 }
 
-/// `shot` of `scene` at tick 600, captured the way the Studio captures it at `preset` and `size`.
+/// `runtime` at tick 600 from seed 1, its HUD hidden (H, tapped before the first tick).
+fn at_shot_tick<W: Default + 'static>(mut runtime: Runtime<W>) -> Runtime<W> {
+    runtime.seed(1);
+    runtime.start();
+    runtime.inject(Input::key_tap(Key::KeyH));
+    runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
+    runtime
+}
+
+/// `shot` of `scene` at tick 600 with its HUD hidden, captured the way the Studio captures it at
+/// `preset` and `size`.
 fn capture(scene: Scene, shot: &str, preset: QualityPreset, size: (u32, u32)) -> Option<Capture> {
     match scene {
         Scene::Lakeside => {
             let presenter = Presenter::open(showcase_game::showcase::WORLD_SIZE, showcase_game::assets()).ok()?;
-            Some(settled(presenter, lakeside_at_shot_tick(), shot, preset, size))
+            let runtime = at_shot_tick(Runtime::new(showcase_game::game()).expect("installs"));
+            Some(settled(presenter, runtime, shot, preset, size))
         }
         Scene::Harbour => {
             let presenter = Presenter::open(showcase_game::harbour::WORLD_SIZE, showcase_game::harbour_assets()).ok()?;
-            let mut runtime = Runtime::new(showcase_game::harbour_game()).expect("installs");
-            runtime.seed(1);
-            runtime.start();
-            runtime.step(f64::from(SHOT_TICK) * FIXED_STEP_MS);
+            let runtime = at_shot_tick(Runtime::new(showcase_game::harbour_game()).expect("installs"));
             Some(settled(presenter, runtime, shot, preset, size))
         }
     }
+}
+
+/// The comma-separated list in `var`, or None when unset.
+fn narrowed(var: &str) -> Option<Vec<String>> {
+    std::env::var(var).ok().map(|list| list.split(',').map(|item| item.trim().to_owned()).collect())
 }
 
 /// A settled capture of `shot` on `presenter` at `preset` and `size`.
@@ -261,19 +279,22 @@ fn metal_section7_stills_are_written_at_1440p_and_4k() {
         return;
     }
     let root = std::env::var_os(OUT_ENV).map_or_else(|| support::evidence_dir("pass2/captures/latest"), PathBuf::from);
+    let sizes: Vec<(u32, u32)> = narrowed("GENEX_SECTION7_SIZES").map_or_else(|| SIZES.to_vec(), |list| list.iter().map(|size| parse_size(size)).collect());
+    let only = narrowed("GENEX_SECTION7_SHOTS");
     let mut rows = Vec::new();
+    let mut problems = Vec::new();
     for scene in [Scene::Lakeside, Scene::Harbour] {
         let dir = root.join(scene.wire());
         std::fs::create_dir_all(&dir).expect("the stills folder");
-        for shot in scene.shots() {
+        for shot in scene.shots().into_iter().filter(|shot| only.as_ref().is_none_or(|only| only.iter().any(|name| name == shot))) {
             for preset in PRESETS {
-                for (w, h) in SIZES {
+                for &(w, h) in &sizes {
                     let first = capture(scene, shot, preset, (w, h)).expect("a presenter");
                     let again = capture(scene, shot, preset, (w, h)).expect("a second presenter");
                     write_png(&dir.join(format!("{shot}-{}-{w}x{h}.png", preset.wire())), &first);
                     if again.digest() != first.digest() {
                         write_png(&dir.join(format!("{shot}-{}-{w}x{h}-again.png", preset.wire())), &again);
-                        panic!("{} {shot} {} {w}x{h}: two settled captures differ: {}", scene.wire(), preset.wire(), difference(&first, &again));
+                        problems.push(format!("{} {shot} {} {w}x{h}: two settled captures differ: {}", scene.wire(), preset.wire(), difference(&first, &again)));
                     }
                     rows.push(format!("{{\"scene\": \"{}\", \"shot\": \"{shot}\", \"preset\": \"{}\", \"size\": [{w}, {h}], \"digest\": \"{:016x}\"}}", scene.wire(), preset.wire(), first.digest()));
                 }
@@ -281,4 +302,5 @@ fn metal_section7_stills_are_written_at_1440p_and_4k() {
         }
     }
     std::fs::write(root.join("digests.json"), format!("{{\"tick\": {SHOT_TICK}, \"rows\": [\n{}\n]}}\n", rows.join(",\n"))).expect("digests");
+    assert!(problems.is_empty(), "{problems:#?}");
 }

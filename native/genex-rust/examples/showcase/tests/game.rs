@@ -5,7 +5,7 @@
 
 use genex::gpu::PassStage;
 use genex::{FIXED_STEP_MS, Input, Key, Runtime, View, json};
-use showcase_game::world::{SHOTS, World};
+use showcase_game::world::{SHOTS, World, named_shots};
 use showcase_game::{assets, game};
 
 fn runtime() -> Runtime<World> {
@@ -36,8 +36,8 @@ fn ten_seconds_replay_to_the_same_checksum_and_probes() {
 fn every_shot_is_a_named_camera_and_draws_the_scene() {
     let mut runtime = runtime();
     run(&mut runtime, 60);
-    assert_eq!(runtime.cameras(), SHOTS.iter().map(|shot| shot.name.to_owned()).collect::<Vec<_>>());
-    for shot in SHOTS {
+    assert_eq!(runtime.cameras(), named_shots().map(|shot| shot.name.to_owned()).collect::<Vec<_>>());
+    for shot in named_shots() {
         let camera = runtime.camera(View::Named(shot.name)).expect("the shot");
         assert_eq!(camera.position, shot.eye());
         let frame = runtime.frame(View::Named(shot.name)).expect("its frame");

@@ -13,6 +13,8 @@ pub mod fetched;
 pub mod harbour;
 #[path = "../game/src/hud.rs"]
 pub mod hud;
+#[path = "../game/src/interior.rs"]
+pub mod interior;
 #[path = "../game/src/layout.rs"]
 pub mod layout;
 pub mod meshgen;

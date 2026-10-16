@@ -445,7 +445,8 @@ function sideRefusals(base: PerfRecord, candidate: PerfRecord, minFrames: number
 
 /**
  * Scenes whose `off` rows are information, never gated (owner decision 2026-10-12): the Lakeside
- * shots' content was remastered at bf0920e1, so no baseline commit draws the same scene. The
+ * shots' content was remastered at bf0920e1 (and Lakeside v2 added four shots and the cabin's
+ * room in renderer pass 2), so no baseline commit draws the same scene. The
  * features-off rule covers the bench and stress scenes, whose content is unchanged.
  */
 export const INFORMATIONAL_OFF_SCENES: ReadonlySet<string> = new Set([
@@ -454,6 +455,10 @@ export const INFORMATIONAL_OFF_SCENES: ReadonlySet<string> = new Set([
   "lakeside-cabin",
   "lakeside-forest",
   "lakeside-closeup",
+  "lakeside-golden-wide",
+  "lakeside-shore",
+  "lakeside-forest-floor",
+  "lakeside-cabin-interior",
 ]);
 
 /** Whether a row's ratio is gated: an `off` row of a scene the rule covers. */

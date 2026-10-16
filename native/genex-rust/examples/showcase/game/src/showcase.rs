@@ -6,7 +6,7 @@ use genex::render::{Bloom, Exposure, Fog, QualityPreset, RenderConfig, ShadowCon
 
 use crate::draw::{HORIZON, draw};
 use crate::passes;
-use crate::world::{Models, SHOTS, World, scene_probe, update};
+use crate::world::{Models, World, named_shots, scene_probe, update};
 
 /// Auto exposure's compensation in EV, against the renderer's metering of the golden-hour frame:
 /// none. AgX punchy holds middle grey where plain AgX draws it (pass 2, P2-0.10), so the +0.9 EV
@@ -99,7 +99,7 @@ pub fn wire(game: &mut Game<World>) {
     game.on_ui(|sim, ui, _ctx| crate::hud::ui(&mut sim.world, ui));
     game.on_draw(|sim, frame, camera| draw(&sim.world, frame, camera));
     game.camera(|sim| sim.world.camera());
-    for shot in SHOTS {
+    for shot in named_shots() {
         game.named_camera(shot.name, move |_| shot.camera());
     }
     game.probe("view", |sim| json!({ "mode": sim.world.mode.label(), "tick": sim.world.tick, "backdrop": sim.world.backdrop.label() }));

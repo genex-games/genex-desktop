@@ -181,6 +181,31 @@ describe("render perf informational scenes", () => {
   });
 });
 
+describe("render perf Lakeside v2 scenes", () => {
+  it("reports the Lakeside v2 shots' off rows as information too", async () => {
+    // Renderer pass 2 (plan section 6): the four shots Lakeside v2 adds draw content no baseline
+    // commit has, so a slower off row is never a regression.
+    const base = await fixture("baseline.json");
+    for (const name of ["lakeside-golden-wide", "lakeside-shore", "lakeside-forest-floor", "lakeside-cabin-interior"]) {
+      const named = (record: PerfRecord, factor: number) => {
+        const copy = structuredClone(record);
+        const extra = structuredClone(copy.rows.filter((r) => r.row === "bench-outdoor" && r.profile === "off"));
+        for (const row of extra) {
+          row.row = name;
+          if (row.gpuMs) row.gpuMs.p95 *= factor;
+        }
+        copy.rows.push(...extra);
+        return copy;
+      };
+      const comparison = compareRecords(named(base, 1), named(await fixture("candidate-same.json"), 1.88), {
+        minFrames: MIN_GATE_FRAMES,
+      });
+      assert.equal(verdictOf(comparison, name, "off", 1080), RowVerdict.Info, name);
+      assert.equal(comparison.passed, true, name);
+    }
+  });
+});
+
 describe("render perf run merge", () => {
   it("takes the median p95 of each row over the runs", async () => {
     const base = await fixture("baseline.json");

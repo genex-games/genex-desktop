@@ -11,7 +11,7 @@
 use genex::math::{self, FRAC_PI_2, Quat, Vec3, vec3};
 use genex::prelude::*;
 use genex::render::SpotLight;
-use genex::{Assets, Model};
+use genex::{Assets, InstanceGroup, Model, Scatter, Terrain};
 
 use crate::layout::{
     CABIN, CABIN_FLOOR, CABIN_YAW, DOCK_DECK, DOCK_LENGTH, Dock, Rock, Tree, TreeKind, TreeLod, WATER_LEVEL, height, layout, mix, smoothstep,
@@ -39,6 +39,19 @@ const GOLDEN: [Color; 3] = [Color::rgb(190, 128, 40), Color::rgb(176, 92, 34), C
 /// pixel, where nothing filters its highlight but TAA; at 0.62 the low sun's glints blew out to
 /// white sparkles on every preset without TAA (pass-1 gate findings 04 and 08).
 const LEAF_ROUGHNESS: f32 = 0.85;
+
+/// The scatter's terrain layers (`layout::TERRAIN_LAYERS` order): the soil and the sand.
+const SOIL_LAYER: u8 = 2;
+const SAND_LAYER: u8 = 3;
+/// Pebbles a square metre of beach and stones a square metre of path, and the most of each.
+const PEBBLE_DENSITY: f32 = 0.5;
+const PEBBLES_MAX: usize = 360;
+const STONE_DENSITY: f32 = 0.12;
+const STONES_MAX: usize = 150;
+
+/// The room's waxed floor: the planks' roughness times this, so the hearth and the doorway's
+/// sunlight sheen on it through the room's reflection probe.
+const FLOOR_ROUGHNESS: f32 = 0.62;
 
 /// The untextured stand-ins of the fetched textures (sRGB), and how rough each surface is.
 const BARK: Color = Color::rgb(84, 64, 48);
@@ -111,6 +124,14 @@ const CHIMNEY_FOOT: f32 = -0.51;
 
 /// A wall log along the front and back (`props.rs` writes every part mesh).
 pub const LOG_LONG: &str = "part-log-long.glb";
+/// A front wall log beside the doorway: from a corner to the door's jamb.
+pub const LOG_JAMB: &str = "part-log-jamb.glb";
+/// The cabin room's plank floor.
+pub const FLOOR: &str = "part-floor.glb";
+/// The doorway's half width: the door's own and a finger of play.
+pub const DOOR_HALF_WIDTH: f32 = 0.55;
+/// The doorway's height: the door's own.
+pub const DOOR_HEIGHT: f32 = 2.0;
 /// A wall log along the sides (squeezed for the gables).
 pub const LOG_SHORT: &str = "part-log-short.glb";
 /// A log of the woodpile.
@@ -164,6 +185,9 @@ pub fn roof_run_drop() -> (f32, f32) {
 #[derive(Clone, Debug, Default)]
 pub struct Parts {
     log_long: Model,
+    log_jamb: Model,
+    /// The room's plank floor ([`FLOOR`]).
+    pub(crate) floor: Model,
     log_short: Model,
     firewood: Model,
     post: Model,
@@ -172,7 +196,8 @@ pub struct Parts {
     step: Model,
     bench: Model,
     door: Model,
-    roof: Model,
+    /// One roof panel ([`ROOF`]): the room's ceiling boards are drawn with it too.
+    pub(crate) roof: Model,
     footing: Model,
     chimney: Model,
     planks: Vec<Model>,
@@ -188,6 +213,8 @@ impl Parts {
     pub fn load(assets: &Assets) -> Parts {
         Parts {
             log_long: assets.model(LOG_LONG),
+            log_jamb: assets.model(LOG_JAMB),
+            floor: assets.model(FLOOR),
             log_short: assets.model(LOG_SHORT),
             firewood: assets.model(LOG_FIREWOOD),
             post: assets.model(POST),
@@ -226,13 +253,15 @@ pub struct Surfaces {
     bark: Material,
     pine_bark: Material,
     rock: Material,
-    planks: Material,
+    pub(crate) planks: Material,
+    /// The room's floor: the planks, worn smooth and waxed.
+    pub(crate) floor: Material,
     logs: Material,
     roof: Material,
-    stone: Material,
+    pub(crate) stone: Material,
     door: Material,
     trim: Material,
-    iron: Material,
+    pub(crate) iron: Material,
     leaves: Vec<Material>,
     golden: Vec<Material>,
     needles: Vec<Material>,
@@ -254,6 +283,7 @@ impl Surfaces {
             pine_bark: scanned("pine-bark", PINE_BARK, 1.0, 1.0),
             rock: scanned("rock", ROCK, 1.0, 1.2),
             planks: scanned("planks", PLANK, 1.0, 1.0),
+            floor: scanned("planks", PLANK, FLOOR_ROUGHNESS, 1.0),
             logs: scanned("logs", LOG, 1.0, 1.0),
             roof: scanned("roof", SLATE, 1.0, 1.0),
             stone: scanned("stone", STONE, 1.0, 1.2),
@@ -276,9 +306,9 @@ impl Surfaces {
 
 /// A local frame (a cabin, a dock, an animal): parts are placed in it and drawn in the world.
 #[derive(Clone, Copy)]
-struct Local {
-    origin: Vec3,
-    rotation: Quat,
+pub(crate) struct Local {
+    pub(crate) origin: Vec3,
+    pub(crate) rotation: Quat,
 }
 
 impl Local {
@@ -286,7 +316,8 @@ impl Local {
         Local { origin, rotation: Quat::from_rotation_y(yaw) }
     }
 
-    fn point(&self, p: Vec3) -> Vec3 {
+    /// `p` in this frame, in the world.
+    pub(crate) fn point(&self, p: Vec3) -> Vec3 {
         self.origin + self.rotation * p
     }
 
@@ -301,12 +332,12 @@ impl Local {
     }
 
     /// A box of `size` centred at `at`, of `material`.
-    fn cube_with(&self, frame: &mut Frame, at: Vec3, size: Vec3, material: &Material) {
+    pub(crate) fn cube_with(&self, frame: &mut Frame, at: Vec3, size: Vec3, material: &Material) {
         frame.cube_with(self.part(at, Quat::IDENTITY, size), material);
     }
 
     /// `model` at `at`, turned by `rotation`, scaled by `scale`, of `material`.
-    fn model(&self, frame: &mut Frame, model: &Model, at: Vec3, rotation: Quat, scale: Vec3, material: &Material) {
+    pub(crate) fn model(&self, frame: &mut Frame, model: &Model, at: Vec3, rotation: Quat, scale: Vec3, material: &Material) {
         frame.model_with(model, self.part(at, rotation, scale), material);
     }
 
@@ -353,7 +384,7 @@ pub fn draw(world: &World, frame: &mut Frame, camera: &Camera) {
     terrain(world, frame);
     trees(world, frame, camera.position, t);
     rocks(world, frame);
-    cabin(world, frame);
+    cabin(world, frame, t);
     dock(world, frame, t);
     lanterns(world, frame, t);
     fireflies(frame, camera, t);
@@ -401,10 +432,46 @@ fn rocks(world: &World, frame: &mut Frame) {
         let transform = Transform { translation: center, rotation: Quat::from_rotation_y(yaw), scale: size };
         frame.model_with(&world.models.rock[variant as usize % world.models.rock.len()], transform, &world.models.surfaces.rock);
     }
+    frame.tag("stones");
+    for group in &world.models.stones {
+        frame.group(group);
+    }
+}
+
+/// The scattered stones (renderer pass 2 A.8 scatter, Lakeside v2): pebbles on the beach (the
+/// sand layer above the lake bed) and stones along the path and the yard (the soil layer), on
+/// flat-enough ground, leaning with it, squashed and sunk a little. Each kind is split over the
+/// rock variants by its order, one retained instance group each (D4: uploaded once).
+pub(crate) fn stone_groups(ground: &Terrain, rock: &[Model], surfaces: &Surfaces) -> Vec<InstanceGroup> {
+    use crate::layout::TERRAIN_HALF;
+    let corner = math::vec2(TERRAIN_HALF, TERRAIN_HALF);
+    let kinds = [
+        (Scatter::new(PEBBLE_DENSITY, &[SAND_LAYER]).with_scale(0.07, 0.16).on_flat_ground(0.8).following_ground(0.8).with_seed(11).with_cap(PEBBLES_MAX), 0.5),
+        (Scatter::new(STONE_DENSITY, &[SOIL_LAYER]).with_scale(0.09, 0.22).on_flat_ground(0.85).following_ground(0.7).with_seed(23).with_cap(STONES_MAX), 0.6),
+    ];
+    let mut groups = Vec::new();
+    for (rule, squash) in kinds {
+        let placed = ground.scatter(&rule, -corner, corner);
+        for (variant, model) in rock.iter().enumerate() {
+            let transforms: Vec<Transform> = placed
+                .iter()
+                .skip(variant)
+                .step_by(rock.len())
+                .map(|t| {
+                    let scale = t.scale * vec3(1.0, squash, 1.0);
+                    Transform { translation: t.translation - Vec3::Y * scale.y * 0.25, rotation: t.rotation, scale }
+                })
+                .collect();
+            if let Ok(group) = InstanceGroup::models_with(model, transforms, &surfaces.rock) {
+                groups.push(group);
+            }
+        }
+    }
+    groups
 }
 
 /// The cabin's frame: on its yard, its front (+z) facing across the lake.
-fn cabin_frame() -> Local {
+pub(crate) fn cabin_frame() -> Local {
     Local::new(vec3(CABIN.x, CABIN_FLOOR, CABIN.y), CABIN_YAW)
 }
 
@@ -413,7 +480,7 @@ fn along_z() -> Quat {
     Quat::from_rotation_y(-FRAC_PI_2)
 }
 
-fn cabin(world: &World, frame: &mut Frame) {
+fn cabin(world: &World, frame: &mut Frame, t: f32) {
     frame.tag("cabin");
     let c = cabin_frame();
     let (parts, surfaces) = (&world.models.parts, &world.models.surfaces);
@@ -424,8 +491,10 @@ fn cabin(world: &World, frame: &mut Frame) {
     c.model(frame, &parts.step, vec3(0.0, -0.3, hd + 2.25), Quat::IDENTITY, Vec3::ONE, &surfaces.planks);
     log_walls(frame, &c, parts, &surfaces.logs);
     roof(frame, &c, parts, surfaces);
-    // Door, the lit windows, chimney.
-    c.model(frame, &parts.door, vec3(0.0, 1.0, hd + 0.16), Quat::IDENTITY, Vec3::ONE, &surfaces.door);
+    // The door, open: hinged at the doorway's left jamb (from outside) and swung into the room
+    // against it, so the low sun reaches the floor; then the lit windows and the chimney.
+    let door = vec3(-DOOR_HALF_WIDTH + 0.06, DOOR_HEIGHT * 0.5, hd - LOG_RADIUS - 0.525);
+    c.model(frame, &parts.door, door, Quat::from_rotation_y(FRAC_PI_2), Vec3::ONE, &surfaces.door);
     for x in [-2.0, 2.0] {
         c.cube_with(frame, vec3(x, 1.45, hd + 0.17), vec3(1.15, 1.1, 0.05), &surfaces.trim);
         window(frame, &c, vec3(x, 1.45, hd + 0.2), 1.0, &surfaces.mullion);
@@ -441,6 +510,7 @@ fn cabin(world: &World, frame: &mut Frame) {
     for (x, y) in [(0.0, 0.0), (0.3, 0.0), (0.6, 0.0), (0.15, 0.26), (0.45, 0.26), (0.3, 0.52)] {
         c.model(frame, &parts.firewood, vec3(hw + 0.45 + x, 0.13 + y, -1.6), along_z(), Vec3::ONE, &surfaces.logs);
     }
+    crate::interior::room(world, frame, t);
 }
 
 /// The interlocking log walls: front and back logs along x, side logs along z half a log higher,
@@ -450,8 +520,14 @@ fn log_walls(frame: &mut Frame, c: &Local, parts: &Parts, logs: &Material) {
     let courses = (WALL_HEIGHT / (LOG_RADIUS * 2.0)) as u32;
     for i in 0..courses {
         let y = LOG_RADIUS + i as f32 * LOG_RADIUS * 2.0;
-        for z in [-hd, hd] {
-            c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, z), Quat::IDENTITY, Vec3::ONE, logs);
+        c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, -hd), Quat::IDENTITY, Vec3::ONE, logs);
+        // The front's logs below the door's head stop at its jambs (the doorway).
+        if y + LOG_RADIUS <= DOOR_HEIGHT + 0.05 {
+            for x in [-hw - 0.35, DOOR_HALF_WIDTH] {
+                c.model(frame, &parts.log_jamb, vec3(x, y, hd), Quat::IDENTITY, Vec3::ONE, logs);
+            }
+        } else {
+            c.model(frame, &parts.log_long, vec3(-hw - 0.35, y, hd), Quat::IDENTITY, Vec3::ONE, logs);
         }
         for x in [-hw + 0.1, hw - 0.1] {
             c.model(frame, &parts.log_short, vec3(x, y + LOG_RADIUS, -hd - 0.35), along_z(), Vec3::ONE, logs);

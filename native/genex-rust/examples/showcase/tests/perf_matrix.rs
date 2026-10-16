@@ -6,7 +6,7 @@
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- cargo test -p showcase --release \
 //!     --offline --locked --test perf_matrix -- --ignored metal --nocapture
 //!
-//! Scenes: the five lakeside shots (fixed cameras, one simulation tick per frame from tick 600, drawn
+//! Scenes: the nine lakeside shots (pass 1's five and Lakeside v2's four; fixed cameras, one simulation tick per frame from tick 600, drawn
 //! as the studio draws them), the three bench scenes along their camera paths, and the two stress
 //! scenes ([`showcase_game::stress`]: 1,024 point lights over a plaza; a 1.5 M triangle forest).
 //! Profiles: `off` (today's renderer) and the four presets as the host's device class resolves them.
@@ -481,7 +481,8 @@ enum Cell {
 impl Cell {
     /// The scenes in report order.
     fn all() -> Vec<Cell> {
-        let mut cells: Vec<Cell> = SHOTS.iter().map(|shot| Cell::Lakeside(shot.name)).collect();
+        // Every named shot: pass 1's five and Lakeside v2's four (the D7 whole-frame rows).
+        let mut cells: Vec<Cell> = showcase_game::world::named_shots().map(|shot| Cell::Lakeside(shot.name)).collect();
         cells.extend(SceneId::ALL.into_iter().map(Cell::Bench));
         cells.extend(StressId::ALL.into_iter().map(Cell::Stress));
         cells

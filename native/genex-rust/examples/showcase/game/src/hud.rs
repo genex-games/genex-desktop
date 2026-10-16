@@ -3,7 +3,7 @@
 
 use genex::egui;
 
-use crate::world::{CameraMode, SHOTS, World};
+use crate::world::{CameraMode, World, shot_at};
 
 /// The card's background: the evening's violet, mostly see-through.
 const CARD: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 16, 30, 150);
@@ -43,7 +43,7 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     let shot = match world.mode {
         CameraMode::Tour => "Tour".to_owned(),
         CameraMode::Free => "Free camera".to_owned(),
-        CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, SHOTS[i.min(SHOTS.len() - 1)].name),
+        CameraMode::Shot(i) => format!("Shot {}: {}", i + 1, shot_at(i).name),
     };
     ui.label(egui::RichText::new("Lakeside at golden hour").color(TITLE).size(18.0).strong());
     ui.label(egui::RichText::new(format!("{shot} · {}", world.backdrop.label())).color(BODY).size(14.0));
@@ -51,7 +51,7 @@ fn card_contents(world: &mut World, ui: &mut egui::Ui) {
     let hint = if world.mode == CameraMode::Free {
         "WASD move · Q/E down/up · arrows or drag to look · Space tour"
     } else {
-        "1–5 shots · Space tour · F free camera · B sky/HDRI · tap next shot · O settings · H hide"
+        "1–9 shots · Space tour · F free camera · B sky/HDRI · tap next shot · O settings · H hide"
     };
     ui.label(egui::RichText::new(hint).color(HINT).size(12.0));
     ui.add_space(4.0);

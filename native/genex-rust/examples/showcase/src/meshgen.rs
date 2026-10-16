@@ -299,7 +299,9 @@ pub fn tube(mesh: &mut Mesh, spine: &[(Vec3, f32)], sides: u32, wraps: f32, tile
     for k in 0..spine.len() as u32 - 1 {
         for s in 0..sides {
             let a = base + k * row + s;
-            mesh.indices.extend([a, a + row, a + 1, a + 1, a + row, a + row + 1]);
+            // Counter-clockwise seen from outside, where the normals point (the renderer culls
+            // back faces; the reverse order drew every tube inside out).
+            mesh.indices.extend([a, a + 1, a + row, a + 1, a + row + 1, a + row]);
         }
     }
 }

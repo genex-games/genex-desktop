@@ -122,3 +122,36 @@ fn the_rowboat_floats_dry_with_its_bottom_boards_over_the_water() {
     }
     assert!(wet.is_empty(), "{} spots inside the hull lie under the water's reach {reach:.3}, e.g. {:?}", wet.len(), &wet[..wet.len().min(4)]);
 }
+
+/// Every generated mesh's triangles wind counter-clockwise seen from where its vertex normals
+/// point (the renderer culls back faces). The tube builder wound clockwise, so the logs, the posts,
+/// the branches and the limbs drew inside out: from the cabin's room a log wall showed only its
+/// far halves (Lakeside v2 interior, renderer pass 2).
+#[test]
+fn every_generated_triangle_winds_towards_its_normals() {
+    use genex::math::Vec3;
+    use showcase_game::meshgen::{Mesh, tube};
+    let mut sample = Mesh::default();
+    tube(&mut sample, &[(Vec3::ZERO, 0.3), (Vec3::new(2.0, 0.5, 0.0), 0.2), (Vec3::new(3.0, 2.0, 1.0), 0.1)], 9, 1.0, 1.0);
+    // The leaf cards are two-sided by construction (each card in both windings), so they are left out.
+    let solid = |(name, _): &(String, Mesh)| !name.contains("foliage");
+    let meshes = showcase_game::trees::assets().into_iter().chain(showcase_game::props::assets()).filter(solid).chain([("tube".to_owned(), sample)]);
+    let mut wrong = Vec::new();
+    for (name, mesh) in meshes {
+        let at = |i: u32| Vec3::from(mesh.positions[i as usize]);
+        let normal = |i: u32| Vec3::from(mesh.normals[i as usize]);
+        let (mut inward, mut faces) = (0, 0);
+        for tri in mesh.indices.chunks(3) {
+            let face = (at(tri[1]) - at(tri[0])).cross(at(tri[2]) - at(tri[0]));
+            if face.length_squared() < 1e-12 {
+                continue;
+            }
+            faces += 1;
+            inward += usize::from(face.dot(normal(tri[0]) + normal(tri[1]) + normal(tri[2])) < 0.0);
+        }
+        if inward * 1000 > faces {
+            wrong.push(format!("{name}: {inward} of {faces} faces wind away from their normals"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

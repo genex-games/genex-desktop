@@ -67,13 +67,36 @@ pub const SHOTS: [Shot; 5] = [
     Shot { name: "closeup", eye: vec3(-30.0, 0.55, -2.0), target: vec3(-14.0, 1.1, -6.0), fovy: 42.0 },
 ];
 
+/// Lakeside v2's shots (renderer pass 2, plan section 6), after pass 1's five (kept for continuity;
+/// the tour flies through those only): a wide golden hour over the lake into the low sun, a shore
+/// close-up crouched on the east beach's pebbles, looking along the waterline with the sun behind,
+/// the forest floor looking into the sun through the trunks and the cabin's lamplit room from its
+/// back corner (the table lamp, the hearth and the sun through the open door; a reflection probe
+/// and an irradiance volume over the room). 6–9 hold them.
+pub const V2_SHOTS: [Shot; 4] = [
+    Shot { name: "golden-wide", eye: vec3(-44.0, 13.0, -14.0), target: vec3(8.0, 0.0, 6.0), fovy: 52.0 },
+    Shot { name: "shore", eye: vec3(27.0, 0.9, -2.0), target: vec3(8.0, 0.3, -14.0), fovy: 46.0 },
+    Shot { name: "forest-floor", eye: vec3(-24.0, 0.6, -44.0), target: vec3(-8.0, 2.4, -32.0), fovy: 56.0 },
+    Shot { name: "cabin-interior", eye: vec3(-7.675, 1.8, -23.673), target: vec3(-9.688, 1.05, -19.598), fovy: 60.0 },
+];
+
+/// Every named shot: pass 1's five, then Lakeside v2's.
+pub fn named_shots() -> impl Iterator<Item = &'static Shot> {
+    SHOTS.iter().chain(V2_SHOTS.iter())
+}
+
+/// Named shot `i` ([`named_shots`] order; past the last, the last).
+pub fn shot_at(i: usize) -> &'static Shot {
+    named_shots().nth(i).unwrap_or(&V2_SHOTS[V2_SHOTS.len() - 1])
+}
+
 /// How the camera moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum CameraMode {
     /// The slow fly-through of every shot (the default).
     #[default]
     Tour,
-    /// One fixed shot ([`SHOTS`]).
+    /// One fixed shot ([`named_shots`]).
     Shot(usize),
     /// The free camera.
     Free,
@@ -84,7 +107,7 @@ impl CameraMode {
     pub fn label(self) -> &'static str {
         match self {
             CameraMode::Tour => "tour",
-            CameraMode::Shot(i) => SHOTS[i.min(SHOTS.len() - 1)].name,
+            CameraMode::Shot(i) => shot_at(i).name,
             CameraMode::Free => "free",
         }
     }
@@ -203,6 +226,9 @@ pub struct Models {
     pub pine: Vec<Vec<TreeMeshes>>,
     /// Rock variants.
     pub rock: Vec<Model>,
+    /// The beach's pebbles and the path's stones, scattered on the terrain's layers
+    /// ([`crate::draw::stone_groups`]): one retained instance group per rock variant and kind.
+    pub stones: Vec<genex::InstanceGroup>,
     /// A unit cylinder (radius 0.5, height 1 from y 0).
     pub cylinder: Model,
     /// A unit sphere (radius 1) with smooth normals.
@@ -280,15 +306,18 @@ impl Models {
                 .map(|lod| TreeMeshes { wood: assets.model(&tree_asset(pine, variant, *lod, false)), foliage: assets.model(&tree_asset(pine, variant, *lod, true)) })
                 .collect()
         };
+        let rock: Vec<Model> = (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect();
+        let surfaces = crate::draw::Surfaces::new();
         Models {
             terrain: Some(terrain()),
             broadleaf: (0..3).map(|v| tree(false, v)).collect(),
             pine: (0..2).map(|v| tree(true, v)).collect(),
-            rock: (0..3).map(|i| assets.model(&format!("rock-{i}.glb"))).collect(),
+            stones: crate::draw::stone_groups(&terrain(), &rock, &surfaces),
+            rock,
             cylinder: assets.model("cylinder.glb"),
             sphere: assets.model("sphere.glb"),
             parts: crate::draw::Parts::load(assets),
-            surfaces: crate::draw::Surfaces::new(),
+            surfaces,
         }
     }
 }
@@ -329,7 +358,7 @@ impl World {
     pub fn camera(&self) -> Camera {
         match self.mode {
             CameraMode::Tour => tour(self.seconds()),
-            CameraMode::Shot(i) => SHOTS[i.min(SHOTS.len() - 1)].camera(),
+            CameraMode::Shot(i) => shot_at(i).camera(),
             CameraMode::Free => {
                 let free = &self.free;
                 Camera { fovy: 50.0, ..Camera::look_at(free.eye, free.eye + free.forward()) }
@@ -379,13 +408,13 @@ fn tapped_scene(world: &World, ctx: &Ctx<'_>) -> bool {
     ctx.touches.all().iter().filter(ended).any(|touch| !on_hud(touch.position))
 }
 
-/// One tick: the clock, the camera keys (1–5 a shot, Space the tour, F the free camera, H the HUD,
+/// One tick: the clock, the camera keys (1–9 a shot, Space the tour, F the free camera, H the HUD,
 /// O the graphics panel; a tap on the scene steps to the next shot), the backdrop (B) and the free
 /// camera's flight.
 pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     world.tick = ctx.tick + 1;
     let before = world.mode;
-    let digits = [Key::Digit1, Key::Digit2, Key::Digit3, Key::Digit4, Key::Digit5];
+    let digits = [Key::Digit1, Key::Digit2, Key::Digit3, Key::Digit4, Key::Digit5, Key::Digit6, Key::Digit7, Key::Digit8, Key::Digit9];
     if let Some(shot) = digits.iter().position(|key| ctx.keys.pressed(*key)) {
         world.mode = CameraMode::Shot(shot);
     }
@@ -408,7 +437,7 @@ pub fn update(world: &mut World, ctx: &Ctx<'_>) {
     }
     if tapped_scene(world, ctx) && world.mode != CameraMode::Free {
         world.mode = match world.mode {
-            CameraMode::Shot(i) if i + 1 < SHOTS.len() => CameraMode::Shot(i + 1),
+            CameraMode::Shot(i) if i + 1 < SHOTS.len() + V2_SHOTS.len() => CameraMode::Shot(i + 1),
             CameraMode::Shot(_) => CameraMode::Tour,
             _ => CameraMode::Shot(0),
         };

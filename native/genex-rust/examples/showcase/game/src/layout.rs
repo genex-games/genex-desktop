@@ -593,6 +593,7 @@ mod tests {
     fn the_lake_holds_water_and_the_cabin_stands_on_dry_ground() {
         assert!(height(LAKE_CENTER.x, LAKE_CENTER.y) < WATER_LEVEL - 1.5);
         assert!(height(CABIN.x, CABIN.y) > WATER_LEVEL + 1.0);
-        assert_eq!(surface(LAKE_CENTER.x, LAKE_CENTER.y), Surface::Bed);
+        // The lake's middle is the terrain's lake-bed layer (the last of `TERRAIN_LAYERS`).
+        assert_eq!(usize::from(terrain_texel(LAKE_CENTER.x, LAKE_CENTER.y).control().base()), TERRAIN_LAYERS - 1);
     }
 }
