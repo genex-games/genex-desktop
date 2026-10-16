@@ -20,6 +20,7 @@ import {
   panelHeight,
 } from "./panel-bridge.ts";
 import { PluginApproval } from "./PluginApproval.tsx";
+import { answerCustomizationRequest, isCustomizationRequest } from "./plugin-customization-request.ts";
 
 /** The longest request id a panel may use, and how many requests it may have in flight. */
 const REQUEST_ID_MAX = 80;
@@ -68,6 +69,8 @@ async function answerRequest(
   if (m.method === PanelMethod.Context)
     return panelContext(host.project, getComputedStyle(window.document.documentElement), host.surface);
   if (m.method === PanelMethod.Settings) return await window.studio.pluginSettings(host.id);
+  if (isCustomizationRequest(m.method))
+    return await answerCustomizationRequest(m.method, m.args, host.plugin, window.studio, host.id);
   // Checked here before it leaves the renderer, and again in main before the picker opens.
   if (m.method === PanelMethod.ChooseFile)
     return await window.studio.pluginChooseFile(host.id, pluginFileRequest(m.args));

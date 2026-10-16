@@ -265,6 +265,8 @@ const FIXTURE_SAFE = [
   "studio:plugins.panel",
   "studio:plugins.settings",
   "studio:plugins.setting",
+  "studio:plugins.customization",
+  "studio:plugins.customization-set",
   "studio:plugins.review",
   "studio:plugins.action",
   // Publish's file list: the same export Export makes, into the profile's scratch, then removed.

@@ -7400,3 +7400,41 @@ p.usage-divider {
     animation: none;
   }
 }
+
+/* A plugin can fill this box only. Its source label stays in host-owned UI. */
+.new-chat-plugin {
+  margin-top: 16px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+.new-chat-plugin-source {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  color: var(--muted-foreground);
+  font-size: var(--t-xs);
+  border-bottom: 1px solid var(--border);
+}
+.new-chat-plugin-source span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.new-chat-plugin-content {
+  overflow: hidden;
+  contain: layout paint;
+}
+
+.appearance-native-editors {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.appearance-native-editors:disabled {
+  opacity: 0.65;
+}

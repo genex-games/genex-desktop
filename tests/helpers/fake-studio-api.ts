@@ -32,6 +32,8 @@ const METHODS = [
   "pluginPanel",
   "pluginSettings",
   "pluginSetSetting",
+  "pluginCustomization",
+  "pluginSetCustomization",
   "pluginReview",
   "pluginAction",
   "pluginChooseFile",

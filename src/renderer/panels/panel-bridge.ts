@@ -4,6 +4,7 @@
  */
 import { errorMessage, isUserCancelled } from "../../shared/errors.ts";
 import { PanelErrorCode, PLUGIN_API_VERSION } from "../../shared/plugins.ts";
+import { PLUGIN_CUSTOMIZATION_VERSION } from "../../shared/plugin-customization.ts";
 
 /** Reads one CSS custom property, as `getComputedStyle` does. */
 export type StyleReader = { getPropertyValue(name: string): string };
@@ -46,6 +47,7 @@ export function panelContext(
     },
     apiVersion: PLUGIN_API_VERSION,
     surface,
+    features: { uiCustomization: PLUGIN_CUSTOMIZATION_VERSION },
   };
 }
 

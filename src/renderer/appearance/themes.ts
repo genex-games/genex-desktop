@@ -1,5 +1,9 @@
 /** Profile-local appearance data. No CSS, scripts, extensions or file includes are evaluated. */
 import { channels, fromOklch, oklch, rgbHex } from "../../shared/oklch.ts";
+import { COLOR_ROLES } from "../../shared/theme-palette.ts";
+import { contrastRatio, luminance } from "../../shared/color-contrast.ts";
+import { isPluginId } from "../../shared/plugin-id.ts";
+export { COLOR_ROLES, contrastRatio, luminance };
 /** A colour scheme: every theme has a light side and a dark side. */
 export const Scheme = {
   Light: "light",
@@ -13,22 +17,6 @@ export const AppearanceMode = {
   Dark: Scheme.Dark,
 } as const;
 export type AppearanceMode = (typeof AppearanceMode)[keyof typeof AppearanceMode];
-export const COLOR_ROLES = [
-  "background",
-  "foreground",
-  "surface",
-  "sidebar",
-  "popover",
-  "field",
-  "hover",
-  "muted",
-  "border",
-  "controlBorder",
-  "accent",
-  "success",
-  "warning",
-  "danger",
-] as const;
 export type ColorRole = (typeof COLOR_ROLES)[number];
 /**
  * Play's tinted families (people.css): the profile chips and edit button, the tint buttons (Invite,
@@ -265,6 +253,8 @@ export type Appearance = {
   contentFont: "inherit" | "system" | "serif" | "mono";
   codeFont: "geist" | "system";
   saved: ThemePreset[];
+  /** Selected plugin theme, never a request to change the light/dark mode. */
+  pluginTheme?: string;
 };
 
 function preset(id: string, name: string, scheme: Scheme, values: string[], details: Details = {}): ThemePreset {
@@ -693,6 +683,7 @@ export function normalizeAppearance(value: unknown): Appearance {
   return {
     version: 1,
     mode,
+    ...(isPluginId(raw.pluginTheme) ? { pluginTheme: raw.pluginTheme } : {}),
     light: selectionOf(raw.light, Scheme.Light, saved),
     dark: selectionOf(raw.dark, Scheme.Dark, saved),
     saved,
@@ -727,16 +718,6 @@ function coreOf(palette: Palette): Palette {
 export function resolveScheme(mode: AppearanceMode, systemDark: boolean): Scheme {
   if (mode !== AppearanceMode.System) return mode;
   return systemDark ? Scheme.Dark : Scheme.Light;
-}
-type Rgb = [number, number, number];
-export function luminance(color: string): number {
-  const [r, g, b] = channels(color).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)) as Rgb;
-  return r * 0.2126 + g * 0.7152 + b * 0.0722;
-}
-export function contrastRatio(a: string, b: string): number {
-  const x = luminance(a),
-    y = luminance(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 export function onColor(color: string): string {
   return contrastRatio(color, "#ffffff") >= contrastRatio(color, "#000000") ? "#ffffff" : "#000000";

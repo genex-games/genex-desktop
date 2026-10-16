@@ -105,6 +105,8 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   }));
   handle("studio:plugins.settings", async (p) => core.plugins.settings(p.id));
   handle("studio:plugins.setting", async (p) => core.plugins.setSetting(p.id, p.key, p.value));
+  handle("studio:plugins.customization", async (p) => core.plugins.customization(p.id));
+  handle("studio:plugins.customization-set", async (p) => core.plugins.setCustomization(p.id, p.profile));
   handle("studio:plugins.review", async (p) => {
     const info = await core.plugins.review(p.id, p.name, p.args, await core.pluginBinding(p.project));
     const words = reviewWords(info);

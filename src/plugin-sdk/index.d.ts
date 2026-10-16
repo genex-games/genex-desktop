@@ -88,6 +88,7 @@ export type PluginScalar = string | number | boolean;
 
 /** Host services a manifest may declare. `export` is API 2. */
 export type PluginCapability =
+  | "ui.customization"
   | "settings"
   | "project.read"
   | "project.write"
@@ -829,8 +830,46 @@ export interface PluginActivation {
 /** The backend module's single export. */
 export type Activate = (host: PluginHost) => PluginActivation | Promise<PluginActivation>;
 
+/** Native palette roles; every theme supplies all roles in both schemes as #RRGGBB. */
+export type CustomizationColorRole =
+  | "background"
+  | "foreground"
+  | "surface"
+  | "sidebar"
+  | "popover"
+  | "field"
+  | "hover"
+  | "muted"
+  | "border"
+  | "controlBorder"
+  | "accent"
+  | "success"
+  | "warning"
+  | "danger";
+/** One theme offer, selected by the person in Settings > Appearance. No light/dark override. */
+export interface PluginTheme {
+  name: string;
+  light: Record<CustomizationColorRole, string>;
+  dark: Record<CustomizationColorRole, string>;
+  geometry?: { buttonRadius?: number; cardRadius?: number };
+  fonts?: {
+    uiFont?: "studio" | "system";
+    contentFont?: "inherit" | "system" | "serif" | "mono";
+    codeFont?: "geist" | "system";
+  };
+}
+/** Version 1: one readable theme and one declared settings panel in the New Chat slot. */
+export interface PluginCustomization {
+  version: 1;
+  theme?: PluginTheme;
+  /** Content height 96–240px; the host owns its labelled box and position. */
+  newChat?: { panel: string; height: number };
+}
+
 /** What `studioPlugin.call('context')` answers inside a panel frame. */
 export interface PluginPanelContext {
+  /** Absent on older hosts. Feature discovery is separate from the general SDK version. */
+  features?: { uiCustomization?: 1 };
   project: string | null;
   apiVersion: PluginApiVersion;
   theme: {
@@ -886,6 +925,10 @@ export interface StudioPluginUi {
  * preload: there is no `window.studio`, no `require` and no direct IPC.
  */
 export interface StudioPluginPanel {
+  /** Requires ui.customization. Reads or changes only this panel's plugin profile. */
+  call(method: "customization.read"): Promise<PluginCustomization | null>;
+  call(method: "customization.set", name: undefined, args: PluginCustomization): Promise<void>;
+  call(method: "customization.reset"): Promise<void>;
   /** Host context changed; re-read status. No secrets are included in notifications. */
   onContextChanged(callback: () => void): () => void;
   call(method: "context"): Promise<PluginPanelContext>;
