@@ -1,6 +1,7 @@
 {
   "about": "Explicit edges for scripts/affected-tests.mjs, for inputs no test imports or names by a literal path. Keys use knowledge-map glob semantics (dir/** also owns hidden files); values are test files. Tier follows the test: rig tests land in L3. Changes under src/harness-seed/** and src/game-template/** already select the harness gate; do not repeat that here.",
   "map": {
+    "src/main/smoke/run-smoke.ts": ["tests/conformance/smoke-reload.test.ts"],
     ".github/workflows/check.yml": ["tests/conformance/ci-test-plan.test.ts"],
     "src/main/preview.ts": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],
     "src/page/**": ["tests/conformance/page-shim.test.ts", "tests/conformance/page-serve.test.ts"],

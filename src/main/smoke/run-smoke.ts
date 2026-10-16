@@ -24,6 +24,7 @@ import type { StudioCore } from "../studio-core.ts";
 import type { DelegateRequest, DelegateResult, Engine } from "../../substrate/engines/types.ts";
 import { COMPUTER_SMOKE_GAME, COMPUTER_SMOKE_WEBGPU_GAME } from "./fixture-games.ts";
 import type { SmokeReadGates } from "./read-gates.ts";
+import { reloadAndWait } from "./reload.ts";
 import { sleep, waitFor as waitUntil } from "./wait.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { expectedStatusFlag, flagValue, hasFlag, StudioFlag } from "../dev/launch-flags.ts";
@@ -562,6 +563,8 @@ interface BuildSmoke extends Smoke {
   append(eventType: string, payload: Record<string, unknown>): Promise<unknown>;
   /** Poll an expression in the window until it is true; false on timeout. */
   waitFor(expression: string, timeoutMs?: number): Promise<boolean>;
+  /** Open the game's chat from home through its sidebar row. */
+  openChat(): Promise<boolean>;
 }
 
 /** What the interrupt checks leave for the Stop checks: the sheet probe and the recorded cancels. */
@@ -629,7 +632,6 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
   });
   const append = async (event_type: string, payload: Record<string, unknown>) =>
     core.append([{ type: EventKind.Custom, event_type, payload: { runId, ...payload } }], threadId);
-  await wc.executeJavaScript(`localStorage.setItem("studio.activeThread", ${JSON.stringify(threadId)})`);
   await wc.executeJavaScript(
     `localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)}, "codex::gpt-5.6-sol")`,
   );
@@ -643,18 +645,31 @@ async function startBuildSmoke(smoke: Smoke): Promise<BuildSmoke> {
       },
       { timeoutMs, intervalMs: WINDOW_POLL_MS },
     );
-  return { ...smoke, project, threadId, runId, append, waitFor };
+  const openChat = () => openBuildChat({ wc, waitFor, threadId });
+  return { ...smoke, project, threadId, runId, append, waitFor, openChat };
+}
+
+/** Every load opens home; select the game's chat without depending on retired persisted navigation. */
+async function openBuildChat({
+  wc,
+  waitFor,
+  threadId,
+}: Pick<BuildSmoke, "wc" | "waitFor" | "threadId">): Promise<boolean> {
+  const row = `nav [data-thread=${JSON.stringify(threadId)}]`;
+  if (!(await waitFor(`!!document.querySelector(${JSON.stringify(row)})`))) return false;
+  await wc.executeJavaScript(`document.querySelector(${JSON.stringify(row)})?.click()`);
+  return waitFor(`document.querySelector('[data-studio-state]')?.dataset.activeThread===${JSON.stringify(threadId)}`);
 }
 
 /** Delayed and failed IPC reads: empty data and unavailable data must never look alike. */
 async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
-  const { wc, check, waitFor } = buildSmoke;
+  const { wc, check, waitFor, openChat } = buildSmoke;
   const { smokeReads } = buildSmoke.ctx;
   // Delay actual IPC reads; empty data and unavailable data must never look alike.
   // Faults persist until the explicit retry: StrictMode may replay mount reads,
   // so a one-shot rejection can be consumed by an already-disposed effect.
   smokeReads.failBootstrap = true;
-  wc.reload();
+  await reloadAndWait(wc, BUILD_WAIT_MS);
   check(
     "bootstrap failure lifts the startup loader and offers Retry instead of empty games",
     await waitFor(
@@ -662,7 +677,8 @@ async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
     ),
   );
   smokeReads.failBootstrap = false;
-  let releaseBootstrap!: () => void, releaseThread!: () => void;
+  let releaseBootstrap = () => {};
+  let releaseThread = () => {};
   smokeReads.bootstrap = new Promise<void>((resolve) => {
     releaseBootstrap = resolve;
   });
@@ -680,11 +696,14 @@ async function checkReadGates(buildSmoke: BuildSmoke): Promise<void> {
   );
   releaseBootstrap();
   smokeReads.bootstrap = undefined;
+  // Home mounts an empty chat without loading a thread; exercise the game's pending read instead.
+  const opened = await openChat();
   check(
     "games can load while the chat is still pending",
-    await waitFor(
-      `!document.body.innerText.includes('Could not load games and chats.')&&!!document.querySelector('[aria-label="Loading conversation…"]')&&!!document.querySelector('nav [data-project]')`,
-    ),
+    opened &&
+      (await waitFor(
+        `!document.body.innerText.includes('Could not load games and chats.')&&!!document.querySelector('[aria-label="Loading conversation…"]')&&!!document.querySelector('nav [data-project]')`,
+      )),
   );
   smokeReads.failThread = true;
   releaseThread();
@@ -797,7 +816,7 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
 
 /** A game chat picks its builder and judge, and the choice survives a reload. */
 async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
-  const { wc, check, threadId, waitFor } = buildSmoke;
+  const { wc, check, threadId, waitFor, openChat } = buildSmoke;
   await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
   await waitFor(`!!document.querySelector('[data-chat-composer] [aria-label="Model settings"]')`);
   await wc.executeJavaScript(`document.querySelector('[aria-label="Model settings"]')?.click()`);
@@ -816,10 +835,12 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.removeItem('studio.roles.codex');localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'bonsai::bonsai-2:27b-pq2_0')`,
   );
-  wc.reload();
+  await reloadAndWait(wc, BUILD_WAIT_MS);
+  const bonsaiOpened = await openChat();
   check(
     "Bonsai selection restores on reload",
-    await waitFor(`document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Bonsai')`),
+    bonsaiOpened &&
+      (await waitFor(`document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Bonsai')`)),
   );
   await wc.executeJavaScript(`document.querySelector('[aria-label="Model settings"]')?.click()`);
   await waitFor(`!!document.querySelector('[data-model-view="roles"] [data-role="judge"]')`);
@@ -837,12 +858,14 @@ async function checkChatModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},'codex::gpt-5.6-sol')`,
   );
-  wc.reload();
+  await reloadAndWait(wc, BUILD_WAIT_MS);
+  const codexOpened = await openChat();
   check(
     "returning to Codex preserves the project",
-    await waitFor(
-      `document.body.innerText.includes('Ready for your first idea')&&document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Sol')`,
-    ),
+    codexOpened &&
+      (await waitFor(
+        `document.body.innerText.includes('Ready for your first idea')&&document.querySelector('[aria-label="Model settings"]')?.textContent.includes('Sol')`,
+      )),
   );
 }
 
@@ -893,14 +916,12 @@ async function checkLocalModelRoles(buildSmoke: BuildSmoke): Promise<void> {
 
 /** Reload on a model for the game's chat, open that chat itself and its model menu. */
 async function openGameChatOn(buildSmoke: BuildSmoke, modelKey: string, shown: string): Promise<void> {
-  const { wc, threadId, waitFor } = buildSmoke;
+  const { wc, threadId, waitFor, openChat } = buildSmoke;
   await wc.executeJavaScript(
     `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));localStorage.setItem(${JSON.stringify(`studio.model.${threadId}`)},${JSON.stringify(modelKey)})`,
   );
-  wc.reload();
-  // Open the game's chat itself: the reload is not relied on to land there.
-  await waitFor(`!!document.querySelector('nav [data-thread="${threadId}"]')`);
-  await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
+  await reloadAndWait(wc, BUILD_WAIT_MS);
+  if (!(await openChat())) throw new Error(MESSAGE.missing("the game's chat after reload"));
   await waitFor(
     `document.querySelector('[data-chat-composer] [aria-label="Model settings"]')?.textContent.includes(${JSON.stringify(shown)})`,
   );
