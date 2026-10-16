@@ -419,6 +419,17 @@ function suggestedCandidate(candidates: GameCandidate[]): string | null {
   return null;
 }
 
+/** The flags a game's library entry adds to its listing: still provisional, its scaffold stamp, waiting for a first build. */
+function presentationFlags(
+  entry: GameLibraryEntry | undefined,
+): Pick<GameProject, "provisional" | "scaffoldStamp" | "awaitingFirstBuild"> {
+  return {
+    ...(entry?.provisional ? { provisional: true } : {}),
+    ...(entry?.scaffoldStamp ? { scaffoldStamp: entry.scaffoldStamp } : {}),
+    ...(entry?.awaitingFirstBuild ? { awaitingFirstBuild: true } : {}),
+  };
+}
+
 export class GameWorkspaces {
   /** Where new games are created and the folder listed as the library. `changeRoot` moves it. */
   root: string;
@@ -1036,7 +1047,7 @@ export class GameWorkspaces {
       pinned: presentation?.pinned ?? false,
       cover: presentation?.cover,
       lastOpenedAt: this.#recents.find((row) => row.name === name)?.openedAt,
-      ...(presentation?.provisional ? { provisional: true } : {}),
+      ...presentationFlags(presentation),
       createdAt: parsed.createdAt ?? "",
       pathLabel: this.pathLabel(dir),
       library: isInside(this.root, dir),
@@ -1050,8 +1061,6 @@ export class GameWorkspaces {
       ...(portedFrom.length > 0 ? { portedFrom } : {}),
       ...(scaffold ? { scaffold: { plugin: scaffold.plugin, id: scaffold.id, label: scaffold.label } } : {}),
       web: hasFact(facts, CoreFact.WebGame, "."),
-      ...(presentation?.scaffoldStamp ? { scaffoldStamp: presentation.scaffoldStamp } : {}),
-      ...(presentation?.awaitingFirstBuild ? { awaitingFirstBuild: true } : {}),
       ...((await usesGenexMultiplayer(dir)) ? { multiplayer: true } : {}),
     };
   }
