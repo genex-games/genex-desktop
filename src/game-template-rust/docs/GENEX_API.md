@@ -667,7 +667,10 @@ but its frame stays on the legacy LDR scene (`material-v1-in-hdr` in `degraded`)
 The look's fog reaches a v2 material and particles as it reaches a built-in surface (`gx_shade_pbr`
 applies it; call `gx_apply_fog` on linear radiance only for a surface shaded its own way), and
 under the physical sky the air's aerial perspective with it (`fog_aerial_perspective = false`
-turns that off).
+turns that off). On desktop and web `high` and `ultra` the fog is a lit volume: the sun's shadows
+carve shafts out of it and local lights glow in it, for built-in surfaces, transparents, v2
+materials (through `gx_shade_pbr`) and particles alike. A Level-3 pass applying the fog from its
+tables (`fog_color`, `fog_params`) draws the plain height fog, without shafts.
 
 Shaders under TAA: a v2 material and a v2 pass in the world draw through `gx_frame.view_proj`,
 which carries the jitter, so they line up with the scene; `inv_view_proj` is its inverse (the depth

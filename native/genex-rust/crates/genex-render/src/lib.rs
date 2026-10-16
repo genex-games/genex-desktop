@@ -144,6 +144,9 @@ pub mod foliage;
 pub mod prepass;
 /// Height and distance fog matched to the sky: its GPU row and CPU reference.
 pub mod fog;
+/// Froxel volumetric fog and sun shafts (renderer pass 2 A.5): the height fog as a lit volume on
+/// `high` and `ultra`, bound in the aerial perspective's place.
+pub mod froxel;
 
 // --- RQ5: motion vectors, TAA, the FSR1 upscaler (RQ5.0 registers every RQ5 module; TAA and the
 // upscaler are `post` nodes, `post::taa` and `post::fsr`, whose shaders their modules hold until

@@ -45,9 +45,14 @@ const BACKDROP_FOG_FLAT_EXPONENT: f32 = 1e-2;
 const BACKDROP_FOG_EXPONENT_LIMIT: f32 = 60.0;
 const BACKDROP_FOG_HORIZON_SLOPE: f32 = 0.02;
 // The sun lobe's Henyey-Greenstein asymmetry, its share of the sun's radiance and the band (sine
-// of elevation) over which it sets (lighting/fog.wgsl's GX_FOG_SUN_*).
+// of elevation) over which it sets (lighting/fog.wgsl's GX_FOG_SUN_*; owner decision D13: a third
+// weaker than pass 1's 1/2, its colour a third of the way to the sun's luminance).
 const BACKDROP_FOG_SUN_G: f32 = 0.6;
-const BACKDROP_FOG_SUN_SHARE: f32 = 0.5;
+const BACKDROP_FOG_SUN_SHARE: f32 = 1.0 / 3.0;
+const BACKDROP_FOG_SUN_DESATURATE: f32 = 1.0 / 3.0;
+const BACKDROP_FOG_LUMINANCE: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+// lighting/fog.wgsl's GX_FOG_SUN_SIDE_CUT (D13).
+const BACKDROP_FOG_SUN_SIDE_CUT: f32 = 0.5;
 const BACKDROP_FOG_SET_BAND: f32 = 0.04;
 
 fn backdrop_fog_exp(x: f32) -> f32 {
@@ -106,7 +111,25 @@ fn backdrop_fog_sun_lobe(dir: vec3<f32>) -> vec3<f32> {
     let denominator = max(1.0 + g2 - 2.0 * BACKDROP_FOG_SUN_G * dot(dir, sun), 1e-4);
     let phase = (1.0 - g2) / (4.0 * BACKDROP_PI * denominator * sqrt(denominator));
     let up = smoothstep(-BACKDROP_FOG_SET_BAND, 0.0, sun.y);
-    return frame.sun_color.rgb * (up * BACKDROP_FOG_SUN_SHARE * phase);
+    let lobe_color = mix(frame.sun_color.rgb, vec3<f32>(dot(frame.sun_color.rgb, BACKDROP_FOG_LUMINANCE)), BACKDROP_FOG_SUN_DESATURATE);
+    return lobe_color * (up * BACKDROP_FOG_SUN_SHARE * phase);
+}
+
+// The Henyey-Greenstein phase of the sun's lobe at `cos_theta` (lighting/fog.wgsl's `gx_fog_phase`).
+fn backdrop_fog_phase(cos_theta: f32) -> f32 {
+    let g2 = BACKDROP_FOG_SUN_G * BACKDROP_FOG_SUN_G;
+    let denominator = max(1.0 + g2 - 2.0 * BACKDROP_FOG_SUN_G * cos_theta, 1e-4);
+    return (1.0 - g2) / (4.0 * BACKDROP_PI * denominator * sqrt(denominator));
+}
+
+// The map's horizon light `horizon_light`, read along `horizon_dir` for the ray along `dir`, as the
+// fog scatters it (lighting/fog.wgsl's `gx_fog_sky_light`, D13).
+fn backdrop_fog_sky_light(horizon_light: vec3<f32>, horizon_dir: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    let sun = normalize(frame.sun_dir.xyz);
+    let up = smoothstep(-BACKDROP_FOG_SET_BAND, 0.0, sun.y);
+    let nearer = backdrop_fog_phase(dot(horizon_dir, sun)) - backdrop_fog_phase(dot(dir, sun));
+    let cut = BACKDROP_FOG_SUN_SIDE_CUT * up * max(nearer, 0.0) / backdrop_fog_phase(1.0);
+    return mix(horizon_light, vec3<f32>(dot(horizon_light, BACKDROP_FOG_LUMINANCE)), cut) * (1.0 - cut);
 }
 
 // `radiance` seen through the fog towards unit `dir`: blended into the map's colour at the horizon
@@ -124,7 +147,8 @@ fn backdrop_fogged(radiance: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec3<f32> {
     let azimuth = select(vec2<f32>(0.0, 1.0), dir.xz / around, around > 1e-6);
     let horizon_dir = normalize(vec3<f32>(azimuth.x, BACKDROP_FOG_HORIZON_SLOPE, azimuth.y));
     let horizon = backdrop_radiance(horizon_dir, lod + BACKDROP_FOG_LOD_BIAS);
-    return radiance * (1.0 - opacity) + frame.fog_color.rgb * (horizon + backdrop_fog_sun_lobe(dir)) * opacity;
+    let inscatter = backdrop_fog_sky_light(horizon, horizon_dir, dir) + backdrop_fog_sun_lobe(dir);
+    return radiance * (1.0 - opacity) + frame.fog_color.rgb * inscatter * opacity;
 }
 
 @fragment

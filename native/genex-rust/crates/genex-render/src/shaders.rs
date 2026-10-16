@@ -260,6 +260,8 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("bloom-down", BLOOM_DOWN),
     ("bloom-up", BLOOM_UP),
     ("aerial-perspective", AERIAL_PERSPECTIVE),
+    // Renderer pass 2 A.5: the froxel fog's inject and integrate kernels.
+    ("froxel-fog", crate::froxel::FROXEL_FOG),
     ("gtao", GTAO),
     ("ao-denoise", AO_DENOISE),
     ("contact-shadow", CONTACT_SHADOW),

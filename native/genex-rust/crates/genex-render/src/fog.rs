@@ -15,10 +15,12 @@
 //!   horizon colour plus the same lobe (and the HDR map's backdrop with the map's horizon plus the
 //!   lobe), so the fog is one colour on geometry and on the sky behind it, towards the sun too
 //!   (SI-03);
-//! - on medium and above [`AerialPerspective`] writes Hillaire's camera-space volume (32³
-//!   `rgba16float`, graph node 11): the sky's in-scatter and transmittance between the camera and
-//!   a point `AERIAL_RANGE × w²` away along each pixel's ray, which the chunk applies
-//!   (`gx_apply_aerial`) before the height fog;
+//! - on medium and above [`AerialPerspective`] writes Hillaire's camera-space volume (32 x 32 x
+//!   64 `rgba16float`, graph node 11): the sky's in-scatter and its transmittance per channel
+//!   (renderer pass 2 SI-04, [`AIR_HALVES`]) between the camera and the point at slice coordinate
+//!   `w` along each pixel's ray ([`aerial_slice_distance`], shared with the froxel fog), which the
+//!   chunk applies (`gx_apply_air`) before the height fog; on high and ultra the froxel fog
+//!   ([`crate::froxel`]) folds that volume into its own and binds it in its place;
 //! - particles fog through the same model (`particles_draw.wgsl`'s `*_fogged` entries).
 //!
 //! The lighting chunks read the fog through `gx_fog()`: the Level-2 v2 prelude from GxFrameV2 (its
@@ -59,8 +61,19 @@ pub const HORIZON_SLOPE: f32 = 0.02;
 pub const ENV_ROUGHNESS: f32 = 0.0;
 /// The sun lobe's Henyey-Greenstein asymmetry (`GX_FOG_SUN_G`).
 const SUN_G: f32 = 0.6;
-/// The sun lobe's share of the sun's radiance (`GX_FOG_SUN_SHARE`).
-const SUN_SHARE: f32 = 0.5;
+/// The sun lobe's share of the sun's radiance (`GX_FOG_SUN_SHARE`): owner decision D13 cut pass 1's
+/// 1/2 by a third, so the warm veil towards a low sun keeps the ground under it.
+const SUN_SHARE: f32 = 1.0 / 3.0;
+/// How far the sun lobe's colour moves from the sun's towards the sun's luminance
+/// (`GX_FOG_SUN_DESATURATE`, D13: a third less warm).
+const SUN_DESATURATE: f32 = 1.0 / 3.0;
+/// The share of the sun's aureole the horizon read sees beyond the ray's own angle to the sun that
+/// the in-scatter cuts, in strength and in warmth (`GX_FOG_SUN_SIDE_CUT`, D13): the sky is read at
+/// the horizon in the ray's azimuth whatever its slope, so a ray looking down at sunlit ground
+/// towards a low sun took the aureole as if it looked at the horizon (the golden hour's warm veil).
+pub const SUN_SIDE_CUT: f32 = 0.5;
+/// Rec. 709 luminance weights (`GX_FOG_LUMINANCE`).
+const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
 /// The band, in the sine of elevation, over which the sun sets (`GX_FOG_SET_BAND`).
 const SET_BAND: f32 = 0.04;
 /// How far the sky background's fog reaches along its ray, world units (`SKY_FOG_REACH` in
@@ -69,9 +82,24 @@ pub const SKY_REACH: f32 = 50_000.0;
 
 /// Slices, rows and columns of the aerial-perspective volume.
 pub const AERIAL_SIDE: u32 = 32;
+/// Depth of every air volume bound at the forward pass's `aerial_perspective` slot (renderer pass 2
+/// SI-04): two halves of its slices, the in-scatter (rgb; a: 1 where the volume holds the height
+/// fog too, the froxel fog's, [`crate::froxel`]) in front and the transmittance per channel (rgb)
+/// behind, slice for slice. A Rayleigh sky dims blue far more than red, so a grey mean left far
+/// geometry blue-grey instead of warm at a low sun. The aerial volume is 32 x 32 x 64.
+pub const AIR_HALVES: u32 = 2;
+/// The aerial-perspective volume's texture depth: [`AERIAL_SIDE`] slices per half.
+pub const AERIAL_DEPTH: u32 = AERIAL_SIDE * AIR_HALVES;
 /// The farthest slice's distance along its ray, world units (`GX_FOG_AERIAL_RANGE`,
 /// `AERIAL_RANGE` in `aerial_perspective.wgsl`).
 pub const AERIAL_RANGE: f32 = 32_000.0;
+/// Where the air volumes' slices turn from even to logarithmic steps, world units
+/// (`GX_AIR_NEAR`): the slice coordinate is `log2(1 + d / near) / log2(1 + range / near)`, so the
+/// aerial volume and the froxel fog (renderer pass 2 A.5) share one mapping, dense near the camera
+/// where shafts are seen (half the slices inside 360 m, a 64-slice volume's slices 15% deep there)
+/// and out to [`AERIAL_RANGE`] for the sky's own haze. The forward pass reads either volume through
+/// the same lookup.
+pub const AIR_NEAR: f32 = 4.0;
 /// The volume's format: `rgba16float`, write-only storage in compute (core).
 pub const AERIAL_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 /// Marching steps inside each slice (`AERIAL_SLICE_STEPS`).
@@ -222,25 +250,67 @@ pub fn sun_up(sun_y: f32) -> f32 {
 pub fn inscatter_env(fog: &GpuFog, sky: [f32; 3], dir: [f32; 3], sun_dir: [f32; 3], sun_color: [f32; 3]) -> [f32; 3] {
     let cos_theta = dir[0] * sun_dir[0] + dir[1] * sun_dir[1] + dir[2] * sun_dir[2];
     let share = SUN_SHARE * sun_phase(cos_theta) * sun_up(sun_dir[1]);
-    [0, 1, 2].map(|c| fog.color[c] * (sky[c] + sun_color[c] * share))
+    let lobe = sun_lobe_color(sun_color);
+    let sky = sun_side_sky(sky, horizon_direction(dir), dir, sun_dir);
+    [0, 1, 2].map(|c| fog.color[c] * (sky[c] + lobe[c] * share))
+}
+
+/// How much of the sky's light read along the unit horizon direction `horizon` for the ray along
+/// unit `dir` the in-scatter cuts (`gx_fog_sun_side`, D13): [`SUN_SIDE_CUT`] of how much nearer
+/// the sun's lobe the read is than the ray (each the lobe's phase over its peak), none once the sun
+/// has set. A ray along the horizon keeps its light.
+pub fn sun_side_cut(horizon: [f32; 3], dir: [f32; 3], sun_dir: [f32; 3]) -> f32 {
+    let cos = |v: [f32; 3]| v[0] * sun_dir[0] + v[1] * sun_dir[1] + v[2] * sun_dir[2];
+    let nearer = (sun_phase(cos(horizon)) - sun_phase(cos(dir))).max(0.0);
+    SUN_SIDE_CUT * sun_up(sun_dir[1]) * nearer / sun_phase(1.0)
+}
+
+/// The sky's light `sky`, read along `horizon` for the ray along `dir`, as the fog scatters it
+/// (`gx_fog_sky_light`, D13): the cut share weaker and moved as far towards its luminance.
+pub fn sun_side_sky(sky: [f32; 3], horizon: [f32; 3], dir: [f32; 3], sun_dir: [f32; 3]) -> [f32; 3] {
+    let cut = sun_side_cut(horizon, dir, sun_dir);
+    let luminance = sky[0] * LUMINANCE[0] + sky[1] * LUMINANCE[1] + sky[2] * LUMINANCE[2];
+    sky.map(|c| (c + (luminance - c) * cut) * (1.0 - cut))
+}
+
+/// The colour of the sun's lobe for the sun's radiance `sun_color` as it reaches the ground: a third
+/// of the way to its luminance (`gx_fog_sun_color`, D13), the sun's hue with less of its warmth.
+pub fn sun_lobe_color(sun_color: [f32; 3]) -> [f32; 3] {
+    let luminance = sun_color[0] * LUMINANCE[0] + sun_color[1] * LUMINANCE[1] + sun_color[2] * LUMINANCE[2];
+    sun_color.map(|c| c + (luminance - c) * SUN_DESATURATE)
 }
 
 /// The fog's colour in the aerial-perspective volume's texel `(rgb in-scatter, a transmittance)`:
-/// `color × a + rgb` (`gx_apply_aerial`).
+/// `color × a + rgb` (`gx_apply_aerial`, the grey form a Level-2 v2 shader may still call).
 pub fn apply_aerial(color: [f32; 3], aerial: [f32; 4]) -> [f32; 3] {
     [0, 1, 2].map(|c| color[c] * aerial[3] + aerial[c])
 }
 
-/// The distance along its ray of the volume's slice coordinate `w` (`0..=1`): the square of `w`
-/// over [`AERIAL_RANGE`], dense near the camera.
-pub fn aerial_slice_distance(w: f32) -> f32 {
-    let w = w.clamp(0.0, 1.0);
-    AERIAL_RANGE * w * w
+/// `color` seen through the air: `color × transmittance + inscatter`, per channel
+/// (`gx_apply_air`).
+pub fn apply_air(color: [f32; 3], inscatter: [f32; 3], transmittance: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|c| color[c] * transmittance[c] + inscatter[c])
 }
 
-/// The volume's slice coordinate of the point `distance` along its ray (`gx_aerial_uvw`'s z).
+/// `log2(1 + range / near)`: the slice mapping's span (`GX_AIR_SPAN`).
+fn air_span() -> f32 {
+    libm::log2f(1.0 + AERIAL_RANGE / AIR_NEAR)
+}
+
+/// The distance along its ray of an air volume's slice coordinate `w` (`0..=1`): even steps inside
+/// [`AIR_NEAR`], logarithmic past it, [`AERIAL_RANGE`] at 1 (`gx_air_slice` inverted).
+pub fn aerial_slice_distance(w: f32) -> f32 {
+    let w = w.clamp(0.0, 1.0);
+    if w >= 1.0 {
+        return AERIAL_RANGE;
+    }
+    AIR_NEAR * (libm::exp2f(w * air_span()) - 1.0)
+}
+
+/// An air volume's slice coordinate of the point `distance` along its ray (`gx_aerial_uvw`'s z,
+/// `gx_air_slice`).
 pub fn aerial_slice_coordinate(distance: f32) -> f32 {
-    libm::sqrtf((distance / AERIAL_RANGE).clamp(0.0, 1.0))
+    (libm::log2f(1.0 + distance.max(0.0) / AIR_NEAR) / air_span()).clamp(0.0, 1.0)
 }
 
 /// The volume coordinate of `world` seen from `camera` through `view_proj` (column-major, wgpu's
@@ -320,7 +390,7 @@ impl AerialPerspective {
     pub fn new(device: &Device) -> Result<AerialPerspective, RenderError> {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aerial perspective"),
-            size: wgpu::Extent3d { width: AERIAL_SIDE, height: AERIAL_SIDE, depth_or_array_layers: AERIAL_SIDE },
+            size: wgpu::Extent3d { width: AERIAL_SIDE, height: AERIAL_SIDE, depth_or_array_layers: AERIAL_DEPTH },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D3,
@@ -343,7 +413,8 @@ impl AerialPerspective {
         Ok(AerialPerspective { texture, view, layout, pipeline })
     }
 
-    /// The volume as a sampled 3D view (rgb in-scatter, a transmittance).
+    /// The volume as a sampled 3D view: in-scatter (rgb) in front of the transmittance (rgb), slice
+    /// for slice ([`AIR_HALVES`]).
     pub fn view(&self) -> &TextureView {
         &self.view
     }

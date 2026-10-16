@@ -243,7 +243,12 @@ const LOOK_FOG_HORIZON_RISE: f32 = 0.02;
 // lighting/fog.wgsl's GX_FOG_ENV_ROUGHNESS, through the cube's perceptual mip mapping.
 const LOOK_FOG_ENV_ROUGHNESS: f32 = 0.0;
 const LOOK_FOG_SUN_G: f32 = 0.6;
-const LOOK_FOG_SUN_SHARE: f32 = 0.5;
+// lighting/fog.wgsl's GX_FOG_SUN_SHARE and GX_FOG_SUN_DESATURATE (genex's D13 golden-hour cut: the
+// lobe a third weaker, its colour a third of the way to the sun's luminance).
+const LOOK_FOG_SUN_SHARE: f32 = 1.0 / 3.0;
+const LOOK_FOG_SUN_DESATURATE: f32 = 1.0 / 3.0;
+const LOOK_FOG_LUMINANCE: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+const LOOK_FOG_SUN_SIDE_CUT: f32 = 0.5;
 const LOOK_FOG_FLAT: f32 = 1e-2;
 const LOOK_FOG_EXPONENT_LIMIT: f32 = 60.0;
 
@@ -286,7 +291,15 @@ fn look_fog_light(dir: vec3<f32>) -> vec3<f32> {
     let g2 = LOOK_FOG_SUN_G * LOOK_FOG_SUN_G;
     let denominator = max(1.0 + g2 - 2.0 * LOOK_FOG_SUN_G * dot(dir, sun), 1e-4);
     let phase = (1.0 - g2) / (4.0 * PI * denominator * sqrt(denominator));
-    return tint * (sky + gx_frame.sun_color.rgb * (sun_up * LOOK_FOG_SUN_SHARE * phase));
+    let lobe_color = mix(gx_frame.sun_color.rgb, vec3<f32>(dot(gx_frame.sun_color.rgb, LOOK_FOG_LUMINANCE)), LOOK_FOG_SUN_DESATURATE);
+    // genex's `gx_fog_sky_light` (D13): the aureole the horizon read sees beyond the ray's own angle
+    // to the sun, cut (the lobe's phase at the read less the ray's, over its peak).
+    let toward = max(1.0 + g2 - 2.0 * LOOK_FOG_SUN_G * dot(horizon, sun), 1e-4);
+    let peak = (1.0 - LOOK_FOG_SUN_G) * (1.0 - LOOK_FOG_SUN_G);
+    let nearer = pow(peak / toward, 1.5) - pow(peak / denominator, 1.5);
+    let cut = LOOK_FOG_SUN_SIDE_CUT * sun_up * max(nearer, 0.0);
+    let sky_light = mix(sky, vec3<f32>(dot(sky, LOOK_FOG_LUMINANCE)), cut) * (1.0 - cut);
+    return tint * (sky_light + lobe_color * (sun_up * LOOK_FOG_SUN_SHARE * phase));
 }
 
 // `color` (linear radiance) seen through the look's fog between the camera and `world`.

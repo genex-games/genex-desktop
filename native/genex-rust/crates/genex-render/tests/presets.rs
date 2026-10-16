@@ -674,16 +674,22 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // Pass 2 B.7 flips the high and ultra rows (named in the log): the sun-shadow screen mask's
         // raw, two state and mask targets, 28 bytes a render pixel: +103_219_200 at 1440p (was
         // 283_121_652 and 614_289_268) and +58_060_800 at 1080p (was 178_781_532).
-        ("desktop-high", QualityPreset::High, (2560, 1440), false, 386_340_852),
-        ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 174_743_784),
-        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 717_508_468),
+        // Pass 2 A.5 flips the rows with the aerial volume and the high and ultra rows (named in the
+        // log): the aerial volume holds its transmittance per channel behind its in-scatter (SI-04,
+        // 32 x 32 x 64, +262_144 on every medium, high and ultra row), and the froxel fog's four
+        // volumes (high 112 x 63 x 64: +14_450_688; ultra 160 x 90 x 64: +29_491_200). Was
+        // 386_340_852, 174_743_784, 717_508_468, 236_842_332, 31_627_308, 56_238_172 and
+        // 99_462_748.
+        ("desktop-high", QualityPreset::High, (2560, 1440), false, 401_053_684),
+        ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 175_005_928),
+        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 747_261_812),
         ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
-        ("desktop-high", QualityPreset::High, (1920, 1080), false, 236_842_332),
-        ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_627_308),
+        ("desktop-high", QualityPreset::High, (1920, 1080), false, 251_555_164),
+        ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_889_452),
         ("mobile-mid", QualityPreset::Low, (824, 1830), true, 20_668_292),
         ("mobile-mid", QualityPreset::Low, (1080, 2400), true, 33_231_356),
-        ("mobile-mid", QualityPreset::High, (1179, 2556), true, 56_238_172),
-        ("mobile-mid", QualityPreset::High, (1179, 2556), false, 99_462_748),
+        ("mobile-mid", QualityPreset::High, (1179, 2556), true, 56_500_316),
+        ("mobile-mid", QualityPreset::High, (1179, 2556), false, 99_724_892),
         ("mobile-low", QualityPreset::Low, (824, 1830), true, 18_281_716),
     ];
     for (wire, preset, output, transient, bytes) in rows {
@@ -755,7 +761,9 @@ fn mobile_mid_high_on_an_iphone_panel_degrades_in_the_documented_order_to_fit_96
     // P2-0.13 flipped (was 127_186_828; named in the log): the bloom chain is sized from the
     // output (a 166 x 360 top on this portrait panel, seven mips for five, and its 332 x 720
     // pre-level), and its rung halves that resolution (was bloom mips 5 -> 4).
-    assert_eq!(total(&quality, &at), 126_143_132, "over the 96 MB class budget");
+    // Pass 2 A.5 flipped (was 126_143_132 and 92_316_700 fitted; named in the log): +262_144, the
+    // aerial volume's transmittance half (SI-04); same steps.
+    assert_eq!(total(&quality, &at), 126_405_276, "over the 96 MB class budget");
     let fitted = fit(&quality, &at, class_defaults(mobile_mid).budget_bytes, DegradeMode::Boot);
     let step = |rung, from, to| DegradeStep { rung, from, to };
     assert_eq!(
@@ -770,7 +778,7 @@ fn mobile_mid_high_on_an_iphone_panel_degrades_in_the_documented_order_to_fit_96
         "transient MSAA saves nothing to drop, AO is already off: bloom, shadows, IBL, materials"
     );
     assert!(fitted.fits);
-    assert_eq!(fitted.total_bytes, 92_316_700, "P2-0.13 flipped (was 95_262_540): the output-sized chain, then its rung");
+    assert_eq!(fitted.total_bytes, 92_578_844, "P2-0.13 flipped (was 95_262_540): the output-sized chain, then its rung");
     assert_eq!(fitted.materials, vec![MaterialClass { size_px: 256, layers: 64 }, MaterialClass { size_px: 256, layers: 16 }]);
     assert_eq!(fitted.quality.anti_aliasing, AntiAliasing::Msaa4, "tile MSAA kept");
     assert_eq!(fitted.quality.shadows.cascades, 2, "cascades come last and were not needed");
@@ -841,10 +849,12 @@ fn boot_degrades_drop_msaa_first_when_it_saves_memory() {
     // P2-0.13 flipped (was 185_041_480; named in the log): +15_022_112 bytes, the bloom chain sized
     // from the 1440p output (960 x 540, seven mips) and its 1920 x 1080 pre-level for the render
     // size's (1088 x 612, five).
-    assert_eq!(total(&quality, &at), 200_063_592);
+    // Pass 2 A.5 flipped (was 200_063_592 and 114_834_024; named in the log): +262_144, the aerial
+    // volume's transmittance half (SI-04).
+    assert_eq!(total(&quality, &at), 200_325_736);
     let fitted = fit(&quality, &at, 128 * MIB, DegradeMode::Boot);
     assert_eq!(fitted.steps, vec![DegradeStep { rung: DegradeRung::Msaa, from: 4, to: 1 }]);
-    assert_eq!((fitted.total_bytes, fitted.quality.anti_aliasing), (114_834_024, AntiAliasing::Off));
+    assert_eq!((fitted.total_bytes, fitted.quality.anti_aliasing), (115_096_168, AntiAliasing::Off));
 }
 
 #[test]
@@ -855,6 +865,7 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
             DegradeRung::ShadowFormat,
             DegradeRung::Msaa,
             DegradeRung::SunMask,
+            DegradeRung::FroxelFog,
             DegradeRung::Ao,
             DegradeRung::BloomResolution,
             DegradeRung::SpotShadows,
@@ -889,12 +900,16 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // step instead (it was [shadow-format, taa-history, ao, ao] at 258_537_444 bytes, no AA).
     // Pass 2 B.7 flipped (named in the log): ultra's sun-shadow screen mask (28 bytes a pixel,
     // 103_219_200 at 1440p) is given up first among the resource rungs, then the same steps to the
-    // same total (it was [shadow-format, ao, ao, bloom-resolution, shadow-size]).
+    // same total (it was [shadow-format, ao, ao, bloom-resolution, shadow-size]). Pass 2 A.5
+    // flipped (named in the log): ultra's froxel fog (29_491_200 bytes) is given up right after the
+    // mask, then the same steps (it was [shadow-format, sun-mask, ao, ao, bloom-resolution,
+    // shadow-size]).
     assert_eq!(
         boot.steps,
         vec![
             step(DegradeRung::ShadowFormat, 32, 16),
             step(DegradeRung::SunMask, 1, 0),
+            step(DegradeRung::FroxelFog, 64, 0),
             step(DegradeRung::Ao, 2, 1),
             step(DegradeRung::Ao, 1, 0),
             step(DegradeRung::BloomResolution, 540, 270),
@@ -906,7 +921,9 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // P2-0.13 flipped (was 254_072_084 after three bloom-mips steps; named in the log): the chain is
     // sized from the 1440p output with its pre-level, and its rung halves the resolution once (540
     // -> 270 rows).
-    assert_eq!(boot.total_bytes, 249_808_244, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
+    // Pass 2 A.5 flipped (was 249_808_244; named in the log): +262_144, the aerial volume's
+    // transmittance half (SI-04); the froxel fog's volumes are given up.
+    assert_eq!(boot.total_bytes, 250_070_388, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
     assert!(boot.quality.anti_aliasing.temporal(), "ultra keeps TAA");
     // At runtime the shadow format and TAA rungs are closed: the resource rungs step after the
     // boot ladder's. RQ5.6 flipped (named in the log): TAA draws one sample, not MSAA 4x, so the
@@ -915,9 +932,11 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     let runtime = fit(&ultra, &at, 256 * MIB, DegradeMode::Runtime);
     // Pass 2 B.7 flipped (named in the log): the sun-mask rung is a resource rung, so the runtime
     // ladder takes it too (it compared steps[..2] with the boot's [1..3]).
-    assert_eq!(runtime.steps[..3], boot.steps[1..4], "the boot ladder without its pipeline rungs, then further");
+    // Pass 2 A.5 flipped (named in the log): the froxel-fog rung is a resource rung too (it compared
+    // steps[..3] with the boot's [1..4]).
+    assert_eq!(runtime.steps[..4], boot.steps[1..5], "the boot ladder without its pipeline rungs, then further");
     assert_eq!(
-        runtime.steps[3..],
+        runtime.steps[4..],
         [
             step(DegradeRung::BloomResolution, 540, 270),
             step(DegradeRung::ShadowSize, 4096, 2048),
@@ -931,7 +950,8 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // P2-0.11 flipped (was 233_219_332; named in the log): + 4_075_536 bytes, as the boot total.
     // P2-0.13 flipped (was 237_294_868 after three bloom-mips steps; named in the log): one bloom
     // resolution step on the output-sized chain.
-    assert_eq!((runtime.total_bytes, runtime.fits), (233_031_028, true));
+    // Pass 2 A.5 flipped (was 233_031_028; named in the log): +262_144, as the boot total.
+    assert_eq!((runtime.total_bytes, runtime.fits), (233_293_172, true));
     // A game that uses shadowed spots reserves the atlas, and its own rung gives the spots up
     // before the sun's cascades are halved for their memory.
     let spotted = at.clone().with_spot_atlas(true);

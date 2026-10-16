@@ -2174,6 +2174,9 @@ impl<'a> WorldNodes<'a> {
                 // Renderer pass 2 A.3: the reflection probes' captures, lit by the bake just made.
                 let probe_passes = renderer.encode_probes(frame, self.prep);
                 self.count_passes(frame, probe_passes);
+                // Renderer pass 2 A.5: the froxel fog, after the aerial volume it folds in.
+                let froxel_passes = renderer.encode_froxels(frame, self.prep);
+                self.count_passes(frame, froxel_passes);
                 // A new bake or this frame's aerial-perspective volume: the world pass binds them.
                 self.baked_groups = Some(renderer.current_groups());
             }

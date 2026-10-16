@@ -44,9 +44,14 @@ const SKY_FOG_FLAT_EXPONENT: f32 = 1e-2;
 const SKY_FOG_EXPONENT_LIMIT: f32 = 60.0;
 const SKY_FOG_HORIZON_SLOPE: f32 = 0.02;
 // The sun lobe's Henyey-Greenstein asymmetry, its share of the sun's radiance and the band (sine
-// of elevation) over which it sets (lighting/fog.wgsl's GX_FOG_SUN_*).
+// of elevation) over which it sets (lighting/fog.wgsl's GX_FOG_SUN_*; owner decision D13: a third
+// weaker than pass 1's 1/2, its colour a third of the way to the sun's luminance).
 const SKY_FOG_SUN_G: f32 = 0.6;
-const SKY_FOG_SUN_SHARE: f32 = 0.5;
+const SKY_FOG_SUN_SHARE: f32 = 1.0 / 3.0;
+const SKY_FOG_SUN_DESATURATE: f32 = 1.0 / 3.0;
+const SKY_FOG_LUMINANCE: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+// lighting/fog.wgsl's GX_FOG_SUN_SIDE_CUT (D13).
+const SKY_FOG_SUN_SIDE_CUT: f32 = 0.5;
 const SKY_FOG_SET_BAND: f32 = 0.04;
 
 fn sky_fog_exp(x: f32) -> f32 {
@@ -163,8 +168,18 @@ fn sky_fog_phase(cos_theta: f32) -> f32 {
 // `gx_fog_inscatter` lobe): the sun as it reaches the ground at `height` km, setting with the sun.
 fn sky_fog_sun_lobe(dir: vec3<f32>, sun: vec3<f32>, height: f32) -> vec3<f32> {
     let ground_sun = frame.sun_color.rgb * sky_transmittance(height, sun.y);
+    let lobe_color = mix(ground_sun, vec3<f32>(dot(ground_sun, SKY_FOG_LUMINANCE)), SKY_FOG_SUN_DESATURATE);
     let up = smoothstep(-SKY_FOG_SET_BAND, 0.0, sun.y);
-    return ground_sun * (up * SKY_FOG_SUN_SHARE * sky_fog_phase(dot(dir, sun)));
+    return lobe_color * (up * SKY_FOG_SUN_SHARE * sky_fog_phase(dot(dir, sun)));
+}
+
+// The horizon's light `horizon_light`, read along `horizon_dir` for the ray along `dir`, as the fog
+// scatters it (lighting/fog.wgsl's `gx_fog_sky_light`, D13).
+fn sky_fog_sky_light(horizon_light: vec3<f32>, horizon_dir: vec3<f32>, dir: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
+    let up = smoothstep(-SKY_FOG_SET_BAND, 0.0, sun.y);
+    let nearer = sky_fog_phase(dot(horizon_dir, sun)) - sky_fog_phase(dot(dir, sun));
+    let cut = SKY_FOG_SUN_SIDE_CUT * up * max(nearer, 0.0) / sky_fog_phase(1.0);
+    return mix(horizon_light, vec3<f32>(dot(horizon_light, SKY_FOG_LUMINANCE)), cut) * (1.0 - cut);
 }
 
 // `radiance` seen through the fog towards unit `dir`: blended into the sky-view LUT's colour at the
@@ -182,7 +197,7 @@ fn sky_fogged(radiance: vec3<f32>, dir: vec3<f32>, sun: vec3<f32>, height: f32) 
     let azimuth = select(vec2<f32>(0.0, 1.0), dir.xz / around, around > 1e-6);
     let horizon_dir = normalize(vec3<f32>(azimuth.x, SKY_FOG_HORIZON_SLOPE, azimuth.y));
     let horizon = textureSampleLevel(sky_view, lut_sampler, sky_view_uv(horizon_dir, sun, height), 0.0).rgb;
-    let inscatter = horizon + sky_fog_sun_lobe(dir, sun, height);
+    let inscatter = sky_fog_sky_light(horizon, horizon_dir, dir, sun) + sky_fog_sun_lobe(dir, sun, height);
     return radiance * (1.0 - opacity) + frame.fog_color.rgb * inscatter * opacity;
 }
 

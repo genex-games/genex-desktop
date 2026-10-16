@@ -75,27 +75,43 @@ struct ParticleFog {
 @group(0) @binding(1) var<uniform> particle_fog: ParticleFog;
 @group(0) @binding(2) var particle_env_specular: texture_cube<f32>;
 @group(0) @binding(3) var particle_env_sampler: sampler;
-// The aerial-perspective volume (RQ4 review): rgb in-scatter, a transmittance, over view-space
-// froxels; a texel of no air (0, 0, 0, 1) where node 11 does not write it, which leaves the colour
-// as it is bit for bit. The HDR entry hazes the billboard's centre as the forward pass hazes an
-// opaque surface (lighting/fog.wgsl's `gx_aerial_froxel` and forward_effects.wgsl's
-// `gx_aerial_at`).
+// The air volume (RQ4 review; renderer pass 2 SI-04 and A.5): node 11's aerial perspective, or on
+// froxel presets the froxel fog with the aerial folded in, in the split layout (fog.rs
+// `AIR_HALVES`: in-scatter in front, its alpha 1 where the volume holds the height fog;
+// transmittance per channel behind); one texel deep where neither runs (no air, the colour as it is
+// bit for bit). The HDR entry hazes the billboard's centre as the forward pass hazes an opaque
+// surface (lighting/fog.wgsl's `gx_aerial_froxel` and `gx_air_sample`).
 @group(0) @binding(4) var particle_aerial: texture_3d<f32>;
 
-// lighting/fog.wgsl's `GX_FOG_AERIAL_RANGE` and the volume's side (fog::AERIAL_SIDE).
+// lighting/fog.wgsl's `GX_FOG_AERIAL_RANGE` and `GX_AIR_NEAR`.
 const PARTICLE_AERIAL_RANGE: f32 = 32000.0;
-const PARTICLE_AERIAL_SIDE: f32 = 32.0;
+const PARTICLE_AIR_NEAR: f32 = 4.0;
 
-// The aerial-perspective volume's texel at `world`.
-fn particle_aerial_at(world: vec3<f32>) -> vec4<f32> {
+// The air at `world` (lighting/fog.wgsl's `GxAir`, `gx_air_sample`).
+struct ParticleAir {
+    inscatter: vec3<f32>,
+    transmittance: vec3<f32>,
+    holds_fog: bool,
+}
+
+fn particle_air_at(world: vec3<f32>) -> ParticleAir {
+    let size = textureDimensions(particle_aerial);
+    if size.z < 2u {
+        return ParticleAir(vec3<f32>(0.0), vec3<f32>(1.0), false);
+    }
     let clip = frame.view_proj * vec4<f32>(world, 1.0);
     let ndc = clip.xy / max(abs(clip.w), 1e-6);
     let uv = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-    let uvw = vec3<f32>(uv, sqrt(clamp(length(world - frame.camera_pos.xyz) / PARTICLE_AERIAL_RANGE, 0.0, 1.0)));
-    let half = 0.5 / PARTICLE_AERIAL_SIDE;
-    let air = textureSampleLevel(particle_aerial, particle_env_sampler, clamp(uvw, vec3<f32>(half), vec3<f32>(1.0 - half)), 0.0);
-    let f = clamp(uvw.z / half, 0.0, 1.0);
-    return vec4<f32>(air.rgb * f, 1.0 - (1.0 - air.a) * f);
+    let span = log2(1.0 + PARTICLE_AERIAL_RANGE / PARTICLE_AIR_NEAR);
+    let w = clamp(log2(1.0 + length(world - frame.camera_pos.xyz) / PARTICLE_AIR_NEAR) / span, 0.0, 1.0);
+    let depth = f32(size.z);
+    let edge = 0.5 / vec2<f32>(size.xy);
+    let xy = clamp(uv, edge, vec2<f32>(1.0) - edge);
+    let z = clamp(w * 0.5, 0.5 / depth, 0.5 - 0.5 / depth);
+    let front = textureSampleLevel(particle_aerial, particle_env_sampler, vec3<f32>(xy, z), 0.0);
+    let back = textureSampleLevel(particle_aerial, particle_env_sampler, vec3<f32>(xy, z + 0.5), 0.0);
+    let f = clamp(w * depth, 0.0, 1.0);
+    return ParticleAir(front.rgb * f, vec3<f32>(1.0) - (vec3<f32>(1.0) - back.rgb) * f, front.a > 0.5);
 }
 
 const PARTICLE_FOG_CLEAR_DEPTH: f32 = 1e-7;
@@ -103,7 +119,13 @@ const PARTICLE_FOG_FLAT_EXPONENT: f32 = 1e-2;
 const PARTICLE_FOG_EXPONENT_LIMIT: f32 = 60.0;
 const PARTICLE_FOG_HORIZON_SLOPE: f32 = 0.02;
 const PARTICLE_FOG_SUN_G: f32 = 0.6;
-const PARTICLE_FOG_SUN_SHARE: f32 = 0.5;
+// The sun lobe's share and how far its colour moves to the sun's luminance (lighting/fog.wgsl's
+// GX_FOG_SUN_SHARE and GX_FOG_SUN_DESATURATE, owner decision D13).
+const PARTICLE_FOG_SUN_SHARE: f32 = 1.0 / 3.0;
+const PARTICLE_FOG_SUN_DESATURATE: f32 = 1.0 / 3.0;
+const PARTICLE_FOG_LUMINANCE: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+// lighting/fog.wgsl's GX_FOG_SUN_SIDE_CUT (D13).
+const PARTICLE_FOG_SUN_SIDE_CUT: f32 = 0.5;
 const PARTICLE_FOG_SET_BAND: f32 = 0.04;
 const PARTICLE_FOG_PI: f32 = 3.14159265358979;
 
@@ -157,14 +179,26 @@ fn particle_fog_inscatter(dir: vec3<f32>) -> vec3<f32> {
     // The frame's sun is already the sun as it reaches the ground (lighting/fog.wgsl): never
     // reddened by a second air mass here.
     let sun_up = smoothstep(-PARTICLE_FOG_SET_BAND, 0.0, sun.y);
-    let lobe = frame.sun_color.rgb * (sun_up * PARTICLE_FOG_SUN_SHARE * phase);
-    return tint * (particle_env_radiance(horizon) + lobe);
+    let lobe_color = mix(frame.sun_color.rgb, vec3<f32>(dot(frame.sun_color.rgb, PARTICLE_FOG_LUMINANCE)), PARTICLE_FOG_SUN_DESATURATE);
+    let lobe = lobe_color * (sun_up * PARTICLE_FOG_SUN_SHARE * phase);
+    // The aureole the horizon read sees beyond the ray's own angle to the sun, cut (lighting/fog.wgsl's
+    // `gx_fog_sky_light`, D13): the lobe's phase at the read less the ray's, over its peak.
+    let toward = max(1.0 + g2 - 2.0 * PARTICLE_FOG_SUN_G * dot(horizon, sun), 1e-4);
+    let peak = (1.0 - PARTICLE_FOG_SUN_G) * (1.0 - PARTICLE_FOG_SUN_G);
+    let nearer = pow(peak / toward, 1.5) - pow(peak / denominator, 1.5);
+    let cut = PARTICLE_FOG_SUN_SIDE_CUT * sun_up * max(nearer, 0.0);
+    let sky = particle_env_radiance(horizon);
+    return tint * (mix(sky, vec3<f32>(dot(sky, PARTICLE_FOG_LUMINANCE)), cut) * (1.0 - cut) + lobe);
 }
 
-// `color` (linear) seen through the fog between the camera and `world`.
-fn particle_apply_fog(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+// `color` (linear) seen through the fog between the camera and `world` is `color * terms.a +
+// terms.rgb` for these terms: rgb the in-scatter times the fog's opacity, a one minus the opacity
+// ((0, 0, 0, 1) without fog). Taken once per billboard, at its centre, by the vertex stage
+// (renderer pass 2 A.11: the same fog for a fraction of a big puff's fragment work).
+fn particle_fog_terms(world: vec3<f32>) -> vec4<f32> {
+    let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     if particle_fog.color.a <= 0.0 {
-        return color;
+        return clear;
     }
     let origin = frame.camera_pos.xyz;
     let to_particle = world - origin;

@@ -621,6 +621,12 @@ pub struct SkyState {
     aerial: Option<crate::fog::AerialPerspective>,
     /// Whether node 11 wrote the volume this frame (the forward pass binds it only then).
     aerial_ready: bool,
+    /// The froxel fog (renderer pass 2 A.5, [`crate::froxel`]), made on the first frame that asks
+    /// for it (again when the grid changes).
+    froxels: Option<crate::froxel::FroxelFog>,
+    /// Whether node 11 wrote the froxel fog this frame: it is then bound in the aerial volume's
+    /// place.
+    froxels_ready: bool,
 }
 
 /// What the backdrop of an HDR map needs from the frame: the uploaded map's view and the
@@ -798,14 +804,62 @@ impl SkyState {
         passes
     }
 
-    /// Start a frame: the aerial-perspective volume counts only once node 11 writes it again.
+    /// Start a frame: the aerial-perspective volume and the froxel fog count only once node 11
+    /// writes them again.
     pub fn begin_frame(&mut self) {
         self.aerial_ready = false;
+        self.froxels_ready = false;
     }
 
-    /// The aerial-perspective volume node 11 wrote this frame (None: it did not run).
+    /// The air volume the forward pass binds in its aerial slot this frame: the froxel fog where
+    /// node 11 drew it (the aerial volume folded in), else the aerial-perspective volume where it
+    /// wrote that (None: neither ran).
     pub fn aerial_view(&self) -> Option<&TextureView> {
+        let froxels = self.froxels.as_ref().filter(|_| self.froxels_ready).map(crate::froxel::FroxelFog::view);
+        froxels.or_else(|| self.sky_aerial_view())
+    }
+
+    /// The aerial-perspective volume node 11 wrote this frame, without the froxel fog (None: it did
+    /// not run): what the froxel fog folds in.
+    pub fn sky_aerial_view(&self) -> Option<&TextureView> {
         self.aerial.as_ref().filter(|_| self.aerial_ready).map(crate::fog::AerialPerspective::view)
+    }
+
+    /// Node 11's froxel fog of `grid` for `frame` (renderer pass 2 A.5), after the aerial volume
+    /// (`inputs.aerial`, which it folds in): bound in the aerial slot from now on this frame. The
+    /// compute passes it opened (none when its shaders are refused, logged once).
+    pub fn encode_froxels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        (grid, inputs, frame): (crate::froxel::FroxelGrid, &crate::froxel::FroxelInputs<'_>, &crate::froxel::FroxelFrame),
+    ) -> PassCounters {
+        if self.froxels.as_ref().is_none_or(|froxels| froxels.grid() != grid) {
+            match crate::froxel::FroxelFog::new(device, grid) {
+                Ok(froxels) => self.froxels = Some(froxels),
+                Err(error) => {
+                    log::warn!("froxel fog is off: {error}");
+                    self.froxels = None;
+                    return PassCounters::default();
+                }
+            }
+        }
+        let Some(froxels) = self.froxels.as_mut() else { return PassCounters::default() };
+        let passes = froxels.encode(device, queue, encoder, inputs, frame);
+        self.froxels_ready = true;
+        passes
+    }
+
+    /// Bytes the froxel fog holds (0 before a frame drew it).
+    pub fn froxel_bytes(&self) -> u64 {
+        self.froxels.as_ref().map_or(0, crate::froxel::FroxelFog::bytes)
+    }
+
+    /// Release the froxel fog (a quality without it).
+    pub fn release_froxels(&mut self) {
+        self.froxels = None;
+        self.froxels_ready = false;
     }
 
     /// Node 11's aerial-perspective volume for `ctx` (medium and above, where the fog's look allows

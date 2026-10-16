@@ -256,7 +256,7 @@ fn gx_shade_pbr(surface: GxSurface) -> vec3<f32> {
     var color = gx_ambient(s);
     color += gx_sun(s, sun);
     color = gx_local_lights(color, s);
-    color = gx_apply_fog_aerial(color, s.world_pos, gx_aerial_at(s.world_pos));
+    color = gx_apply_fog_air(color, s.world_pos, gx_air_at(s.world_pos));
     return gx_expose(color);
 }
 
@@ -327,16 +327,16 @@ fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
     return textureLoad(contact_shadow_mask, gx_screen_texel_v2(world_pos, textureDimensions(contact_shadow_mask)), 0).r;
 }
 
-// The volume's slices (fog::AERIAL_SIDE).
-const GX_AERIAL_SIDE_V2: f32 = 32.0;
+// The air at `world_pos` (the forward pass's `gx_air_at`; renderer pass 2 SI-04 and A.5): the
+// volume bound in the aerial slot, in-scatter, transmittance per channel and whether it holds the
+// height fog (the froxel fog's).
+fn gx_air_at(world_pos: vec3<f32>) -> GxAir {
+    return gx_air_sample(aerial_perspective, env_sampler, gx_aerial_froxel(world_pos));
+}
 
-// The aerial-perspective volume's texel at `world_pos` (the forward pass's `gx_aerial_at`):
-// sampled inside half a texel of the edges and faded to no air in front of the first slice.
+// The air at `world_pos` as one grey texel (rgb in-scatter, a the mean transmittance), for shaders
+// written against the grey form (`gx_apply_fog_aerial`).
 fn gx_aerial_at(world_pos: vec3<f32>) -> vec4<f32> {
-    let uvw = gx_aerial_froxel(world_pos);
-    let half = 0.5 / GX_AERIAL_SIDE_V2;
-    let held = clamp(uvw, vec3<f32>(half), vec3<f32>(1.0 - half));
-    let air = textureSampleLevel(aerial_perspective, env_sampler, held, 0.0);
-    let f = clamp(uvw.z / half, 0.0, 1.0);
-    return vec4<f32>(air.rgb * f, 1.0 - (1.0 - air.a) * f);
+    let air = gx_air_at(world_pos);
+    return vec4<f32>(air.inscatter, (air.transmittance.x + air.transmittance.y + air.transmittance.z) / 3.0);
 }

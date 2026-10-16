@@ -13,9 +13,6 @@
 @group(0) @binding(18) var point_sampler: sampler;
 @group(0) @binding(19) var contact_shadow_mask: texture_2d<f32>;
 
-// The volume's slices (fog::AERIAL_SIDE).
-const GX_AERIAL_SIDE: f32 = 32.0;
-
 // Which screen effects the quality draws (the renderer's `SurfaceKey`), one constant each: an
 // accessor whose effect is off answers its neutral value without projecting the position or
 // reading its binding, so a legacy or low frame (fog alone) pays no texture read for AO, contact
@@ -97,28 +94,24 @@ fn gx_sun_screen_shadow(world_pos: vec3<f32>) -> f32 {
     return select(-1.0, texel.g, texel.a < 0.5);
 }
 
-// The aerial-perspective volume's texel at `world_pos`: sampled with the environment's filtering
-// sampler inside half a texel of the edges (so no address mode wraps), and faded to no air in
-// front of the first slice's centre (the air nearer than it is negligible, never a full slice's).
-fn gx_aerial_at(world_pos: vec3<f32>) -> vec4<f32> {
-    let uvw = gx_aerial_froxel(world_pos);
-    let half = 0.5 / GX_AERIAL_SIDE;
-    let held = clamp(uvw, vec3<f32>(half), vec3<f32>(1.0 - half));
-    let air = textureSampleLevel(aerial_perspective, env_sampler, held, 0.0);
-    // Faded towards no air as `in-scatter × f, 1 - (1 - transmittance) × f`: a texel of no air
-    // stays exactly (0, 0, 0, 1), so the colour is untouched bit for bit.
-    let f = clamp(uvw.z / half, 0.0, 1.0);
-    return vec4<f32>(air.rgb * f, 1.0 - (1.0 - air.a) * f);
+// The air at `world_pos` (renderer pass 2 SI-04 and A.5): the air volume bound in the aerial slot
+// (node 11's aerial perspective, or on froxel presets the froxel fog with the aerial folded in; no
+// air where neither ran), read with the environment's filtering sampler (`gx_air_sample`).
+fn gx_air_at(world_pos: vec3<f32>) -> GxAir {
+    return gx_air_sample(aerial_perspective, env_sampler, gx_aerial_froxel(world_pos));
 }
 
-// `color` at `world_pos` seen through the air (the aerial perspective, where the quality draws
-// it) and then the frame's fog (where the quality draws it): `gx_apply_fog_aerial`'s order.
+// `color` at `world_pos` seen through the air (the aerial perspective or the froxel fog, where the
+// quality draws it) and then the frame's height fog (where the quality draws it and the air does not
+// hold it already): `gx_apply_fog_air`'s order.
 fn gx_forward_fog(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     var seen = color;
+    var air = gx_air_none();
     if GX_AERIAL {
-        seen = gx_apply_aerial(seen, gx_aerial_at(world_pos));
+        air = gx_air_at(world_pos);
+        seen = gx_apply_air(seen, air);
     }
-    if GX_FOG {
+    if GX_FOG && !gx_air_holds_fog(air) {
         seen = gx_apply_fog(seen, world_pos);
     }
     return seen;

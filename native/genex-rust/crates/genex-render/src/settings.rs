@@ -443,6 +443,10 @@ pub struct Fog {
     pub color: [f32; 3],
     /// Whether the aerial-perspective volume adds the sky's scattering where the quality has it on.
     pub aerial_perspective: bool,
+    /// Whether the fog is drawn as a lit volume where the quality has the froxel fog on (renderer
+    /// pass 2 A.5): the sun's shadows carve shafts out of it and local lights glow in it. Off, the
+    /// fog is the analytic height fog on every preset.
+    pub volumetric: bool,
 }
 
 /// Bloom's default spread.
@@ -485,6 +489,7 @@ const DEFAULT_FOG: Fog = Fog {
     max_opacity: 1.0,
     color: [1.0; 3],
     aerial_perspective: true,
+    volumetric: true,
 };
 
 impl Default for Fog {
@@ -529,6 +534,12 @@ impl Fog {
     /// The fog with the aerial-perspective volume allowed or not.
     pub fn with_aerial_perspective(mut self, on: bool) -> Fog {
         self.aerial_perspective = on;
+        self
+    }
+
+    /// The fog drawn as a lit volume (sun shafts) where the quality has the froxel fog, or not.
+    pub fn with_volumetric(mut self, on: bool) -> Fog {
+        self.volumetric = on;
         self
     }
 }
@@ -1587,6 +1598,10 @@ pub struct EnvironmentQuality {
     /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
     /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
     pub irradiance_leak_control: bool,
+    /// The froxel fog's grid (renderer pass 2 A.5, [`crate::froxel`]): the height fog lit per
+    /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
+    /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
+    pub froxel_fog: Option<crate::froxel::FroxelGrid>,
 }
 
 /// Local lights.

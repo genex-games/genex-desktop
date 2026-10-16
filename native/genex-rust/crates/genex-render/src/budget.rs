@@ -430,6 +430,15 @@ fn environment_map_bytes(quality: &Quality, width: u32) -> Option<u64> {
     (draws && width > 0).then(|| crate::ibl::map_bytes(width, (width / 2).max(1)))
 }
 
+/// The froxel fog's ledger label (renderer pass 2 A.5).
+pub const FROXEL_FOG_LABEL: &str = "froxel-fog";
+
+/// The froxel fog's grid on `quality`'s HDR scene (renderer pass 2 A.5; a look without fog draws
+/// none, which the ledger does not know, so it counts the quality's).
+fn froxel_grid(quality: &Quality) -> Option<crate::froxel::FroxelGrid> {
+    quality.environment.froxel_fog.filter(|_| quality.hdr && quality.fog && crate::froxel::LANDED)
+}
+
 /// The sky LUT bytes: sky-view, transmittance, multi-scattering and (if on) aerial perspective.
 fn sky_bytes(quality: &Quality) -> Option<[u64; 4]> {
     let environment = &quality.environment;
@@ -437,7 +446,8 @@ fn sky_bytes(quality: &Quality) -> Option<[u64; 4]> {
         return None;
     }
     let (w, h) = environment.sky_lut;
-    let aerial = if environment.aerial_perspective { AERIAL_PX * AERIAL_PX * AERIAL_PX * RGBA16F } else { 0 };
+    // Renderer pass 2 SI-04: two halves, the in-scatter and the transmittance per channel.
+    let aerial = if environment.aerial_perspective { AERIAL_PX * AERIAL_PX * AERIAL_PX * u64::from(crate::fog::AIR_HALVES) * RGBA16F } else { 0 };
     Some([
         u64::from(w) * u64::from(h) * RGBA16F,
         SKY_TRANSMITTANCE.0 * SKY_TRANSMITTANCE.1 * RGBA16F,
@@ -664,6 +674,9 @@ fn register_lighting(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape
             ledger.register(BudgetKind::Ibl, "aerial", aerial);
         }
     }
+    if let Some(grid) = froxel_grid(quality) {
+        ledger.register(BudgetKind::Ibl, FROXEL_FOG_LABEL, grid.bytes());
+    }
 }
 
 /// One rung of the degrade ladder, in its fixed order ([`DegradeRung::ALL`]).
@@ -682,6 +695,10 @@ pub enum DegradeRung {
     /// hides `deviceMemory`, and the inline path draws the same shadows with a little more
     /// still-camera flicker.
     SunMask,
+    /// The froxel fog → the analytic height fog (`from`/`to`: its slices → 0; renderer pass 2
+    /// A.5). Its four volumes (14 MB at `high`, 29 MB at `ultra`) go right after the sun mask:
+    /// the analytic fog draws the same fog, only without shafts.
+    FroxelFog,
     /// TAA → MSAA 4x where MSAA is transient, else no AA (`from`/`to`: history buffers 2 → 0).
     /// Pipeline: boot or explicit only. It comes after the resource rungs (AO, bloom resolution, spot
     /// shadows, shadow and IBL size; RQ5 review): its history pair is a fraction of what they
@@ -709,10 +726,11 @@ pub enum DegradeRung {
 
 impl DegradeRung {
     /// The ladder, in order.
-    pub const ALL: [DegradeRung; 11] = [
+    pub const ALL: [DegradeRung; 12] = [
         DegradeRung::ShadowFormat,
         DegradeRung::Msaa,
         DegradeRung::SunMask,
+        DegradeRung::FroxelFog,
         DegradeRung::Ao,
         DegradeRung::BloomResolution,
         DegradeRung::SpotShadows,
@@ -738,6 +756,7 @@ impl DegradeRung {
             DegradeRung::Msaa => "msaa",
             DegradeRung::TaaHistory => "taa-history",
             DegradeRung::SunMask => "sun-mask",
+            DegradeRung::FroxelFog => "froxel-fog",
             DegradeRung::Ao => "ao",
             DegradeRung::BloomResolution => "bloom-resolution",
             DegradeRung::SpotShadows => "spot-shadows",
@@ -801,6 +820,7 @@ fn step_down(rung: DegradeRung, quality: &mut Quality, materials: &mut [Material
         DegradeRung::Msaa => step_msaa(quality),
         DegradeRung::TaaHistory => step_taa(quality, transient),
         DegradeRung::SunMask => step_sun_mask(quality),
+        DegradeRung::FroxelFog => step_froxel_fog(quality),
         DegradeRung::Ao => step_ao(quality),
         DegradeRung::BloomResolution => step_bloom(quality),
         DegradeRung::SpotShadows => step_spot_shadows(quality),
@@ -854,6 +874,12 @@ fn step_sun_mask(quality: &mut Quality) -> Option<(u32, u32)> {
     }
     quality.shadows.screen_mask = false;
     Some((1, 0))
+}
+
+fn step_froxel_fog(quality: &mut Quality) -> Option<(u32, u32)> {
+    let grid = quality.environment.froxel_fog?;
+    quality.environment.froxel_fog = None;
+    Some((u32::from(grid.slices), 0))
 }
 
 fn step_spot_shadows(quality: &mut Quality) -> Option<(u32, u32)> {
@@ -1109,6 +1135,11 @@ fn lighting_bytes(quality: &Quality, shape: &Shape) -> u64 {
     if let Some([view, _, _, aerial]) = sky_bytes(quality) {
         bytes += 2 * (view + aerial) / u64::from(quality.environment.sky_cadence.max(1));
     }
+    if let Some(grid) = froxel_grid(quality) {
+        // The inject writes a volume and reads the history; the scan reads it and writes the
+        // result's two halves.
+        bytes += grid.froxels() * RGBA16F * (3 + u64::from(crate::fog::AIR_HALVES));
+    }
     bytes
 }
 
@@ -1135,7 +1166,9 @@ fn taps_per_pixel(quality: &Quality, shape: &Shape) -> f32 {
         taps += 3.0;
     }
     if let Some([_, _, _, aerial]) = sky_bytes(quality) {
-        taps += 1.0 + if aerial > 0 { 1.0 } else { 0.0 };
+        // The air volume's two halves (SI-04): one tap each.
+        let air = aerial > 0 || froxel_grid(quality).is_some();
+        taps += 1.0 + if air { f32::from(crate::fog::AIR_HALVES as u8) } else { 0.0 };
     }
     if quality.contact_shadows {
         taps += CONTACT_SHADOW_STEPS / 4.0;

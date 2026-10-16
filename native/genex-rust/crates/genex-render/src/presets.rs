@@ -296,6 +296,7 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         continuous_sky: false,
         irradiance_volumes: 0,
         irradiance_leak_control: true,
+        froxel_fog: None,
     }
 }
 
@@ -383,6 +384,8 @@ fn high_row(quality: &mut Quality) {
     // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
     // sample count; phones keep the time-sliced cycle).
     quality.environment.continuous_sky = true;
+    // A.5: the froxel fog (sun shafts); medium keeps the analytic fog and the aerial volume.
+    quality.environment.froxel_fog = Some(crate::froxel::HIGH_GRID);
     quality.shadows = shadows(3, 2048, ShadowFilter::PcssLite, ShadowFormat::Depth32, &HIGH_REACH);
     quality.contact_shadows = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
@@ -408,6 +411,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
     quality.environment.reflection_probes = PROBES_PER_PRESET[3];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
+    quality.environment.froxel_fog = Some(crate::froxel::ULTRA_GRID);
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
     quality.shadows = shadows(4, map_size, ShadowFilter::Pcss, ShadowFormat::Depth32, &ULTRA_REACH);
     // Three slices of eight steps at full resolution with history. The unbiased estimate (gate
@@ -585,6 +589,9 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     let tier_volumes = MOBILE_VOLUMES_PER_TIER[PerformanceTier::ALL.iter().position(|tier| *tier == class.tier).unwrap_or(0)];
     quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(tier_volumes);
     quality.environment.irradiance_leak_control = false;
+    // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
+    // behind that measurement).
+    quality.environment.froxel_fog = None;
     // Ten passes of Filament's ring gather are a desktop's: phones take Godot's circular gather.
     quality.dof = DofTier::Circular;
     // Phones blur in one pass, and the low-tier phone not at all (the plan's "off on mobile-low").

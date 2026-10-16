@@ -50,9 +50,10 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
 | 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
-| 11 | environment: sky LUTs, IBL bake, irradiance-volume bakes, reflection-probe captures | compute + pass |
+| 11 | environment: sky LUTs and aerial perspective, IBL bake, irradiance-volume bakes, reflection-probe captures, froxel fog | compute + pass |
 | 12-15 | opaque, sky, Level-2 materials and `after-opaque`, transparent | in the world pass |
 | 15a, 16, 17 | Level-3 in-world passes' own motion, reactive mask, MSAA resolve, TAA | pass |
+| 17a, 17b | the look's depth of field and motion blur (`post::dof`, `post::motion_blur`; off by default, on frames with the depth prepass, never on a settled capture unless the shot asks) | pass / compute |
 | 18-21 | `post-hdr`, bloom, exposure, tonemap | pass / compute |
 | 22-25 | upscale, 2D and `ldr` post, HUD (captures), timestamps | pass / queue |
 

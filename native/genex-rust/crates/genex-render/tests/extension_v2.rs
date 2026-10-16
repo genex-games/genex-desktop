@@ -1493,8 +1493,11 @@ fn metal_a_v2_material_under_the_physical_sky_is_hazed_as_the_built_in_surface()
     write_capture_evidence("v2-aerial-clear", &clear);
     let pixels = (SHADOW_ROW_SIZE.0 * SHADOW_ROW_SIZE.1) as usize;
     let differing = |a: &Capture, b: &Capture, by: u8| a.bgra().chunks(4).zip(b.bgra().chunks(4)).filter(|(x, y)| x.iter().zip(y.iter()).take(3).any(|(p, q)| p.abs_diff(*q) > by)).count();
-    let (hazed, apart) = (differing(&built_in, &clear, 1), differing(&built_in, &custom, 1));
-    eprintln!("far ground: the air moves {hazed} of {pixels} pixels by more than a level; the v2 ground differs from the built-in in {apart}");
+    // Any level counts (renderer pass 2 SI-04 flipped this from "more than a level"): with the air's
+    // transmittance per channel the warm ground's red is no longer dimmed by the blue channel's
+    // extinction, so the haze over it is the sky's blue in-scatter alone, one level at 2 km.
+    let (hazed, apart) = (differing(&built_in, &clear, 0), differing(&built_in, &custom, 0));
+    eprintln!("far ground: the air moves {hazed} of {pixels} pixels; the v2 ground differs from the built-in in {apart}");
     assert!(hazed > 1000, "the aerial perspective hazes the far ground ({hazed} pixels)");
     assert!(apart * 20 <= hazed, "the v2 ground is hazed otherwise than the built-in one in {apart} pixels ({hazed} hazed)");
 }
