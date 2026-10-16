@@ -2034,6 +2034,8 @@ impl<'a> WorldNodes<'a> {
             // The stage's billboards may need it too: the node checks its work as it encodes.
             NodeId::Reactive => self.taa_runs(),
             NodeId::Taa => self.taa_runs(),
+            NodeId::Dof => self.renderer.lens.borrow().draws_dof(),
+            NodeId::MotionBlur => self.renderer.lens.borrow().draws_motion_blur(),
             NodeId::Tonemap => self.renderer.path.hdr,
             NodeId::Environment => self.renderer.path.hdr && self.renderer.environment_choice.lights_scene(),
             NodeId::Sky => self.renderer.path.hdr && self.renderer.sky.borrow().draws_background(),
@@ -2182,6 +2184,8 @@ impl<'a> WorldNodes<'a> {
             }
             NodeId::Reactive => self.encode_reactive(frame, stage),
             NodeId::Taa => self.encode_taa(frame),
+            NodeId::Dof => self.encode_dof(frame),
+            NodeId::MotionBlur => self.encode_motion_blur(frame),
             NodeId::Upscale | NodeId::Tonemap if renderer.path.hdr => {
                 if id == tonemap_node() {
                     self.encode_tonemap(frame);
@@ -4152,6 +4156,7 @@ impl Renderer {
         self.effects.get_mut().prepare(&self.device, &mut self.pool, render, ao.as_ref(), contact, sun_mask)?;
         self.sky.get_mut().begin_frame();
         self.prepare_bloom()?;
+        self.prepare_lens(&scene_path, prepass.is_some(), spec.motion, lens::frame_proj(&plan, &scene.camera))?;
         let groups = self.ensure_groups();
         if !scene_path.hdr {
             self.ensure_upscale()?;
@@ -4542,6 +4547,13 @@ impl Renderer {
         let volumes = self.environment.borrow().irradiance().bytes();
         if volumes > 0 {
             ledger.register(crate::budget::BudgetKind::Ibl, crate::budget::IRRADIANCE_VOLUMES_LABEL, volumes);
+        }
+        // The look's depth of field and motion blur (A.9), pooled targets the quality's ledger
+        // does not know (the look turns them on).
+        for (label, bytes) in [crate::budget::DEPTH_OF_FIELD_LABEL, crate::budget::MOTION_BLUR_LABEL].into_iter().zip(self.lens_bytes()) {
+            if bytes > 0 {
+                ledger.register(crate::budget::BudgetKind::Target, label, bytes);
+            }
         }
         ledger
     }

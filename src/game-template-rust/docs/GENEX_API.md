@@ -324,8 +324,8 @@ upscales (EASU with RCAS, bilinear on a desktop's `low`). Phones are capped what
 shadows while the world pass is multisampled.
 
 The look maps the linear HDR scene to the display. `tonemapper`: `khronos-neutral`
-(default) keeps authored colours; `agx-punchy` is the filmic choice
-for a bright, high-contrast scene (AgX's middle grey, more contrast and colour); plain `agx` is
+(default) keeps authored colours; `agx-punchy` is filmic, for a bright,
+high-contrast scene; plain `agx` is
 muted; `aces` is a punchier film curve; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
 meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
@@ -336,11 +336,12 @@ for a sunlit scene; keep `manual` for flat, stylized colour. Keep dusk dark with
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (the glow's spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
-`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. Keep `fog_color`
-white and warm the whole frame in code with `.temperature(0.3, 0.0)` (a blue sky stays blue) or
-`.white_balance([1.0, 0.85, 0.65])`. In code:
+`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. Warm the
+frame in code with `.temperature(0.3, 0.0)` or `.white_balance([1.0, 0.85, 0.65])`, not `fog_color`. In code:
 `RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5)).grading(Grading::NEUTRAL.with_contrast(1.15))`
 (`genex::render`; contrast turns about middle grey; `.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8)` adds a `.cube` LUT).
+Depth of field and motion blur are off by default: `.depth_of_field(DepthOfField::focused(3.0, 2.0))`,
+`.motion_blur(MotionBlur::shutter(0.5))`; a capture draws them when its `lens` asks.
 
 Each feature has a switch; off is its cheaper variant, never a refusal:
 

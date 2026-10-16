@@ -333,6 +333,42 @@ pub trait StudioGame {
     fn set_capture_size(&mut self, size: Option<[u32; 2]>) -> bool {
         size.is_none()
     }
+    /// Draw the next captures with what `lens` asks of the look's depth of field and motion blur
+    /// (`capture`'s `lens` argument, renderer pass 2 A.9), or with neither again (the default).
+    /// Answers whether the game can: one without render settings refuses an ask (`bad-argument`).
+    fn set_capture_lens(&mut self, lens: CaptureLens) -> bool {
+        lens == CaptureLens::default()
+    }
+}
+
+/// What `capture`'s `lens` argument asks of the look (`NativeCaptureLens`): neither by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptureLens {
+    /// `depthOfField`: draw the look's depth of field.
+    pub depth_of_field: bool,
+    /// `motionBlur`: draw the look's motion blur.
+    pub motion_blur: bool,
+}
+
+/// `capture`'s `lens` argument (`{depthOfField?, motionBlur?}`, booleans): the default when absent
+/// or null, `Err` for anything else (a string, a number, a switch that is not a boolean).
+fn capture_lens(arg: &Value) -> Result<CaptureLens, ()> {
+    let lens = match arg {
+        Value::Object(_) => arg.get(wire::CAPTURE_LENS).unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    };
+    if lens.is_null() {
+        return Ok(CaptureLens::default());
+    }
+    if !matches!(lens, Value::Object(_)) {
+        return Err(());
+    }
+    let switch = |key: &str| match lens.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(on)) => Ok(*on),
+        Some(_) => Err(()),
+    };
+    Ok(CaptureLens { depth_of_field: switch(wire::LENS_DEPTH_OF_FIELD)?, motion_blur: switch(wire::LENS_MOTION_BLUR)? })
 }
 
 /// `capture`'s `size` argument (`{width, height}`, whole pixels within the world target's limits
@@ -1086,14 +1122,20 @@ impl Studio {
     fn capture<G: StudioGame>(&mut self, game: &mut G, arg: &Value) -> Answer {
         let camera = argument(arg, "camera");
         let Ok(size) = capture_size(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
+        let Ok(lens) = capture_lens(arg) else { return refuse(VerbRefusal::BAD_ARGUMENT) };
         if matches!(camera, Value::String(_)) && !self.place(game, camera.as_str()) {
             return refuse(VerbRefusal::UNKNOWN_CAMERA);
         }
         if !game.set_capture_size(size) {
             return refuse(VerbRefusal::BAD_ARGUMENT);
         }
+        if !game.set_capture_lens(lens) {
+            game.set_capture_size(None);
+            return refuse(VerbRefusal::BAD_ARGUMENT);
+        }
         let answer = self.capture_drawn(game);
         game.set_capture_size(None);
+        game.set_capture_lens(CaptureLens::default());
         answer
     }
 

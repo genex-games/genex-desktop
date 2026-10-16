@@ -11,6 +11,14 @@
 // the bilinear weights), each layer sampled from the renderer's material arrays with explicit
 // gradients and blended by weight and height (Mishkinis 2013), hex-tiled on desktop high and
 // ultra (`GX_TERRAIN_DETILE`, hextile.wgsl).
+//
+// The prepass and the motion prepass take no screen derivative (GA1). Far away a 2x2 pixel quad
+// spans several sub-pixel triangles, and a derivative across it came out differently from one run
+// to the next on Apple GPUs: the pyramid level the prepass picked moved, its far-ground normals by
+// 1-4 half-float steps, and a settled capture changed by a level on tens of pixels. Their pixel's
+// steps across the ground come from the camera instead (`gx_terrain_steps`), on the plane of the
+// vertices' mean normal. The world pass's shading keeps its screen derivatives: worked out from
+// the camera there they cost medium's 1440p frame 0.05-0.1 ms past the terrain's 0.8 ms budget.
 
 // Whether the layers are hex-tiled (`TerrainQuality::detile`): three taps per texture.
 override GX_TERRAIN_DETILE: bool = false;
@@ -19,18 +27,28 @@ override GX_TERRAIN_DETILE: bool = false;
 const GX_TERRAIN_TAPS: u32 = 8u;
 // A layer weighing less than this at a pixel is not sampled.
 const GX_TERRAIN_MIN_WEIGHT: f32 = 0.002;
+// The least upward part of a pixel's plane (a height field's normals point up).
+const GX_TERRAIN_PLANE_UP_MIN: f32 = 1e-3;
+// A plane seen this close to edge on draws its pixel as covering the whole pyramid.
+const GX_TERRAIN_EDGE_ON: f32 = 1e-30;
+// A pixel's step edge on, metres.
+const GX_TERRAIN_STEP_MAX: f32 = 1e15;
 
 struct GxTerrainOut {
     @builtin(position) @invariant clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
+    // The ground's mean normal around the vertex (`gx_terrain_plane`).
+    @location(1) plane: vec3<f32>,
 }
 
 @vertex
 fn vs_terrain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> GxTerrainOut {
-    let world = gx_terrain_vertex(gx_terrain_rows[instance], vertex, frame.camera_pos.xyz);
+    let row = gx_terrain_rows[instance];
+    let world = gx_terrain_vertex(row, vertex, frame.camera_pos.xyz);
     var out: GxTerrainOut;
     out.clip = gx_clip_position(frame.view_proj, vec4<f32>(world, 1.0), frame.jitter.xy);
     out.world_pos = world;
+    out.plane = gx_terrain_plane(row, world);
     return out;
 }
 
@@ -76,12 +94,55 @@ fn gx_terrain_normal(p: vec2<f32>, footprint: f32) -> vec3<f32> {
     return mix(gx_terrain_normal_level(level, p), gx_terrain_normal_level(next, p), lod - f32(level));
 }
 
-// How many samples a pixel at fractional sample position `p` covers (its longer side). Call it
-// in uniform control flow.
-fn gx_terrain_footprint(p: vec2<f32>) -> f32 {
+// The ground's mean normal around a vertex of `row` at world point `world` (unnormalized): the
+// pyramid at the node's level, whose texels average the samples between its vertices. Its
+// interpolated value is the plane a pixel's steps are measured on.
+fn gx_terrain_plane(row: GxTerrainRow, world: vec3<f32>) -> vec3<f32> {
+    let level = min(row.lod, max(gx_terrain.size.w, 1u) - 1u);
+    return gx_terrain_normal_level(level, gx_terrain_texel_of(world));
+}
+
+// A pixel's step at world point `world` across the screen (column 0) and down it (column 1), in
+// world x and z, on the plane through `world` facing `plane` (`gx_terrain_plane`, interpolated):
+// what a screen derivative of the world position measures on a flat triangle, worked out from the
+// projection (`frame.view_proj`, perspective or orthographic) and the render pixel's size in NDC
+// (`gx_terrain.pixel`), so it depends on this pixel alone. Edge on (the horizon) it is huge.
+fn gx_terrain_steps(world: vec3<f32>, plane: vec3<f32>) -> mat2x2<f32> {
+    let m = frame.view_proj;
+    let clip = m * vec4<f32>(world, 1.0);
+    let n = normalize(plane);
+    // The plane's rise per metre along world x and along world z (a height field faces up).
+    let up = max(n.y, GX_TERRAIN_PLANE_UP_MIN);
+    let along_x = vec3<f32>(1.0, -n.x / up, 0.0);
+    let along_z = vec3<f32>(0.0, -n.z / up, 1.0);
+    // NDC x and y move by (row * w - clip * row 3) / w^2 along a world direction (rows 0, 1, 3).
+    let r0 = vec3<f32>(m[0][0], m[1][0], m[2][0]);
+    let r1 = vec3<f32>(m[0][1], m[1][1], m[2][1]);
+    let r3 = vec3<f32>(m[0][3], m[1][3], m[2][3]);
+    let w2 = clip.w * clip.w;
+    let a = (vec2<f32>(dot(r0, along_x), dot(r1, along_x)) * clip.w - clip.xy * dot(r3, along_x)) / w2;
+    let b = (vec2<f32>(dot(r0, along_z), dot(r1, along_z)) * clip.w - clip.xy * dot(r3, along_z)) / w2;
+    let det = a.x * b.y - b.x * a.y;
+    if abs(det) < GX_TERRAIN_EDGE_ON {
+        return mat2x2<f32>(vec2<f32>(GX_TERRAIN_STEP_MAX, 0.0), vec2<f32>(0.0, GX_TERRAIN_STEP_MAX));
+    }
+    // The inverse of (a b), one pixel along NDC x, then one along NDC y.
+    let across = vec2<f32>(b.y, -a.y) * (gx_terrain.pixel.x / det);
+    let down = vec2<f32>(-b.x, a.x) * (gx_terrain.pixel.y / det);
+    return mat2x2<f32>(across, down);
+}
+
+// How many samples a pixel at fractional sample position `p` covers by its screen derivatives
+// (the forward pass's shading; call it in uniform control flow).
+fn gx_terrain_screen_footprint(p: vec2<f32>) -> f32 {
     let dx = dpdx(p);
     let dy = dpdy(p);
     return max(length(dx), length(dy));
+}
+
+// How many samples a pixel's `steps` (`gx_terrain_steps`) cover: its longer side.
+fn gx_terrain_footprint(steps: mat2x2<f32>) -> f32 {
+    return max(length(steps[0]), length(steps[1])) * gx_terrain.origin.w;
 }
 
 // One layer's texel at a pixel.
@@ -249,7 +310,7 @@ fn gx_terrain_blend(xz: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> GxTerrainBle
 // flow: its derivatives are taken here.
 fn gx_terrain_surface(world: vec3<f32>) -> Surface {
     let p = gx_terrain_texel_of(world);
-    let mean = gx_terrain_normal(p, gx_terrain_footprint(p));
+    let mean = gx_terrain_normal(p, gx_terrain_screen_footprint(p));
     // The normals under the pixel disagree by as much as their mean falls short of unit length.
     let agreement = length(mean);
     let geometric = mean / max(agreement, 1e-4);
@@ -337,7 +398,8 @@ fn fs_terrain(in: GxTerrainOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_terrain_prepass(in: GxTerrainOut) -> @location(0) vec2<f32> {
     let p = gx_terrain_texel_of(in.world_pos);
-    return gx_oct_encode(normalize(gx_terrain_normal(p, gx_terrain_footprint(p))));
+    let footprint = gx_terrain_footprint(gx_terrain_steps(in.world_pos, in.plane));
+    return gx_oct_encode(normalize(gx_terrain_normal(p, footprint)));
 }
 
 // --- The motion prepass (RQ5.6): group 3 is the motion node's group (`motion::MotionNode`); the
@@ -357,6 +419,7 @@ struct GxTerrainMotionOut {
     @location(0) world_pos: vec3<f32>,
     @location(1) current: vec4<f32>,
     @location(2) previous: vec4<f32>,
+    @location(3) plane: vec3<f32>,
 }
 
 struct GxTerrainMotionTargets {
@@ -367,8 +430,10 @@ struct GxTerrainMotionTargets {
 
 @vertex
 fn vs_terrain_motion(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> GxTerrainMotionOut {
-    let world = vec4<f32>(gx_terrain_vertex(gx_terrain_rows[instance], vertex, frame.camera_pos.xyz), 1.0);
+    let row = gx_terrain_rows[instance];
+    let world = vec4<f32>(gx_terrain_vertex(row, vertex, frame.camera_pos.xyz), 1.0);
     var out: GxTerrainMotionOut;
+    out.plane = gx_terrain_plane(row, world.xyz);
     out.clip = gx_clip_position(frame.view_proj, world, gx_terrain_motion.jitter.xy);
     out.world_pos = world.xyz;
     out.current = frame.view_proj * world;
@@ -380,7 +445,8 @@ fn vs_terrain_motion(@builtin(vertex_index) vertex: u32, @builtin(instance_index
 fn fs_terrain_motion(in: GxTerrainMotionOut) -> GxTerrainMotionTargets {
     var out: GxTerrainMotionTargets;
     let p = gx_terrain_texel_of(in.world_pos);
-    out.normal = gx_oct_encode(normalize(gx_terrain_normal(p, gx_terrain_footprint(p))));
+    let footprint = gx_terrain_footprint(gx_terrain_steps(in.world_pos, in.plane));
+    out.normal = gx_oct_encode(normalize(gx_terrain_normal(p, footprint)));
     out.reactive = 0.0;
     out.motion = vec2<f32>(0.0);
     // A point behind last frame's camera has no reprojection: no motion, and no history.

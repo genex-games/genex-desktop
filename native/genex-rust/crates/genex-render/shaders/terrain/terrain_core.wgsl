@@ -46,6 +46,9 @@ struct GxTerrain {
     // Each normal pyramid level's first word, four a row.
     normal_levels: array<vec4<u32>, 3>,
     layers: array<GxTerrainLayer, 16>,
+    // x, y: one render pixel in NDC (2 / width, 2 / height), from which a pixel's step across
+    // the ground is worked out (`gx_terrain_steps`); z, w: 0.
+    pixel: vec4<f32>,
 }
 
 // One drawn node (`terrain::TerrainRow::gpu`).

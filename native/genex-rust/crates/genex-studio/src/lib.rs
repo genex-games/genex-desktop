@@ -51,6 +51,6 @@ pub use transport::{
     STUDIO_FD, Transport, WRITE_STALL, from_environment, report_panics, studio_pipe_name,
 };
 pub use verbs::{
-    CAPTURE_FORMAT, CAPTURE_MAX_BYTES, CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, DEFAULT_CAMERA, FatalReason, Op,
+    CAPTURE_FORMAT, CAPTURE_MAX_BYTES, CAPTURE_MAX_PX, CAPTURES_KEPT, CaptureFault, CaptureLens, DEFAULT_CAMERA, FatalReason, Op,
     Pixels, ReadyInfo, RingFault, Served, Studio, StudioGame, VerbRefusal,
 };

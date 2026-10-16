@@ -1,13 +1,13 @@
 // Motion blur's tiles (A.9 / A7.3), after a depth chunk and motion_blur_pack.wgsl: the longest
 // velocity of each tile's 3x3 neighbourhood (KinoMotion's TileMax and NeighborMax, MIT; McGuire et
 // al. 2012), in two passes: a compute reduction of each 16x16 block of render pixels in workgroup
-// memory that also writes each pixel's packed velocity and distance (KinoMotion's VelocitySetup;
+// memory that also writes each pixel's packed speed and distance (KinoMotion's VelocitySetup;
 // it reduces in four fragment passes), then one fragment pass per tile over the k x k blocks of
 // its 3x3 tiles.
 
 // The 16x16 blocks' longest velocities (xy).
 @group(0) @binding(6) var mb_blocks_out: texture_storage_2d<rgba16float, write>;
-// Each render pixel's packed velocity and distance.
+// Each render pixel's packed speed and distance.
 @group(0) @binding(7) var mb_packed_out: texture_storage_2d<r32uint, write>;
 // The 16x16 blocks, read by the neighbourhood pass.
 @group(0) @binding(3) var mb_blocks: texture_2d<f32>;
@@ -15,7 +15,7 @@
 // One velocity per invocation: the longest of its 2x2 pixels of a 16x16 block.
 var<workgroup> mb_block: array<vec2<f32>, 64>;
 
-// The velocity of render pixel `p`, its packed velocity and distance stored when `p` is inside
+// The velocity of render pixel `p`, its packed speed and distance stored when `p` is inside
 // the render size.
 fn mb_pack_pixel(p: vec2<i32>) -> vec2<f32> {
     let v = mb_velocity(p);
@@ -26,7 +26,7 @@ fn mb_pack_pixel(p: vec2<i32>) -> vec2<f32> {
 }
 
 // The longest velocity of the workgroup's 16x16 render pixels (clamped to the render size), and
-// each pixel's packed velocity and distance. Each of the 8x8 invocations takes 2x2 pixels: fewer
+// each pixel's packed speed and distance. Each of the 8x8 invocations takes 2x2 pixels: fewer
 // invocations and barriers than one a pixel (a still 1080p frame's node 0.25 -> 0.21 ms).
 @compute @workgroup_size(8, 8)
 fn cs_mb_blocks(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) index: u32, @builtin(workgroup_id) group: vec3<u32>) {

@@ -379,6 +379,10 @@ impl<W: Default + 'static> StudioGame for StudioRun<'_, W> {
         self.presenter.set_capture_size(size.map(|[width, height]| (width, height)));
         true
     }
+    fn set_capture_lens(&mut self, lens: genex_studio::CaptureLens) -> bool {
+        self.presenter.set_capture_lens(crate::render::CaptureLens { depth_of_field: lens.depth_of_field, motion_blur: lens.motion_blur });
+        true
+    }
     fn render_settings(&mut self, change: Option<&RenderSettingsChange>) -> Result<Value, RenderSettingsRefusal> {
         let handle = self.game.render();
         let answer = match change {

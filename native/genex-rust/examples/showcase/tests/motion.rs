@@ -9,7 +9,13 @@
 //!   a neighbour within the radius, so it is no pop (a plain per-pixel test counts every textured
 //!   grass blade a 2 px pan moves);
 //! - **shadow-attributed pops**: the same camera path drawn with the sun's shadows (and contact
-//!   shadows) on and off, frame by frame; what the shadows add is theirs;
+//!   shadows) on and off at the same exposure, frame by frame; what the shadows add is theirs.
+//!   Owner decision D12 (2026-10-16): a pixel is a shadow pop only if it pops in the shadows-on run
+//!   and does not pop at the same frame in the shadows-off run, where popping there is SH-15's
+//!   plain test (more than [`POP_LEVELS`] for exactly one frame at the pixel): a sub-pixel canopy
+//!   speck, content entering at the frame's edge or a mote that blinks in both runs is foliage and
+//!   TAA quality, even where only the shadowed run's darker surroundings carry it past the
+//!   envelope;
 //! - **the maximum over frames**, never only the mean;
 //! - on bench-outdoor: the creeping row's **lake box** (the flicker map's pixels over the water),
 //!   and pans of 1, 4 and 16 px a frame with a **sharpness ratio** (Laplacian energy during the
@@ -184,12 +190,30 @@ fn pops_at(before: &Envelope, now: &Envelope, after: &Envelope, i: usize) -> boo
     !before.holds(i, value, POP_LEVELS) && !after.holds(i, value, POP_LEVELS) && came_back
 }
 
+/// Whether pixel `i`'s own luma in frame `now` jumps by more than [`POP_LEVELS`] from the frames
+/// before and after, the same way, while those two agree within it: SH-15's plain one-frame pop.
+fn excursion_at(before: &Envelope, now: &Envelope, after: &Envelope, i: usize) -> bool {
+    let (b, n, a) = (f64::from(before.luma[i]), f64::from(now.luma[i]), f64::from(after.luma[i]));
+    let same_way = (n - b).signum() == (n - a).signum();
+    (n - b).abs() > POP_LEVELS && (n - a).abs() > POP_LEVELS && same_way && (b - a).abs() <= POP_LEVELS
+}
+
+/// What pops in a shadows-off run at each frame, for attributing a shadows-on run's pops (owner
+/// decision D12): its envelope pops and its plain one-frame excursions.
+fn off_pops(off: &Run) -> Vec<Vec<u32>> {
+    off.pops.iter().zip(&off.excursions).map(|(pops, excursions)| pops.iter().chain(excursions).copied().collect()).collect()
+}
+
 /// What a run of frames did, frame by frame.
 struct Run {
     /// How far (pixels) a frame's motion may carry a value to the next: the envelope's radius.
     radius: usize,
     /// The pixels that popped in each measured frame (the first and last have no pair on one side).
     pops: Vec<Vec<u32>>,
+    /// The pixels whose own luma jumped by more than [`POP_LEVELS`] for exactly one frame and came
+    /// back, in each measured frame (SH-15's plain test, without the motion envelope): what pops
+    /// in a shadows-off run when a shadows-on run's pop is attributed (owner decision D12).
+    excursions: Vec<Vec<u32>>,
     /// The pixels that flickered into each frame from the last: a luma more than
     /// [`FLICKER_LEVELS`] from every value within the radius in the frame before (on a still
     /// camera, the pass-1 row's per-pixel flicker; on a moving one, what the motion does not explain).
@@ -210,7 +234,7 @@ struct Run {
 impl Run {
     /// A run whose frames move values by at most `radius` pixels a frame.
     fn new(radius: usize) -> Run {
-        Run { radius, pops: Vec::new(), flickers: Vec::new(), popped: Vec::new(), last: None, window: Vec::new(), frames: None, fast: None }
+        Run { radius, pops: Vec::new(), excursions: Vec::new(), flickers: Vec::new(), popped: Vec::new(), last: None, window: Vec::new(), frames: None, fast: None }
     }
 
     /// [`Run::new`], keeping every frame.
@@ -250,6 +274,7 @@ impl Run {
                 self.popped[*i as usize] = true;
             }
             self.pops.push(popped);
+            self.excursions.push((0..next.luma.len()).filter(|i| excursion_at(before, now, &next, *i)).map(|i| i as u32).collect());
         }
         self.window.push(next);
         if self.window.len() > 2 {
@@ -406,7 +431,9 @@ struct Drawn {
 /// shadowed pixel past the flicker threshold sooner than a sunlit one (the tone curve), and that
 /// difference was counted as the shadows changing 1.2-1.3% of the picture at once. The glare's
 /// own onset is held by [`metal_lakeside_the_sun_s_glare_enters_the_pan_without_a_step`].
-const SHADOW_ROW_ISOLATED: &[RenderFeature] = &[RenderFeature::Bloom];
+/// Owner decision D12 (2026-10-16): the pair is drawn at the same exposure, so auto exposure is off
+/// in both (the shadows otherwise change what it meters, and every pixel's luma with it).
+const SHADOW_ROW_ISOLATED: &[RenderFeature] = &[RenderFeature::Bloom, RenderFeature::Exposure];
 
 /// The features a run without the sun's shadows switches off.
 const SUN_SHADOWS: &[RenderFeature] = &[RenderFeature::Shadows, RenderFeature::ContactShadows];
@@ -491,12 +518,15 @@ fn judge_row(label: &str, radius: usize, on: &Run, off: &Run, class: DeviceClass
     write_png(&out_dir().join(format!("pops-{label}.png")), &on.pop_map());
     write_png(&out_dir().join(format!("pops-{label}-shadows-off.png")), &off.pop_map());
     let pixels = on.popped.len();
-    let pops = attributed(&on.pops, &off.pops, pixels);
+    // D12 flipped: an on-run pop at a pixel that also pops at the same frame of the off run by
+    // SH-15's plain test (not only by the envelope) is not the shadows'.
+    let off_popped = off_pops(off);
+    let pops = attributed(&on.pops, &off_popped, pixels);
     let worst = pops.iter().copied().max().unwrap_or(0);
     let worst_frame = pops.iter().position(|count| *count == worst).unwrap_or(0);
     let total: usize = pops.iter().sum();
     let width = on.last.as_ref().map_or(1, |last| last.width() as usize);
-    let worst_pixels: Vec<String> = attributed_pixels(&on.pops, &off.pops, worst_frame, width).iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
+    let worst_pixels: Vec<String> = attributed_pixels(&on.pops, &off_popped, worst_frame, width).iter().map(|(x, y)| format!("[{x}, {y}]")).collect();
     let flicker: Vec<f64> = attributed(&on.flickers, &off.flickers, pixels).iter().map(|count| *count as f64 / on.pixels()).collect();
     let (flicker_mean, flicker_max) = (mean(&flicker), flicker.iter().copied().fold(0.0, f64::max));
     let step_frame = flicker.iter().position(|share| *share == flicker_max).unwrap_or(0);

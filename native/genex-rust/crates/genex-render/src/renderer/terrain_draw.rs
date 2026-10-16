@@ -160,6 +160,7 @@ impl Renderer {
         let quality = self.terrain_quality();
         let Some(terrain) = self.terrain.as_mut() else { return Ok(()) };
         terrain.set_quality(&self.queue, quality);
+        terrain.set_render_size(&self.queue, self.targets.render_size);
         let camera = [plan.frame.camera_pos[0], plan.frame.camera_pos[1], plan.frame.camera_pos[2]];
         let views = 1 + plan.cascades_drawn();
         terrain.prepare(&self.device, &self.queue, camera, &plan.cull_views.planes[..views])?;

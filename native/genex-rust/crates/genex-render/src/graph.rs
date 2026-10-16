@@ -27,6 +27,9 @@
 //! on [`crate::post::fsr::LANDED`]; [`TemporalFrame`] is what they know about a frame. RQ5.6
 //! landed all three. The reactive coverage (15a) is a pass node between the transparent draws and
 //! the MSAA resolve: TAA draws one sample, so a frame never runs both and the world pass stays one.
+//! Renderer pass 2 A.9 lands the look's depth of field (17a) and motion blur (17b) between TAA's
+//! resolve and `post-hdr`, gated on [`crate::post::dof::LANDED`] and
+//! [`crate::post::motion_blur::LANDED`].
 
 use wgpu::{CommandEncoder, Device, Queue, RenderPass, TextureFormat};
 
@@ -92,6 +95,10 @@ pub enum NodeId {
     Resolve,
     /// 17: TAA (RQ5).
     Taa,
+    /// 17a: the look's depth of field (renderer pass 2 A.9).
+    Dof,
+    /// 17b: the look's motion blur (renderer pass 2 A.9).
+    MotionBlur,
     /// 18: Level-3 `post-hdr` and Level-2 `hdr` post passes (RQ1).
     PostHdr,
     /// 19: bloom (RQ4).
@@ -176,6 +183,8 @@ impl NodeId {
             NodeId::Occlusion => crate::meshlet_cull::occlusion_landed(),
             NodeId::Reactive | NodeId::Taa => crate::post::taa::LANDED,
             NodeId::LightBinning => crate::cluster::LANDED,
+            NodeId::Dof => crate::post::dof::LANDED,
+            NodeId::MotionBlur => crate::post::motion_blur::LANDED,
             _ => matches!(
                 self,
                 NodeId::Tables
@@ -214,6 +223,8 @@ impl NodeId {
             NodeId::Prepass if crate::prepass::LANDED => &[Target::SceneDepth, Target::Normals],
             NodeId::Reactive if crate::post::taa::LANDED => &[Target::ReactiveMask],
             NodeId::Taa if crate::post::taa::LANDED => &[Target::SceneColor, Target::TaaHistory],
+            NodeId::Dof if crate::post::dof::LANDED => &[Target::SceneColor],
+            NodeId::MotionBlur if crate::post::motion_blur::LANDED => &[Target::SceneColor],
             NodeId::LightBinning if crate::cluster::LANDED => &[Target::LightBins],
             NodeId::AfterPrepass if crate::prepass::LANDED && crate::custom_pass::AFTER_PREPASS_SERVED => &[Target::PassOwned],
             NodeId::Ao if crate::post::ao::LANDED => &[Target::AmbientOcclusion],
@@ -243,6 +254,8 @@ pub fn quality_allows(id: NodeId, quality: &Quality) -> bool {
         NodeId::Environment => quality.environment.ibl || quality.environment.sky,
         NodeId::Sky => quality.environment.sky,
         NodeId::Reactive | NodeId::Taa => quality.anti_aliasing.temporal(),
+        // The look turns the lens on; a node runs on the HDR scene only (`post::dof::frame_settings`).
+        NodeId::Dof | NodeId::MotionBlur => quality.hdr,
         NodeId::Bloom => quality.bloom.enabled,
         NodeId::Exposure => quality.hdr && quality.exposure,
         NodeId::Tonemap => quality.hdr,
@@ -321,6 +334,8 @@ pub const FRAME_GRAPH: &[NodeSpec] = &[
     node(NodeId::Reactive, NodeKind::Pass, "reactive"),
     node(NodeId::Resolve, NodeKind::InPass, "resolve"),
     node(NodeId::Taa, NodeKind::Pass, "taa"),
+    node(NodeId::Dof, NodeKind::Pass, "dof"),
+    node(NodeId::MotionBlur, NodeKind::Pass, "motion-blur"),
     node(NodeId::PostHdr, NodeKind::Pass, "post-hdr"),
     node(NodeId::Bloom, NodeKind::Pass, "bloom"),
     node(NodeId::Exposure, NodeKind::Compute, "exposure"),
@@ -638,10 +653,13 @@ mod tests {
         // no environment: its sky and IBL switches are off, so those nodes never run there. Its
         // prepass switch is off too (RQ4.1), and so are two-pass occlusion (R2.4), AO, contact
         // shadows and bloom (RQ4.6), light binning (RQ6.7: the binned path is the HDR scene's), and
-        // TAA's reactive coverage and resolve (RQ5.6: the legacy renderer draws MSAA).
+        // TAA's reactive coverage and resolve (RQ5.6: the legacy renderer draws MSAA), and the
+        // look's depth of field and motion blur (renderer pass 2 A.9: the HDR scene's).
         let hdr_only = [
             NodeId::Reactive,
             NodeId::Taa,
+            NodeId::Dof,
+            NodeId::MotionBlur,
             NodeId::LightBinning,
             NodeId::Prepass,
             NodeId::Occlusion,

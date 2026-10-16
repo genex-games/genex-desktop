@@ -346,19 +346,19 @@ impl GpuDofParams {
 }
 
 /// The shared chunk: the row, the fullscreen triangle and the CoC helpers.
-const COMMON: &str = include_str!("../../shaders/post/dof_common.wgsl");
+const COMMON: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_common.wgsl"));
 /// The depth read of a single-sampled depth.
-const DEPTH_SINGLE: &str = include_str!("../../shaders/post/dof_depth.wgsl");
+const DEPTH_SINGLE: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_depth.wgsl"));
 /// The depth read of sample 0 of a multisampled depth.
-const DEPTH_MULTI: &str = include_str!("../../shaders/post/dof_depth_ms.wgsl");
+const DEPTH_MULTI: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_depth_ms.wgsl"));
 /// The downsample, mip, tile and dilate passes (after a depth chunk).
-const PREPARE: &str = include_str!("../../shaders/post/dof_prepare.wgsl");
+const PREPARE: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_prepare.wgsl"));
 /// The ring gather and the median (Filament).
-const RING: &str = include_str!("../../shaders/post/dof_ring.wgsl");
+const RING: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_ring.wgsl"));
 /// The circular gather (Godot).
-const CIRCULAR: &str = include_str!("../../shaders/post/dof_circular.wgsl");
+const CIRCULAR: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_circular.wgsl"));
 /// The ring combine and the circular composite (after a depth chunk).
-const COMBINE: &str = include_str!("../../shaders/post/dof_combine.wgsl");
+const COMBINE: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/dof_combine.wgsl"));
 
 /// The depth chunk for a depth of `samples` per pixel.
 fn depth_chunk(samples: u32) -> &'static str {

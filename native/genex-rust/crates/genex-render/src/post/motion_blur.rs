@@ -67,12 +67,12 @@ pub const DIRECT_MIN_PX: f32 = 1.0;
 
 /// The 16x16 blocks' format (xy a velocity in render pixels; a core storage format).
 pub const BLOCKS_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
-/// Each pixel's velocity (10 bits an axis) and log view distance (12 bits), one word: the
-/// reconstruction reads one texel a sample for both (a core storage format).
+/// Each pixel's speed (20 bits) and log view distance (12 bits), one word: the reconstruction
+/// reads one texel a sample for both (a core storage format); a sample needs no direction.
 pub const PACKED_FORMAT: TextureFormat = TextureFormat::R32Uint;
 /// The neighbourhood maximum's format (a velocity in render pixels).
 pub const TILES_FORMAT: TextureFormat = TextureFormat::Rg16Float;
-/// The packed velocity and distance's pool label.
+/// The packed speed and distance's pool label.
 pub const PACKED_LABEL: &str = "motion blur packed";
 /// The 16x16 blocks' pool label.
 pub const BLOCKS_LABEL: &str = "motion blur blocks";
@@ -270,17 +270,17 @@ impl GpuMotionBlurParams {
 }
 
 /// The shared chunk: the row, the motion read, the fullscreen triangle and the noise.
-const COMMON: &str = include_str!("../../shaders/post/motion_blur_common.wgsl");
+const COMMON: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur_common.wgsl"));
 /// The depth read of a single-sampled depth.
-const DEPTH_SINGLE: &str = include_str!("../../shaders/post/motion_blur_depth.wgsl");
+const DEPTH_SINGLE: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur_depth.wgsl"));
 /// The depth read of sample 0 of a multisampled depth.
-const DEPTH_MULTI: &str = include_str!("../../shaders/post/motion_blur_depth_ms.wgsl");
-/// The view distance and the packed velocity (after a depth chunk).
-const PACK: &str = include_str!("../../shaders/post/motion_blur_pack.wgsl");
+const DEPTH_MULTI: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur_depth_ms.wgsl"));
+/// The view distance and the packed speed (after a depth chunk).
+const PACK: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur_pack.wgsl"));
 /// The block reduction and the tiles' neighbourhood maximum.
-const TILES: &str = include_str!("../../shaders/post/motion_blur_tiles.wgsl");
+const TILES: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur_tiles.wgsl"));
 /// The reconstruction and the direct blur (after a depth chunk).
-const BLUR: &str = include_str!("../../shaders/post/motion_blur.wgsl");
+const BLUR: &str = crate::shaders::minify::shipped_wgsl!(include_str!("../../shaders/post/motion_blur.wgsl"));
 
 /// The depth chunk for a depth of `samples` per pixel.
 fn depth_chunk(samples: u32) -> &'static str {
@@ -318,7 +318,7 @@ impl Held {
 struct Targets {
     render: (u32, u32),
     tier: MotionBlurTier,
-    /// The reconstruction's packed velocity and distance, blocks and neighbourhood.
+    /// The reconstruction's packed speed and distance, blocks and neighbourhood.
     tiles: Option<[Held; 3]>,
     output: Option<Held>,
 }
@@ -576,7 +576,7 @@ impl MotionBlurNode {
                 compute(encoder, reduction, &bind, (blocks.texture.width(), blocks.texture.height()), stamps());
                 let bind = group("motion blur neighbour", &self.neighbour, &[params.clone(), texture_entry(3, &blocks.view)]);
                 pass(encoder, "motion blur neighbour", &self.neighbour, &bind, &neighbour.view, stamps());
-                let entries = [params, texture_entry(3, &neighbour.view), texture_entry(4, input.scene), texture_entry(7, &packed.view)];
+                let entries = [params, texture_entry(1, input.motion), texture_entry(3, &neighbour.view), texture_entry(4, input.scene), texture_entry(7, &packed.view)];
                 let bind = group("motion blur reconstruct", &reconstruct, &entries);
                 pass(encoder, "motion blur reconstruct", &reconstruct, &bind, output, stamps());
             }

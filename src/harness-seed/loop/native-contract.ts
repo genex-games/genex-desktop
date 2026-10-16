@@ -711,6 +711,15 @@ export interface NativeCaptureReply {
   render?: CaptureProvenance;
 }
 
+/**
+ * What a capture asks of the look's lens (a Rust · wgpu game): its depth of field and motion blur,
+ * neither by default, so a capture is a still of the held frame.
+ */
+export interface NativeCaptureLens {
+  depthOfField?: boolean;
+  motionBlur?: boolean;
+}
+
 /** A size a capture is asked to draw at, in whole pixels (a Rust · wgpu game). */
 export interface NativeCaptureSize {
   width: number;
@@ -722,7 +731,7 @@ export interface NativeOpArgs {
   [NativeOp.Seed]: { seed: number };
   [NativeOp.Step]: { ms: number };
   [NativeOp.Input]: { actions: NativeInputAction[] };
-  [NativeOp.Capture]: { camera?: string; size?: NativeCaptureSize };
+  [NativeOp.Capture]: { camera?: string; size?: NativeCaptureSize; lens?: NativeCaptureLens };
   [NativeOp.DebugCamera]: { camera: string | null };
   [NativeOp.Demo]: { name: string };
   [NativeOp.Audio]: { muted: boolean };

@@ -181,6 +181,10 @@ pub struct BudgetInput {
     /// `irradiance::IrradianceMaps::bytes`: the atlas, the staging block and the bake's targets;
     /// 0: no volume held; the [`IRRADIANCE_VOLUMES_LABEL`] entry of `Renderer::buffer_ledger`).
     pub irradiance_volume_bytes: u64,
+    /// The bytes the look's depth of field and motion blur take from the target pool (renderer
+    /// pass 2 A.9; 0: the look has neither on; the [`DEPTH_OF_FIELD_LABEL`] and
+    /// [`MOTION_BLUR_LABEL`] entries of `Renderer::buffer_ledger`).
+    pub lens_bytes: [u64; 2],
 }
 
 /// The ledger label of the look's 3D grading LUT ([`BudgetKind::Ibl`]; renderer pass 2 A.2).
@@ -191,6 +195,12 @@ pub const REFLECTION_PROBES_LABEL: &str = "reflection-probes";
 /// The ledger label of the irradiance volumes' atlas and bake targets ([`BudgetKind::Ibl`];
 /// renderer pass 2 A.4).
 pub const IRRADIANCE_VOLUMES_LABEL: &str = "irradiance-volumes";
+/// The ledger label of the look's depth-of-field targets ([`BudgetKind::Target`]; renderer pass 2
+/// A.9, graph node 17a).
+pub const DEPTH_OF_FIELD_LABEL: &str = "depth-of-field";
+/// The ledger label of the look's motion-blur targets ([`BudgetKind::Target`]; renderer pass 2
+/// A.9, graph node 17b).
+pub const MOTION_BLUR_LABEL: &str = "motion-blur";
 
 impl BudgetInput {
     /// An input with no materials and no passes.
@@ -211,18 +221,21 @@ impl BudgetInput {
             grading_lut_bytes: 0,
             reflection_probe_bytes: 0,
             irradiance_volume_bytes: 0,
+            lens_bytes: [0; 2],
         }
     }
 
     /// The input with the [`BudgetKind::Buffers`] entries of `held` (the renderer's buffers), its
-    /// grading LUT ([`GRADING_LUT_LABEL`]), its reflection probes ([`REFLECTION_PROBES_LABEL`]) and
-    /// its irradiance volumes ([`IRRADIANCE_VOLUMES_LABEL`]).
+    /// grading LUT ([`GRADING_LUT_LABEL`]), its reflection probes ([`REFLECTION_PROBES_LABEL`]),
+    /// its irradiance volumes ([`IRRADIANCE_VOLUMES_LABEL`]) and the look's lens targets
+    /// ([`DEPTH_OF_FIELD_LABEL`], [`MOTION_BLUR_LABEL`]).
     pub fn with_buffers(mut self, held: &BudgetLedger) -> BudgetInput {
         self.buffers = held.entries().iter().filter(|entry| entry.kind == BudgetKind::Buffers).map(|entry| (entry.label.clone(), entry.bytes)).collect();
         let labelled = |label: &str| held.entries().iter().filter(|entry| entry.label == label).map(|entry| entry.bytes).sum();
         self.grading_lut_bytes = labelled(GRADING_LUT_LABEL);
         self.reflection_probe_bytes = labelled(REFLECTION_PROBES_LABEL);
         self.irradiance_volume_bytes = labelled(IRRADIANCE_VOLUMES_LABEL);
+        self.lens_bytes = [labelled(DEPTH_OF_FIELD_LABEL), labelled(MOTION_BLUR_LABEL)];
         self
     }
 
@@ -481,6 +494,11 @@ pub fn ledger(quality: &Quality, input: &BudgetInput) -> BudgetLedger {
     }
     if input.irradiance_volume_bytes > 0 {
         ledger.register(BudgetKind::Ibl, IRRADIANCE_VOLUMES_LABEL, input.irradiance_volume_bytes);
+    }
+    for (label, bytes) in [DEPTH_OF_FIELD_LABEL, MOTION_BLUR_LABEL].into_iter().zip(input.lens_bytes) {
+        if bytes > 0 {
+            ledger.register(BudgetKind::Target, label, bytes);
+        }
     }
     register_window(&mut ledger, input);
     ledger

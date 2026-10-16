@@ -745,6 +745,8 @@ pub struct Presenter {
     window: Option<(u32, u32)>,
     /// The size captures draw at when one was asked for ([`Presenter::set_capture_size`]).
     capture_size: Option<(u32, u32)>,
+    /// What the next settled captures ask of the look's lens ([`Presenter::set_capture_lens`]).
+    capture_lens: crate::render::CaptureLens,
     /// The output size the last draw drew at (Live's window pixels or a capture's size).
     last_output: Option<(u32, u32)>,
     source: Box<dyn ModelSource>,
@@ -907,6 +909,7 @@ impl Presenter {
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
             capture_size: None,
+            capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
             source,
             assets: AssetCache::default(),
@@ -1244,6 +1247,8 @@ impl Presenter {
             let graded = self.custom_passes && self.passes.runs_at(PassStage::PostHdr);
             let frames = self.resilient.renderer().settle_frames_graded(graded);
             self.last_settle_frames = Some(frames);
+            // A recovered renderer starts from the defaults: the shot's lens is handed over per capture.
+            self.resilient.renderer_mut().renderer_mut().set_capture_lens(self.capture_lens);
             settle(&mut self.resilient, &mut self.passes, self.custom_passes, passes, tick, &immediate, overlay, frames)?
         } else {
             draw_once(&mut self.resilient, &mut self.passes, self.custom_passes, passes, tick, &immediate, overlay)?
@@ -1266,6 +1271,13 @@ impl Presenter {
             self.window_pixels_per_point = view.width as f32 / world.0 as f32;
             self.window = Some(window);
         }
+    }
+
+    /// Draw the next settled captures with what `lens` asks of the look's depth of field and
+    /// motion blur (`capture`'s `lens`; renderer pass 2 A.9). Neither by default: a capture is a
+    /// still of the held frame.
+    pub fn set_capture_lens(&mut self, lens: crate::render::CaptureLens) {
+        self.capture_lens = lens;
     }
 
     /// Draw the next captures at `size` (`capture --size`, the 4K/1440p plan; each side 64..=4096),

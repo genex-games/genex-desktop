@@ -96,6 +96,14 @@ pub const OP_RENDER_SETTINGS: &str = "renderSettings";
 /// (`NATIVE_RENDER_KEY`). Outside the checksum; never compared.
 pub const STATE_RENDER: &str = "render";
 
+/// `capture`'s `lens` argument and its two switches (`NativeCaptureLens`): what a settled capture
+/// asks of the look's depth of field and motion blur (renderer pass 2 A.9; neither by default).
+pub const CAPTURE_LENS: &str = "lens";
+/// `lens.depthOfField`.
+pub const LENS_DEPTH_OF_FIELD: &str = "depthOfField";
+/// `lens.motionBlur`.
+pub const LENS_MOTION_BLUR: &str = "motionBlur";
+
 /// A wire value outside its shape: the field that failed. The host's own check refuses the same.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BadField(pub &'static str);

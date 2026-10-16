@@ -87,6 +87,17 @@ pub use genex_render::settings::{JitterCycle, TaaQuality};
 /// saturation, vibrance, per-section lift, gamma and gain, and a display LUT read from a `.cube`
 /// ([`GradingLut::parse_cube`], then [`GradingLut::intern`]).
 pub use genex_render::post::grading::{Grading, GradingLut, GradingLutError, GradingSection};
+/// The look's depth of field (A.9, [`RenderConfig::depth_of_field`]): a thin lens focused at a
+/// distance through an f-number, off by default. The preset picks the gather
+/// ([`DofTier`]: the ring at desktop high and ultra, the circular gather elsewhere).
+pub use genex_render::post::dof::{DepthOfField, DofTier};
+/// The look's motion blur (A.9, [`RenderConfig::motion_blur`]): the shutter open for a share of
+/// each frame, off by default (owner decision D10). The preset picks the tier
+/// ([`MotionBlurTier`]: the reconstruction at desktop high and ultra, none on low phones).
+pub use genex_render::post::motion_blur::{MotionBlur, MotionBlurTier};
+/// What a settled capture's shot asks of the look's lens (the capture verb's `lens`): neither by
+/// default, so a capture is a still of the held frame.
+pub use genex_render::renderer::CaptureLens;
 /// The key [`crate::Frame::id`] names a moving draw with across frames (a string or an integer),
 /// so its motion vectors find where it was last frame under TAA.
 pub use genex_render::motion::DrawId;
@@ -538,6 +549,24 @@ impl RenderConfig {
     /// The config with `bloom` as its look's bloom ([`Bloom::apply_to`]).
     pub fn bloom(mut self, bloom: Bloom) -> RenderConfig {
         self.look = bloom.apply_to(self.look);
+        self
+    }
+
+    /// The config with its look's depth of field, each knob held to its range:
+    /// `RenderConfig::new().depth_of_field(DepthOfField::focused(3.0, 2.0))` keeps three metres
+    /// sharp at f/2. It draws after TAA on frames with the depth prepass (medium and up), never
+    /// on a settled capture unless the shot asks ([`CaptureLens`]). Off by default.
+    pub fn depth_of_field(mut self, depth_of_field: DepthOfField) -> RenderConfig {
+        self.look = self.look.with_depth_of_field(depth_of_field);
+        self
+    }
+
+    /// The config with its look's motion blur: `RenderConfig::new().motion_blur(MotionBlur::shutter(0.5))`
+    /// blurs what moved by half its motion each frame (a 180-degree shutter). It draws after TAA
+    /// and depth of field on frames that write motion (TAA's), at the preset's tier, never on a
+    /// settled capture unless the shot asks ([`CaptureLens`]). Off by default.
+    pub fn motion_blur(mut self, motion_blur: MotionBlur) -> RenderConfig {
+        self.look = self.look.with_motion_blur(motion_blur);
         self
     }
 

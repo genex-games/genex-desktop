@@ -249,6 +249,18 @@ fn a_look_takes_a_grading_held_to_its_ranges_and_a_cube_lut() {
 }
 
 #[test]
+fn a_look_takes_depth_of_field_and_motion_blur_off_by_default() {
+    use genex::render::{CaptureLens, DepthOfField, Look, MotionBlur};
+    let look = RenderConfig::new().depth_of_field(DepthOfField::focused(3.0, 2.0)).motion_blur(MotionBlur::shutter(0.5)).look;
+    assert_eq!(look.depth_of_field, DepthOfField::focused(3.0, 2.0));
+    assert_eq!(look.motion_blur, MotionBlur::shutter(0.5));
+    let defaults = RenderConfig::new().look;
+    assert!(!defaults.depth_of_field.enabled && !defaults.motion_blur.enabled, "both are off by default (D10 for motion blur)");
+    assert_eq!((defaults.depth_of_field, defaults.motion_blur), (Look::default().depth_of_field, Look::default().motion_blur));
+    assert_eq!(CaptureLens::default(), CaptureLens { depth_of_field: false, motion_blur: false }, "a capture asks for neither");
+}
+
+#[test]
 fn the_facade_default_is_hdr_with_the_legacy_preserving_look() {
     use genex::render::{ExposureMode, Look, Tonemap};
     let control = control(RenderConfig::new());

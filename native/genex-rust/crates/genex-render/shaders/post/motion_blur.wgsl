@@ -17,7 +17,7 @@
 @group(0) @binding(3) var mb_neighbour: texture_2d<f32>;
 // The HDR scene at render size.
 @group(0) @binding(4) var mb_scene: texture_2d<f32>;
-// The packed velocity and distance at render size (the block reduction writes it).
+// The packed speed and distance at render size (the block reduction writes it).
 @group(0) @binding(7) var mb_packed: texture_2d<u32>;
 // The shortest velocity a sample's weight divides by (render pixels).
 const MB_VELOCITY_EPSILON: f32 = 1.0e-4;
@@ -57,9 +57,8 @@ fn fs_mb_reconstruct(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f3
     if l_v_max < mb.samples.z {
         return c_p;
     }
-    let packed_p = textureLoad(mb_packed, p, 0).x;
-    let v_p = mb_unpack_velocity(packed_p);
-    let log_d_p = mb_unpack_log_distance(packed_p);
+    let v_p = mb_velocity(p);
+    let log_d_p = mb_unpack_log_distance(textureLoad(mb_packed, p, 0).x);
     let l_v_p = max(length(v_p), 0.5);
     // The pixel's own velocity as the second direction, unless it is short beside the longest
     // (rescaled to the longest's length).
@@ -84,11 +83,10 @@ fn fs_mb_reconstruct(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f3
         let l_t = distance(frag.xy, vec2<f32>(q) + vec2<f32>(0.5));
         let c = textureLoad(mb_scene, q, 0).rgb;
         let packed = textureLoad(mb_packed, q, 0).x;
-        let v = mb_unpack_velocity(packed);
         let log_d = mb_unpack_log_distance(packed);
         // 1 where the sample is in front of the pixel, 0 behind.
         let fg = saturate((log_d_p - log_d) * MB_DEPTH_SOFTNESS_PER_STOP);
-        let l_v = mix(l_v_bg, length(v), fg);
+        let l_v = mix(l_v_bg, mb_unpack_speed(packed), fg);
         // Reaches the pixel, spread over its velocity, by a triangular window.
         // (A still foreground sample has no velocity: KinoMotion divides by its zero, which turned a
         // still prop's panning surroundings black.)

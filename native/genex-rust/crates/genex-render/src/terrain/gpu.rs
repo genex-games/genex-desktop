@@ -98,6 +98,11 @@ pub struct GpuTerrain {
     pub normal_levels: [[u32; 4]; MAX_NORMAL_LEVELS / 4],
     /// The layers.
     pub layers: [GpuTerrainLayer; MAX_TERRAIN_LAYERS],
+    /// x, y: one render pixel in NDC (2 / width, 2 / height), set per render size
+    /// ([`TerrainGpu::set_render_size`]): the shaders work a pixel's step across the ground out
+    /// from it and the projection, never from a screen derivative (GA1: across a quad of
+    /// sub-pixel triangles far away those changed from run to run).
+    pub pixel: [f32; 4],
 }
 
 /// The terrain row of `desc` under `lod`.
@@ -136,6 +141,7 @@ pub fn terrain_row(desc: &TerrainDesc, lod: &TerrainLod) -> GpuTerrain {
         morph,
         normal_levels,
         layers,
+        pixel: [0.0; 4],
     }
 }
 
@@ -214,6 +220,15 @@ impl TerrainGpu {
 
     fn make_group(device: &Device, layout: &BindGroupLayout, [row, rows, maps]: [&Buffer; 3]) -> BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("terrain"), layout, entries: &[entry(0, row), entry(1, rows), entry(2, maps)] })
+    }
+
+    /// Draw at render size `size` (pixels) from now on: the row again when it changed.
+    pub fn set_render_size(&mut self, queue: &Queue, size: (u32, u32)) {
+        let pixel = [2.0 / size.0.max(1) as f32, 2.0 / size.1.max(1) as f32, 0.0, 0.0];
+        if pixel != self.desc_row.pixel {
+            self.desc_row.pixel = pixel;
+            queue.write_buffer(&self.row, 0, bytemuck::bytes_of(&self.desc_row));
+        }
     }
 
     /// Draw at `quality` from now on: new ranges (the row again) when its detail changed.
