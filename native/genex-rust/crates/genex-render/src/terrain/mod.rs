@@ -356,17 +356,25 @@ pub struct TerrainLayer {
     pub roughness: f32,
     /// The normal map's strength (0: flat).
     pub normal_strength: f32,
+    /// The grass growing on this layer (renderer pass 2 A.8, [`crate::foliage`]; None: bare).
+    pub grass: Option<crate::foliage::GrassLayer>,
 }
 
 impl TerrainLayer {
     /// A flat layer of linear colour `tint`.
     pub const fn flat(tint: [f32; 3]) -> TerrainLayer {
-        TerrainLayer { albedo: None, data: None, tint, tile: 4.0, roughness: 0.9, normal_strength: 1.0 }
+        TerrainLayer { albedo: None, data: None, tint, tile: 4.0, roughness: 0.9, normal_strength: 1.0, grass: None }
     }
 
     /// A textured layer tiled every `tile` metres.
     pub const fn textured(albedo: Option<TextureId>, data: Option<TextureId>, tile: f32) -> TerrainLayer {
-        TerrainLayer { albedo, data, tint: [1.0; 3], tile, roughness: 1.0, normal_strength: 1.0 }
+        TerrainLayer { albedo, data, tint: [1.0; 3], tile, roughness: 1.0, normal_strength: 1.0, grass: None }
+    }
+
+    /// This layer with `grass` growing on it.
+    pub const fn with_grass(mut self, grass: crate::foliage::GrassLayer) -> TerrainLayer {
+        self.grass = Some(grass);
+        self
     }
 }
 
@@ -413,7 +421,7 @@ impl TerrainDesc {
     }
 
     /// Refuse a control map of the wrong size, a texel naming a missing layer, too many or no
-    /// layers, or a layer that does not tile (`mesh-invalid`).
+    /// layers, a layer that does not tile or grass out of range (`mesh-invalid`).
     pub fn check(&self) -> Result<(), RenderError> {
         let (w, d) = self.heights.samples();
         if self.layers.is_empty() || self.layers.len() > MAX_TERRAIN_LAYERS {
@@ -429,7 +437,7 @@ impl TerrainDesc {
         if let Some(bad) = self.control.iter().position(|texel| texel.base() >= layers || texel.overlay() >= layers) {
             return Err(invalid(format!("control texel {bad} names a layer past the {layers} given")));
         }
-        Ok(())
+        crate::foliage::check(self)
     }
 
     /// The control words the GPU reads (layer 0 everywhere without a map).

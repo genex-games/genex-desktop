@@ -253,6 +253,32 @@ around the pixel blended by weight and height, hex-tiled (Mikkelsen 2022) on des
 buffer to the forward stage's (tests/terrain.rs). Probe captures and spot shadows leave the
 terrain out. The ledger's `terrain` buffers row counts its tables and grid.
 
+## Grass and scatter
+
+A terrain layer may carry grass (`terrain::TerrainLayer::grass`, `foliage::GrassLayer`; the
+facade's `Grass` and `TerrainLayer::with_grass`): blades per square metre, their height and width
+ranges and colours (foot, tip, dry tips, flowers) and how much light passes through them. Nothing
+is uploaded per blade. Each frame, after the tables (graph node 1), three compute passes generate a
+camera-centred square of 16 x 16-cell tiles (`foliage::gpu`, `shaders/foliage/grass_gen.wgsl`): a
+tile past the reach or outside the camera's frustum keeps nothing; elsewhere one lane per cell hashes
+the cell's global index into a candidate (jitter, layer from the control map, keep threshold against
+the layers' density times the cell's area, the quality's share and a distance falloff), compacts the
+survivors by a workgroup prefix sum into the tile's region, scans the tile counts into the indirect
+draw's arguments and packs the drawn order. No atomics: the drawn list equals its CPU twin
+(`foliage::plan`) blade for blade, and a blade grows in and sinks out over a band of its cell's
+probability, so a moving camera never pops one. A blade is a strip of `segments` (quadratic Bezier,
+its lean plus the shared wind's at this tick and the last, rounded normals eased skywards with
+distance, wider far away) drawn in the prepass (its sway's own motion under TAA), the world pass
+(`Equal`, the forward chunks plus a back-lit Lambert lobe) and, on `high` and `ultra`, the nearest
+cascade. It adds no binding to the forward stage (`tests/grass.rs`). `Quality::grass`
+(`foliage::GrassQuality`, a resource knob): `medium` three in five blades to 32 m, `high` all to
+44 m casting, `ultra` to 60 m, the high phones a third to 22 m from `high`, none on `low`, the low
+phones or the legacy renderer. The ledger's `grass` buffers row holds its regions and order.
+
+`foliage::scatter::scatter` (the facade's `Terrain::scatter` and `Scatter`) places instances on the
+terrain's chosen layers at a loading point with the same global cell hashing: the same instances for
+any area that covers them, cut by slope, leaned with the ground on request and capped evenly by a
+hashed priority. The game draws them through an instance group.
 ## Output size and window present
 
 A renderer is made at the game's logical `world_size` (`Renderer::logical_size`: the 2D layer's

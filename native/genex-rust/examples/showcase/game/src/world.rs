@@ -220,6 +220,29 @@ fn layer(name: &str, tile: f32) -> TerrainLayer {
     TerrainLayer::textured(&format!("fetched/{name}-layer.png"), &format!("fetched/{name}-data.png"), tile)
 }
 
+/// The lush meadow's grass (renderer pass 2 A.8): knee-high blades from a dark foot to a fresh
+/// green, a fifth of the tips dry, a few yellow flowers, the low sun shining through them.
+pub fn lush_grass() -> genex::Grass {
+    genex::Grass::meadow(30.0, 0.5)
+        .with_height(0.14, 0.5)
+        .with_width(0.022, 0.042)
+        .with_colors(Color::rgb(39, 58, 25), Color::rgb(84, 112, 47))
+        .with_dry(Color::rgb(149, 129, 75), 0.18)
+        .with_flowers(Color::rgb(237, 206, 79), 0.025)
+        .with_transmission(0.7)
+}
+
+/// The dry meadow's grass: taller and sparser, most of its tips gone gold.
+pub fn dry_grass() -> genex::Grass {
+    genex::Grass::meadow(22.0, 0.7)
+        .with_height(0.3, 0.7)
+        .with_width(0.022, 0.042)
+        .with_colors(Color::rgb(48, 60, 27), Color::rgb(112, 118, 52))
+        .with_dry(Color::rgb(160, 136, 76), 0.6)
+        .with_flowers(Color::rgb(232, 225, 210), 0.015)
+        .with_transmission(0.75)
+}
+
 /// The lakeside's ground on the built-in terrain (renderer pass 2 A.7): the layout's heights every
 /// [`crate::layout::TERRAIN_SPACING`] metres and its control map, six layers (tiles in metres: the
 /// fetched textures' real sizes, assets-manifest.json `worldSizeMetres`): the scanned forest floor
@@ -234,8 +257,8 @@ pub fn terrain() -> Terrain {
             let origin = math::vec2(-TERRAIN_HALF, -TERRAIN_HALF);
             let ground = Terrain::from_heights([TERRAIN_SAMPLES; 2], origin, TERRAIN_SPACING, heights).expect("the layout's heights");
             let layers = vec![
-                layer("terrain-grass", 2.0).with_tint(vec3(0.68, 1.0, 0.5)).with_fallback(Color::rgb(54, 79, 34)),
-                layer("terrain-grass", 2.0).with_tint(vec3(1.3, 1.08, 0.58)).with_fallback(Color::rgb(126, 108, 66)),
+                layer("terrain-grass", 2.0).with_tint(vec3(0.68, 1.0, 0.5)).with_fallback(Color::rgb(54, 79, 34)).with_grass(lush_grass()),
+                layer("terrain-grass", 2.0).with_tint(vec3(1.3, 1.08, 0.58)).with_fallback(Color::rgb(126, 108, 66)).with_grass(dry_grass()),
                 layer("terrain-soil", 2.0).with_fallback(Color::rgb(108, 84, 62)),
                 layer("terrain-sand", 3.0).with_fallback(Color::rgb(170, 152, 125)),
                 layer("terrain-rock", 2.4).with_fallback(Color::rgb(138, 134, 126)),
@@ -404,7 +427,6 @@ pub fn scene_probe() -> Value {
     json!({
         "trees": layout.trees.len(),
         "rocks": layout.rocks.len(),
-        "grassBlades": layout.blades.len(),
         "lanterns": layout.lanterns.len(),
         "fireflies": layout.fireflies.len(),
     })

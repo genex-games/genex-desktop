@@ -792,8 +792,10 @@ fn textures_variant(gpu: &Gpu) -> Result<(), RenderError> {
 
 /// The terrain's pipelines (renderer pass 2 A.7) at `preset` on desktop-high: a small rolling
 /// height field with a flat and a textured layer, two frames (the casters, the prepass with motion
-/// on a TAA preset, the world pass's `Equal` or MSAA variant).
-fn terrain_variant(gpu: &Gpu, preset: QualityPreset) -> Result<(), RenderError> {
+/// on a TAA preset, the world pass's `Equal` or MSAA variant). With `grass` the flat layer grows a
+/// meadow (A.8): the grass's generation passes, its prepass, motion prepass and world pass, and on
+/// high its cascade casters.
+fn terrain_variant(gpu: &Gpu, preset: QualityPreset, grass: bool) -> Result<(), RenderError> {
     use genex_render::terrain::{ControlTexel, Heightfield, TerrainDesc, TerrainLayer};
     let class = DeviceClass::from_wire("desktop-high").ok_or_else(|| RenderError::refused(RenderCode::DeviceFailed, "no desktop-high class"))?;
     let quality = preset_quality(preset, class);
@@ -807,7 +809,9 @@ fn terrain_variant(gpu: &Gpu, preset: QualityPreset) -> Result<(), RenderError> 
     let texture = TextureData::rgba8(4, 4, vec![128; 64])?;
     let albedo = renderer.add_texture(gpu, &texture, TextureKind::Color)?;
     let data = renderer.add_texture(gpu, &texture, TextureKind::Data)?;
-    let layers = vec![TerrainLayer::flat([0.2, 0.3, 0.1]), TerrainLayer::textured(Some(albedo), Some(data), 2.0)];
+    let meadow = TerrainLayer::flat([0.2, 0.3, 0.1]);
+    let meadow = if grass { meadow.with_grass(genex_render::foliage::GrassLayer::meadow(1.0, 0.4)) } else { meadow };
+    let layers = vec![meadow, TerrainLayer::textured(Some(albedo), Some(data), 2.0)];
     let control = (0..65 * 65).map(|i| ControlTexel::blend(0, 1, (i % 255) as u8)).collect();
     let desc = TerrainDesc { heights, control, layers, look: Default::default() };
     renderer.renderer_mut().set_terrain(gpu, Some((&desc, 1)))?;
@@ -817,9 +821,49 @@ fn terrain_variant(gpu: &Gpu, preset: QualityPreset) -> Result<(), RenderError> 
         renderer.render(gpu, &frame, CullPath::Gpu, None)?;
     }
     match renderer.renderer().terrain_stats() {
-        Some(stats) if stats.camera_rows > 0 => Ok(()),
-        _ => Err(RenderError::refused(RenderCode::DeviceFailed, "the terrain drew no row")),
+        Some(stats) if stats.camera_rows > 0 => {}
+        _ => return Err(RenderError::refused(RenderCode::DeviceFailed, "the terrain drew no row")),
     }
+    if grass && renderer.renderer().grass_stats().is_none() {
+        return Err(RenderError::refused(RenderCode::DeviceFailed, "the meadow drew no grass"));
+    }
+    Ok(())
+}
+
+/// The look's lens (renderer pass 2 A.9, graph nodes 17a and 17b) on desktop-high's high under TAA:
+/// depth of field and motion blur at the preset's tiers (the ring gather and the reconstruction,
+/// `ring`) or at the other ones (the circular gather and the direct blur), two frames with the
+/// camera moving, so the nodes' pipelines (the reconstruction's block reduction a compute pass over
+/// an `r32uint` storage texture) are created on the browser's device.
+fn lens_variant(gpu: &Gpu, ring: bool) -> Result<(), RenderError> {
+    use genex_render::post::dof::{DepthOfField, DofTier};
+    use genex_render::post::motion_blur::{MotionBlur, MotionBlurTier};
+    let class = DeviceClass::from_wire("desktop-high").ok_or_else(|| RenderError::refused(RenderCode::DeviceFailed, "no desktop-high class"))?;
+    let mut quality = preset_quality(QualityPreset::High, class);
+    if !ring {
+        quality.dof = DofTier::Circular;
+        quality.motion_blur = MotionBlurTier::Direct;
+    }
+    let msaa = genex_render::renderer::landed_samples(quality.anti_aliasing) > 1;
+    let mut renderer = FrameRenderer::new(gpu, CHECK_SIZE, CHECK_SIZE, RenderOptions { msaa })?;
+    let part1 = renderer.renderer_mut();
+    part1.set_scene_format(SceneFormat::Rgba16Float);
+    part1.set_device_class(class);
+    part1.set_quality(&quality);
+    let look = part1.look().with_depth_of_field(DepthOfField::focused(2.0, 1.4)).with_motion_blur(MotionBlur::shutter(0.5));
+    part1.set_look(look);
+    for tick in 1..=2u64 {
+        let x = tick as f32 * 0.5;
+        let mut frame = ImmediateFrame::new(CameraDesc::look_at([x, 2.0, 6.0], [x, 0.0, 0.0]), [0, 0, 0, 255]);
+        frame.cube(translation(0.0, 0.5, 0.0), [200, 60, 50, 255]);
+        frame.set_tick(tick);
+        renderer.render(gpu, &frame, CullPath::Gpu, None)?;
+    }
+    let held = |label: &str| renderer.renderer().buffer_ledger().entries().iter().any(|entry| entry.label == label && entry.bytes > 0);
+    if !(held(genex_render::budget::DEPTH_OF_FIELD_LABEL) && held(genex_render::budget::MOTION_BLUR_LABEL)) {
+        return Err(RenderError::refused(RenderCode::DeviceFailed, "the lens did not draw"));
+    }
+    Ok(())
 }
 
 /// Every renderer pipeline variant on `gpu`, each under its own scopes: the renderer with and
@@ -868,7 +912,13 @@ fn pipeline_variants(gpu: &Gpu, inject_invalid: bool) -> Vec<(String, VariantSco
     }
     variants.push(variant(gpu, "textures-classes".to_owned(), textures_variant));
     for (preset, name) in [(QualityPreset::Medium, "terrain-medium"), (QualityPreset::High, "terrain-high")] {
-        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset)));
+        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset, false)));
+    }
+    for (preset, name) in [(QualityPreset::Medium, "grass-medium"), (QualityPreset::High, "grass-high")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| terrain_variant(gpu, preset, true)));
+    }
+    for (ring, name) in [(true, "lens-ring"), (false, "lens-circular")] {
+        variants.push(variant(gpu, name.to_owned(), move |gpu| lens_variant(gpu, ring)));
     }
     variants.push(variant(gpu, "hud".to_owned(), |gpu| {
         drop(HudPainter::new(&gpu.device, WORLD_FORMAT));

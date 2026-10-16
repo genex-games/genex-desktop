@@ -266,6 +266,13 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
         QualityPreset::High => high_row(&mut quality),
         QualityPreset::Ultra => ultra_row(&mut quality, form),
     }
+    // A.8: the terrain's grass (phones' caps lower it, `apply_mobile_caps`).
+    quality.grass = match preset {
+        QualityPreset::Low => GrassQuality::OFF,
+        QualityPreset::Medium => GrassQuality::MEDIUM,
+        QualityPreset::High => GrassQuality::HIGH,
+        QualityPreset::Ultra => GrassQuality::ULTRA,
+    };
     quality
 }
 

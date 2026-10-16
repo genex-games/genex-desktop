@@ -2,8 +2,9 @@
  * Web parity for the renderer (renderer follow-up RQ0.3): the lakeside showcase built for wasm32
  * (`scripts/spike/rust-wgpu/web-showcase.sh`: `examples/showcase-web`, packaged by the lane's
  * `packageWeb` with its staged assets) runs in Chromium's WebGPU on the one presenter native runs
- * draw with (genex's `present.rs`): its four Level-3 custom passes (what no built-in draws: the
- * clouds, grass, the lake, the light sprites) are installed at `studio_boot`,
+ * draw with (genex's `present.rs`): its three Level-3 custom passes (what no built-in draws: the
+ * clouds, the lake, the light sprites; its meadow is the terrain's own grass since renderer pass 2
+ * A.8) are installed at `studio_boot`,
  * listed in `state().volatile.customPasses` with no refusal, and change the picture; `state()`
  * carries the frame meter (`fps`) and the presenter's per-tag triangles; and every renderer
  * pipeline variant is created on the browser's device under error scopes, which report an
@@ -44,11 +45,10 @@ const OUTPUT_MAX_BYTES = 64 * 1024 * 1024;
 const WORLD = { width: 1280, height: 720 };
 const PASSES = [
   { name: "clouds", stage: "after-opaque" },
-  { name: "grass", stage: "after-opaque" },
   { name: "lake", stage: "after-transparent" },
   { name: "lights", stage: "after-transparent" },
 ] as const;
-/** The shot the A/B is taken from, and its grass and lake in world pixels (x0, y0, x1, y1). */
+/** The shot the A/B is taken from, and its meadow and lake in world pixels (x0, y0, x1, y1). */
 const SHOT = "wide";
 const MEADOW = { x0: 900, y0: 420, x1: 1240, y1: 700 };
 const LAKE = { x0: 420, y0: 330, x1: 860, y1: 520 };
@@ -89,6 +89,17 @@ const MESHLET_VARIANTS: readonly string[] = [
   "terrain-high",
   "shader-terrain",
   "shader-terrain-shadow",
+  // Renderer pass 2 A.9: the look's depth of field and motion blur after TAA (graph nodes 17a and
+  // 17b) at the preset's tiers (the ring gather, the reconstruction) and the other ones.
+  "lens-ring",
+  "lens-circular",
+  // Renderer pass 2 A.8: the terrain's grass (generation, prepass, motion prepass, world pass and,
+  // on high, the cascade casters) and its modules.
+  "grass-medium",
+  "grass-high",
+  "shader-grass-gen",
+  "shader-grass",
+  "shader-grass-shadow",
 ];
 /** The variant the browser row injects so its error scope must report it (web.rs). */
 const INJECTED_VARIANT = "injected-invalid";
@@ -272,7 +283,7 @@ describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chrom
     showcase?.close();
   });
 
-  it("installs all four passes at boot with no refusal, and state() counts fps and triangles", {
+  it("installs all three passes at boot with no refusal, and state() counts fps and triangles", {
     timeout: 2 * BOOT_TIMEOUT_MS,
   }, async () => {
     const { context, page } = await openShell(browser, showcase.origin, false);
@@ -297,7 +308,7 @@ describe("Lakeside on the web: the shared presenter runs Level-3 passes in Chrom
     await context.close();
   });
 
-  it("draws grass, lake and sprites over the built-in scene: > 5% of the meadow and the lake differ from the passes off", {
+  it("draws clouds, lake and sprites over the built-in scene: > 5% of the meadow and the lake differ from the passes off", {
     timeout: 2 * BOOT_TIMEOUT_MS,
   }, async () => {
     const { context, page } = await openShell(browser, showcase.origin, true);

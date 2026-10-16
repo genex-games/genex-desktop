@@ -241,7 +241,9 @@ pub const WORKGROUP_AUDIT: &[(&str, &str)] = &[
     ("sky-multiscatter", "each of the 64 lanes stores its direction's gathers before the reduction's first barrier"),
     ("ibl-sh9", "each lane stores partial[lane] and lowest[lane] before reading; lane 0 stores ringing before the uniform load"),
     ("meshlet-cull", "cull_mark, cull_scan and cull_scatter store every lane's scan_a, scan_b, marks and lane_slots before a barrier"),
+    ("grass-gen", "cs_grass_tiles and cs_grass_scan store every lane's gx_grass_scan[lane] before the scan's first barrier; cs_grass_pack declares none it reads"),
     ("irradiance-passes", "cs_irradiance_reduce: each of the 64 lanes stores lane_light[lane][a] and lane_reach[lane][a] for all six directions before the reduction's first barrier"),
+    ("particles-sort", "cs_sort_block and cs_sort_inner: each of the 256 lanes stores all eight of its sort_lds slots (a pair past the count as the last key) before the first barrier; cs_sort_step declares none"),
 ];
 
 /// Compilation options for a kernel in [`WORKGROUP_AUDIT`]: no workgroup zeroing on native, where

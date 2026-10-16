@@ -219,6 +219,10 @@ pub const DEPTH_WRITING_VERTEX_ENTRIES: &[(&str, &str)] = &[
     // shares `vs_terrain`).
     ("terrain", "vs_terrain"),
     ("terrain", "vs_terrain_motion"),
+    // Renderer pass 2 A.8: the grass's world-pass and motion-prepass vertices (its plain prepass
+    // shares `vs_grass`).
+    ("grass", "vs_grass"),
+    ("grass", "vs_grass_motion"),
 ];
 
 /// Every renderer shader by name.

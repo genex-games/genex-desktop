@@ -131,7 +131,7 @@ pub const INSTANCE_GROUP_CALLS: [&str; 6] =
 /// `TerrainLayer::flat(..)`, `.with_layers(..)`) and control map (`TerrainTexel::blend(..)`,
 /// `.with_control(..)`), drawn each frame (`frame.terrain(..)`) and asked for its height
 /// (`terrain.height(..)`).
-pub const TERRAIN_CALLS: [&str; 9] = [
+pub const TERRAIN_CALLS: [&str; 13] = [
     "Terrain::from_fn",
     "Terrain::from_heights",
     "TerrainLayer::textured",
@@ -141,6 +141,11 @@ pub const TERRAIN_CALLS: [&str; 9] = [
     ".with_control",
     "frame.terrain",
     "terrain.height",
+    // Renderer pass 2 A.8: grass on a terrain layer, and scatter on the terrain.
+    "Grass::meadow",
+    ".with_grass",
+    "Scatter::new",
+    "terrain.scatter",
 ];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).

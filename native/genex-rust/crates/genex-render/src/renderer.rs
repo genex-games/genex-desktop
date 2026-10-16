@@ -111,10 +111,16 @@
 pub mod live_timing;
 /// The forward pass's RQ4 screen effects: fog row, AO term, contact-shadow mask (RQ4.6).
 mod effects;
+mod froxel_fog;
+/// Graph nodes 17a and 17b: the look's depth of field and motion blur (renderer pass 2 A.9).
+mod lens;
 mod probe_capture;
+mod grass_draw;
 mod terrain_draw;
 mod variants;
 
+pub use grass_draw::GrassStats;
+pub use lens::CaptureLens;
 pub use terrain_draw::TerrainStats;
 
 use wgpu::{
@@ -829,6 +835,12 @@ pub struct Renderer {
     /// first frame that draws each.
     terrain: Option<crate::terrain::gpu::TerrainGpu>,
     terrain_pipelines: terrain_draw::TerrainPipelines,
+    /// The terrain's grass (renderer pass 2 A.8), its pipelines and the time its wind sways at.
+    grass: Option<crate::foliage::gpu::GrassGpu>,
+    grass_pipelines: grass_draw::GrassPipelines,
+    grass_time: grass_draw::GrassTime,
+    /// The look's depth of field and motion blur (graph nodes 17a and 17b, renderer pass 2 A.9).
+    lens: std::cell::RefCell<lens::LensNodes>,
     shadow_sampler: Sampler,
     /// PCSS's blocker search gathers the shadow map through it (`layout::SHADOW_BLOCKER_SAMPLER`).
     point_sampler: Sampler,
@@ -2084,6 +2096,12 @@ impl<'a> WorldNodes<'a> {
                 }
                 renderer.write_uploads(frame.encoder(), &self.prep.uploads, plan, &rows);
                 renderer.write_meshlets(frame.queue(), self.prep);
+                // The terrain's grass (A.8): generated for the camera before the shadows and the
+                // prepass draw it.
+                let grass = renderer.encode_grass(frame.encoder());
+                if grass > 0 {
+                    self.count_compute(frame, grass);
+                }
                 // The frame's first command buffer opens with the armed timer's begin pass.
                 if let Some(timer) = renderer.timer.borrow_mut().as_mut() {
                     timer.encode_begin(frame.encoder());
@@ -2293,8 +2311,9 @@ impl<'a> WorldNodes<'a> {
                         self.stats.meshlet_draws += 1;
                     }
                 }
-                // The terrain (A.7), after the opaque batches.
+                // The terrain (A.7), after the opaque batches, then its grass (A.8).
                 renderer.draw_terrain(pass, &groups.frame, &groups.pass);
+                renderer.draw_grass(pass, &groups.frame, &groups.pass);
                 if !plan.lines.is_empty() {
                     pass.set_pipeline(&renderer.scene_pipelines().lines);
                     pass.set_bind_group(0, &groups.lines, &[]);
@@ -2546,6 +2565,10 @@ impl Renderer {
             variants: variants::VariantPipelines::default(),
             terrain: None,
             terrain_pipelines: terrain_draw::TerrainPipelines::default(),
+            grass: None,
+            grass_pipelines: grass_draw::GrassPipelines::default(),
+            grass_time: grass_draw::GrassTime::default(),
+            lens: std::cell::RefCell::default(),
             shadow_sampler,
             point_sampler,
             texture_sampler,
@@ -3756,8 +3779,10 @@ impl Renderer {
                 custom_draws += 1;
             }
         }
-        // The terrain's depth, normals and motion (A.7), after every other geometry.
+        // The terrain's depth, normals and motion (A.7), after every other geometry, then its
+        // grass's (A.8).
         self.draw_terrain_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
+        self.draw_grass_prepass(&mut pass, prep, motion.map(|(group, _, _, _)| group));
         if let Some((group, motion_pipelines, _, _)) = motion {
             // T-03: the camera's motion wherever no geometry drew (the sky, its sun disc, the fog
             // horizon), after every draw of the pass: `Equal` against the cleared far plane.
@@ -4112,6 +4137,7 @@ impl Renderer {
         self.ensure_temporal(&scene_path)?;
         self.ensure_variants(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.prepare_terrain(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
+        self.prepare_grass(&plan, &scene_path, prepass.as_ref(), spec.motion)?;
         self.path = scene_path;
         let meshlets = self.prepare_meshlets(meshlets, prepass.is_some())?;
         let consumers = prepass.as_ref().map_or(PrepassConsumers::NONE, |prepass| prepass.consumers);
@@ -4498,6 +4524,11 @@ impl Renderer {
         let terrain = self.terrain_bytes();
         if terrain > 0 {
             ledger.register(Buffers, crate::terrain::TERRAIN_LEDGER_LABEL, terrain);
+        }
+        // The grass's row, tile regions, counts, arguments and order (A.8).
+        let grass = self.grass_bytes();
+        if grass > 0 {
+            ledger.register(Buffers, crate::foliage::GRASS_LEDGER_LABEL, grass);
         }
         // The reflection probes' cubes, capture targets and rows (A.3), outside the target pool.
         let probes = self.environment.borrow().probes().bytes();
@@ -5017,8 +5048,10 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        // The terrain's casters (A.7) before the batches' (it binds its own groups and grid).
+        // The terrain's casters (A.7) and its grass's (A.8) before the batches' (they bind their
+        // own groups).
         self.draw_terrain_casters(&mut pass, prep, cascade);
+        self.draw_grass_casters(&mut pass, prep, cascade);
         if plan.batches.is_empty() {
             return;
         }

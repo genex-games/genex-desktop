@@ -80,7 +80,11 @@
       "TerrainTexel::blend",
       ".with_control",
       "frame.terrain",
-      "terrain.height"
+      "terrain.height",
+      "Grass::meadow",
+      ".with_grass",
+      "Scatter::new",
+      "terrain.scatter"
     ],
     "refusals": ["terrain-heights-invalid", "terrain-layers-invalid", "terrain-control-invalid"]
   },

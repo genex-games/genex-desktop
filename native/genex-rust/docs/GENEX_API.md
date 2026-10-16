@@ -560,6 +560,70 @@ build colliders with it. Refusals change nothing: `terrain-heights-invalid` (a s
 `terrain-control-invalid` (a control map of another size, a texel naming a missing layer). A
 frame draws one terrain.
 
+A layer can grow grass: `TerrainLayer::textured(..).with_grass(Grass::meadow(36.0, 0.5))` (blades a
+square metre up to `GRASS_DENSITY_MAX` (150), the tallest blade in metres up to `GRASS_HEIGHT_MAX`
+(2)), with `.with_height(shortest, tallest)`, `.with_width(narrowest, widest)`,
+`.with_colors(root, tip)`, `.with_dry(color, share)`, `.with_flowers(color, share)` and
+`.with_transmission(..)` (how much of the sun behind a blade shines through it). Wherever the
+control map paints that layer, the renderer grows blades around the camera on the GPU (nothing is
+uploaded per blade; a blade belongs to its place, so the field never swims), thinner and wider far
+away and gone past a reach that grows with the preset, swaying in the shared wind (simulated time,
+with its own motion so TAA keeps it sharp), shadowed by the sun and lit through from behind.
+Desktop and web `medium`, `high` and `ultra` draw it (`high` and `ultra` also cast its shadows);
+the high phones draw a third of it from `high`; `low` and the low phones draw the ground alone, so
+paint the grassy layer's own colour close to the grass's. Grass out of range (a density or height
+past its cap, a share outside 0..1, a number that is not one) is refused `terrain-layers-invalid`.
+
+Bushes, rocks and flowers are placed on a terrain once, at a loading point, and drawn as an
+instance group: `terrain.scatter(&Scatter::new(0.4, &[0, 1]).with_scale(0.7, 1.3).with_seed(2),
+vec2(-60.0, -60.0), vec2(60.0, 60.0))` returns the transforms standing on the ground wherever
+layers 0 and 1 cover it (instances a square metre, up to 16), with `.on_flat_ground(0.9)` (only
+where the ground's normal has at least that much y), `.following_ground(share)` (lean with the
+slope), `.with_cap(most)` (past it they thin evenly; give phones a smaller cap). An instance belongs
+to its place, so the same rule gives the same instances for any area that covers them: scatter
+chunks as the player moves and they meet exactly. A rule out of range or an empty area places
+nothing.
+
+## Particles
+
+Steam from a vent, rain over a street, sparks from a fountain: an emitter made once and drawn every
+frame with `frame.particles(&emitter)`, one logical draw. A particle is a pure function of the
+emitter and the tick the frame is drawn at, never of earlier frames, so Live and a capture of the
+same tick draw the same particles; nothing is read back and the simulation never sees them.
+
+```rust
+// on_reset: kept in the world.
+sim.world.steam = Particles::steam(vec3(4.0, 0.0, -2.0));
+sim.world.rain = Particles::rain(vec3(0.0, 9.0, -10.0), vec3(6.0, 0.0, 14.0))
+    .with_rate(120, 70)
+    .expect("rain");
+// on_draw:
+frame.particles(&sim.world.steam).particles(&sim.world.rain);
+```
+
+`Particles::steam(origin)` rises slowly, grows and turns, drawn back to front and soft where it
+meets walls and the ground; `Particles::rain(top, half_extent)` falls as streaks from the top of a
+box and stops where it meets what the camera sees; `Particles::fountain(origin)` throws round warm
+sparks. Change one with `.with_rate(per_tick, lifetime_ticks)` (at most `PARTICLES_MAX`, 16384,
+alive at once), `.with_origin(origin, half_extent)`, `.with_motion(velocity, spread, gravity)`
+(world units a tick at 60 ticks a second), `.with_look(size, end_scale, start, end)`,
+`.with_soft(distance)` (a billboard fades out over that many metres as it nears the scene behind
+it instead of cutting a line; soft where the quality may run the depth prepass, desktop `medium`
+and up, hard elsewhere), `.with_sorted(true)` (back to front, for smoke and steam that overlap),
+`.with_collision(thickness, rest_ticks)` (a particle whose path went behind a visible surface, by
+less than `thickness` metres, rests there, fading, then is gone; one hitting something out of view
+is not stopped), `.with_shape(stretch_ticks, rotation_jitter, spin)` and `.with_seed(seed)`.
+`.with_flipbook(atlas, columns, rows, frames, cycles, blend)` textures it from an sRGB atlas
+under `assets/` (frames read row by row from the top left, played `cycles` times over a life,
+cross-faded when `blend`); a missing atlas draws round particles and is logged once. Refusals
+change nothing: `particles-count-invalid` (none alive, or more than 16384 at once) and
+`particles-flipbook-invalid` (no frames, or a grid of no cells or more than 16 a side). Each
+`with_*` answers the changed emitter and leaves the old one as it was. An emitter is its
+description: the same one made again (in the next `on_reset`) is the same emitter, while a renderer
+holds 16 different ones, so make them at a loading point, not a new one every frame.
+A phone draws at most 32768 particles a frame (8192 on the low phones): past that every n-th
+particle of each emitter is drawn.
+
 ## Custom materials and post passes
 
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,

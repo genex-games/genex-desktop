@@ -100,13 +100,14 @@ fn terrain_pipeline(device: &wgpu::Device, spec: &TerrainSpec<'_>) -> Compiled<R
 impl Renderer {
     /// Draw `terrain` from the next frame on (None: no terrain), its layers' textures already
     /// added ([`Renderer::add_texture`]). `version` names it: the same version is kept as it is.
-    /// Refused `mesh-invalid` for a height field, control map or layer it cannot draw.
+    /// Refused `mesh-invalid` for a height field, control map, layer or grass it cannot draw. The
+    /// grass its layers carry (A.8) comes and goes with it.
     pub fn set_terrain(&mut self, gpu: &Gpu, terrain: Option<(&TerrainDesc, u64)>) -> Result<(), RenderError> {
         let detail = self.terrain_pipelines.detail;
         let Some((desc, version)) = terrain else {
             self.terrain = None;
             self.terrain_pipelines = TerrainPipelines { detail, ..TerrainPipelines::default() };
-            return Ok(());
+            return self.set_grass(None);
         };
         if self.terrain.as_ref().is_some_and(|held| held.version() == version) {
             return Ok(());
@@ -114,7 +115,7 @@ impl Renderer {
         let quality = self.terrain_quality();
         self.terrain = Some(TerrainGpu::new(&gpu.device, &gpu.queue, desc, quality, version)?);
         self.terrain_pipelines = TerrainPipelines { detail, ..TerrainPipelines::default() };
-        Ok(())
+        self.set_grass(Some(desc))
     }
 
     /// How far the terrain's finest level reaches, as a multiple (at least 1) of the least

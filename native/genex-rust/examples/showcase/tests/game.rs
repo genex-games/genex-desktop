@@ -1,6 +1,6 @@
 //! The lakeside's rules headless (no GPU): it replays from a seed, its shots are named cameras,
 //! only the passes no built-in draws are registered, all at custom-pass API v2, the ground is the
-//! built-in terrain, its look (fog included) is its own, the grass follows the device's tier, and
+//! built-in terrain with its grassy layers' grass, its look (fog included) is its own, and
 //! the camera keys switch between the tour, a shot and free flight.
 
 use genex::gpu::PassStage;
@@ -54,7 +54,6 @@ fn only_the_passes_built_ins_cannot_draw_are_registered_and_all_at_api_2() {
     // physical sky has no clouds).
     let expected = [
         ("clouds", PassStage::AfterOpaque),
-        ("grass", PassStage::AfterOpaque),
         ("lake", PassStage::AfterTransparent),
         ("lights", PassStage::AfterTransparent),
     ];
@@ -141,16 +140,17 @@ fn the_ground_is_the_built_in_terrain_with_six_fetched_layers_over_the_layouts_h
     }
 }
 
+// Renderer pass 2 A.8: the meadow is the terrain's own grass, grown on its two grassy layers (the
+// renderer's preset decides how much of it a device draws), not a Level-3 pass.
 #[test]
-fn the_grass_draws_all_its_blades_on_strong_tiers_and_fewer_on_weaker_ones() {
-    use genex::render::{DeviceClass, FormFactor, PerformanceTier, QualityPreset, preset_quality};
-    use showcase_game::passes::grass_share;
-    let desktop = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
-    let phone = DeviceClass::new(FormFactor::Mobile, PerformanceTier::Mid);
-    let share = |class: DeviceClass, preset: QualityPreset| grass_share(&preset_quality(preset, class));
-    assert_eq!(share(desktop, QualityPreset::High), 1.0);
-    assert!(share(phone, QualityPreset::Medium) < 1.0, "a phone draws a share of the meadow");
-    assert!(share(desktop, QualityPreset::Low) <= share(desktop, QualityPreset::Medium), "lower tiers never draw more");
+fn the_meadow_grows_on_the_terrains_grassy_layers() {
+    let terrain = showcase_game::world::terrain();
+    let grassy: Vec<bool> = terrain.layers().iter().map(|layer| layer.grass().is_some()).collect();
+    assert_eq!(grassy, [true, true, false, false, false, false], "lush and dry grass; soil, sand, rock and the lake bed bare");
+    let lush = showcase_game::world::lush_grass().render_layer();
+    let dry = showcase_game::world::dry_grass().render_layer();
+    assert!(lush.usable() && dry.usable());
+    assert!(dry.dry_share > lush.dry_share && dry.height[1] > lush.height[1], "the dry meadow is taller and golder");
 }
 
 /// The settings panel's switches header (genex-hud's settings panel), shown only while it is open.

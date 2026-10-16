@@ -570,6 +570,8 @@ fn terrain_desc(terrain: &crate::Terrain, assets: &AssetCache) -> genex_render::
                 tile,
                 roughness,
                 normal_strength,
+                // Its grass (A.8), in linear colours.
+                grass: layer.grass().map(crate::Grass::render_layer),
             }
         })
         .collect();

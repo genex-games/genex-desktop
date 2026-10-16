@@ -18,11 +18,6 @@ kind = "pass"
 api = 2
 
 [[wgsl]]
-path = "shaders/grass.wgsl"
-kind = "pass"
-api = 2
-
-[[wgsl]]
 path = "shaders/water.wgsl"
 kind = "pass"
 api = 2

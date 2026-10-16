@@ -26,6 +26,7 @@ pub const TERRAIN: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/forward_env.wgsl"),
     include_str!("../../shaders/pbr.wgsl"),
     include_str!("../../shaders/lighting/surface.wgsl"),
+    include_str!("../../shaders/lighting/decals.wgsl"),
     include_str!("../../shaders/lighting/ambient.wgsl"),
     include_str!("../../shaders/lighting/sun.wgsl"),
     include_str!("../../shaders/lighting/local_lights.wgsl"),
@@ -156,10 +157,11 @@ pub fn maps(desc: &TerrainDesc) -> Vec<u32> {
     words
 }
 
-/// The terrain group's layout entries.
+/// The terrain group's layout entries. The row and the maps are seen by compute too: the grass's
+/// generation reads the heights and the control map through this group (A.8, `foliage::gpu`).
 pub fn layout_entries() -> [BindGroupLayoutEntry; 3] {
-    let both = ShaderStages::VERTEX_FRAGMENT;
-    [uniform(0, false, both), storage(1, true, ShaderStages::VERTEX), storage(2, true, both)]
+    let all = ShaderStages::VERTEX_FRAGMENT | ShaderStages::COMPUTE;
+    [uniform(0, false, all), storage(1, true, ShaderStages::VERTEX), storage(2, true, all)]
 }
 
 /// The bytes of a row in the rows table.
@@ -247,6 +249,11 @@ impl TerrainGpu {
     /// The group's layout (every terrain pipeline's group 2).
     pub fn layout(&self) -> &BindGroupLayout {
         &self.layout
+    }
+
+    /// The group itself (the grass's generation binds it as its group 2, A.8).
+    pub fn group(&self) -> &BindGroup {
+        &self.group
     }
 
     /// The quality it draws at.

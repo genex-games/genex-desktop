@@ -1,11 +1,12 @@
 //! The lakeside's custom GPU passes (extension ladder level 3, custom-pass API v2): only what no
-//! built-in draws. The clouds (the physical sky has none) and the grass after the opaque models;
-//! the lake and the light sprites (the fireflies' halos, pollen, glints, smoke and the lights'
-//! pools on the grass) after the transparent ones. Everything
-//! else is the renderer's own: the sky (`frame.environment`, see `draw.rs`), the lanterns and
-//! windows (real lights and emissive materials, `draw.rs`), and the look's height fog, bloom and
-//! tonemap (`showcase.rs`). The look's fog is applied as each built-in surface is shaded and does not
-//! reach geometry a pass draws, so the grass and the lake apply the same fog from the v2 tables'
+//! built-in draws. The clouds (the physical sky has none) after the opaque models; the lake and the
+//! light sprites (the fireflies' halos, pollen, glints, smoke and the lights' pools on the grass)
+//! after the transparent ones. Everything else is the renderer's own: the sky
+//! (`frame.environment`, see `draw.rs`), the meadow (the terrain's grassy layers grow it, renderer
+//! pass 2 A.8, `world::terrain`), the lanterns and windows (real lights and emissive materials,
+//! `draw.rs`), and the look's height fog, bloom and tonemap (`showcase.rs`). The look's fog is
+//! applied as each built-in surface is shaded and does not reach geometry a pass draws, so the lake
+//! applies the same fog from the v2 tables'
 //! fog row themselves (`common.wgsl`'s `look_fog`). Each pass reads the simulation (its tick)
 //! read-only and builds every resource through `PassSetup`. At API v2 every pass draws in the scene
 //! format: linear, pre-exposed radiance on the HDR scene, which the look's tonemapper maps to the
@@ -21,23 +22,16 @@ use crate::layout::{CABIN, CABIN_FLOOR, CABIN_YAW, LAKE_CENTER, LAKE_RADII, heig
 use crate::world::{TICKS_PER_SECOND, World};
 
 const COMMON_WGSL: &str = include_str!("../shaders/common.wgsl");
-const GRASS_WGSL: &str = include_str!("../shaders/grass.wgsl");
 const WATER_WGSL: &str = include_str!("../shaders/water.wgsl");
 const SPRITES_WGSL: &str = include_str!("../shaders/sprites.wgsl");
 const CLOUDS_WGSL: &str = include_str!("../shaders/clouds.wgsl");
 
-/// Vertices of one grass blade (a strip of three segments and a tip).
-const BLADE_VERTICES: u32 = 7;
 /// The custom-pass API every lakeside pass is written against (the v2 tables, the scene format).
 const PASS_API: u32 = 2;
-/// Bytes per grass blade and per sprite in their instance buffers.
-const BLADE_BYTES: u64 = 32;
+/// Bytes per sprite in the sprites' instance buffer.
 const SPRITE_BYTES: u64 = 64;
 /// How strong a firefly's halo is at the peak of its blink.
 const FIREFLY_HALO: f32 = 0.35;
-/// The share of the grass blades drawn where the device draws one or two shadow cascades.
-const GRASS_SHARE_LOW: f32 = 0.35;
-const GRASS_SHARE_MEDIUM: f32 = 0.6;
 /// The most sprites a frame draws.
 const MAX_SPRITES: usize = 1024;
 /// The lake's grid: cells across and along, and bed samples per side.
@@ -57,7 +51,6 @@ const SMOKE_STRENGTH: f32 = 0.45;
 /// Register every pass, in drawing order within each stage.
 pub fn wire(game: &mut Game<World>) {
     game.gpu_pass("clouds", PassStage::AfterOpaque, Clouds::default());
-    game.gpu_pass("grass", PassStage::AfterOpaque, Grass::default());
     game.gpu_pass("lake", PassStage::AfterTransparent, Lake::default());
     game.gpu_pass("lights", PassStage::AfterTransparent, Sprites::default());
 }
@@ -196,106 +189,6 @@ const ALPHA: gpu::BlendState = gpu::BlendState {
 
 fn seconds(tick: u64) -> f32 {
     tick as f32 / TICKS_PER_SECOND
-}
-
-/// The share of the layout's grass blades a frame draws at `quality`: all of them where the sun casts
-/// three or more cascades (desktops at high and above), fewer on the tiers that draw fewer (phones,
-/// `low` and `medium`), so the meadow's cost follows the device as the renderer's own work does.
-pub fn grass_share(quality: &genex::render::Quality) -> f32 {
-    match quality.shadows.cascades {
-        0 | 1 => GRASS_SHARE_LOW,
-        2 => GRASS_SHARE_MEDIUM,
-        _ => 1.0,
-    }
-}
-
-/// The grass: every blade of the layout, instanced, swaying in genex's shared wind. Under TAA it
-/// draws its own motion too (`motion_draws`: the sway between last frame's time and this one's), so
-/// TAA reprojects the blades instead of trailing them (renderer pass 2, B.7).
-#[derive(Default)]
-pub struct Grass {
-    resources: Option<GrassResources>,
-}
-
-struct GrassResources {
-    instances: gpu::Buffer,
-    params: gpu::Buffer,
-    group: gpu::BindGroup,
-    pipeline: gpu::RenderPipeline,
-    motion: gpu::RenderPipeline,
-    count: u32,
-}
-
-impl GpuPass<World> for Grass {
-    fn rebuild(&mut self, setup: &mut PassSetup<'_>) -> Result<(), GpuError> {
-        let blades = &layout().blades;
-        let data: Vec<f32> = blades
-            .iter()
-            .flat_map(|b| [b.root.x, b.root.y, b.root.z, b.yaw, b.height, b.width, b.sun, b.tint])
-            .collect();
-        let instances = setup.create_buffer_init("grass blades", &floats(&data), gpu::BufferUsages::VERTEX)?;
-        let module = shader(setup, "grass", GRASS_WGSL)?;
-        let (buffer, layout, group) = params_group(setup, "grass", 16, &[])?;
-        let attributes = [
-            gpu::VertexAttribute { format: gpu::VertexFormat::Float32x4, offset: 0, shader_location: 0 },
-            gpu::VertexAttribute { format: gpu::VertexFormat::Float32x4, offset: 16, shader_location: 1 },
-        ];
-        let buffers = [Some(gpu::VertexBufferLayout { array_stride: BLADE_BYTES, step_mode: gpu::VertexStepMode::Instance, attributes: &attributes })];
-        let desc = WorldPipeline {
-            label: "grass",
-            module: &module,
-            vertex: "vs_grass",
-            fragment: "fs_grass",
-            buffers: &buffers,
-            topology: gpu::PrimitiveTopology::TriangleStrip,
-            blend: None,
-            depth_write: true,
-        };
-        let pipeline = world_pipeline(setup, Some(&layout), &desc);
-        let motion_desc = TemporalPipeline {
-            label: "grass motion",
-            module: &module,
-            vertex: "vs_grass_motion",
-            fragment: "fs_grass_motion",
-            buffers: &buffers,
-            topology: gpu::PrimitiveTopology::TriangleStrip,
-            target: setup.motion_target(),
-            depth: setup.temporal_depth(true),
-        };
-        let motion = temporal_pipeline(setup, Some(&layout), &motion_desc);
-        let count = u32::try_from(blades.len()).unwrap_or(u32::MAX);
-        self.resources = Some(GrassResources { instances, params: buffer, group, pipeline, motion, count });
-        Ok(())
-    }
-
-    fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {
-        let Some(grass) = &self.resources else { return };
-        let tick = ctx.sim().world.tick;
-        let time = seconds(tick);
-        // Last frame's time (this frame's after a history reset and in a capture): the sway's
-        // motion starts there.
-        let before = seconds(tick.saturating_sub(ctx.tick() - ctx.prev_tick()));
-        // Weaker devices draw a share of the meadow (the layout's blades are in random order, so
-        // any first share is spread evenly), each blade wider to keep the cover.
-        let share = grass_share(ctx.quality());
-        let _ = ctx.write_buffer(&grass.params, 0, &floats(&[time, 1.0 / share.sqrt(), before, 0.0]));
-        let drawn = ((grass.count as f32) * share) as u32;
-        if let Some(draws) = ctx.draws() {
-            draws.set_pipeline(&grass.pipeline).bind_tables(0).set_bind_group(1, &grass.group, &[]).set_vertex_buffer(0, &grass.instances, ..).draw(0..BLADE_VERTICES, 0..drawn);
-        }
-        if let Some(draws) = ctx.motion_draws() {
-            draws.set_pipeline(&grass.motion).bind_tables(0).set_bind_group(1, &grass.group, &[]).set_vertex_buffer(0, &grass.instances, ..).draw(0..BLADE_VERTICES, 0..drawn);
-        }
-    }
-
-    fn api(&self) -> u32 {
-        PASS_API
-    }
-
-    // The environment's light is what the look's fog scatters over the meadow (`look_fog`).
-    fn inputs(&self) -> gpu::RenderInputs {
-        gpu::RenderInputs::ENVIRONMENT
-    }
 }
 
 /// The clouds over the physical sky (`clouds.wgsl`): one full-screen triangle behind the scene.
