@@ -4,7 +4,7 @@ import { applyGraphFixture } from "./fixture-graph-control.ts";
 import { measureWindowResize } from "./window-resize.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 /**
- * The developer control's runtime inside a developer launch: a Unix socket that takes one
+ * The developer control's runtime inside a developer launch: a local socket (a named pipe on Windows) that takes one
  * request line per connection from `scripts/studio-dev`, checks its instance and capability,
  * performs the operation against the studio window or the game view, and answers one line.
  */
@@ -52,6 +52,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { secretRedactor } from "../../shared/redact.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { HarnessState } from "../../shared/protocol.ts";
+import { controlSocket, secureControlSocket } from "./transport.ts";
 
 /** Why the developer runtime cannot start. */
 const MESSAGE = {
@@ -142,7 +143,7 @@ export async function startRuntime(
     server.once("error", reject);
     server.listen(rt.socket, () => resolve());
   });
-  await fsp.chmod(rt.socket, 0o600);
+  await secureControlSocket(rt.socket);
   await publishIdentity(rt);
   return { status: () => status(rt), stop: () => stop(rt) };
 }
@@ -155,7 +156,7 @@ async function openRuntime(parts: RuntimeParts): Promise<Runtime> {
   await fsp.mkdir(root, { mode: 0o700 });
   const transport = await fsp.mkdtemp(path.join(os.tmpdir(), "ags-"));
   await fsp.chmod(transport, 0o700);
-  const socket = path.join(transport, "s");
+  const socket = controlSocket(transport, parts.ctx.instanceId);
   if (Buffer.byteLength(socket) > MAX_SOCKET_PATH_BYTES) throw new Error(MESSAGE.socketPathTooLong);
   const control = new DesktopControl();
   return {

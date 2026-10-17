@@ -62,6 +62,7 @@
   "tests/conformance/dev-inspect-dom.test.ts",
   "tests/conformance/dev-launch.test.ts",
   "tests/conformance/dev-policy.test.ts",
+  "tests/conformance/dev-transport.test.ts",
   "tests/conformance/diagnostics.test.ts",
   "tests/conformance/door.test.ts",
   "tests/conformance/draw-counters.test.ts",
