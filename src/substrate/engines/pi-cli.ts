@@ -22,20 +22,39 @@ const THINKING_EFFORTS: readonly string[] = [
   ReasoningEffort.Max,
 ];
 /**
- * Where a built-in provider answers. A provider missing here reaches only hosts the listing named.
+ * Where a built-in provider answers. An unknown id still reaches these hosts so Copilot, ChatGPT
+ * sign-in and custom models are not cut off; a dotted id is treated as a hostname of its own.
  */
 const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   openai: ["api.openai.com", "chatgpt.com", "auth.openai.com"],
   anthropic: ["api.anthropic.com"],
   google: ["generativelanguage.googleapis.com"],
-  groq: ["api.groq.com"],
-  xai: ["api.x.ai"],
-  mistral: ["api.mistral.ai"],
-  togetherai: ["api.together.xyz"],
+  "google-vertex": ["*.googleapis.com"],
+  "google-vertex-anthropic": ["*.googleapis.com"],
+  "amazon-bedrock": ["*.amazonaws.com"],
+  azure: ["*.openai.azure.com", "*.cognitiveservices.azure.com"],
+  "azure-cognitive-services": ["*.cognitiveservices.azure.com"],
+  "github-copilot": ["api.github.com"],
   cerebras: ["api.cerebras.ai"],
+  cohere: ["api.cohere.com"],
+  deepinfra: ["api.deepinfra.com"],
+  groq: ["api.groq.com"],
+  mistral: ["api.mistral.ai"],
+  perplexity: ["api.perplexity.ai"],
+  togetherai: ["api.together.xyz"],
+  xai: ["api.x.ai"],
+  vercel: ["ai-gateway.vercel.sh"],
   cursor: ["api2.cursor.sh", "www.cursor.com"],
   openrouter: ["openrouter.ai"],
 };
+const KNOWN_HOSTS: readonly string[] = [...new Set(Object.values(PROVIDER_HOSTS).flat())];
+
+function hostsFor(provider: string): string[] {
+  const known = PROVIDER_HOSTS[provider];
+  if (known) return [...known];
+  if (provider.includes(".")) return [provider];
+  return [...KNOWN_HOSTS];
+}
 
 const MESSAGE = {
   Malformed: "Pi's model list could not be read.",
@@ -90,7 +109,7 @@ export function parsePiModels(stdout: string): PiModel[] {
         ...(thinks ? { efforts: [...THINKING_EFFORTS], defaultEffort: ReasoningEffort.Medium } : {}),
         note: provider,
       },
-      hosts: [...(PROVIDER_HOSTS[provider] ?? [])],
+      hosts: hostsFor(provider),
     });
   }
   return models;

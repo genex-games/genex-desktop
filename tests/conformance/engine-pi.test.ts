@@ -14,6 +14,7 @@ import { PiEngine, type PiExec, type PiInvocation, piSandbox } from "../../src/s
 import { parsePiModels } from "../../src/substrate/engines/pi-cli.ts";
 import { translatePiEvent } from "../../src/substrate/engines/pi-events.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { readFile } from "node:fs/promises";
 
@@ -59,7 +60,7 @@ describe("Pi's model list", () => {
     const listed = parsePiModels(await fixture("pi-models.txt"));
     assert.deepEqual(
       listed.map((model) => model.row.id),
-      ["anthropic/claude-sonnet-4", "openai/gpt-4.1"],
+      ["anthropic/claude-sonnet-4", "openai/gpt-4.1", "github-copilot/gpt-4o", "acme/custom-bot"],
     );
     const [sonnet, gpt] = listed;
     assert.equal(sonnet?.row.label, "claude-sonnet-4");
@@ -70,6 +71,8 @@ describe("Pi's model list", () => {
     assert.deepEqual(sonnet?.hosts, ["api.anthropic.com"]);
     assert.equal(gpt?.row.supportsThinking, false);
     assert.deepEqual(gpt?.hosts, ["api.openai.com", "chatgpt.com", "auth.openai.com"]);
+    assert.ok(listed[2]?.hosts.includes("api.github.com"), "Copilot reaches GitHub");
+    assert.ok(listed[3]?.hosts.length, "an unknown provider still reaches known API hosts");
   });
 
   it("skips the header and refuses a listing that is not one", () => {
@@ -222,5 +225,112 @@ describe("Pi's sandbox", () => {
     assert.ok(sandbox.writableRoots.includes("/game"));
     assert.ok(sandbox.ownHome?.some((home) => home.endsWith(".pi") || home.includes(`${path.sep}.pi`)));
     assert.ok(sandbox.secretPaths.includes("/secrets"));
+    const denied = sandbox.denyWrite ?? [];
+    assert.ok(
+      denied.some((p) => p.endsWith(`${path.sep}auth.json`)),
+      "a session cannot write Pi's tokens",
+    );
+    assert.ok(
+      denied.some((p) => p.endsWith(`${path.sep}extensions`)),
+      "a session cannot plant extensions that later run unsandboxed",
+    );
+    assert.ok(
+      denied.some((p) => p === path.join("/game", ".pi")),
+      "a game's own .pi folder is not the session's to plant",
+    );
+  });
+});
+
+describe("Pi's JSON stream", () => {
+  it("takes one reply's usage from the last snapshot, not the sum of every delta", async () => {
+    const cwd = await game();
+    const stream = await events("pi-stream.jsonl");
+    const mirrored: DelegateEvent[] = [];
+    const { engine } = await engineWith(() => replay(stream));
+    const result = await engine.delegate({ cwd, prompt: "Hi", onEvent: (event) => mirrored.push(event) });
+    assert.equal(result.ok, true);
+    assert.equal(result.summary, "Hello from Pi.");
+    assert.equal(result.turns, 1, "one assistant reply is one turn");
+    assert.equal(result.usage.input_tokens, 100, "cumulative input, not 100+100");
+    assert.equal(result.usage.output_tokens, 2, "cumulative output, not 1+2");
+    assert.equal(result.usage.cost_usd, 0.02);
+    const assistants = mirrored.filter((event) => event.type === "assistant");
+    assert.equal(assistants.length, 1, "message_end is the one chat row, not each delta");
+    assert.ok(
+      mirrored.some((event) => event.type === "text_delta"),
+      "deltas still stream for the live display",
+    );
+  });
+
+  it("a rate-limit retry that gives up is a failure, not an empty success", async () => {
+    const cwd = await game();
+    const stream = await events("pi-error.jsonl");
+    const { engine } = await engineWith(() => replay(stream));
+    await assert.rejects(
+      engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} }),
+      (err: unknown) => err instanceof EngineError && err.kind === "rate_limit",
+    );
+  });
+
+  it("a refused model ends as an error, not an empty answer", async () => {
+    const cwd = await game();
+    const stream = await events("pi-refusal.jsonl");
+    const { engine } = await engineWith(() => replay(stream));
+    const result = await engine.delegate({ cwd, prompt: "Hi", model: "anthropic/claude-sonnet-4", onEvent: () => {} });
+    assert.equal(result.ok, false);
+    assert.equal(result.stopReason, "error");
+    assert.match(result.errorText ?? "", /model not found/i);
+  });
+
+  it("a non-zero exit after events is a failure", async () => {
+    const cwd = await game();
+    const { engine } = await engineWith(async function* () {
+      yield { type: "session", id: "sess-exit" };
+      throw new Error("Pi exited with 1");
+    });
+    const result = await engine.delegate({ cwd, prompt: "Hi", onEvent: () => {} });
+    assert.equal(result.ok, false);
+    assert.match(result.errorText ?? "", /exited with 1/);
+  });
+});
+
+describe("Pi's plan and one-shot answers", () => {
+  it("keeps bash in Plan so the studio tools bridge can run", async () => {
+    const cwd = await game();
+    const { engine, seen } = await engineWith(() => replay([]));
+    await engine.delegate({
+      cwd,
+      prompt: "Plan it",
+      permissions: {
+        mode: PermissionMode.Plan,
+        allow: [],
+        directories: [],
+        protectWrites: [],
+        ask: async () => ({ decision: "allow" as const }),
+      },
+      interviewTools: [{ name: "ask_user", description: "ask", parameters: { type: "object", properties: {} } }],
+      onEvent: () => {},
+    });
+    const tools = seen[0]?.argv[seen[0].argv.indexOf("--tools") + 1] ?? "";
+    assert.match(tools, /\bbash\b/, "Plan still has bash for node .studio/bridge/tool.mjs");
+  });
+
+  it("answers a judge with no tools", async () => {
+    const stream = await events("pi-run.jsonl");
+    const { engine, seen } = await engineWith(() => replay(stream));
+    const response = await engine.complete({
+      systemPrompt: "You judge builds.",
+      messages: [{ role: "user", content: "A or B?" }],
+    });
+    assert.equal(response.message.content, "Hello from Pi.");
+    assert.equal(response.engine, "pi");
+    assert.ok(seen[0]?.argv.includes("--no-tools"));
+    await assert.rejects(
+      engine.complete({
+        messages: [{ role: "user", content: "x" }],
+        tools: [{ name: "t", description: "t", parameters: { type: "object", properties: {} } }],
+      }),
+      /no studio tools/,
+    );
   });
 });

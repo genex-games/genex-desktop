@@ -681,7 +681,7 @@ describe("both sign-in paths go through the controllers", () => {
     });
     assert.deepEqual(await piLogin.start(), { started: true });
     assert.equal(opened[0]?.file, "/bin/pi");
-    assert.deepEqual(opened[0]?.args, []);
+    assert.deepEqual(opened[0]?.args, ["--no-extensions"]);
     assert.equal(opened[0]?.kind, "pi-login");
     assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
     exit?.(0);

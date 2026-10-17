@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"sess-pi-err","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"429 rate limited"}
+{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"429 rate limited"}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}

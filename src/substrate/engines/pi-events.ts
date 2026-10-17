@@ -16,8 +16,12 @@ export const PiEvent = {
   MessageEnd: "message_end",
   ToolStart: "tool_execution_start",
   ToolEnd: "tool_execution_end",
+  AutoRetryEnd: "auto_retry_end",
 } as const;
 export type PiEvent = (typeof PiEvent)[keyof typeof PiEvent];
+
+/** Assistant-message stop reasons that are a failed turn, not a finished reply. */
+const FAILED_STOP = new Set(["error", "aborted", "refusal", "content_filter"]);
 
 const TRACE_TOOL_INPUT_CHARS = 2_000;
 const TRACE_TOOL_RESULT_CHARS = 4_000;
@@ -27,7 +31,8 @@ export interface MirroredEvent {
     | typeof DelegateEventType.System
     | typeof DelegateEventType.Assistant
     | typeof DelegateEventType.User
-    | typeof DelegateEventType.Result;
+    | typeof DelegateEventType.Result
+    | typeof DelegateEventType.TextDelta;
   payload: unknown;
 }
 
@@ -35,6 +40,9 @@ export interface MirroredEvent {
 export interface Translated {
   events: MirroredEvent[];
   sessionId?: string;
+  /** Latest cumulative usage for the reply in flight; applied once at `message_end`. */
+  latestUsage?: Partial<Usage>;
+  /** This reply's usage, added to the run once. */
   usage?: Partial<Usage>;
   text?: string;
   failure?: { message: string; status: number | null };
@@ -55,6 +63,12 @@ const textOf = (value: unknown): string => {
   return value.map((part) => (typeof part === "string" ? part : String(record(part).text ?? ""))).join("");
 };
 
+/** HTTP status named in an error string, when Pi did not send one of its own. */
+function statusIn(text: string): number | null {
+  const match = /\b(429|401|403|402|503|502|500|400|404)\b/.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
 /** One parsed `--mode json` line, translated; nothing for a line it does not know. */
 export function translatePiEvent(event: Record_): Translated {
   switch (String(event.type ?? "")) {
@@ -68,6 +82,8 @@ export function translatePiEvent(event: Record_): Translated {
       return toolStart(event);
     case PiEvent.ToolEnd:
       return toolEnd(event);
+    case PiEvent.AutoRetryEnd:
+      return autoRetryEnd(event);
     default:
       return { events: [] };
   }
@@ -80,27 +96,49 @@ function session(event: Record_): Translated {
 
 function messageUpdate(event: Record_): Translated {
   const nested = record(event.assistantMessageEvent);
-  const usage = usageOf(record(event.usage));
+  const latestUsage = usageOf(record(event.usage));
   if (nested.type === "error") {
     const message = String(nested.error ?? nested.reason ?? "Pi stopped") || "Pi stopped";
     return {
       events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: message } }],
-      failure: { message, status: null },
-      usage,
+      failure: { message, status: statusIn(message) },
+      latestUsage,
     };
   }
-  if (nested.type !== "text_delta") return { events: [], usage };
+  if (nested.type !== "text_delta") return { events: [], latestUsage };
   const words = String(nested.delta ?? "");
-  if (!words) return { events: [], usage };
-  return { events: [assistant([{ type: "text", text: words }])], text: words, turns: 1, usage };
+  if (!words) return { events: [], latestUsage };
+  return {
+    events: [{ type: DelegateEventType.TextDelta, payload: { streamId: "pi", delta: words } }],
+    latestUsage,
+  };
 }
 
 function messageEnd(event: Record_): Translated {
   const message = record(event.message);
   if (message.role !== "assistant") return { events: [] };
+  const usage = usageOf(record(message.usage)) ?? usageOf(record(event.usage));
+  const stop = String(message.stopReason ?? "");
+  if (FAILED_STOP.has(stop)) {
+    const words = String(message.errorMessage ?? message.error ?? (textOf(message.content) || "Pi stopped"));
+    return {
+      events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: words } }],
+      failure: { message: words, status: statusIn(words) },
+      usage,
+    };
+  }
   const words = textOf(message.content).trim();
-  if (!words) return { events: [] };
-  return { events: [assistant([{ type: "text", text: words }])], text: words, turns: 1 };
+  if (!words) return { events: [], usage };
+  return { events: [assistant([{ type: "text", text: words }])], text: words, turns: 1, usage };
+}
+
+function autoRetryEnd(event: Record_): Translated {
+  if (event.success !== false) return { events: [] };
+  const message = String(event.finalError ?? event.errorMessage ?? "Pi stopped") || "Pi stopped";
+  return {
+    events: [{ type: DelegateEventType.Result, payload: { subtype: "error", result: message } }],
+    failure: { message, status: statusIn(message) },
+  };
 }
 
 function toolStart(event: Record_): Translated {

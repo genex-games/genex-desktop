@@ -17,18 +17,28 @@ import { runCommand } from "./claude-cli.ts";
 import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
-import { offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import { parsePiModels } from "./pi-cli.ts";
 import { parsePiLine, translatePiEvent, type Translated } from "./pi-events.ts";
 import {
+  type CompleteRequest,
+  type CompleteResponse,
   type DelegateRequest,
   type DelegateResult,
   type Engine,
   EngineError,
   type EngineModel,
   type EngineStatus,
+  classifyHttpFailure,
 } from "./types.ts";
-import { abortControllerFor, interruption, partialDelegateResult } from "./common.ts";
+import {
+  abortControllerFor,
+  COMPLETE_TIMEOUT_MS,
+  CompletionStop,
+  interruption,
+  partialDelegateResult,
+  STOPPED_BY_USER,
+} from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
@@ -36,7 +46,7 @@ import { credentialHomes } from "../credential-homes.ts";
 import { stopChild } from "../process-tree.ts";
 import type { Usage } from "../types.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { type EngineAccount, EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { ModelCatalogSource } from "../../shared/model-catalog.ts";
@@ -47,7 +57,10 @@ import type { ChildProcess } from "node:child_process";
 const MODELS_TIMEOUT_MS = 30 * SECOND_MS;
 const KILL_GRACE_MS = 3 * SECOND_MS;
 const STDERR_TAIL_CHARS = 4_000;
-const PLAN_TOOLS = "read,grep,find,ls";
+/** Plan/read-only: look, and keep `bash` so the studio tools bridge can run. */
+const PLAN_TOOLS = "read,grep,find,ls,bash";
+/** The provider statuses that refuse the request itself: pick another model. */
+const MODEL_REFUSED_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 
 const MESSAGE = {
   NotInstalled: "Pi isn't installed on this Mac.",
@@ -56,7 +69,12 @@ const MESSAGE = {
   SignInRemedy: "Sign in to a provider with Pi from Settings › Model Providers.",
   Ready: (version: string | undefined, count: number) => `Pi ${version ?? ""}, ${count} model(s)`.trim(),
   NoCompact: "Pi compacts its own sessions",
+  NoTools: "Pi's one-shot answers take no studio tools",
   Stopped: (code: number | null) => `Pi exited with ${code}`,
+  NoAnswer: "Pi gave no answer",
+  JudgeTimedOut: (minutes: number) => `the judge did not answer within ${minutes} min`,
+  ModelRefused: (model: string, words: string) =>
+    `The provider refused ${model} (${words}). Pick another model, then send again.`,
 } as const;
 
 /** One `pi --mode json`, as the engine starts it; injectable in tests. */
@@ -89,6 +107,7 @@ interface PiRun {
   sessionId: string | undefined;
   failure: { message: string; status: number | null } | null;
   deadlineHit: boolean;
+  pendingUsage: Partial<Usage> | undefined;
 }
 
 /** The sandbox a session runs in: the folder it works in, Pi's own home, and nothing it must not read. */
@@ -102,11 +121,19 @@ export function piSandbox(input: {
   home?: string;
 }): SandboxOptions {
   const home = input.home ?? os.homedir();
+  const piHome = path.join(home, ".pi");
   return {
     writableRoots: [input.runDir, ...input.gitDirs],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
-    ownHome: [path.join(home, ".pi")],
+    ownHome: [piHome],
+    // The CLI must read its sign-ins; the session must not overwrite them or plant extensions
+    // that later run unsandboxed in the TUI `/login`.
+    denyWrite: [
+      path.join(piHome, "agent", "auth.json"),
+      path.join(piHome, "agent", "extensions"),
+      path.join(input.gameDir, ".pi"),
+    ],
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }
@@ -227,11 +254,75 @@ export class PiEngine implements Engine {
     }
     if (request.signal?.aborted || run.deadlineHit)
       return metered(partialDelegateResult(this.id, interruption(request.signal?.aborted), partial()));
-    if (run.failure)
-      return metered(
-        partialDelegateResult(this.id, { stopReason: StopReason.Error, errorText: run.failure.message }, partial()),
-      );
+    if (run.failure) return this.#failedEnding(run.failure, partial, request.model);
     return completed(this.id, run, startedAt, request.model, recordedCalls(bridge, request));
+  }
+
+  /** A one-shot answer (a judge's verdict): no tools, in an empty folder of its own. */
+  async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    if (request.tools?.length) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoTools);
+    const controller = abortControllerFor(request.signal);
+    const ceiling = request.timeoutMs ?? COMPLETE_TIMEOUT_MS;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, ceiling);
+    const stopped = (): EngineError | null => {
+      if (timedOut)
+        return new EngineError(
+          EngineFailureKind.Timeout,
+          this.id,
+          MESSAGE.JudgeTimedOut(Math.round(ceiling / MINUTE_MS)),
+        );
+      return request.signal?.aborted ? new EngineError(EngineFailureKind.Aborted, this.id, STOPPED_BY_USER) : null;
+    };
+    let run: PiRun;
+    try {
+      run = await this.#answer(request, controller.signal);
+    } catch (err) {
+      throw stopped() ?? err;
+    } finally {
+      clearTimeout(timer);
+    }
+    const stop = stopped();
+    if (stop) throw stop;
+    if (run.failure) throw failureError(this.id, run.failure);
+    if (!run.summary) throw new EngineError(EngineFailureKind.Other, this.id, MESSAGE.NoAnswer);
+    return {
+      message: { role: "assistant", content: run.summary },
+      usage: run.usage,
+      stopReason: CompletionStop.Stop,
+      model: request.model ?? "",
+      engine: this.id,
+    };
+  }
+
+  /** One answer session in a scratch folder; removed after. */
+  async #answer(request: CompleteRequest, signal: AbortSignal): Promise<PiRun> {
+    const scratch = await this.#scratch("answer-");
+    const images = request.messages.flatMap((message) => message.images ?? []);
+    const stills = await writeDelegateStills(images.map((image) => ({ ...image, label: image.label ?? "" })));
+    const run = newRun(this.id, undefined);
+    try {
+      const invocation = await this.#invocation(
+        { model: request.model, effort: request.effort, denyReads: [] },
+        {
+          cwd: scratch,
+          runDir: scratch,
+          sessionId: undefined,
+          readOnly: true,
+          oneshot: true,
+          prompt: answerPrompt(request, stills.paths),
+          signal,
+        },
+      );
+      await this.#readEvents({}, run, invocation);
+      return run;
+    } finally {
+      if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
+      await rm(scratch, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   async #readModels(
@@ -291,18 +382,25 @@ export class PiEngine implements Engine {
 
   async #invocation(
     request: Pick<DelegateRequest, "model" | "effort" | "denyReads">,
-    ctx: { cwd: string; runDir: string; sessionId: string; readOnly: boolean; prompt: string; signal: AbortSignal },
+    ctx: {
+      cwd: string;
+      runDir: string;
+      sessionId: string | undefined;
+      readOnly: boolean;
+      oneshot?: boolean;
+      prompt: string;
+      signal: AbortSignal;
+    },
   ): Promise<PiInvocation> {
     const model = request.model;
     const argv = [
       "--mode",
       "json",
       "--no-extensions",
-      "--session-id",
-      ctx.sessionId,
+      ...(ctx.oneshot ? ["--no-tools", "--no-session"] : ["--session-id", ctx.sessionId ?? ""]),
       ...(model ? ["--model", model] : []),
       ...(request.effort ? ["--thinking", request.effort] : []),
-      ...(ctx.readOnly ? ["--tools", PLAN_TOOLS] : []),
+      ...(!ctx.oneshot && ctx.readOnly ? ["--tools", PLAN_TOOLS] : []),
     ];
     return {
       argv,
@@ -344,6 +442,18 @@ export class PiEngine implements Engine {
     const message = err instanceof Error ? err.message : String(err);
     return metered(partialDelegateResult(this.id, { stopReason: StopReason.Error, errorText: message }, partial()));
   }
+
+  /** A failure Pi reported: one with a status the run policy knows is thrown, the rest is an outcome. */
+  #failedEnding(
+    failure: { message: string; status: number | null },
+    partial: () => PartialDelegateState,
+    model: string | undefined,
+  ): DelegateResult {
+    const error = failureError(this.id, failure);
+    if (error.kind !== EngineFailureKind.Other) throw error;
+    const errorText = refusedModelText(failure, model) ?? failure.message;
+    return metered(partialDelegateResult(this.id, { stopReason: StopReason.Error, errorText }, partial()));
+  }
 }
 
 function isReadOnly(request: DelegateRequest): boolean {
@@ -355,8 +465,38 @@ function chatMode(request: DelegateRequest): PermissionMode | null {
   return request.permissions ? engineMode(EngineId.Pi, request.permissions.mode) : null;
 }
 
-function newRun(engine: string, sessionId: string): PiRun {
-  return { usage: { engine }, turns: 0, summary: "", sessionId, failure: null, deadlineHit: false };
+function newRun(engine: string, sessionId: string | undefined): PiRun {
+  return {
+    usage: { engine },
+    turns: 0,
+    summary: "",
+    sessionId,
+    failure: null,
+    deadlineHit: false,
+    pendingUsage: undefined,
+  };
+}
+
+/** A judge's question as one prompt: the system words, the conversation, and the critic's two rules. */
+function answerPrompt(request: CompleteRequest, files: string[]): string {
+  const conversation = request.messages.map((message) => `${message.role.toUpperCase()}:\n${message.content}`);
+  const attached = files.map((file) => `@${file}`).join("\n");
+  return [request.systemPrompt ?? "", ...conversation, attached, ...JUDGE_RULES]
+    .filter((part) => part.trim())
+    .join("\n\n");
+}
+
+function refusedModelText(
+  failure: { message: string; status: number | null },
+  model: string | undefined,
+): string | null {
+  if (!model || failure.status === null || !MODEL_REFUSED_STATUSES.has(failure.status)) return null;
+  return MESSAGE.ModelRefused(model, failure.message);
+}
+
+function failureError(engine: string, failure: { message: string; status: number | null }): EngineError {
+  if (failure.status !== null) return classifyHttpFailure(engine, failure.status, failure.message);
+  return new EngineError(EngineFailureKind.Other, engine, failure.message);
 }
 
 const SUMMED_USAGE = [
@@ -374,9 +514,15 @@ function applyTranslated(request: Pick<DelegateRequest, "onEvent">, run: PiRun, 
     request.onEvent?.(event as Parameters<NonNullable<DelegateRequest["onEvent"]>>[0]);
   if (translated.text) run.summary = translated.text;
   if (translated.turns) run.turns += translated.turns;
-  if (translated.failure) run.failure = translated.failure;
+  if (translated.failure && (!run.failure || translated.failure.message !== "Pi stopped"))
+    run.failure = translated.failure;
+  if (translated.latestUsage) run.pendingUsage = translated.latestUsage;
+  const closing = Boolean(translated.usage) || Boolean(translated.turns) || Boolean(translated.failure);
+  if (!closing) return;
+  const usage = translated.usage ?? run.pendingUsage;
+  run.pendingUsage = undefined;
   for (const key of SUMMED_USAGE) {
-    const value = translated.usage?.[key];
+    const value = usage?.[key];
     if (typeof value === "number") run.usage[key] = (run.usage[key] ?? 0) + value;
   }
 }
@@ -511,13 +657,11 @@ async function* childEvents(child: ChildProcess, invocation: PiInvocation): Asyn
     child.once("error", reject);
     child.once("close", (code) => resolve(code));
   });
-  let said = false;
   try {
     if (child.stdout) {
       for await (const line of lfLines(child.stdout)) {
         const event = parsePiLine(line);
         if (!event) continue;
-        said = true;
         yield event;
       }
     }
@@ -525,5 +669,5 @@ async function* childEvents(child: ChildProcess, invocation: PiInvocation): Asyn
     invocation.signal.removeEventListener("abort", onAbort);
   }
   const code = await exit;
-  if (code !== 0 && !said && !invocation.signal.aborted) throw new Error(stderr.trim() || MESSAGE.Stopped(code));
+  if (code !== 0 && !invocation.signal.aborted) throw new Error(stderr.trim() || MESSAGE.Stopped(code));
 }

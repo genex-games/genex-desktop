@@ -165,7 +165,7 @@ export function createLoginControllers({
       if (!cli) return { started: false, missingCli: true };
       terminals.open({
         file: cli.path,
-        args: [],
+        args: ["--no-extensions"],
         cwd: os.tmpdir(),
         // Interactive TUI so the person can `/login`. Pi keeps what it is given; the studio
         // rereads the models Pi can run once the terminal closes.
