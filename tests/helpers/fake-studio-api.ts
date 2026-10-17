@@ -118,6 +118,7 @@ const METHODS = [
   "claudeLoginOpenBrowser",
   "claudeLoginCancel",
   "openCodeSignIn",
+  "piSignIn",
   "openRouterKeySave",
   "openRouterKeyClear",
   "openRouterSignIn",

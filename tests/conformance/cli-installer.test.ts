@@ -9,7 +9,7 @@ import {
   type InstallerRun,
 } from "../../src/substrate/cli-installer.ts";
 import { CliInstallProblem } from "../../src/shared/cli-install.ts";
-import type { CodingProvider } from "../../src/shared/coding-cli.ts";
+import type { CodingProvider, InstallableCodingProvider } from "../../src/shared/coding-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const POSIX_ONLY = process.platform === "win32" && "runs its scripts with /bin/sh and /bin/bash";
@@ -38,7 +38,7 @@ const neverRuns: InstallerRun = async () => {
 };
 
 test("each CLI's installer is its vendor's own script: shell on macOS and Linux, PowerShell on Windows", () => {
-  const expected: Record<CodingProvider, [string, string | null]> = {
+  const expected: Record<InstallableCodingProvider, [string, string | null]> = {
     "claude-code": ["https://claude.ai/install.sh", "https://claude.ai/install.ps1"],
     codex: ["https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1"],
     // OpenCode publishes no PowerShell installer: Windows has none to fetch.
@@ -51,6 +51,7 @@ test("each CLI's installer is its vendor's own script: shell on macOS and Linux,
   }
   assert.throws(() => installerSource("gemini" as CodingProvider, "darwin"), /unknown coding CLI/);
   assert.throws(() => installerSource("__proto__" as CodingProvider, "darwin"), /unknown coding CLI/);
+  assert.throws(() => installerSource("pi", "darwin"), /unknown coding CLI/, "Pi has no vendor HTTPS installer");
 });
 
 test("a CLI with no installer for this system fails before anything is fetched or run", async () => {

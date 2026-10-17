@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCliInstalls, type CliInstallsDeps } from "../../src/main/cli-install.ts";
-import { CliInstallPhase, CliInstallProblem } from "../../src/shared/cli-install.ts";
+import { CliInstallOperation, CliInstallPhase, CliInstallProblem } from "../../src/shared/cli-install.ts";
 import type { CodingProvider } from "../../src/shared/coding-cli.ts";
 import type { InstallOutcome } from "../../src/substrate/cli-installer.ts";
 import { UiEvent, type UiEvent as UiEventShape } from "../../src/shared/ui-events.ts";
@@ -94,4 +94,32 @@ test("only Claude Code and Codex can be installed: anything else is refused befo
     assert.throws(() => service.start(hostile), /unknown coding CLI/, String(hostile));
     assert.deepEqual([installs, events, service.status()], [[], [], []], String(hostile));
   }
+});
+
+test("Pi has no in-app installer but Account can still update it", async () => {
+  let updates = 0;
+  let installs = 0;
+  const events: UiEventShape[] = [];
+  const service = createCliInstalls({
+    install: async () => {
+      installs++;
+      return { ok: true };
+    },
+    update: async () => {
+      updates++;
+      return { ok: true };
+    },
+    found: async () => true,
+    pushUiEvent: (event) => events.push(event),
+    log: () => {},
+    now: () => NOW,
+  });
+  assert.throws(() => service.start("pi"), /unknown coding CLI/);
+  assert.equal(installs, 0);
+  const job = service.start("pi", CliInstallOperation.Update);
+  assert.equal(job.operation, CliInstallOperation.Update);
+  const done = await service.settled("pi");
+  assert.equal(done?.phase, CliInstallPhase.Installed);
+  assert.equal(updates, 1);
+  assert.equal(installs, 0);
 });

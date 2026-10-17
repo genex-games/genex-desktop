@@ -65,6 +65,8 @@ export interface LoginControllerDeps {
   showClaudeState(state: ClaudeLoginState): void;
   /** OpenCode's sign-in ended: read the models it can run now. */
   onOpenCodeSignedIn?(): Promise<unknown>;
+  /** Pi's TUI `/login` ended: read the models it can run now. */
+  onPiSignedIn?(): Promise<unknown>;
   /** The installed CLI each sign-in runs; the studio's own resolver unless a test gives another. */
   requireCli?: typeof requireCodingCli;
   findBinary?: typeof findClaudeBinary;
@@ -80,10 +82,12 @@ export function createLoginControllers({
   requireCli = requireCodingCli,
   findBinary = findClaudeBinary,
   onOpenCodeSignedIn,
+  onPiSignedIn,
 }: LoginControllerDeps): {
   codexLogin: CodexLoginController;
   claudeLogin: ClaudeLoginController;
   openCodeLogin: OpenCodeLogin;
+  piLogin: PiLogin;
 } {
   let lastCodexLoginPhase = "idle";
   const codexLogin = new CodexLoginController({
@@ -155,7 +159,27 @@ export function createLoginControllers({
       return { started: true };
     },
   };
-  return { codexLogin, claudeLogin, openCodeLogin };
+  const piLogin: PiLogin = {
+    async start() {
+      const cli = await requireCli(EngineId.Pi).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: ["--no-extensions"],
+        cwd: os.tmpdir(),
+        // Interactive TUI so the person can `/login`. Pi keeps what it is given; the studio
+        // rereads the models Pi can run once the terminal closes.
+        env: childEnv(cli.env, { base: "contractor", vendor: "pi" }),
+        title: "Pi sign-in",
+        kind: TerminalKind.PiLogin,
+        onExit: () => {
+          void onPiSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
+  return { codexLogin, claudeLogin, openCodeLogin, piLogin };
 }
 
 /**
@@ -164,5 +188,13 @@ export function createLoginControllers({
  * rereads the models OpenCode can run once the terminal closes.
  */
 export interface OpenCodeLogin {
+  start(): Promise<{ started: boolean; missingCli?: boolean }>;
+}
+
+/**
+ * Pi's sign-in: its own TUI so the person can `/login`. Pi keeps credentials in its own store;
+ * the studio rereads the models Pi can run once the terminal closes.
+ */
+export interface PiLogin {
   start(): Promise<{ started: boolean; missingCli?: boolean }>;
 }

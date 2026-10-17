@@ -49,6 +49,7 @@ function sessionStatus(current: TerminalSession): string {
 function dockLabel(current: TerminalSession | undefined): string {
   if (current?.kind === TerminalKind.ClaudeLogin) return "Claude Code sign-in";
   if (current?.kind === TerminalKind.OpenCodeLogin) return "OpenCode sign-in";
+  if (current?.kind === TerminalKind.PiLogin) return "Pi sign-in";
   return current?.kind === TerminalKind.Command ? "Command" : "Terminal";
 }
 

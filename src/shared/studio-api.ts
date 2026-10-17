@@ -408,6 +408,8 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Pi's own TUI (`/login`), in the Settings row terminal. */
+  piSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.

@@ -65,6 +65,7 @@ export const EngineId = {
   Ollama: "ollama",
   OpenCode: "opencode",
   OpenRouter: "openrouter",
+  Pi: "pi",
   LocalServer: "local-server",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
@@ -137,6 +138,15 @@ export const PROVIDERS = [
     label: "OpenRouter",
     subscription: false,
     login: "none",
+    roles: "sessions",
+    billing: "metered",
+    signIn: null,
+  },
+  {
+    id: EngineId.Pi,
+    label: "Pi",
+    subscription: false,
+    login: "cli",
     roles: "sessions",
     billing: "metered",
     signIn: null,

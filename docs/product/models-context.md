@@ -21,8 +21,8 @@ Workers and Reviewers run only in Loop and
 survive a main-agent change. Each Ollama job takes its own model; Reviewers must see images and
 check a Loop's finish.
 
-Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenRouter and OpenCode show three once
-set up, no default, never auto-chosen unless Free and alone
+Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenRouter, OpenCode and Pi show three
+once set up, no default, never auto-chosen unless Free and alone
 ([details](../connections-and-context.md#openrouter-and-opencode)). Local server connects your LM
 Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-model-server)).
 

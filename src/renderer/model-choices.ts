@@ -131,7 +131,7 @@ function apiModelChoices(engine: EngineDescriptor, picker: PickerChoices[string]
  * sign-in cannot run (a free model, or a GPT a ChatGPT plan refuses). The row stays a hidden
  * choice, so a pick saved on it still resolves.
  */
-const UNOFFERED_DEFAULT: ReadonlySet<string> = new Set([EngineId.OpenCode]);
+const UNOFFERED_DEFAULT: ReadonlySet<string> = new Set([EngineId.OpenCode, EngineId.Pi]);
 
 /** The provider-default row: the catalog's own, else one made for it. */
 function defaultRow(engine: EngineDescriptor): EngineModel {

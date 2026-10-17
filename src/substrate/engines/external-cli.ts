@@ -46,18 +46,21 @@ const CLI_BINARY = {
   [EngineId.Codex]: "codex",
   [EngineId.ClaudeCode]: "claude",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Pi]: "pi",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
   [EngineId.Codex]: "https://developers.openai.com/codex/cli/",
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
+  [EngineId.Pi]: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
 } as const satisfies Record<CodingProvider, string>;
 /** The help each CLI is asked for, and the options it must list: every one Studio passes. */
 const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["exec", "--help"],
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
+  [EngineId.Pi]: ["--help"],
 };
 const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, string[]> = {
   [EngineId.Codex]: ["--json", "--output-schema", "--ignore-user-config", "--skip-git-repo-check"],
@@ -71,6 +74,7 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--allowedTools",
     "--disallowedTools",
   ],
+  [EngineId.Pi]: ["--mode", "--session-id", "--model", "--list-models", "--thinking"],
 };
 /**
  * `opencode run`'s options by the command line its version speaks: 1.18 lists every one (an older

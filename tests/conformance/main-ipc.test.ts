@@ -319,6 +319,12 @@ function loginFixture(
         return { started: true };
       },
     },
+    piLogin: {
+      start: async () => {
+        started.push("pi");
+        return { started: true };
+      },
+    },
     claudeLogin: {
       start: async (home: string | null) => {
         started.push(`claude ${home}`);
@@ -528,6 +534,12 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(started, ["opencode"]);
   });
 
+  it("Pi signs in through its own TUI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:pi.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["pi"]);
+  });
+
   it("the OpenCode sign-in runs `opencode auth login` in the terminal, and rechecks its models when it ends", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
     let exit: ((code: number) => void) | undefined;
@@ -631,6 +643,68 @@ describe("both sign-in paths go through the controllers", () => {
       ["auth", "login", "--standalone"],
       "2.x signs in on a server of its own, never by starting the shared background one",
     );
+  });
+
+  it("the Pi sign-in opens the TUI so the person can /login, and rechecks its models when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { piLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t1", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onPiSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-pi", PI_HOME: "/pi" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await piLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/pi");
+    assert.deepEqual(opened[0]?.args, ["--no-extensions"]);
+    assert.equal(opened[0]?.kind, "pi-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
+
+    const missing = createLoginControllers({
+      terminals: {
+        open: () => {
+          throw new Error("no terminal without a CLI");
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      requireCli: async () => {
+        throw new Error("pi is not installed");
+      },
+    });
+    assert.deepEqual(await missing.piLogin.start(), { started: false, missingCli: true });
   });
 
   it("an unknown engine is refused", async () => {

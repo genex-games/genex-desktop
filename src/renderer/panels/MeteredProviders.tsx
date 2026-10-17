@@ -1,6 +1,6 @@
 /**
- * Settings → Model Providers, the metered rows: OpenCode, which signs in to providers itself in
- * Studio's terminal, and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
+ * Settings → Model Providers, the metered rows: OpenCode and Pi, which sign in to providers
+ * themselves in Studio's terminal, and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
  * subscription's (`ModelsSection.tsx`): one status plate, one line, at most one visible action, an
  * Account menu once connected, and the picker's model list under it. The OpenRouter key goes
  * straight to main, which checks it with OpenRouter and keeps it in the OS secret store; it is
@@ -330,6 +330,117 @@ function OpenCodeRow({
   );
 }
 
+const PI_WORDS: ProviderWords = { name: WORDS.pi.name, plans: "", guide: WORDS.pi.guide };
+
+function PiRow({
+  engine,
+  onEnginesRefresh,
+}: { engine: EngineDescriptor } & Pick<MeteredProviderProps, "onEnginesRefresh">) {
+  const install = useCliInstall(EngineId.Pi);
+  const { run, error } = useRun();
+  const { checking, recheck } = useRecheck(EngineId.Pi, onEnginesRefresh);
+  const terminal = useSignInTerminal(TerminalKind.PiLogin);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const ready = engine.status.code === EngineStatusCode.Ready;
+  const state = openCodeRowState(engine, { installing: false, signingIn: Boolean(terminal) });
+  const signIn = (): void =>
+    void run(async () => {
+      setTerminalError(null);
+      const started = await window.studio.piSignIn();
+      if (!started.started) await recheck();
+    });
+  const cancelSignIn = (): void => {
+    if (terminal) void run(() => window.studio.terminalStop(terminal.id));
+  };
+  const view = piView(state, {
+    install: () => void window.studio.openUrl(WORDS.pi.guide),
+    recheck: () => void run(recheck),
+    signIn,
+    cancelSignIn,
+    openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
+    update: () => void install.update(),
+  });
+  return (
+    <ProviderCard
+      words={PI_WORDS}
+      engine={engine}
+      view={view}
+      checking={checking}
+      connected={ready}
+      problem={error ?? terminalError}
+    >
+      {terminal && <SignInTerminal session={terminal} onError={setTerminalError} />}
+    </ProviderCard>
+  );
+}
+
+/** Pi's row: no in-app installer, Sign in opens the TUI so the person can `/login`. */
+function piView(state: OpenCodeRowState, act: OpenCodeActions): RowView {
+  switch (state) {
+    case OpenCodeRowState.NotInstalled:
+      return {
+        tone: RowTone.Off,
+        status: WORDS.notInstalled,
+        line: WORDS.pi.installLine,
+        actions: (
+          <>
+            <Button variant="default" onClick={act.install}>
+              {WORDS.pi.install}
+            </Button>
+            <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
+          </>
+        ),
+      };
+    case OpenCodeRowState.SigningIn:
+      return {
+        tone: RowTone.Busy,
+        status: WORDS.signingIn,
+        line: WORDS.pi.signingIn,
+        actions: (
+          <>
+            {act.openSignInPage && <Button onClick={act.openSignInPage}>{WORDS.pi.openSignInPage}</Button>}
+            <Button onClick={act.cancelSignIn}>{WORDS.pi.cancelSignIn}</Button>
+          </>
+        ),
+      };
+    case OpenCodeRowState.SignedOut:
+    case OpenCodeRowState.FreeOnly:
+      return {
+        tone: RowTone.Off,
+        status: WORDS.notConnected,
+        line: WORDS.pi.signInLine,
+        actions: (
+          <Button variant="default" onClick={act.signIn}>
+            {WORDS.pi.signIn}
+          </Button>
+        ),
+      };
+    case OpenCodeRowState.Connected:
+      return {
+        tone: RowTone.Connected,
+        status: WORDS.connected,
+        line: WORDS.pi.connectedLine,
+        actions: (
+          <AccountMenu name={WORDS.pi.name} onCheck={act.recheck}>
+            <>
+              <DropdownMenuItem onSelect={act.signIn}>
+                <ItemWords title={WORDS.pi.addProvider} line={WORDS.pi.addProviderLine} />
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={act.update}>{WORDS.pi.update}</DropdownMenuItem>
+            </>
+          </AccountMenu>
+        ),
+      };
+    default:
+      return {
+        tone: RowTone.Off,
+        status: WORDS.couldNotCheck,
+        line: WORDS.pi.unreachable,
+        actions: <Button onClick={act.recheck}>{WORDS.tryAgain}</Button>,
+      };
+  }
+}
+
 const OPEN_ROUTER_WORDS: ProviderWords = { name: WORDS.openRouter.name, plans: "", guide: WORDS.openRouter.keysUrl };
 
 /** The key field: paste, save (checked by OpenRouter first), get a key, or cancel a replacement. */
@@ -455,10 +566,12 @@ function OpenRouterRow({
 /** The metered rows, under the subscriptions: each only when its engine is registered. */
 export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProviderProps): JSX.Element {
   const openCode = engines.find((engine) => engine.id === EngineId.OpenCode);
+  const pi = engines.find((engine) => engine.id === EngineId.Pi);
   const openRouter = engines.find((engine) => engine.id === EngineId.OpenRouter);
   return (
     <>
       {openCode && <OpenCodeRow engine={openCode} onEnginesRefresh={onEnginesRefresh} />}
+      {pi && <PiRow engine={pi} onEnginesRefresh={onEnginesRefresh} />}
       {openRouter && <OpenRouterRow engine={openRouter} onEnginesRefresh={onEnginesRefresh} />}
     </>
   );

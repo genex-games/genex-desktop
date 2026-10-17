@@ -9,7 +9,7 @@ import { CODEX_STUDIO_AUTH_ARGS, codexSubscriptionEnv } from "../../substrate/en
 import { requireCodingCli } from "../../substrate/engines/external-cli.ts";
 import type { ClaudeLoginController } from "../claude-login.ts";
 import type { CodexLoginController } from "../codex-login.ts";
-import type { OpenCodeLogin, SubscriptionEngine } from "../login-controllers.ts";
+import type { OpenCodeLogin, PiLogin, SubscriptionEngine } from "../login-controllers.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { LoginSource } from "../../shared/engine-descriptor.ts";
@@ -36,6 +36,7 @@ export interface LoginIpcDeps {
   claudeLogin: Pick<ClaudeLoginController, "start" | "snapshot" | "submitCode" | "openBrowser" | "cancel">;
   codexLogin: Pick<CodexLoginController, "start" | "snapshot" | "cancel" | "dismiss" | "openBrowser">;
   openCodeLogin: OpenCodeLogin;
+  piLogin: PiLogin;
   subscription(id: string): SubscriptionEngine | null;
   /** A run is being held awake for, or a user turn is in flight: the ChatGPT account must not change under it. */
   busy(): boolean;
@@ -50,6 +51,7 @@ export function registerLoginIpc(
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    piLogin,
     subscription,
     busy,
     pushUiEvent,
@@ -106,6 +108,7 @@ export function registerLoginIpc(
 
   // OpenCode's own sign-in in the terminal: it changes no account a run is using, so it is never refused.
   handle("studio:opencode.signin", async () => openCodeLogin.start());
+  handle("studio:pi.signin", async () => piLogin.start());
 
   handle("studio:codex-login.state", async () => codexLogin.snapshot());
   handle("studio:codex-login.cancel", async () => {

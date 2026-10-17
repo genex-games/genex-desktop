@@ -711,6 +711,16 @@ describe("eval review server: grader-validation labels", () => {
   });
 });
 
+/**
+ * Did `body` name `word` as itself? A two- or three-letter engine id (`pi`) also appears inside
+ * ordinary English, so those match on a word boundary only.
+ */
+function leaked(body: string, word: string): boolean {
+  if (word.length <= 3 && /^[a-z]+$/.test(word))
+    return new RegExp(`(^|[^A-Za-z0-9])${word}([^A-Za-z0-9]|$)`).test(body);
+  return body.includes(word);
+}
+
 /** Load the page, its script and style, then answer every task; returns every body the server sent. */
 async function answerEverything(handle: ReviewServerHandle): Promise<string[]> {
   const token = tokenOf(handle);
@@ -762,8 +772,7 @@ describe("eval review server: blinding", () => {
       });
       closeBeforeCleanup(() => handle.close());
       const served = await answerEverything(handle);
-      for (const body of served)
-        for (const word of forbidden) assert.ok(!body.includes(word), `${mode} served ${word}`);
+      for (const body of served) for (const word of forbidden) assert.ok(!leaked(body, word), `${mode} served ${word}`);
       if (mode === ReviewMode.GraderValidation)
         assert.ok(
           served.some((body) => body.includes(`"family":"${GraderFamily.Claude}"`)),
